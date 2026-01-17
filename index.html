@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#216e48" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="description" content="Mühendis Kayıt Sistemi - Ziraat Mühendisleri İçin Çevrimdışı Asistan" />
+    
+    <title>Mühendis Kayıt Sistemi</title>
+    
+    <!-- PWA Manifest (Android Manifest Equivalent) -->
+    <link rel="manifest" href="/manifest.json" />
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              agri: {
+                50: '#f2fcf5',
+                100: '#e1f8e8',
+                200: '#c3efd2',
+                300: '#94e0b3',
+                400: '#5cc78e',
+                500: '#34ab6f',
+                600: '#268a57',
+                700: '#216e48',
+                800: '#1d573b',
+                900: '#194833',
+              },
+              earth: {
+                50: '#faf8f6',
+                100: '#f3efea',
+                200: '#e5ddd3',
+                300: '#d1c2b0',
+                400: '#bba28a',
+                500: '#a68568',
+                600: '#8d6d53',
+                700: '#725644',
+                800: '#5f483b',
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+      body { 
+        font-family: 'Inter', sans-serif; 
+        -webkit-tap-highlight-color: transparent;
+      }
+      /* Hide scrollbar for Chrome, Safari and Opera */
+      .no-scrollbar::-webkit-scrollbar {
+          display: none;
+      }
+      /* Hide scrollbar for IE, Edge and Firefox */
+      .no-scrollbar {
+          -ms-overflow-style: none;  /* IE and Edge */
+          scrollbar-width: none;  /* Firefox */
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.37.0",
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
+    "recharts": "https://esm.sh/recharts@^3.6.0",
+    "idb": "https://esm.sh/idb@8.0.0"
+  }
+}
+</script>
+</head>
+  <body class="bg-earth-50 text-stone-800 select-none">
+    <div id="root"></div>
+  </body>
+</html>
