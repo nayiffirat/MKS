@@ -344,8 +344,8 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
 
                 </div>
 
-                {/* BOTTOM ACTION BAR - Fixed to bottom with absolute positioning */}
-                <div className="absolute bottom-0 left-0 w-full p-4 bg-stone-900 border-t border-white/5 pb-8 flex gap-3 z-50 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
+                {/* BOTTOM ACTION BAR - Fixed to bottom */}
+                <div className="w-full p-4 bg-stone-900 border-t border-white/5 pb-10 flex gap-3 z-50 shadow-[0_-10px_40px_rgba(0,0,0,0.5)] shrink-0 mt-auto">
                      <button onClick={cancelWizard} className="flex-1 py-4 rounded-xl font-bold text-stone-400 hover:text-white bg-stone-800 hover:bg-stone-700 transition-all border border-white/5">
                          İptal
                      </button>
