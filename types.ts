@@ -1,3 +1,11 @@
+
+export interface AgriCity {
+  name: string;
+  lat: number;
+  lon: number;
+  admin1?: string; 
+}
+
 export interface Farmer {
   id: string;
   fullName: string;
@@ -12,7 +20,8 @@ export enum PesticideCategory {
   INSECTICIDE = 'İnsektisit (Böcek)',
   HERBICIDE = 'Herbisit (Ot)',
   FUNGICIDE = 'Fungisit (Mantar)',
-  FERTILIZER = 'Gübre',
+  FERTILIZER = 'Gübre / Besleme',
+  GROWTH_REGULATOR = 'Bitki Gelişim Düzenleyici (BGD)',
   OTHER = 'Diğer'
 }
 
@@ -22,6 +31,7 @@ export interface Pesticide {
   activeIngredient: string;
   defaultDosage: string;
   category: PesticideCategory;
+  description?: string;
 }
 
 export interface VisitLog {
@@ -31,12 +41,15 @@ export interface VisitLog {
   note: string;
   photoUri?: string; // Base64 or Blob URL
   aiAnalysis?: string; // Gemini analysis result
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface PrescriptionItem {
   pesticideId: string;
   pesticideName: string;
   dosage: string;
+  quantity?: string; // Opsiyonel ürün adedi (örn: "2", "3 Kutu")
 }
 
 export interface Prescription {
@@ -49,6 +62,17 @@ export interface Prescription {
   isOfficial: boolean;
 }
 
+export interface Reminder {
+  id: string;
+  title: string;
+  description: string;
+  date: string; // ISO String
+  isCompleted: boolean;
+  priority: 'LOW' | 'MEDIUM' | 'HIGH';
+  farmerIds?: string[]; // Array of linked farmers
+  recurrence: 'NONE' | 'DAILY' | 'WEEKLY' | 'MONTHLY';
+}
+
 export enum NewsCategory {
   AGRICULTURE = 'TARIM',
   TECHNOLOGY = 'TEKNOLOJİ',
@@ -57,7 +81,7 @@ export enum NewsCategory {
   SPORTS = 'SPOR',
   HEALTH = 'SAĞLIK',
   AUTOMOTIVE = 'OTOMOTİV',
-  MAGAZINE = 'MAGAZİN',
+  MAGAZİN = 'MAGAZİN',
   WORLD = 'DÜNYA'
 }
 
@@ -72,4 +96,24 @@ export interface NewsItem {
   date: string; // ISO String
 }
 
-export type ViewState = 'DASHBOARD' | 'FARMERS' | 'PESTICIDES' | 'VISITS' | 'PRESCRIPTIONS' | 'NEWS';
+export interface AppNotification {
+  id: string;
+  type: 'WARNING' | 'INFO' | 'SUCCESS' | 'SYSTEM';
+  title: string;
+  message: string;
+  date: string;
+  isRead: boolean;
+}
+
+export interface UserProfile {
+  fullName: string;
+  phoneNumber: string;
+  companyName: string;
+  title: string;
+  assistantVoice?: 'MALE' | 'FEMALE';
+  selectedCity?: AgriCity;
+}
+
+export type ViewState = 'DASHBOARD' | 'FARMERS' | 'PESTICIDES' | 'PRESCRIPTIONS' | 'VISITS' | 'NEWS' | 'CONTACT' | 'SETTINGS' | 'NOTIFICATIONS' | 'PROFILE' | 'STATISTICS' | 'FIELD_ASSISTANT' | 'REMINDERS';
+
+export type UIScale = 'SMALL' | 'MEDIUM' | 'LARGE';

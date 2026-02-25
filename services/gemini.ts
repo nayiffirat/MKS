@@ -1,18 +1,19 @@
+
 import { GoogleGenAI } from "@google/genai";
 
-// Initialize the Gemini API client
-// Note: In a real production app, you should not hardcode the API key in the frontend.
-// Since this is a demo environment, we assume the key is injected via environment variables.
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || 'DEMO_KEY' });
+// Strictly follow GenAI guidelines: use the API key directly from process.env.API_KEY
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 export const GeminiService = {
+  /**
+   * Analyzes plant health using gemini-3-flash-preview for superior reasoning.
+   */
   async analyzePlantImage(base64Image: string): Promise<string> {
     try {
-        // Remove data URL prefix if present for clean base64
         const cleanBase64 = base64Image.replace(/^data:image\/(png|jpg|jpeg);base64,/, "");
 
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image', // Optimized for speed and image tasks
+            model: 'gemini-3-flash-preview',
             contents: {
                 parts: [
                     {
@@ -22,21 +23,43 @@ export const GeminiService = {
                         }
                     },
                     {
-                        text: "Bu bir bitki hastalığı veya zararlısı fotoğrafı olabilir. Lütfen bir Ziraat Mühendisi gibi analiz et. Hastalığın/zararlının adını tahmin et ve kısa bir çözüm önerisi sun. Yanıtı Türkçe ver."
+                        text: "Sen uzman bir Ziraat Mühendisisin. Bu fotoğraftaki bitkiyi derinlemesine analiz et. Varsa hastalığı, zararlıyı veya besin noksanlığını teşhis et. Teşhisin adını, nedenlerini ve profesyonel çözüm önerilerini (ilaçlama, gübreleme veya kültürel önlemler) içeren kısa bir rapor sun. Yanıtın teknik ama anlaşılır bir dille Türkçe olmalı."
                     }
                 ]
+            },
+            config: {
+                // Enabling thinking for better analysis accuracy with limited budget
+                thinkingConfig: { thinkingBudget: 1000 },
+                maxOutputTokens: 2000
             }
         });
 
-        return response.text || "Analiz yapılamadı.";
+        return response.text || "Görsel analiz edilemedi, lütfen tekrar deneyin.";
     } catch (error) {
-      console.error("Gemini Analysis Error:", error);
-      return "Yapay zeka servisine ulaşılamadı. Lütfen internet bağlantınızı kontrol edin.";
+      console.error("Gemini 3 Image Analysis Error:", error);
+      return "AI servisi şu an meşgul veya görsel işlenemedi. Lütfen tekrar deneyin.";
     }
   },
 
-  async speechToText(audioBase64: string): Promise<string> {
-      // Future implementation for voice notes
-      return "Sesli not özelliği henüz aktif değil.";
+  /**
+   * General agricultural knowledge assistant using Gemini 3.
+   */
+  async askAgriBot(prompt: string): Promise<string> {
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-3-flash-preview',
+            contents: prompt,
+            config: {
+                systemInstruction: "Sen 'MKS Asistan' adında, deneyimli bir Kıdemli Ziraat Mühendisisin. Tarım mevzuatı, bitki koruma, bitki besleme ve akıllı tarım teknolojileri konularında uzmansın. Yanıtların profesyonel, yapıcı, kısa ve Türkçe olmalı. Gemini 3 motoru ile en güncel teknik verileri kullan.",
+                thinkingConfig: { thinkingBudget: 500 },
+                maxOutputTokens: 1000
+            }
+        });
+
+        return response.text || "Üzgünüm, bu soruyu şu an yanıtlayamıyorum.";
+    } catch (error) {
+        console.error("Gemini 3 Text API Error:", error);
+        return "Bağlantı hatası oluştu. Lütfen sorunuzu tekrar sorun.";
+    }
   }
 };

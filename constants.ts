@@ -1,204 +1,67 @@
+
 import { Pesticide, PesticideCategory } from './types';
 
+export const APP_NAME = "Mühendis Kayıt Sistemi";
+
 export const MOCK_PESTICIDES: Pesticide[] = [
-  { id: '1', name: 'Alpha Guard', activeIngredient: 'Cypermethrin', defaultDosage: '50ml/100L', category: PesticideCategory.INSECTICIDE },
-  { id: '2', name: 'Weed Killer X', activeIngredient: 'Glyphosate', defaultDosage: '200ml/100L', category: PesticideCategory.HERBICIDE },
-  { id: '3', name: 'Fungi Stop', activeIngredient: 'Tebuconazole', defaultDosage: '75ml/100L', category: PesticideCategory.FUNGICIDE },
-  { id: '4', name: 'Mega Growth', activeIngredient: 'Nitrogen+Zinc', defaultDosage: '250g/100L', category: PesticideCategory.FERTILIZER },
+  // --- SYNGENTA ---
+  { id: 'syn-1', name: 'Amistar Trio', activeIngredient: 'Azoxystrobin + Propiconazole + Cyproconazole', defaultDosage: '60 ml/da', category: PesticideCategory.FUNGICIDE, description: 'Buğdayda pas ve külleme hastalıkları için sistemik çözüm.' },
+  { id: 'syn-2', name: 'Score 250 EC', activeIngredient: 'Difenoconazole', defaultDosage: '40 ml/100L', category: PesticideCategory.FUNGICIDE, description: 'Karaleke ve külleme için standart ürün.' },
+  { id: 'syn-3', name: 'Affirm', activeIngredient: 'Emamectin benzoate', defaultDosage: '150 g/da', category: PesticideCategory.INSECTICIDE, description: 'Lepidoptera türlerine (Tuta, Yeşil Kurt) karşı üstün performans.' },
+  { id: 'syn-5', name: 'Axial', activeIngredient: 'Pinoxaden', defaultDosage: '70 ml/da', category: PesticideCategory.HERBICIDE, description: 'Buğday ve arpada dar yapraklı ot ilacı.' },
+
+  // --- BAYER ---
+  { id: 'bayer-1', name: 'Movento SC 100', activeIngredient: 'Spirotetramat', defaultDosage: '100 ml/100L', category: PesticideCategory.INSECTICIDE, description: 'Çift yönlü sistemik taşıma özelliği ile gizli zararlılara karşı etkili.' },
+  { id: 'bayer-2', name: 'Atlantis Star', activeIngredient: 'Mesosulfuron + Iodosulfuron', defaultDosage: '30 g/da', category: PesticideCategory.HERBICIDE, description: 'Hububatta geniş ve dar yapraklı otlara karşı tam çözüm.' },
+  { id: 'bayer-3', name: 'Luna Experience', activeIngredient: 'Fluopyram + Tebuconazole', defaultDosage: '60 ml/100L', category: PesticideCategory.FUNGICIDE, description: 'Meyve ve sebzede külleme ve monilya ilacı.' },
+
+  // --- CORTEVA ---
+  { id: 'cor-1', name: 'Delegate 250 WG', activeIngredient: 'Spinetoram', defaultDosage: '30 g/da', category: PesticideCategory.INSECTICIDE, description: 'Thrips ve meyve iç kurdu için yeni nesil çözüm.' },
+  { id: 'cor-2', name: 'Closer SC', activeIngredient: 'Isoclast active', defaultDosage: '20 ml/da', category: PesticideCategory.INSECTICIDE, description: 'Yaprak biti ve beyaz sinek için sistemik koruma.' },
+  { id: 'cor-3', name: 'Mustang', activeIngredient: '2,4-D + Florasulam', defaultDosage: '60 ml/da', category: PesticideCategory.HERBICIDE, description: 'Hububatta geniş yapraklı ot mücadelesi.' },
+
+  // --- FMC ---
+  { id: 'fmc-1', name: 'Benevia', activeIngredient: 'Cyantraniliprole', defaultDosage: '60 ml/da', category: PesticideCategory.INSECTICIDE, description: 'Sebzelerde emici ve çiğneyici zararlılara karşı üstün koruma.' },
+  { id: 'fmc-2', name: 'Verimark', activeIngredient: 'Cyantraniliprole', defaultDosage: '15 ml/1000 fide', category: PesticideCategory.INSECTICIDE, description: 'Can suyu uygulaması ile kökten uca sistemik koruma.' },
+  { id: 'fmc-3', name: 'Coragen', activeIngredient: 'Chlorantraniliprole', defaultDosage: '15 ml/da', category: PesticideCategory.INSECTICIDE, description: 'Meyve ve sebzede kurt mücadelesinde dünya lideri.' },
+
+  // --- SUMITOMO ---
+  { id: 'sum-1', name: 'Sumi-Alpha', activeIngredient: 'Esfenvalerate', defaultDosage: '20 ml/da', category: PesticideCategory.INSECTICIDE, description: 'Geniş spektrumlu, ani etkili insektisit.' },
+  { id: 'sum-2', name: 'Admiral 10 EC', activeIngredient: 'Pyriproxyfen', defaultDosage: '50 ml/da', category: PesticideCategory.INSECTICIDE, description: 'Beyaz sinek larvalarına karşı gelişim düzenleyici.' },
+
+  // --- HEKTAŞ ---
+  { id: 'hek-1', name: 'Joker', activeIngredient: 'Chlorpyrifos-methyl', defaultDosage: '100 ml/da', category: PesticideCategory.INSECTICIDE, description: 'Depo zararlıları ve genel insektisit.' },
+  { id: 'hek-2', name: 'Hekvidane 2.5 EC', activeIngredient: 'Lambda-cyhalothrin', defaultDosage: '30 ml/da', category: PesticideCategory.INSECTICIDE, description: 'Çok yönlü temas etkili böcek ilacı.' },
+
+  // --- BASF ---
+  { id: 'basf-1', name: 'Bellis', activeIngredient: 'Boscalid + Pyraclostrobin', defaultDosage: '60 g/100L', category: PesticideCategory.FUNGICIDE, description: 'Depo çürüklüğü ve külleme kontrolü.' },
+  { id: 'basf-2', name: 'Signum', activeIngredient: 'Boscalid + Pyraclostrobin', defaultDosage: '100 g/da', category: PesticideCategory.FUNGICIDE, description: 'Sebzelerde geniş spektrumlu fungisit.' },
+
+  // --- SECTOR TARIM (BGD & ÖZEL ÜRÜNLER) ---
+  { id: 'sec-1', name: 'Sector Gibb Tablet', activeIngredient: 'Gibberellic Acid (GA3) 1g', defaultDosage: '1 Adet/100L', category: PesticideCategory.GROWTH_REGULATOR, description: 'Üzümde salkım uzatma, narenciyede meyve tutumu ve pazar değerini artırma.' },
+  { id: 'sec-2', name: 'Sector Tonik', activeIngredient: 'Sodyum Orto/Para Nitrofenolat', defaultDosage: '50 ml/100L', category: PesticideCategory.GROWTH_REGULATOR, description: 'Bitki hücrelerini aktive eden, strese karşı direnç sağlayan ve verimi artıran biostimülant.' },
+  { id: 'sec-3', name: 'Sectormate 48 SL', activeIngredient: 'Ethephon 480 g/L', defaultDosage: '200 ml/da', category: PesticideCategory.GROWTH_REGULATOR, description: 'Pamukta koza açtırıcı, meyve ağaçlarında hasat olgunlaştırıcı ve renklendirici.' },
+  { id: 'sec-4', name: 'Sector Root', activeIngredient: 'Indole Butyric Acid (IBA) + Amino Asit', defaultDosage: '100 ml/100L', category: PesticideCategory.GROWTH_REGULATOR, description: 'Fide ve fidanlarda kılcal kök oluşumunu teşvik eden güçlü köklendirici.' },
+  { id: 'sec-5', name: 'Sector Combi', activeIngredient: 'Mikro Element Karışımı (Zn, B, Fe, Mn)', defaultDosage: '100 gr/100L', category: PesticideCategory.FERTILIZER, description: 'Bitkideki iz element noksanlıklarını gideren, şelatlı toz yaprak gübresi.' },
+  { id: 'sec-6', name: 'Sector Amino', activeIngredient: 'Serbest Amino Asitler', defaultDosage: '250 ml/100L', category: PesticideCategory.GROWTH_REGULATOR, description: 'Bitkinin stres koşullarını atlatmasına yardımcı olan organik gelişim düzenleyici.' },
+
+  // --- DIGER BITKI GELISIM DUZENLEYICILER (BGD) ---
+  { id: 'bgd-1', name: 'Progibb 40 SG', activeIngredient: 'Gibberellic Acid (GA3)', defaultDosage: '10 g/da', category: PesticideCategory.GROWTH_REGULATOR, description: 'Meyve tutumu ve salkım uzatma için.' },
+  { id: 'bgd-2', name: 'Atonik', activeIngredient: 'Sodium Ortho-Nitrophenolate', defaultDosage: '50 ml/100L', category: PesticideCategory.GROWTH_REGULATOR, description: 'Hücre yenileyici, stres önleyici bitki aktivatörü.' },
+  { id: 'bgd-3', name: 'Ethrel', activeIngredient: 'Ethephon', defaultDosage: '150 ml/da', category: PesticideCategory.GROWTH_REGULATOR, description: 'Meyve olgunlaştırma ve pamukta koza açtırma.' },
+
+  // --- GUBRE & BESLEME ---
+  { id: 'fer-1', name: 'Urea (%46 N)', activeIngredient: 'Azot', defaultDosage: '20 kg/da', category: PesticideCategory.FERTILIZER, description: 'Üst gübreleme için temel azot kaynağı.' },
+  { id: 'fer-2', name: 'Quantum Plus', activeIngredient: 'Sıvı Aminoasit', defaultDosage: '250 ml/100L', category: PesticideCategory.FERTILIZER, description: 'Hızlı absorpsiyon sağlayan biyostimülant.' },
+  { id: 'fer-3', name: 'Potasol', activeIngredient: 'Sıvı Potasyum', defaultDosage: '300 ml/da', category: PesticideCategory.FERTILIZER, description: 'Meyve iriltme ve renklenme desteği.' },
+  { id: 'fer-4', name: 'Calbit C', activeIngredient: 'Kalsiyum', defaultDosage: '250 ml/100L', category: PesticideCategory.FERTILIZER, description: 'Meyve sertliği ve raf ömrü için kalsiyum desteği.' },
+  { id: 'fer-5', name: 'Zintrac', activeIngredient: 'Çinko (%40 Zn)', defaultDosage: '100 ml/da', category: PesticideCategory.FERTILIZER, description: 'Kardeşlenme ve sürgün gelişimi için konsantre çinko.' },
+  { id: 'fer-6', name: 'Bortrac', activeIngredient: 'Bor (%15 B)', defaultDosage: '100 ml/da', category: PesticideCategory.FERTILIZER, description: 'Çiçeklenme ve polen sağlığı için hayati önemde.' }
 ];
 
-export const APP_NAME = "Mühendis Kayıt Sistemi";
-export const ENGINEER_NAME_DEFAULT = "Ziraat Müh. Ahmet Yılmaz";
-
-// Templates for generating random news
 export const NEWS_TEMPLATES: Record<string, { titles: string[], summaries: string[] }> = {
   TARIM: {
-    titles: [
-      'Gübre Fiyatlarında Beklenen İndirim Geldi',
-      '2024 Yılı Tarımsal Destekleme Bütçesi Onaylandı',
-      'Kuraklıkla Mücadelede Yeni Eylem Planı',
-      'Çiftçiye Mazot Desteği Ödemeleri Başlıyor',
-      'Yerli Tohum Üretiminde Rekor Artış',
-      'Organik Tarım İhracatında Hedef Büyütüldü',
-      'Akıllı Tarım Uygulamaları Yaygınlaşıyor',
-      'Buğday Taban Fiyatları Açıklandı',
-      'Seralarda Enerji Verimliliği Dönemi',
-      'Meyve İhracatında Rusya Pazarı Genişliyor'
-    ],
-    summaries: [
-      'Tarım ve Orman Bakanlığı tarafından yapılan son dakika açıklamasına göre üreticilerin yüzünü güldürecek gelişmeler yaşanıyor.',
-      'Resmi Gazete\'de yayımlanan kararname ile birlikte tarımsal girdilerde yeni bir dönem başlıyor.',
-      'İklim değişikliğinin etkilerini en aza indirmek amacıyla hazırlanan raporda çarpıcı detaylar yer alıyor.',
-      'Üretim maliyetlerini düşürmek ve verimliliği artırmak için devlet destekli hibe programları devreye alındı.',
-      'Ziraat Odaları Birliği Başkanı, hasat sezonu öncesi çiftçilere önemli uyarılarda bulundu.'
-    ]
-  },
-  TEKNOLOJİ: {
-    titles: [
-      'Yapay Zeka Tarım Sektörünü Dönüştürüyor',
-      'Android 16 Özellikleri Sızdırıldı',
-      'Yerli Elektrikli Traktör Seri Üretime Geçiyor',
-      '5G Altyapısı Kırsal Bölgelere Ulaşıyor',
-      'Yeni Nesil Drone ile İlaçlama Dönemi',
-      'Google\'dan Çiftçilere Özel Uygulama',
-      'Kuantum Bilgisayarlarda Büyük Adım',
-      'Siber Güvenlikte Yeni Tehdit: Fidye Yazılımları',
-      'Uzaydan Tarla Takibi Yapan Uydu Fırlatıldı',
-      'Giyilebilir Teknolojiler Sağlığı İzliyor'
-    ],
-    summaries: [
-      'Teknoloji devlerinin son geliştirmeleri, günlük hayatı ve endüstriyel süreçleri kökten değiştirmeye hazırlanıyor.',
-      'Silikon Vadisi\'nden gelen son haberler, yatırımcıların dikkatini yapay zeka girişimlerine çekti.',
-      'Yeni geliştirilen sensör teknolojileri sayesinde verimlilik %40 oranında artırıldı.',
-      'Mobil dünyada yaşanan rekabet, kullanıcılara daha uygun fiyatlı ve yüksek performanslı cihazlar sunuyor.',
-      'Dijital dönüşüm süreci, geleneksel sektörlerin de teknolojiyle entegre olmasını zorunlu kılıyor.'
-    ]
-  },
-  EKONOMİ: {
-    titles: [
-      'Merkez Bankası Faiz Kararını Açıkladı',
-      'Altın Fiyatlarında Tarihi Zirve',
-      'Döviz Kurlarında Son Durum',
-      'Enflasyon Rakamları Beklentiyi Aştı',
-      'İhracatta Yeni Rekor: Otomotiv Sektörü',
-      'Borsa İstanbul Güne Yükselişle Başladı',
-      'Kripto Para Piyasasında Hareketli Saatler',
-      'Konut Fiyatlarında Düşüş Beklentisi',
-      'Asgari Ücret Tespit Komisyonu Toplanıyor',
-      'Turizm Gelirleri Yüzleri Güldürdü'
-    ],
-    summaries: [
-      'Piyasalardaki belirsizlik sürerken, uzmanlar yatırımcıları temkinli olmaları konusunda uyarıyor.',
-      'Global piyasalardaki gelişmeler, iç piyasada da etkisini hissettirmeye devam ediyor.',
-      'Ekonomi yönetiminin aldığı yeni tedbirler, orta vadeli programın hedeflerine ulaşılmasını kolaylaştıracak.',
-      'Bankaların kredi faiz oranlarında yaptığı güncelleme, tüketici alışkanlıklarını doğrudan etkiliyor.',
-      'Yatırım araçları arasında yaşanan geçişkenlik, portföy yönetiminin önemini bir kez daha ortaya koydu.'
-    ]
-  },
-  SİYASET: {
-    titles: [
-      'Meclis Genel Kurulu Toplanıyor',
-      'Yeni Anayasa Çalışmaları Başladı',
-      'Kabine Toplantısı Sonrası Önemli Açıklamalar',
-      'Yerel Seçim Hazırlıkları Hız Kazandı',
-      'Parti Gruplarında Gündem Ekonomi',
-      'Uluslararası Diplomasi Trafiği Yoğunlaştı',
-      'Meclis\'ten Geçen Yeni Torba Yasa',
-      'Siyasi Partilerden Ortak Bildiri',
-      'Belediyelerden Kentsel Dönüşüm Hamlesi',
-      'Seçim Kanununda Değişiklik Teklifi'
-    ],
-    summaries: [
-      'Ankara kulislerinde konuşulan son iddialara göre, önümüzdeki günlerde önemli değişiklikler olabilir.',
-      'Siyasi parti liderlerinin karşılıklı açıklamaları gündemdeki sıcaklığını koruyor.',
-      'Meclis gündemine gelen yasa teklifi, kamuoyunda geniş yankı uyandırdı.',
-      'Hükümet yetkilileri, vatandaşların taleplerini karşılamak için yeni projeler üzerinde çalışıyor.',
-      'Diplomatik kaynaklardan alınan bilgilere göre, iki ülke arasındaki ilişkilerde yeni bir sayfa açılıyor.'
-    ]
-  },
-  SPOR: {
-    titles: [
-      'Süper Lig\'de Derbi Heyecanı',
-      'Milli Takım Avrupa Şampiyonası Yolunda',
-      'Transfer Döneminin En Pahalı İmzası',
-      'NBA\'de Temsilcimizden Muhteşem Performans',
-      'Voleybolun Sultanları Finalde',
-      'Formula 1 İstanbul Park İddiası',
-      'Teniste Grand Slam Heyecanı Başlıyor',
-      'Amatör Sporlara Dev Destek',
-      'Şampiyonlar Ligi Kura Çekimi Yapıldı',
-      'Olimpiyat Hazırlıkları Tam Gaz Sürüyor'
-    ],
-    summaries: [
-      'Son dakikada gelen gol, stadyumu bayram yerine çevirdi ve şampiyonluk yolunda kritik bir viraj dönüldü.',
-      'Teknik direktörün maç sonu açıklamaları, takım içindeki dengeleri değiştirecek gibi görünüyor.',
-      'Yıldız oyuncunun sakatlığı, teknik heyeti kara kara düşündürürken alternatif planlar devreye sokuldu.',
-      'Spor camiası, efsane ismin vedasıyla sarsıldı; törene binlerce taraftar katıldı.',
-      'Genç yeteneklerin performansı, gelecek turnuvalar için umut ışığı oldu.'
-    ]
-  },
-  SAĞLIK: {
-    titles: [
-      'Grip Salgınına Karşı Uzman Uyarısı',
-      'Yerli Kanser İlacında Faz 3 Çalışmaları',
-      'Sağlıklı Beslenmenin 10 Altın Kuralı',
-      'Hastanelerde Randevu Sistemi Güncellendi',
-      'Kalp Sağlığı İçin Yürüyüşün Önemi',
-      'Diyabetle Mücadelede Yeni Yöntemler',
-      'Ruh Sağlığı Yasası Meclis Gündeminde',
-      'Aşı Çalışmalarında Sevindirici Gelişme',
-      'Teknoloji Bağımlılığı Çocukları Tehdit Ediyor',
-      'Uyku Düzeninin Bağışıklığa Etkisi'
-    ],
-    summaries: [
-      'Dünya Sağlık Örgütü\'nün son raporu, küresel sağlık risklerine karşı alınması gereken önlemleri sıraladı.',
-      'Hekimler, mevsim geçişlerinde artan hastalıklara karşı bağışıklık sistemini güçlendirmenin yollarını anlattı.',
-      'Yapılan bilimsel araştırmalar, düzenli egzersizin kronik hastalık riskini %50 azalttığını ortaya koydu.',
-      'Sağlık Bakanlığı, vatandaşların sağlık hizmetlerine erişimini kolaylaştırmak için dijital altyapıyı güçlendiriyor.',
-      'Uzman diyetisyenler, şok diyetlerin zararlarına dikkat çekerek dengeli beslenme uyarısında bulundu.'
-    ]
-  },
-  OTOMOTİV: {
-    titles: [
-      'Yerli Otomobil Togg Yollarda',
-      'Elektrikli Araç Satışlarında Patlama',
-      'ÖTV İndirimi Beklentisi Piyasayı Durdurdu',
-      'Çinli Markalar Türkiye Pazarına Giriyor',
-      'Otonom Sürüş Teknolojisinde Devrim',
-      'İkinci El Otomobil Piyasası Hareketlendi',
-      'Benzinli Araçlara Veda Tarihi Açıklandı',
-      'Hibrit Modellerde Kampanya Dönemi',
-      'Yerli Batarya Fabrikası Temeli Atıldı',
-      'Otomobil Fiyatlarında Kur Etkisi'
-    ],
-    summaries: [
-      'Otomotiv Distribütörleri Derneği verilerine göre, geçen aya oranla satışlarda ciddi bir artış gözlemlendi.',
-      'Yeni modelin lansmanı, otomobil tutkunları tarafından büyük bir ilgiyle takip edildi.',
-      'Sektör temsilcileri, tedarik zincirindeki sorunların aşılmasıyla birlikte üretimin hızlanacağını belirtiyor.',
-      'Şarj istasyonu ağının genişlemesi, elektrikli araç tercihini olumlu yönde etkiliyor.',
-      'Güvenlik testlerinden tam not alan yeni SUV modeli, ailelerin gözdesi olmaya aday.'
-    ]
-  },
-  MAGAZİN: {
-    titles: [
-      'Ünlü Şarkıcı Dünya Turnesine Çıkıyor',
-      'Yılın Düğünü İçin Geri Sayım Başladı',
-      'Ödül Töreninde Şıklık Yarışı',
-      'Gişe Rekoru Kıran Filmin Devamı Geliyor',
-      'Sosyal Medya Fenomenine Büyük Şok',
-      'Ünlü Oyuncu Sektörü Bıraktığını Açıkladı',
-      'Yaz Konserleri Takvimi Belli Oldu',
-      'Moda Haftasında Türk Tasarımcı Rüzgarı',
-      'Boşanma Davasında Sürpriz Gelişme',
-      'Dizi Setinde Aşk İddiası'
-    ],
-    summaries: [
-      'Magazin dünyası bu haberi konuşuyor; ünlü çiftin ayrılık kararı hayranlarını üzdü.',
-      'Kırmızı halıda boy gösteren yıldızlar, kıyafetleriyle geceye damga vurdu.',
-      'Sosyal medya hesabından yaptığı paylaşımla sessizliğini bozan sanatçı, iddialara yanıt verdi.',
-      'Yeni projesi için imaj değiştiren oyuncu, hayranlarından tam not aldı.',
-      'Yaz tatilini Bodrum\'da geçiren ünlü isim, objektiflere neşeli pozlar verdi.'
-    ]
-  },
-  DÜNYA: {
-    titles: [
-      'Birleşmiş Milletler\'den Acil Çağrı',
-      'İklim Zirvesi\'nde Kritik Kararlar',
-      'Avrupa\'da Enerji Krizi Endişesi',
-      'ABD Başkanlık Seçimleri Yaklaşıyor',
-      'Asya Piyasalarında Sert Düşüş',
-      'Ortadoğu\'da Barış Görüşmeleri',
-      'Uzay Yarışında Yeni Aktörler',
-      'Küresel Isınma Tehdidi Büyüyor',
-      'Teknoloji Savaşları Kızışıyor',
-      'Göçmen Sorunu İçin Ortak Çözüm Arayışı'
-    ],
-    summaries: [
-      'Dünya liderleri, küresel sorunlara çözüm bulmak amacıyla düzenlenen zirvede bir araya geldi.',
-      'Uluslararası basında yer alan haberlere göre, bölgedeki gerilim tırmanmaya devam ediyor.',
-      'Bilim insanları, buzullardaki erimenin beklenenden daha hızlı gerçekleştiği konusunda uyardı.',
-      'Sınır ötesi operasyonla ilgili yapılan açıklama, diplomatik ilişkilerde yeni bir süreci başlattı.',
-      'Dünya genelinde artan gıda fiyatları, gelişmekte olan ülkeleri zor durumda bırakıyor.'
-    ]
+    titles: ['Gübre Desteği Artırıldı', 'Yeni Hasat Sezonu Başladı', 'Kuraklık Riski Analizi'],
+    summaries: ['Tarım Bakanlığı tarafından açıklanan yeni paketle üreticilere ek destek sağlanacak.']
   }
 };

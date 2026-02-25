@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "92102884744",
+    "project_id": "muhendiskayitsistemi",
+    "storage_bucket": "muhendiskayitsistemi.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:92102884744:android:99fb4a56d9b4a4576a4e3d",
+        "android_client_info": {
+          "package_name": "com.nayiffirat.mks"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "92102884744-nluv352emtngctqp3cnkpgcfepecb856.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAvQQQmN-VpuhYKdz2fHFgGCpmDw58pnJg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "92102884744-nluv352emtngctqp3cnkpgcfepecb856.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

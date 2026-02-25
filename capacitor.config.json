@@ -1,0 +1,24 @@
+{
+  "appId": "com.nayiffirat.mks",
+  "appName": "Mühendis Kayıt Sistemi",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https",
+    "allowNavigation": [
+      "*.firebaseapp.com",
+      "*.googleapis.com",
+      "*.gstatic.com",
+      "cdn.tailwindcss.com",
+      "images.unsplash.com",
+      "cdn-icons-png.flaticon.com",
+      "esm.sh",
+      "*.google.com"
+    ]
+  },
+  "plugins": {
+    "AdMob": {
+      "androidAppId": "ca-app-pub-8216705362885050~9381651016",
+      "iosAppId": "ca-app-pub-8216705362885050~9381651016"
+    }
+  }
+}

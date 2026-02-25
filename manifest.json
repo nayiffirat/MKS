@@ -1,6 +1,7 @@
+
 {
   "name": "Mühendis Kayıt Sistemi",
-  "short_name": "MKS Tarım",
+  "short_name": "MKS",
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait",
@@ -9,12 +10,12 @@
   "description": "Ziraat Mühendisleri için çevrimdışı öncelikli tarla ve çiftçi yönetim sistemi.",
   "icons": [
     {
-      "src": "https://cdn-icons-png.flaticon.com/512/628/628283.png",
+      "src": "/icons/icon-192.png",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "https://cdn-icons-png.flaticon.com/512/628/628283.png",
+      "src": "/icons/icon-512.png",
       "sizes": "512x512",
       "type": "image/png"
     }

@@ -1,151 +1,73 @@
+
 import React, { useState } from 'react';
 import { useWeatherViewModel } from '../hooks/useWeatherViewModel';
-import { Cloud, Sun, Wind, Droplets, Calendar, X, AlertTriangle, CloudRain, MapPin, RefreshCw, Loader2 } from 'lucide-react';
+import { AGRI_CITIES } from '../services/weather';
+import { Sun, Wind, Droplets, X, CloudRain, MapPin, RefreshCw, ArrowLeft, ChevronRight, Sunrise, Sunset, Zap, Cloud, CloudSun, CloudLightning, CloudSnow, Thermometer, Waves, Sparkles, Search, Loader2, LocateFixed } from 'lucide-react';
 
 export const WeatherWidget: React.FC = () => {
-  const { weather, isLoading, refreshWeather, getSprayingAdvice, getWeatherDescription } = useWeatherViewModel();
+  const { weather, isLoading, refreshWeather, getSprayingAdvice, getWeatherUITheme, selectedCity, changeCity, searchLocations, searchResults, isSearching, detectCurrentLocation } = useWeatherViewModel();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isCitySelectorOpen, setIsCitySelectorOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
-  if (!weather && isLoading) return <div className="h-24 bg-stone-100 rounded-xl animate-pulse mb-6 border border-stone-200"></div>;
+  if (!weather && isLoading) return <div className="h-20 bg-stone-900/50 rounded-2xl animate-pulse mb-3 border border-white/5"></div>;
   if (!weather) return null;
 
   const current = weather.current;
-  const advice = getSprayingAdvice(current.wind_speed_10m);
-  const isRisky = current.wind_speed_10m > 20;
+  const theme = getWeatherUITheme(current.weather_code);
+  const advice = getSprayingAdvice(current.wind_speed_10m, current.temperature_2m);
+  const WeatherIcon = ({ code, size=20 }: any) => {
+    if (code === 0) return <Sun size={size} className="text-amber-400" />;
+    if (code >= 1 && code <= 3) return <CloudSun size={size} className="text-amber-200" />;
+    if (code >= 51) return <CloudRain size={size} className="text-blue-400" />;
+    return <Cloud size={size} className="text-stone-300" />;
+  };
 
   return (
     <>
-      <div 
-        onClick={() => setIsDialogOpen(true)}
-        className={`relative mb-6 p-4 rounded-xl border cursor-pointer transition-all shadow-sm hover:shadow-md flex items-center justify-between group ${isRisky ? 'bg-red-50 border-red-200' : 'bg-white border-agri-100'}`}
-      >
-        <div className="flex items-center space-x-4">
-           <div className={`p-3 rounded-full ${isRisky ? 'bg-red-100 text-red-600' : 'bg-blue-50 text-blue-600'}`}>
-              {isLoading ? <Loader2 className="animate-spin" size={24}/> : (current.weather_code <= 3 ? <Sun size={24} /> : <CloudRain size={24} />)}
-           </div>
-           <div>
-              <h3 className="font-bold text-stone-800 flex items-center">
-                 Şanlıurfa, TR
-                 <span className="ml-2 text-xs font-normal text-stone-500 bg-white/50 px-2 py-0.5 rounded-full border border-stone-100">
-                    {getWeatherDescription(current.weather_code)}
-                 </span>
-              </h3>
-              <p className="text-2xl font-bold text-stone-900">{Math.round(current.temperature_2m)}°C</p>
-           </div>
-        </div>
-
-        <div className="text-right hidden md:block">
-           <div className={`flex items-center justify-end text-sm font-medium ${advice.color}`}>
-              <Wind size={16} className="mr-1" />
-              Rüzgar: {current.wind_speed_10m} km/s
-           </div>
-           <p className="text-xs text-stone-500 mt-1">{advice.message}</p>
-        </div>
-        
-        <div className="md:hidden text-right">
-             <span className={`text-xs font-bold px-2 py-1 rounded ${advice.bg} ${advice.color}`}>
-                {advice.status}
-             </span>
+      <div className={`relative mb-3 overflow-hidden rounded-[1.3rem] p-2.5 border border-white/10 shadow-lg bg-gradient-to-br ${theme.gradient} group`}>
+        <div className="absolute -top-5 -right-5 w-24 h-24 bg-white/5 rounded-full blur-xl"></div>
+        <div className="relative z-10 flex flex-col space-y-1.5">
+            <div className="flex justify-between items-center">
+                <button onClick={() => setIsCitySelectorOpen(true)} className="flex items-center space-x-1.5 bg-black/20 px-2 py-0.5 rounded-lg border border-white/5 active:scale-95"><MapPin size={9} className="text-emerald-400" /><span className="text-[9px] font-bold text-stone-100">{selectedCity.name}</span></button>
+                <div className={`flex items-center space-x-1 px-1.5 py-0.5 rounded-md border border-white/5 ${advice.bg}`}><Zap size={9} className={advice.iconColor} /><span className={`text-[7px] font-black uppercase ${advice.color}`}>{advice.status}</span></div>
+            </div>
+            <div onClick={() => setIsDialogOpen(true)} className="flex justify-between items-center cursor-pointer">
+                <div className="flex items-center space-x-2">
+                    <span className="text-4xl font-bold text-white tracking-tighter">{Math.round(current.temperature_2m)}°</span>
+                    <div className="border-l border-white/10 pl-2"><div className="flex items-center space-x-1"><WeatherIcon code={current.weather_code} size={12} /><span className="text-[9px] text-stone-200 font-bold uppercase">{theme.label}</span></div></div>
+                </div>
+                <div className="flex items-center space-x-2 text-[9px] font-bold text-stone-300">
+                    <div className="flex items-center space-x-1 bg-black/10 px-1.5 py-0.5 rounded"><Wind size={9} /><span className="text-stone-200">{Math.round(current.wind_speed_10m)}</span></div>
+                    <div className="flex items-center space-x-1 bg-black/10 px-1.5 py-0.5 rounded"><Droplets size={9} className="text-blue-300" /><span className="text-stone-200">%{current.relative_humidity_2m}</span></div>
+                </div>
+            </div>
         </div>
       </div>
 
-      {isDialogOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-           <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-              
-              <div className="bg-agri-700 text-white p-4 flex justify-between items-center shrink-0">
-                 <div className="flex items-center">
-                    <Cloud className="mr-2" />
-                    <h3 className="font-bold text-lg">Haftalık Tarım Tahmini</h3>
-                 </div>
-                 <div className="flex items-center space-x-1">
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); refreshWeather(); }} 
-                      disabled={isLoading}
-                      className="hover:bg-white/20 rounded-full p-2 disabled:opacity-50 transition-colors"
-                    >
-                        <RefreshCw size={20} className={isLoading ? 'animate-spin' : ''} />
-                    </button>
-                    <button onClick={() => setIsDialogOpen(false)} className="hover:bg-white/20 rounded-full p-2"><X size={20}/></button>
-                 </div>
-              </div>
-
-              <div className="overflow-y-auto flex-1 relative">
-                 {isLoading && (
-                    <div className="absolute inset-0 bg-white/80 z-10 flex items-center justify-center backdrop-blur-[1px]">
-                        <div className="flex flex-col items-center">
-                            <Loader2 className="animate-spin text-agri-600 mb-2" size={40} />
-                            <span className="text-agri-800 font-medium">Veriler Güncelleniyor...</span>
-                        </div>
-                    </div>
-                 )}
-
-                 <div className="p-6 bg-agri-50 border-b border-agri-100">
-                    <div className="flex items-start mb-4">
-                        <MapPin className="text-agri-600 mr-2 mt-1" size={20} />
-                        <div>
-                            <h2 className="text-2xl font-bold text-agri-900">Şanlıurfa</h2>
-                            <p className="text-agri-700">{Math.round(current.temperature_2m)}°C - {getWeatherDescription(current.weather_code)}</p>
-                        </div>
-                    </div>
-
-                    <div className={`p-4 rounded-xl border ${advice.bg} ${advice.color} flex items-start mb-4`}>
-                        <AlertTriangle size={24} className="mr-3 flex-shrink-0" />
-                        <div>
-                            <h4 className="font-bold text-sm uppercase">İlaçlama Durumu: {advice.status}</h4>
-                            <p className="text-sm mt-1">{advice.message}</p>
-                        </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-white p-3 rounded-lg border border-agri-100 flex items-center">
-                            <Droplets className="text-blue-500 mr-3" />
-                            <div>
-                                <p className="text-xs text-stone-500">Nem Oranı</p>
-                                <p className="font-bold text-stone-800">%{current.relative_humidity_2m}</p>
-                            </div>
-                        </div>
-                        <div className="bg-white p-3 rounded-lg border border-agri-100 flex items-center">
-                            <Wind className="text-stone-500 mr-3" />
-                            <div>
-                                <p className="text-xs text-stone-500">Rüzgar Hızı</p>
-                                <p className="font-bold text-stone-800">{current.wind_speed_10m} km/s</p>
-                            </div>
-                        </div>
-                    </div>
-                 </div>
-
-                 <div>
-                    <h4 className="px-6 py-3 text-xs font-bold text-stone-500 uppercase bg-stone-50 sticky top-0 border-b">Önümüzdeki 7 Gün</h4>
-                    {weather.daily.time.map((dateStr, index) => (
-                        <div key={index} className="flex items-center justify-between px-6 py-4 border-b border-stone-50 last:border-0 hover:bg-stone-50">
-                            <div className="flex items-center">
-                                <Calendar size={18} className="text-agri-400 mr-3" />
-                                <div>
-                                    <p className="font-bold text-stone-700">
-                                        {new Date(dateStr).toLocaleDateString('tr-TR', { weekday: 'long' })}
-                                    </p>
-                                    <p className="text-xs text-stone-400">{new Date(dateStr).toLocaleDateString('tr-TR')}</p>
-                                </div>
-                            </div>
-                            <div className="text-right flex items-center space-x-4">
-                                <div className="text-center">
-                                    <p className="text-xs text-stone-400">Yağış</p>
-                                    <p className="font-medium text-blue-600 flex items-center justify-end">
-                                        <Droplets size={12} className="mr-1"/> 
-                                        {weather.daily.precipitation_sum[index]} mm
-                                    </p>
-                                </div>
-                                <div className="w-16 text-right">
-                                    <span className="text-lg font-bold text-stone-800">{Math.round(weather.daily.temperature_2m_max[index])}°</span>
-                                </div>
-                            </div>
-                        </div>
-                    ))}
-                 </div>
-              </div>
-           </div>
+      {isCitySelectorOpen && (
+        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-md flex items-end animate-in fade-in duration-300">
+            <div className="w-full bg-stone-900 rounded-t-[2.5rem] p-5 pb-10 border-t border-white/10 h-[80vh] flex flex-col">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-bold text-white">Konum Seç</h3>
+                    <button onClick={() => setIsCitySelectorOpen(false)} className="bg-stone-800 p-2 rounded-full text-stone-400"><X size={20}/></button>
+                </div>
+                <button onClick={() => { detectCurrentLocation(); setIsCitySelectorOpen(false); }} className="w-full mb-4 flex items-center justify-center space-x-2 py-3 bg-emerald-600/10 border border-emerald-500/30 rounded-xl text-emerald-400 font-bold text-sm"><LocateFixed size={16} /><span>Mevcut Konum</span></button>
+                <div className="relative mb-4"><Search size={16} className="absolute left-3 top-3.5 text-stone-500" /><input type="text" value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); searchLocations(e.target.value); }} placeholder="İlçe ara..." className="w-full bg-stone-800 rounded-xl py-3 pl-10 pr-3 text-stone-200 text-sm outline-none" /></div>
+                <div className="flex-1 overflow-y-auto space-y-1">{searchResults.map((res, i) => (<button key={i} onClick={() => { changeCity(res); setIsCitySelectorOpen(false); }} className="w-full text-left p-3 rounded-xl bg-stone-800/40 hover:bg-stone-800 text-stone-200 text-sm font-bold">{res.name}</button>))}</div>
+            </div>
         </div>
+      )}
+      
+      {isDialogOpen && (
+          <div className="fixed inset-0 z-[100] bg-stone-950 flex flex-col p-6">
+              <button onClick={() => setIsDialogOpen(false)} className="self-start mb-6 p-2 bg-stone-900 rounded-full"><ArrowLeft size={24} className="text-stone-400"/></button>
+              <div className="text-center"><h2 className="text-6xl font-black text-white">{Math.round(current.temperature_2m)}°</h2><p className="text-stone-400 text-lg mt-2">{theme.label}</p></div>
+              <div className="mt-10 grid grid-cols-2 gap-4">
+                  <div className="bg-stone-900 p-4 rounded-2xl border border-white/5"><p className="text-xs text-stone-500 uppercase">Rüzgar</p><p className="text-xl font-bold text-white">{current.wind_speed_10m} km/s</p></div>
+                  <div className="bg-stone-900 p-4 rounded-2xl border border-white/5"><p className="text-xs text-stone-500 uppercase">Nem</p><p className="text-xl font-bold text-white">%{current.relative_humidity_2m}</p></div>
+              </div>
+          </div>
       )}
     </>
   );
