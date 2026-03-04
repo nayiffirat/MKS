@@ -1,8 +1,12 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useAppViewModel } from '../context/AppContext';
 import { WeatherWidget } from './WeatherComponents';
-import { Users, FileText, Sprout, Plus, X, Calendar, Newspaper, ChevronRight, Droplet, ArrowRight, Zap, MapPin, Sparkles, Send, Loader2, Bot, BrainCircuit, CalendarCheck, Clock, Mic, Bell, CalendarClock } from 'lucide-react';
+import { 
+  ResponsiveContainer, AreaChart, Area, XAxis, YAxis, 
+  Tooltip, CartesianGrid 
+} from 'recharts';
+import { Users, FileText, Sprout, Plus, X, Calendar, Newspaper, ChevronRight, Droplet, ArrowRight, Zap, MapPin, Sparkles, Send, Loader2, Bot, BrainCircuit, CalendarCheck, Clock, Mic, Bell, CalendarClock, TrendingUp, AlertCircle, Bug } from 'lucide-react';
 import { ViewState } from '../types';
 import { GeminiService } from '../services/gemini';
 
@@ -11,7 +15,7 @@ interface DashboardProps {
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
-  const { addFarmer, userProfile, reminders, stats } = useAppViewModel();
+  const { addFarmer, userProfile, reminders, stats, prescriptions } = useAppViewModel();
   
   // Quick Add Modal State
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -45,14 +49,37 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
       fullName: newFarmerName,
       phoneNumber: newFarmerPhone,
       village: newFarmerVillage || 'Merkez',
-      fieldSize: 0,
-      crops: ''
+      fields: [{ id: crypto.randomUUID(), name: 'Genel', size: 0, crop: 'Belirtilmedi' }]
     });
     setIsAddModalOpen(false);
     setNewFarmerName('');
     setNewFarmerPhone('+90 ');
     setNewFarmerVillage('');
   };
+
+  // Daily Sales Chart Data
+  const dailyChartData = useMemo(() => {
+    // Last 7 days
+    const days = [...Array(7)].map((_, i) => {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        return d.toISOString().split('T')[0];
+    }).reverse();
+
+    const salesMap: Record<string, number> = {};
+    prescriptions.forEach(p => {
+        const date = p.date.split('T')[0];
+        if (days.includes(date)) {
+            salesMap[date] = (salesMap[date] || 0) + (p.totalAmount || 0);
+        }
+    });
+
+    return days.map(date => ({
+        date: new Date(date).toLocaleDateString('tr-TR', { weekday: 'short' }),
+        amount: salesMap[date] || 0,
+        fullDate: date
+    }));
+  }, [prescriptions]);
 
   const handleAiAsk = async (e?: React.FormEvent) => {
       e?.preventDefault();
@@ -166,6 +193,27 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
 
       <WeatherWidget />
 
+      {/* REGIONAL ALERTS */}
+      {stats.regionalAlerts.length > 0 && (
+          <div className="bg-rose-900/20 border border-rose-500/20 rounded-[1.3rem] p-3 animate-pulse">
+              <div className="flex items-center gap-2 mb-2">
+                  <AlertCircle size={14} className="text-rose-500" />
+                  <h4 className="text-[10px] font-black text-rose-500 uppercase tracking-widest">Bölgesel Risk Uyarısı</h4>
+              </div>
+              <div className="space-y-2">
+                  {stats.regionalAlerts.map((alert, idx) => (
+                      <div key={idx} className="flex items-center justify-between bg-rose-500/10 p-2 rounded-xl border border-rose-500/10">
+                          <div className="flex items-center gap-2">
+                              <Bug size={12} className="text-rose-400" />
+                              <span className="text-[10px] font-bold text-rose-100">{alert.village}: {alert.type}</span>
+                          </div>
+                          <span className="text-[8px] font-black bg-rose-500 text-white px-1.5 py-0.5 rounded-full uppercase">Kritik</span>
+                      </div>
+                  ))}
+              </div>
+          </div>
+      )}
+
       {/* COMPACT AI WIDGET */}
       <div className="relative group z-20">
           <form 
@@ -255,6 +303,59 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 <span className="font-black text-[7px] text-stone-400 uppercase tracking-tight">PLAN</span>
             </button>
         </div>
+      </div>
+
+      {/* DAILY SALES CHART */}
+      <div className="bg-stone-900/40 border border-white/5 rounded-[2rem] p-5 overflow-hidden">
+          <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                  <div className="p-1.5 bg-emerald-500/10 rounded-lg">
+                      <TrendingUp size={14} className="text-emerald-500" />
+                  </div>
+                  <h3 className="text-[10px] font-black text-stone-300 uppercase tracking-[0.2em]">Günlük Satış Performansı</h3>
+              </div>
+              <button 
+                onClick={() => onNavigate('STATISTICS')}
+                className="text-[8px] font-black text-stone-500 uppercase tracking-widest hover:text-emerald-500 transition-colors"
+              >
+                  Detaylar <ChevronRight size={10} className="inline" />
+              </button>
+          </div>
+          
+          <div className="h-32 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={dailyChartData}>
+                      <defs>
+                          <linearGradient id="dashSales" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#10b981" stopOpacity={0.2}/>
+                              <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                          </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#262626" vertical={false} opacity={0.5} />
+                      <XAxis 
+                          dataKey="date" 
+                          axisLine={false} 
+                          tickLine={false} 
+                          tick={{ fill: '#525252', fontSize: 8, fontWeight: 700 }} 
+                      />
+                      <YAxis hide />
+                      <Tooltip 
+                          contentStyle={{ backgroundColor: '#1c1917', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '10px', fontSize: '9px' }}
+                          itemStyle={{ color: '#10b981', fontWeight: 'bold' }}
+                          formatter={(value: number) => [`${value.toLocaleString('tr-TR')} TL`, 'Satış']}
+                          labelStyle={{ color: '#737373', marginBottom: '2px' }}
+                      />
+                      <Area 
+                          type="monotone" 
+                          dataKey="amount" 
+                          stroke="#10b981" 
+                          strokeWidth={2}
+                          fillOpacity={1} 
+                          fill="url(#dashSales)" 
+                      />
+                  </AreaChart>
+              </ResponsiveContainer>
+          </div>
       </div>
 
       {/* QUICK ADD FARMER - BOTTOM SHEET STYLE */}

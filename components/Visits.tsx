@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Camera, Mic, Save, X, Plus, Calendar, User, MapPin, ChevronRight, Image as ImageIcon, CheckCircle2, Phone, MessageSquare, ArrowLeft, Loader2, Navigation, Clock, Sparkles, ImagePlus, Edit2, Trash2, Share2, Upload, Check, ChevronDown, Copy, FileText } from 'lucide-react';
+import { Camera, Mic, Save, X, Plus, Calendar, User, MapPin, ChevronRight, Image as ImageIcon, CheckCircle2, Phone, MessageSquare, ArrowLeft, Loader2, Navigation, Clock, Sparkles, ImagePlus, Edit2, Trash2, Share2, Upload, Check, ChevronDown, Copy, FileText, Bot, RefreshCw, Bug, AlertCircle } from 'lucide-react';
 import { dbService } from '../services/db';
 import { GeminiService } from '../services/gemini';
 import { Farmer, VisitLog } from '../types';
@@ -11,7 +11,7 @@ interface VisitsProps {
 }
 
 export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
-    const { userProfile, updateVisit, deleteVisit } = useAppViewModel();
+    const { userProfile, updateVisit, deleteVisit, updateUserProfile, showToast, hapticFeedback } = useAppViewModel();
     // Yeni mod eklendi: 'AI_WIZARD'
     const [viewMode, setViewMode] = useState<'LIST' | 'FORM' | 'SUCCESS' | 'DETAIL' | 'AI_WIZARD'>('LIST');
 
@@ -24,8 +24,51 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
 
     // Form State
     const [editingId, setEditingId] = useState<string | null>(null);
+
+    // Sub-navigation sync
+    useEffect(() => {
+        const handlePop = (e: PopStateEvent) => {
+            const state = e.state;
+            if (state?.view === 'VISITS') {
+                if (state.subView) {
+                    setViewMode(state.subView);
+                    if (state.subView === 'DETAIL' && state.detailId) {
+                        const target = visits.find(v => v.id === state.detailId);
+                        if (target) setSelectedVisit(target);
+                    }
+                } else {
+                    setViewMode('LIST');
+                    setSelectedVisit(null);
+                    setEditingId(null);
+                }
+            }
+        };
+        window.addEventListener('popstate', handlePop);
+        return () => window.removeEventListener('popstate', handlePop);
+    }, [visits]);
+    const changeViewMode = (mode: 'LIST' | 'FORM' | 'SUCCESS' | 'DETAIL' | 'AI_WIZARD', detailId?: string) => {
+        if (mode === viewMode) return;
+        
+        if (mode === 'LIST') {
+            if (window.history.state?.subView) {
+                window.history.back();
+            } else {
+                setViewMode('LIST');
+                setSelectedVisit(null);
+                setEditingId(null);
+            }
+        } else {
+            window.history.pushState({ ...window.history.state, subView: mode, detailId }, '');
+            setViewMode(mode);
+        }
+    };
+
     const [selectedFarmerId, setSelectedFarmerId] = useState('');
+    const [selectedFieldId, setSelectedFieldId] = useState('');
     const [note, setNote] = useState('');
+    const [pestFound, setPestFound] = useState('');
+    const [diseaseFound, setDiseaseFound] = useState('');
+    const [severity, setSeverity] = useState<'LOW' | 'MEDIUM' | 'HIGH'>('LOW');
     const [isRecording, setIsRecording] = useState(false);
     
     // GPS State
@@ -42,6 +85,7 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
     const [analysis, setAnalysis] = useState<string | null>(null);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [isReportAddedToNotes, setIsReportAddedToNotes] = useState(false);
+    const [isSyncing, setIsSyncing] = useState(false);
 
     const [lastVisitedFarmer, setLastVisitedFarmer] = useState<Farmer | null>(null);
 
@@ -49,6 +93,13 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
         loadData();
         return () => stopCamera();
     }, []);
+
+    // Effect to handle video stream attachment when camera opens
+    useEffect(() => {
+        if (isCameraOpen && streamRef.current && videoRef.current) {
+            videoRef.current.srcObject = streamRef.current;
+        }
+    }, [isCameraOpen]);
 
     useEffect(() => {
         if (viewMode === 'FORM' && !editingId) {
@@ -86,8 +137,6 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
     };
 
     const startCamera = async () => {
-        setIsCameraOpen(true);
-        
         const constraintsList = [
             { video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } },
             { video: { facingMode: 'environment' } },
@@ -107,7 +156,7 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
 
         if (stream) {
             streamRef.current = stream;
-            if (videoRef.current) videoRef.current.srcObject = stream;
+            setIsCameraOpen(true);
         } else {
             console.error("Hiçbir kamera başlatılamadı.");
             alert("Cihazınızda kamera başlatılamadı. Lütfen 'Galeri / Yükle' seçeneğini kullanarak fotoğraf ekleyin.");
@@ -185,45 +234,66 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
     const handleSave = async () => {
         if (!selectedFarmerId) return;
         const currentFarmer = farmers.find(f => f.id === selectedFarmerId);
-        const visitData = { farmerId: selectedFarmerId, date: new Date().toISOString(), note, photoUri: photo || undefined, aiAnalysis: analysis || undefined, latitude: coords?.lat, longitude: coords?.lng };
+        const visitData = { 
+            farmerId: selectedFarmerId, 
+            fieldId: selectedFieldId || undefined,
+            date: new Date().toISOString(), 
+            note, 
+            photoUri: photo || undefined, 
+            aiAnalysis: analysis || undefined, 
+            latitude: coords?.lat, 
+            longitude: coords?.lng,
+            pestFound: pestFound || undefined,
+            diseaseFound: diseaseFound || undefined,
+            severity,
+            village: currentFarmer?.village
+        };
         
         if (editingId) { 
             await updateVisit({ id: editingId, ...visitData }); 
-            setViewMode('LIST'); 
+            showToast('Ziyaret kaydı güncellendi', 'success');
+            hapticFeedback('success');
+            changeViewMode('LIST'); 
         } else { 
             await dbService.addVisit({ id: crypto.randomUUID(), ...visitData }); 
             setLastVisitedFarmer(currentFarmer || null); 
-            setViewMode('SUCCESS'); 
+            showToast('Ziyaret kaydı başarıyla oluşturuldu', 'success');
+            hapticFeedback('success');
+            changeViewMode('SUCCESS'); 
         }
         resetForm(); 
         await loadData();
     };
 
     const resetForm = () => {
-        setEditingId(null); setSelectedFarmerId(''); setNote(''); setPhoto(null); setAnalysis(null); setCoords(null);
+        setEditingId(null); setSelectedFarmerId(''); setSelectedFieldId(''); setNote(''); setPhoto(null); setAnalysis(null); setCoords(null);
+        setPestFound(''); setDiseaseFound(''); setSeverity('LOW');
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
     const handleEdit = (visit: VisitLog) => {
-        setEditingId(visit.id); setSelectedFarmerId(visit.farmerId); setNote(visit.note); setPhoto(visit.photoUri || null); setAnalysis(visit.aiAnalysis || null);
+        setEditingId(visit.id); setSelectedFarmerId(visit.farmerId); setSelectedFieldId(visit.fieldId || ''); setNote(visit.note); setPhoto(visit.photoUri || null); setAnalysis(visit.aiAnalysis || null);
+        setPestFound(visit.pestFound || ''); setDiseaseFound(visit.diseaseFound || ''); setSeverity(visit.severity || 'LOW');
         if (visit.latitude && visit.longitude) setCoords({ lat: visit.latitude, lng: visit.longitude }); else setCoords(null);
-        setViewMode('FORM');
+        changeViewMode('FORM');
     };
 
     const handleDelete = async (id: string) => {
         if (confirm("Bu ziyaret kaydını silmek istediğinize emin misiniz?")) { 
             await deleteVisit(id); 
+            showToast('Ziyaret kaydı silindi', 'success');
+            hapticFeedback('medium');
             await loadData();
             if (viewMode === 'DETAIL') {
                 setSelectedVisit(null);
-                setViewMode('LIST');
+                changeViewMode('LIST');
             }
         }
     };
 
     const handleViewDetail = (visit: VisitLog) => {
         setSelectedVisit(visit);
-        setViewMode('DETAIL');
+        changeViewMode('DETAIL', visit.id);
     };
 
     const toggleMic = () => {
@@ -239,12 +309,35 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
         return date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' }) + `, ${date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}`;
     };
 
+    const handleSync = async () => {
+        setIsSyncing(true);
+        try {
+            const result = await dbService.backupAllData();
+            updateUserProfile({ ...userProfile, lastSyncTime: result.timestamp });
+            alert("Tüm veriler başarıyla Firebase'e yedeklendi.");
+        } catch (error) {
+            alert("Yedekleme hatası: " + (error as any).message);
+        } finally {
+            setIsSyncing(false);
+        }
+    };
+
     // --- RENDERERS ---
 
     // 1. AI WIZARD SCREEN
     if (viewMode === 'AI_WIZARD') {
         return (
-            <div className="fixed inset-0 z-[60] bg-stone-950 flex flex-col animate-in slide-in-from-bottom duration-300">
+            <div className="fixed inset-0 h-[100dvh] z-[60] bg-stone-950 flex flex-col animate-in fade-in duration-500 overflow-hidden">
+                <style>{`
+                    @keyframes scan-line {
+                        0% { transform: translateY(-100%); }
+                        100% { transform: translateY(1000%); }
+                    }
+                    @keyframes pulse-ring {
+                        0% { transform: scale(0.8); opacity: 0.5; }
+                        100% { transform: scale(1.2); opacity: 0; }
+                    }
+                `}</style>
                 <input 
                     type="file" 
                     accept="image/*" 
@@ -253,111 +346,176 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
                     onChange={handleFileUpload}
                 />
                 
-                {/* Header */}
-                <div className="flex items-center justify-between p-4 bg-stone-900/50 backdrop-blur border-b border-white/5 shrink-0">
-                    <button onClick={cancelWizard} className="p-2 bg-stone-800 rounded-full text-stone-400 hover:text-white">
-                        <ArrowLeft size={20} />
-                    </button>
-                    <div className="flex flex-col items-center">
-                        <h2 className="text-stone-100 font-bold text-sm">AI Teşhis Sihirbazı</h2>
-                        <span className="text-[10px] text-stone-500">Fotoğraf Çek & Analiz Et</span>
-                    </div>
-                    <div className="w-9"></div> {/* Spacer */}
+                {/* Background Atmosphere */}
+                <div className="absolute inset-0 z-0 pointer-events-none">
+                    <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_50%_50%,rgba(168,85,247,0.1),transparent_70%)]"></div>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-4 flex flex-col items-center pb-32">
-                    
-                    {/* CAMERA / IMAGE AREA */}
-                    <div className="w-full max-w-md aspect-[3/4] bg-black rounded-3xl overflow-hidden relative shadow-2xl border border-stone-800 mb-6 group shrink-0">
+                {/* Header - More Minimal */}
+                <div className="flex items-center justify-between p-6 z-50 shrink-0">
+                    <button onClick={cancelWizard} className="w-10 h-10 flex items-center justify-center bg-stone-900/50 backdrop-blur-xl rounded-full text-stone-400 border border-white/10 active:scale-90 transition-all">
+                        <X size={20} />
+                    </button>
+                    <div className="text-center">
+                        <h2 className="text-stone-100 font-black text-[10px] uppercase tracking-[0.3em]">AI VISION</h2>
+                        <div className="flex items-center justify-center gap-1 mt-0.5">
+                            <div className={`w-1 h-1 rounded-full ${isAnalyzing ? 'bg-purple-500 animate-pulse' : 'bg-emerald-500'}`}></div>
+                            <span className="text-[8px] text-stone-500 font-bold uppercase tracking-widest">{isAnalyzing ? 'Analiz Ediliyor' : 'Sistem Hazır'}</span>
+                        </div>
+                    </div>
+                    <button onClick={() => fileInputRef.current?.click()} className="w-10 h-10 flex items-center justify-center bg-stone-900/50 backdrop-blur-xl rounded-full text-stone-400 border border-white/10 active:scale-90 transition-all">
+                        <ImageIcon size={18} />
+                    </button>
+                </div>
+
+                {/* Main Viewport */}
+                <div className="flex-1 relative px-6 pb-12 flex flex-col">
+                    <div className="flex-1 relative rounded-[2.5rem] overflow-hidden border border-white/10 bg-stone-900 shadow-2xl group">
                         {!photo ? (
                             isCameraOpen ? (
                                 <>
                                     <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover"></video>
-                                    <div className="absolute bottom-6 left-0 w-full flex justify-center items-center gap-6 z-20">
-                                         <button onClick={() => fileInputRef.current?.click()} className="p-3 bg-stone-900/60 backdrop-blur rounded-full text-stone-300 hover:text-white border border-white/10"><ImagePlus size={24}/></button>
-                                         <button onClick={capturePhoto} className="w-16 h-16 rounded-full border-4 border-white/30 flex items-center justify-center bg-white/20 hover:scale-105 transition-transform"><div className="w-12 h-12 rounded-full bg-white"></div></button>
-                                         <button onClick={stopCamera} className="p-3 bg-red-900/60 backdrop-blur rounded-full text-white border border-white/10"><X size={24}/></button>
+                                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                        <div className="w-64 h-64 border border-white/20 rounded-3xl relative">
+                                            <div className="absolute -top-1 -left-1 w-6 h-6 border-t-2 border-l-2 border-emerald-500 rounded-tl-lg"></div>
+                                            <div className="absolute -top-1 -right-1 w-6 h-6 border-t-2 border-r-2 border-emerald-500 rounded-tr-lg"></div>
+                                            <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-2 border-l-2 border-emerald-500 rounded-bl-lg"></div>
+                                            <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-2 border-r-2 border-emerald-500 rounded-br-lg"></div>
+                                        </div>
+                                    </div>
+                                    <div className="absolute bottom-8 left-0 w-full flex justify-center z-20">
+                                        <button onClick={capturePhoto} className="relative w-20 h-20 flex items-center justify-center group active:scale-90 transition-transform">
+                                            <div className="absolute inset-0 bg-white/20 rounded-full animate-ping opacity-20"></div>
+                                            <div className="w-16 h-16 rounded-full border-4 border-white flex items-center justify-center">
+                                                <div className="w-12 h-12 rounded-full bg-white/90"></div>
+                                            </div>
+                                        </button>
                                     </div>
                                 </>
                             ) : (
-                                <div className="w-full h-full flex flex-col items-center justify-center bg-stone-900">
-                                    <Sparkles size={48} className="text-stone-700 mb-4" />
-                                    <p className="text-stone-500 text-xs mb-6 text-center px-8">Bitki hastalığını veya zararlıyı tespit etmek için fotoğraf yükleyin.</p>
-                                    <div className="flex gap-3">
-                                        <button onClick={startCamera} className="px-5 py-3 bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center shadow-lg hover:bg-emerald-600 transition-all"><Camera size={16} className="mr-2"/> Kamera Aç</button>
-                                        <button onClick={() => fileInputRef.current?.click()} className="px-5 py-3 bg-stone-800 text-stone-300 rounded-xl font-bold text-xs flex items-center border border-white/5 hover:bg-stone-700 transition-all"><Upload size={16} className="mr-2"/> Galeri</button>
+                                <div className="w-full h-full flex flex-col items-center justify-center p-8 text-center bg-[radial-gradient(circle_at_50%_0%,rgba(16,185,129,0.1),transparent_50%)]">
+                                    <div className="relative mb-8">
+                                        <div className="absolute inset-0 bg-emerald-500/20 blur-2xl rounded-full animate-pulse"></div>
+                                        <div className="w-24 h-24 bg-stone-800 rounded-3xl flex items-center justify-center border border-white/5 relative z-10">
+                                            <Bot size={40} className="text-emerald-500" />
+                                        </div>
                                     </div>
+                                    <h3 className="text-stone-100 text-xl font-bold mb-3 tracking-tight">Bitki Teşhis Uzmanı</h3>
+                                    <p className="text-stone-500 text-sm leading-relaxed mb-10 max-w-[240px]">Hastalık, zararlı veya besin eksikliği tespiti için bir fotoğraf çekin.</p>
+                                    <button onClick={startCamera} className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-emerald-900/40 flex items-center justify-center gap-2 active:scale-95 transition-all">
+                                        <Camera size={20} /> Kamerayı Başlat
+                                    </button>
                                 </div>
                             )
                         ) : (
-                            <>
-                                <img src={photo} alt="Analiz" className="w-full h-full object-cover" />
-                                <div className="absolute top-3 right-3 flex gap-2 z-20">
-                                     <button onClick={() => { setPhoto(null); setAnalysis(null); setIsReportAddedToNotes(false); }} className="p-2 bg-black/60 text-white rounded-full backdrop-blur"><Trash2 size={16}/></button>
-                                </div>
-                                {!analysis && !isAnalyzing && (
-                                    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-full px-6 z-20">
-                                        <button onClick={runAnalysis} className="w-full py-4 bg-purple-600 text-white rounded-2xl font-bold shadow-xl shadow-purple-900/40 hover:bg-purple-500 transition-all flex items-center justify-center animate-in slide-in-from-bottom-4">
-                                            <Sparkles size={20} className="mr-2"/> Analizi Başlat
-                                        </button>
+                            <div className="w-full h-full relative">
+                                <img src={photo} alt="Captured" className="w-full h-full object-cover" />
+                                
+                                {isAnalyzing && (
+                                    <div className="absolute inset-0 z-20">
+                                        <div className="absolute top-0 left-0 w-full h-1 bg-purple-500/50 shadow-[0_0_15px_rgba(168,85,247,0.8)]" style={{ animation: 'scan-line 2s linear infinite' }}></div>
+                                        <div className="absolute inset-0 bg-purple-950/20 backdrop-blur-[1px]"></div>
+                                        <div className="absolute inset-0 flex flex-col items-center justify-center">
+                                            <div className="relative">
+                                                <div className="absolute inset-0 bg-purple-500/30 blur-3xl rounded-full animate-pulse"></div>
+                                                <Loader2 size={48} className="text-purple-400 animate-spin relative z-10" />
+                                            </div>
+                                            <span className="mt-4 text-purple-200 font-black text-[10px] uppercase tracking-[0.4em] animate-pulse">Analiz Ediliyor</span>
+                                        </div>
                                     </div>
                                 )}
-                            </>
-                        )}
 
-                        {isAnalyzing && (
-                            <div className="absolute inset-0 bg-stone-950/80 backdrop-blur-sm flex flex-col items-center justify-center z-30">
-                                <Loader2 size={48} className="text-purple-500 animate-spin mb-4" />
-                                <p className="text-purple-200 font-bold text-lg animate-pulse">Teşhis Ediliyor...</p>
-                                <p className="text-purple-400/60 text-xs mt-2">Gemini AI görüntüleri işliyor</p>
+                                {!analysis && !isAnalyzing && (
+                                    <div className="absolute inset-0 bg-black/40 backdrop-blur-sm flex flex-col items-center justify-center p-8 z-20">
+                                        <div className="w-20 h-20 bg-purple-600 rounded-full flex items-center justify-center mb-6 shadow-2xl shadow-purple-900/50 animate-bounce">
+                                            <Sparkles size={32} className="text-white" />
+                                        </div>
+                                        <h4 className="text-white font-bold text-lg mb-2">Görüntü Hazır</h4>
+                                        <p className="text-stone-300 text-xs mb-8 text-center">Yapay zeka motoru görüntüyü işlemeye hazır.</p>
+                                        <div className="flex gap-3 w-full">
+                                            <button onClick={() => setPhoto(null)} className="flex-1 py-3.5 bg-stone-800/80 backdrop-blur text-stone-300 rounded-xl font-bold text-xs border border-white/10 active:scale-95 transition-all">Yeniden Çek</button>
+                                            <button onClick={runAnalysis} className="flex-[2] py-3.5 bg-purple-600 text-white rounded-xl font-bold text-xs shadow-lg shadow-purple-900/40 active:scale-95 transition-all">Analizi Başlat</button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {analysis && (
+                                    <div className="absolute inset-0 bg-stone-950/90 backdrop-blur-md z-30 flex flex-col animate-in fade-in duration-500">
+                                        <div className="p-6 flex-1 overflow-y-auto custom-scrollbar">
+                                            <div className="flex items-center gap-3 mb-6">
+                                                <div className={`w-10 h-10 ${analysis.includes('hata') || analysis.includes('meşgul') ? 'bg-red-500/20 border-red-500/30' : 'bg-purple-500/20 border-purple-500/30'} rounded-2xl flex items-center justify-center border`}>
+                                                    {analysis.includes('hata') || analysis.includes('meşgul') ? <X size={20} className="text-red-400" /> : <Bot size={20} className="text-purple-400" />}
+                                                </div>
+                                                <div>
+                                                    <h4 className={`${analysis.includes('hata') || analysis.includes('meşgul') ? 'text-red-100' : 'text-purple-100'} font-bold text-sm`}>
+                                                        {analysis.includes('hata') || analysis.includes('meşgul') ? 'Analiz Başarısız' : 'Teşhis Sonucu'}
+                                                    </h4>
+                                                    <p className="text-stone-500 text-[9px] font-bold uppercase tracking-widest">Gemini AI Raporu</p>
+                                                </div>
+                                            </div>
+                                            <div className="space-y-4">
+                                                <div className={`p-5 bg-stone-900/50 rounded-[2rem] border ${analysis.includes('hata') || analysis.includes('meşgul') ? 'border-red-500/20' : 'border-white/5'} relative overflow-hidden`}>
+                                                    <div className={`absolute top-0 left-0 w-1 h-full ${analysis.includes('hata') || analysis.includes('meşgul') ? 'bg-red-500/50' : 'bg-purple-500/50'}`}></div>
+                                                    <p className="text-stone-300 text-sm leading-relaxed whitespace-pre-wrap">{analysis}</p>
+                                                </div>
+                                                
+                                                {(analysis.includes('hata') || analysis.includes('meşgul')) && (
+                                                    <button 
+                                                        onClick={runAnalysis}
+                                                        className="w-full py-4 bg-purple-600 text-white rounded-2xl font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-purple-900/40 active:scale-95 transition-all"
+                                                    >
+                                                        <Sparkles size={16}/> Tekrar Dene
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* SCI-FI ACTION DOCK */}
+                                        <div className="p-4 bg-stone-950/50 backdrop-blur-xl border-t border-white/5 relative">
+                                            {/* Decorative Sci-fi Elements */}
+                                            <div className="absolute -top-[1px] left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-purple-500/50 to-transparent"></div>
+                                            <div className="flex flex-col gap-2">
+                                                {!(analysis.includes('hata') || analysis.includes('meşgul')) && (
+                                                    <div className="flex gap-2">
+                                                        <button 
+                                                            onClick={addAnalysisToNotes}
+                                                            disabled={isReportAddedToNotes}
+                                                            className={`flex-1 py-4 rounded-xl font-black text-[10px] uppercase tracking-[0.2em] flex items-center justify-center gap-2 transition-all border ${isReportAddedToNotes ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-stone-900 text-purple-400 border-purple-500/20 hover:bg-purple-500/10 active:scale-95'}`}
+                                                        >
+                                                            {isReportAddedToNotes ? <CheckCircle2 size={14}/> : <Copy size={14}/>}
+                                                            {isReportAddedToNotes ? 'Aktarıldı' : 'Notlara Aktar'}
+                                                        </button>
+                                                        
+                                                        <button 
+                                                            onClick={confirmWizard} 
+                                                            className="flex-[1.5] py-4 bg-emerald-600 text-white rounded-xl font-black text-[10px] uppercase tracking-[0.2em] shadow-[0_0_20px_rgba(16,185,129,0.3)] active:scale-95 transition-all flex items-center justify-center gap-2 border border-emerald-400/30"
+                                                        >
+                                                            <Save size={14}/> Tamamla & Kaydet
+                                                        </button>
+                                                    </div>
+                                                )}
+                                                
+                                                <button 
+                                                    onClick={() => { setAnalysis(null); setPhoto(null); }} 
+                                                    className="w-full py-2 text-stone-600 font-bold text-[9px] uppercase tracking-[0.3em] hover:text-stone-400 transition-colors"
+                                                >
+                                                    [ İşlemi İptal Et ]
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
-
-                    {/* ANALYSIS RESULT AREA */}
-                    {analysis && (
-                        <div className="w-full max-w-md animate-in slide-in-from-bottom duration-500">
-                            <div className="bg-stone-900/80 border border-purple-500/30 rounded-2xl p-5 shadow-lg relative overflow-hidden">
-                                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-purple-500 to-indigo-500"></div>
-                                
-                                <div className="flex justify-between items-center mb-3">
-                                    <h3 className="text-purple-300 font-bold text-sm flex items-center uppercase tracking-wider">
-                                        <Sparkles size={14} className="mr-2 text-purple-500"/> AI Raporu
-                                    </h3>
-                                    
-                                    <button 
-                                        onClick={addAnalysisToNotes}
-                                        disabled={isReportAddedToNotes}
-                                        className={`flex items-center text-[10px] font-bold px-2 py-1 rounded-lg transition-all ${isReportAddedToNotes ? 'bg-emerald-900/50 text-emerald-400 cursor-default' : 'bg-purple-900/40 text-purple-200 hover:bg-purple-800/60'}`}
-                                    >
-                                        {isReportAddedToNotes ? <Check size={12} className="mr-1"/> : <Copy size={12} className="mr-1"/>}
-                                        {isReportAddedToNotes ? 'Eklendi' : 'Notlara Ekle'}
-                                    </button>
-                                </div>
-
-                                <div className="max-h-60 overflow-y-auto pr-1 custom-scrollbar">
-                                    <p className="text-stone-300 text-sm leading-relaxed whitespace-pre-wrap">{analysis}</p>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
                 </div>
 
-                {/* BOTTOM ACTION BAR - Fixed to bottom */}
-                <div className="w-full p-4 bg-stone-900 border-t border-white/5 pb-10 flex gap-3 z-50 shadow-[0_-10px_40px_rgba(0,0,0,0.5)] shrink-0 mt-auto">
-                     <button onClick={cancelWizard} className="flex-1 py-4 rounded-xl font-bold text-stone-400 hover:text-white bg-stone-800 hover:bg-stone-700 transition-all border border-white/5">
-                         İptal
-                     </button>
-                     <button 
-                        onClick={confirmWizard} 
-                        disabled={!photo}
-                        className="flex-[2] py-4 rounded-xl font-bold text-white bg-emerald-600 hover:bg-emerald-500 shadow-lg shadow-emerald-900/20 transition-all disabled:opacity-50 disabled:grayscale flex items-center justify-center border border-emerald-500/20"
-                     >
-                         <CheckCircle2 size={18} className="mr-2"/> 
-                         {analysis ? 'Tamamla' : 'Fotoğrafı Ekle'}
-                     </button>
-                </div>
+                {/* Bottom Status Bar - Very Minimal */}
+                {!analysis && (
+                    <div className="px-10 pb-10 text-center shrink-0">
+                        <p className="text-[9px] text-stone-600 font-bold uppercase tracking-[0.4em]">MKS DIGITAL AGRICULTURE • 2024</p>
+                    </div>
+                )}
             </div>
         );
     }
@@ -375,7 +533,7 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
                     <a href={`tel:${lastVisitedFarmer.phoneNumber}`} className="flex items-center justify-center w-full py-3 bg-stone-800 text-stone-200 border border-white/5 rounded-2xl font-bold hover:bg-stone-700 transition-all text-xs"><Phone size={16} className="mr-2 text-emerald-500"/> Üreticiyi Ara</a>
                     <a href={`sms:${lastVisitedFarmer.phoneNumber}?body=Rapor`} className="flex items-center justify-center w-full py-3 bg-emerald-700 text-white rounded-2xl font-bold hover:bg-emerald-600 transition-all text-xs"><MessageSquare size={16} className="mr-2"/> SMS ile Raporla</a>
                 </div>
-                <button onClick={() => setViewMode('LIST')} className="mt-6 text-stone-500 hover:text-stone-300 font-medium py-2 px-4 text-xs">Listeye Dön</button>
+                <button onClick={() => changeViewMode('LIST')} className="mt-6 text-stone-500 hover:text-stone-300 font-medium py-2 px-4 text-xs">Listeye Dön</button>
             </div>
         );
     }
@@ -383,10 +541,11 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
     // 3. DETAIL SCREEN
     if (viewMode === 'DETAIL' && selectedVisit) {
         const farmer = farmerMap[selectedVisit.farmerId];
+        const field = farmer?.fields?.find(f => f.id === selectedVisit.fieldId);
         return (
             <div className="p-4 max-w-2xl mx-auto pb-24 animate-in slide-in-from-right duration-200">
                 <div className="flex items-center justify-between mb-6 sticky top-0 bg-stone-950/90 backdrop-blur z-20 py-2">
-                    <button onClick={() => setViewMode('LIST')} className="text-stone-400 hover:text-stone-200 flex items-center px-2 py-1 rounded-lg hover:bg-stone-900 transition-colors">
+                    <button onClick={() => changeViewMode('LIST')} className="text-stone-400 hover:text-stone-200 flex items-center px-2 py-1 rounded-lg hover:bg-stone-900 transition-colors">
                         <ArrowLeft size={20} className="mr-1" /> Geri
                     </button>
                     <div className="flex space-x-2">
@@ -412,6 +571,7 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
                                     <div className="flex items-center text-stone-500 text-xs mt-1">
                                         <MapPin size={12} className="mr-1 text-emerald-600" />
                                         {farmer?.village || 'Konum Yok'}
+                                        {field && <span className="ml-2 px-2 py-0.5 bg-emerald-900/30 text-emerald-400 rounded-full border border-emerald-500/20">{field.name} ({field.crop})</span>}
                                     </div>
                                 </div>
                             </div>
@@ -424,6 +584,37 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
                             <span>{new Date(selectedVisit.date).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</span>
                         </div>
                     </div>
+
+                    {/* Findings Card */}
+                    {(selectedVisit.pestFound || selectedVisit.diseaseFound) && (
+                        <div className="bg-stone-900/80 p-5 rounded-3xl border border-white/5 shadow-lg">
+                            <h3 className="text-stone-500 font-bold text-xs mb-3 uppercase tracking-widest">Bulgular</h3>
+                            <div className="flex flex-wrap gap-2">
+                                {selectedVisit.pestFound && (
+                                    <div className="bg-rose-900/20 border border-rose-500/20 px-3 py-1.5 rounded-xl flex items-center gap-2">
+                                        <Bug size={14} className="text-rose-500" />
+                                        <span className="text-xs font-bold text-rose-200">Zararlı: {selectedVisit.pestFound}</span>
+                                    </div>
+                                )}
+                                {selectedVisit.diseaseFound && (
+                                    <div className="bg-amber-900/20 border border-amber-500/20 px-3 py-1.5 rounded-xl flex items-center gap-2">
+                                        <AlertCircle size={14} className="text-amber-500" />
+                                        <span className="text-xs font-bold text-amber-200">Hastalık: {selectedVisit.diseaseFound}</span>
+                                    </div>
+                                )}
+                                <div className={`px-3 py-1.5 rounded-xl flex items-center gap-2 border ${
+                                    selectedVisit.severity === 'HIGH' ? 'bg-rose-600 border-rose-500 text-white' :
+                                    selectedVisit.severity === 'MEDIUM' ? 'bg-amber-600 border-amber-500 text-white' :
+                                    'bg-emerald-600 border-emerald-500 text-white'
+                                }`}>
+                                    <span className="text-[10px] font-black uppercase tracking-wider">Şiddet: {
+                                        selectedVisit.severity === 'HIGH' ? 'Yüksek' :
+                                        selectedVisit.severity === 'MEDIUM' ? 'Orta' : 'Düşük'
+                                    }</span>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Photo */}
                     {selectedVisit.photoUri && (
@@ -473,7 +664,22 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
                         <div>
                             <h2 className="text-lg font-bold text-stone-100">Ziyaret Defteri</h2>
                             <p className="text-[10px] text-stone-500">Saha gözlemleri ve kontroller</p>
+                            {userProfile.lastSyncTime && (
+                                <p className="text-[9px] text-emerald-500/80 mt-0.5 flex items-center">
+                                    <Check size={9} className="mr-1" />
+                                    Son Yedekleme: {new Date(userProfile.lastSyncTime).toLocaleTimeString('tr-TR', {hour: '2-digit', minute:'2-digit'})}
+                                </p>
+                            )}
                         </div>
+                        <button 
+                            onClick={handleSync} 
+                            disabled={isSyncing}
+                            className="px-3 py-1.5 bg-stone-900 text-stone-400 rounded-xl border border-white/5 hover:text-emerald-400 hover:bg-stone-800 transition-all active:scale-95 disabled:opacity-50 flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider"
+                            title="Verileri Buluta Yedekle"
+                        >
+                            <RefreshCw size={14} className={isSyncing ? "animate-spin text-emerald-500" : ""} />
+                            {isSyncing ? 'Yedekleniyor...' : 'Senkronize'}
+                        </button>
                     </header>
 
                     <div className="space-y-3">
@@ -520,13 +726,16 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
                                                 <Clock size={10} className="mr-1"/> {formatVisitDate(visit.date)}
                                             </span>
                                         </div>
+                                        {visit.severity === 'HIGH' && (
+                                            <div className="absolute top-0 right-0 w-1 h-full bg-rose-500/50"></div>
+                                        )}
                                     </div>
                                 );
                             })
                         )}
                     </div>
                 </div>
-                <button onClick={() => { resetForm(); setViewMode('FORM'); }} className="fixed bottom-32 right-5 bg-emerald-600 text-white p-3.5 rounded-full shadow-lg shadow-emerald-900/50 hover:bg-emerald-500 transition-all transform hover:scale-105 z-50 flex items-center justify-center"><Plus size={24} /></button>
+                <button onClick={() => { resetForm(); changeViewMode('FORM'); }} className="fixed bottom-32 right-5 bg-emerald-600 text-white p-3.5 rounded-full shadow-lg shadow-emerald-900/50 hover:bg-emerald-500 transition-all transform hover:scale-105 z-50 flex items-center justify-center"><Plus size={24} /></button>
             </div>
         );
     }
@@ -535,18 +744,35 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
     return (
         <div className="p-4 max-w-2xl mx-auto pb-24 animate-in slide-in-from-right duration-200">
             <div className="flex items-center justify-between mb-4">
-                <button onClick={() => { resetForm(); setViewMode('LIST'); }} className="text-stone-400 font-medium flex items-center hover:text-stone-200 text-xs"><X size={16} className="mr-1"/> İptal</button>
+                <button onClick={() => { resetForm(); changeViewMode('LIST'); }} className="text-stone-400 font-medium flex items-center hover:text-stone-200 text-xs"><X size={16} className="mr-1"/> İptal</button>
                 <h2 className="text-base font-bold text-emerald-400">{editingId ? 'Ziyareti Düzenle' : 'Yeni Kayıt'}</h2>
                 <div className="w-8"></div>
             </div>
 
             <div className="space-y-4">
-                <div>
-                    <label className="block text-[9px] font-bold text-stone-500 mb-1.5 uppercase tracking-widest">Çiftçi Seçimi</label>
-                    <select className="w-full p-3 rounded-xl bg-stone-900 border border-white/5 outline-none focus:border-emerald-500 text-stone-200 text-xs" value={selectedFarmerId} onChange={e => setSelectedFarmerId(e.target.value)}>
-                        <option value="">Çiftçi Seçiniz...</option>
-                        {farmers.map(f => (<option key={f.id} value={f.id}>{f.fullName}</option>))}
-                    </select>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label className="block text-[9px] font-bold text-stone-500 mb-1.5 uppercase tracking-widest">Çiftçi Seçimi</label>
+                        <select className="w-full p-3 rounded-xl bg-stone-900 border border-white/5 outline-none focus:border-emerald-500 text-stone-200 text-xs" value={selectedFarmerId} onChange={e => { setSelectedFarmerId(e.target.value); setSelectedFieldId(''); }}>
+                            <option value="">Çiftçi Seçiniz...</option>
+                            {farmers.map(f => (<option key={f.id} value={f.id}>{f.fullName}</option>))}
+                        </select>
+                    </div>
+
+                    <div>
+                        <label className="block text-[9px] font-bold text-stone-500 mb-1.5 uppercase tracking-widest">Tarla Seçimi</label>
+                        <select 
+                            className="w-full p-3 rounded-xl bg-stone-900 border border-white/5 outline-none focus:border-emerald-500 text-stone-200 text-xs disabled:opacity-50" 
+                            value={selectedFieldId} 
+                            onChange={e => setSelectedFieldId(e.target.value)}
+                            disabled={!selectedFarmerId}
+                        >
+                            <option value="">Tarla Seçiniz...</option>
+                            {selectedFarmerId && farmers.find(f => f.id === selectedFarmerId)?.fields?.map(field => (
+                                <option key={field.id} value={field.id}>{field.name} ({field.crop} - {field.size} da)</option>
+                            ))}
+                        </select>
+                    </div>
                 </div>
 
                 {/* AI & PHOTO SUMMARY CARD OR ADD BUTTON */}
@@ -588,6 +814,49 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
                             <span className="text-[9px] text-stone-500 mt-1">Fotoğraf çekmek ve analiz etmek için dokunun</span>
                         </button>
                     )}
+                </div>
+
+                {/* PEST & DISEASE SELECTION */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label className="block text-[9px] font-bold text-stone-500 mb-1.5 uppercase tracking-widest">Zararlı Tespiti</label>
+                        <input 
+                            type="text" 
+                            className="w-full p-3 rounded-xl bg-stone-900 border border-white/5 outline-none focus:border-emerald-500 text-stone-200 text-xs" 
+                            placeholder="Zararlı adı..."
+                            value={pestFound}
+                            onChange={e => setPestFound(e.target.value)}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-[9px] font-bold text-stone-500 mb-1.5 uppercase tracking-widest">Hastalık Tespiti</label>
+                        <input 
+                            type="text" 
+                            className="w-full p-3 rounded-xl bg-stone-900 border border-white/5 outline-none focus:border-emerald-500 text-stone-200 text-xs" 
+                            placeholder="Hastalık adı..."
+                            value={diseaseFound}
+                            onChange={e => setDiseaseFound(e.target.value)}
+                        />
+                    </div>
+                </div>
+
+                <div>
+                    <label className="block text-[9px] font-bold text-stone-500 mb-1.5 uppercase tracking-widest">Şiddet / Önem Derecesi</label>
+                    <div className="flex gap-2">
+                        {(['LOW', 'MEDIUM', 'HIGH'] as const).map(s => (
+                            <button 
+                                key={s}
+                                onClick={() => setSeverity(s)}
+                                className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${
+                                    severity === s 
+                                        ? (s === 'HIGH' ? 'bg-rose-600 border-rose-500 text-white' : s === 'MEDIUM' ? 'bg-amber-600 border-amber-500 text-white' : 'bg-emerald-600 border-emerald-500 text-white')
+                                        : 'bg-stone-900 border-white/5 text-stone-500'
+                                }`}
+                            >
+                                {s === 'LOW' ? 'Düşük' : s === 'MEDIUM' ? 'Orta' : 'Yüksek'}
+                            </button>
+                        ))}
+                    </div>
                 </div>
 
                 <div>

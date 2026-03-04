@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { dbService } from '../services/db';
 import { Farmer, Pesticide, Prescription, PesticideCategory } from '../types';
 import { useAppViewModel } from '../context/AppContext';
-import { Check, Plus, Trash2, FileOutput, Share2, FileText, Calendar, MapPin, X, User, Loader2, Search, FlaskConical, MessageCircle, Edit2, AlertCircle, ArrowLeft, Printer, Package, Download, MessageSquare } from 'lucide-react';
+import { Check, Plus, Trash2, FileOutput, Share2, FileText, Calendar, MapPin, X, User, Loader2, Search, FlaskConical, MessageCircle, Edit2, AlertCircle, ArrowLeft, Printer, Package, Download, MessageSquare, RefreshCw } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 
@@ -14,10 +14,58 @@ interface PrescriptionFormProps {
 }
 
 export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, initialFarmerId }) => {
-    const { userProfile, refreshStats } = useAppViewModel();
+    const { 
+        userProfile, 
+        refreshStats, 
+        updateUserProfile,
+        prescriptions: contextPrescriptions,
+        togglePrescriptionStatus,
+        farmers: contextFarmers,
+        inventory: contextInventory,
+        showToast,
+        hapticFeedback
+    } = useAppViewModel();
     const [viewMode, setViewMode] = useState<'LIST' | 'FORM' | 'DETAIL'>(initialFarmerId ? 'FORM' : 'LIST');
     
-    const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
+    // Sub-navigation sync
+    useEffect(() => {
+        const handlePop = (e: PopStateEvent) => {
+            const state = e.state;
+            if (state?.view === 'PRESCRIPTIONS') {
+                if (state.subView) {
+                    setViewMode(state.subView);
+                    if (state.subView === 'DETAIL' && state.detailId) {
+                        const target = contextPrescriptions.find(p => p.id === state.detailId);
+                        if (target) setDetailPrescription(target);
+                    }
+                } else {
+                    setViewMode('LIST');
+                    setDetailPrescription(null);
+                    setEditingId(null);
+                }
+            }
+        };
+        window.addEventListener('popstate', handlePop);
+        return () => window.removeEventListener('popstate', handlePop);
+    }, [contextPrescriptions]);
+
+    const changeViewMode = (mode: 'LIST' | 'FORM' | 'DETAIL', detailId?: string) => {
+        if (mode === viewMode) return;
+        
+        if (mode === 'LIST') {
+            if (window.history.state?.subView) {
+                window.history.back();
+            } else {
+                setViewMode('LIST');
+                setDetailPrescription(null);
+                setEditingId(null);
+            }
+        } else {
+            window.history.pushState({ ...window.history.state, subView: mode, detailId }, '');
+            setViewMode(mode);
+        }
+    };
+    
     const [farmerMap, setFarmerMap] = useState<Record<string, Farmer>>({});
 
     const [step, setStep] = useState(1);
@@ -25,12 +73,14 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     const [pesticides, setPesticides] = useState<Pesticide[]>([]);
     
     const [selectedFarmer, setSelectedFarmer] = useState<Farmer | null>(null);
+    const [selectedFieldId, setSelectedFieldId] = useState('');
     const [farmerSearchTerm, setFarmerSearchTerm] = useState('');
     const [pesticideSearchTerm, setPesticideSearchTerm] = useState('');
     const [prescriptionSearchTerm, setPrescriptionSearchTerm] = useState('');
     
-    // Updated state to include quantity
-    const [selectedItems, setSelectedItems] = useState<{pesticide: Pesticide, dosage: string, quantity: string}[]>([]);
+    // Updated state to include quantity and price
+    const [selectedItems, setSelectedItems] = useState<{pesticide: Pesticide, dosage: string, quantity: string, unitPrice?: string, totalPrice?: number}[]>([]);
+    const [showPrices, setShowPrices] = useState(false);
     
     const [isSaved, setIsSaved] = useState(false);
     const [savedPrescription, setSavedPrescription] = useState<Prescription | null>(null);
@@ -41,7 +91,9 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     // Edit Mode State
     const [editingId, setEditingId] = useState<string | null>(null);
     
+    const [filterMode, setFilterMode] = useState<'ALL' | 'PROCESSED' | 'UNPROCESSED'>('ALL');
     const [isProcessingPdf, setIsProcessingPdf] = useState(false);
+    const [isSyncing, setIsSyncing] = useState(false);
     const receiptRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -59,13 +111,11 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     }, [initialFarmerId, farmers]);
 
     const loadData = async () => {
-        const [pList, fList, pestList] = await Promise.all([
-            dbService.getAllPrescriptions(),
+        const [fList, pestList] = await Promise.all([
             dbService.getFarmers(),
             dbService.getPesticides()
         ]);
 
-        setPrescriptions(pList);
         setFarmers(fList);
         setPesticides(pestList);
 
@@ -78,7 +128,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         if (initialFarmerId) {
             onBack(); 
         } else {
-            setViewMode('LIST');
+            changeViewMode('LIST');
             resetForm();
         }
     };
@@ -99,7 +149,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     const addItem = (pesticide: Pesticide) => {
         if (!selectedItems.find(i => i.pesticide.id === pesticide.id)) {
             // Initialize quantity as empty string
-            setSelectedItems([...selectedItems, { pesticide, dosage: pesticide.defaultDosage, quantity: '' }]);
+            setSelectedItems([...selectedItems, { pesticide, dosage: pesticide.defaultDosage, quantity: '', unitPrice: '', totalPrice: 0 }]);
             setPesticideSearchTerm(''); // Seçimden sonra aramayı temizle
         }
     };
@@ -113,17 +163,41 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     };
 
     const updateQuantity = (id: string, newQuantity: string) => {
-        setSelectedItems(selectedItems.map(i => i.pesticide.id === id ? { ...i, quantity: newQuantity } : i));
+        setSelectedItems(selectedItems.map(i => {
+            if (i.pesticide.id === id) {
+                const qty = parseInt(newQuantity) || 0;
+                const price = parseFloat(i.unitPrice || '0') || 0;
+                return { ...i, quantity: newQuantity, totalPrice: qty * price };
+            }
+            return i;
+        }));
+    };
+
+    const updatePrice = (id: string, newPrice: string) => {
+        setSelectedItems(selectedItems.map(i => {
+            if (i.pesticide.id === id) {
+                const qty = parseInt(i.quantity) || 0;
+                const price = parseFloat(newPrice) || 0;
+                return { ...i, unitPrice: newPrice, totalPrice: qty * price };
+            }
+            return i;
+        }));
     };
 
     const handleDelete = async (e: React.MouseEvent, id: string) => {
         e.stopPropagation();
         if (window.confirm("Bu reçeteyi silmek istediğinize emin misiniz?")) {
+            const target = contextPrescriptions.find(p => p.id === id);
+            if (target && target.isInventoryProcessed) {
+                await dbService.revertInventory(target);
+            }
             await dbService.deletePrescription(id);
             await loadData();
             await refreshStats();
+            showToast('Reçete başarıyla silindi', 'success');
+            hapticFeedback('medium');
             if (viewMode === 'DETAIL') {
-                setViewMode('LIST');
+                changeViewMode('LIST');
                 setDetailPrescription(null);
             }
         }
@@ -133,7 +207,10 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         e.stopPropagation();
         
         const farmer = farmerMap[p.farmerId];
-        if (farmer) setSelectedFarmer(farmer);
+        if (farmer) {
+            setSelectedFarmer(farmer);
+            setSelectedFieldId(p.fieldId || '');
+        }
 
         // Reconstruct Pesticide objects from stored items
         const reconstructedItems = p.items.map(item => {
@@ -150,60 +227,111 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
             return { 
                 pesticide: basePesticide, 
                 dosage: item.dosage,
-                quantity: item.quantity || '' // Map existing quantity or default to empty
+                quantity: item.quantity || '', // Map existing quantity or default to empty
+                unitPrice: item.unitPrice ? item.unitPrice.toString() : '',
+                totalPrice: item.totalPrice || 0
             };
         });
+
+        // Eğer en az bir üründe fiyat varsa, fiyat modunu aç
+        if (reconstructedItems.some(i => i.unitPrice)) {
+            setShowPrices(true);
+        } else {
+            setShowPrices(false);
+        }
 
         setSelectedItems(reconstructedItems);
         setEditingId(p.id);
         setStep(2); // Jump directly to items
-        setViewMode('FORM');
+        changeViewMode('FORM');
     };
 
     const handleViewDetail = (p: Prescription) => {
         setDetailPrescription(p);
         const farmer = farmerMap[p.farmerId];
         if (farmer) setSelectedFarmer(farmer);
-        setViewMode('DETAIL');
+        changeViewMode('DETAIL', p.id);
+    };
+
+    const toggleProcessed = async (e: React.MouseEvent, p: Prescription) => {
+        e.stopPropagation();
+        
+        const message = p.isProcessed 
+            ? "Bu reçeteyi 'İşlenmedi' durumuna geri almak istiyor musunuz?" 
+            : "Bu reçete işlensin mi? (Onaylanırsa İşlenenler bölümüne aktarılacaktır)";
+            
+        if (window.confirm(message)) {
+            try {
+                const updated = await togglePrescriptionStatus(p.id);
+                showToast(p.isProcessed ? 'Reçete işlenmedi olarak işaretlendi' : 'Reçete başarıyla işlendi', 'success');
+                hapticFeedback('success');
+                
+                // If we are in detail view, update the detail state as well
+                if (detailPrescription && detailPrescription.id === p.id && updated) {
+                    setDetailPrescription(updated);
+                }
+            } catch (error) {
+                console.error("Toggle processed error:", error);
+                showToast("Durum güncellenirken bir hata oluştu.", 'error');
+                hapticFeedback('error');
+            }
+        }
     };
 
     const handleSave = async () => {
         if (!selectedFarmer) return;
         
+        const items = selectedItems.map(i => ({
+            pesticideId: i.pesticide.id,
+            pesticideName: i.pesticide.name,
+            dosage: i.dosage,
+            quantity: i.quantity, // Save quantity
+            unitPrice: i.unitPrice ? parseFloat(i.unitPrice) : undefined,
+            totalPrice: i.totalPrice
+        }));
+
+        const totalAmount = items.reduce((acc, item) => acc + (item.totalPrice || 0), 0);
+        
         if (editingId) {
             // Update existing
-            const original = prescriptions.find(p => p.id === editingId);
+            const original = contextPrescriptions.find(p => p.id === editingId);
             if (!original) return;
+
+            // If it was already processed, revert old inventory first
+            if (original.isInventoryProcessed) {
+                await dbService.revertInventory(original);
+            }
 
             const updatedPrescription: Prescription = {
                 ...original,
                 farmerId: selectedFarmer.id,
+                fieldId: selectedFieldId || undefined,
                 engineerName: userProfile.fullName || original.engineerName,
-                items: selectedItems.map(i => ({
-                    pesticideId: i.pesticide.id,
-                    pesticideName: i.pesticide.name,
-                    dosage: i.dosage,
-                    quantity: i.quantity // Save quantity
-                }))
+                items: items,
+                totalAmount: totalAmount > 0 ? totalAmount : undefined
             };
 
             await dbService.updatePrescription(updatedPrescription);
+            
+            // If it's still marked as processed, re-process with new items
+            if (updatedPrescription.isProcessed) {
+                await dbService.processInventory(updatedPrescription);
+            }
+
             setSavedPrescription(updatedPrescription);
         } else {
             // Create new
             const newPrescription: Prescription = {
                 id: crypto.randomUUID(),
                 farmerId: selectedFarmer.id,
+                fieldId: selectedFieldId || undefined,
                 date: new Date().toISOString(),
                 prescriptionNo: `REC-${new Date().getFullYear()}-${Math.floor(Math.random() * 1000)}`,
                 engineerName: userProfile.fullName || 'Ziraat Mühendisi',
-                items: selectedItems.map(i => ({
-                    pesticideId: i.pesticide.id,
-                    pesticideName: i.pesticide.name,
-                    dosage: i.dosage,
-                    quantity: i.quantity // Save quantity
-                })),
-                isOfficial: true
+                items: items,
+                isOfficial: true,
+                isProcessed: false,
+                totalAmount: totalAmount > 0 ? totalAmount : undefined
             };
 
             await dbService.addPrescription(newPrescription);
@@ -213,6 +341,10 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         setIsSaved(true);
         await loadData();
         await refreshStats();
+        showToast('Reçete başarıyla kaydedildi', 'success');
+        hapticFeedback('success');
+        changeViewMode('LIST');
+        resetForm();
     };
 
     const handleWhatsAppText = (targetPrescription: Prescription, targetFarmer: Farmer) => {
@@ -310,16 +442,32 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         p.activeIngredient.toLowerCase().includes(pesticideSearchTerm.toLowerCase())
     );
 
-    const filteredPrescriptions = prescriptions.filter(p => {
+    const filteredPrescriptions = contextPrescriptions.filter(p => {
         const farmer = farmerMap[p.farmerId];
         const search = prescriptionSearchTerm.toLowerCase();
-        return (
-            p.prescriptionNo.toLowerCase().includes(search) ||
-            (farmer?.fullName && farmer.fullName.toLowerCase().includes(search))
-        );
+        
+        const matchesSearch = p.prescriptionNo.toLowerCase().includes(search) ||
+            (farmer?.fullName && farmer.fullName.toLowerCase().includes(search));
+            
+        const matchesFilter = filterMode === 'ALL' || 
+            (filterMode === 'PROCESSED' && p.isProcessed) ||
+            (filterMode === 'UNPROCESSED' && !p.isProcessed);
+            
+        return matchesSearch && matchesFilter;
     });
 
-    // ... (Render logic remains same, updating the share button text/icon in detail & success views) ...
+    const handleSync = async () => {
+        setIsSyncing(true);
+        try {
+            const result = await dbService.backupAllData();
+            updateUserProfile({ ...userProfile, lastSyncTime: result.timestamp });
+            alert("Tüm veriler başarıyla Firebase'e yedeklendi.");
+        } catch (error) {
+            alert("Yedekleme hatası: " + (error as any).message);
+        } finally {
+            setIsSyncing(false);
+        }
+    };
 
     if (viewMode === 'LIST') {
         return (
@@ -329,7 +477,22 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                         <div>
                             <h2 className="text-2xl font-bold text-stone-100">Reçete Defteri</h2>
                             <p className="text-sm text-stone-500">Yazılan resmi reçeteler</p>
+                            {userProfile.lastSyncTime && (
+                                <p className="text-[10px] text-emerald-500/80 mt-0.5 flex items-center">
+                                    <Check size={10} className="mr-1" />
+                                    Son Yedekleme: {new Date(userProfile.lastSyncTime).toLocaleTimeString('tr-TR', {hour: '2-digit', minute:'2-digit'})}
+                                </p>
+                            )}
                         </div>
+                        <button 
+                            onClick={handleSync} 
+                            disabled={isSyncing}
+                            className="px-3 py-1.5 bg-stone-900 text-stone-400 rounded-xl border border-white/5 hover:text-emerald-400 hover:bg-stone-800 transition-all active:scale-95 disabled:opacity-50 flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider"
+                            title="Verileri Buluta Yedekle"
+                        >
+                            <RefreshCw size={14} className={isSyncing ? "animate-spin text-emerald-500" : ""} />
+                            {isSyncing ? 'Yedekleniyor...' : 'Senkronize'}
+                        </button>
                     </header>
 
                     <div className="bg-stone-900 rounded-2xl shadow-sm border border-white/5 flex items-center p-1 mb-6 sticky top-20 z-10 backdrop-blur-md">
@@ -346,6 +509,42 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                 <X size={16} />
                             </button>
                         )}
+                    </div>
+
+                    {/* Filter Buttons */}
+                    <div className="flex p-0.5 bg-stone-900/80 rounded-lg border border-white/5 mb-6 w-fit">
+                        <button 
+                            onClick={() => setFilterMode('ALL')}
+                            className={`px-2.5 py-1 rounded-md text-[8px] font-black uppercase tracking-widest transition-all ${
+                                filterMode === 'ALL' 
+                                ? 'bg-emerald-600 text-white shadow-sm' 
+                                : 'text-stone-500 hover:text-stone-300'
+                            }`}
+                        >
+                            Tümü
+                        </button>
+                        <button 
+                            onClick={() => setFilterMode('UNPROCESSED')}
+                            className={`px-2.5 py-1 rounded-md text-[8px] font-black uppercase tracking-widest transition-all flex items-center gap-1 ${
+                                filterMode === 'UNPROCESSED' 
+                                ? 'bg-red-600 text-white shadow-sm' 
+                                : 'text-stone-500 hover:text-stone-300'
+                            }`}
+                        >
+                            <div className={`w-1 h-1 rounded-full ${filterMode === 'UNPROCESSED' ? 'bg-white' : 'bg-red-500'}`}></div>
+                            İşlenmeyenler
+                        </button>
+                        <button 
+                            onClick={() => setFilterMode('PROCESSED')}
+                            className={`px-2.5 py-1 rounded-md text-[8px] font-black uppercase tracking-widest transition-all flex items-center gap-1 ${
+                                filterMode === 'PROCESSED' 
+                                ? 'bg-blue-600 text-white shadow-sm' 
+                                : 'text-stone-500 hover:text-stone-300'
+                            }`}
+                        >
+                            <div className={`w-1 h-1 rounded-full ${filterMode === 'PROCESSED' ? 'bg-white' : 'bg-blue-500'}`}></div>
+                            İşlenenler
+                        </button>
                     </div>
 
                     <div className="space-y-4">
@@ -380,9 +579,20 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                                     <Calendar size={10} className="mr-1" />
                                                     {dateObj.toLocaleDateString('tr-TR')}
                                                 </span>
+                                                <button 
+                                                    type="button"
+                                                    onClick={(e) => toggleProcessed(e, p)}
+                                                    className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all border active:scale-90 relative z-30 ${
+                                                        p.isProcessed 
+                                                        ? 'bg-blue-500/10 border-blue-500/20 text-blue-400' 
+                                                        : 'bg-red-500/10 border-red-500/20 text-red-400'
+                                                    }`}
+                                                >
+                                                    {p.isProcessed ? <Check size={18} /> : <X size={18} />}
+                                                </button>
                                             </div>
                                         </div>
-                                        <div className="pl-13 mt-2">
+                                        <div className="pl-12 mt-2">
                                             <div className="flex flex-wrap gap-1">
                                                 {p.items.slice(0, 3).map((item, idx) => (
                                                     <span key={idx} className="text-[10px] bg-stone-800 text-stone-400 px-2 py-1 rounded-full border border-stone-700">
@@ -404,7 +614,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                 </div>
 
                 <button 
-                    onClick={() => { resetForm(); setViewMode('FORM'); }}
+                    onClick={() => { resetForm(); changeViewMode('FORM'); }}
                     className="fixed bottom-32 right-6 md:bottom-10 md:right-10 bg-emerald-600 text-white p-4 rounded-full shadow-lg shadow-emerald-900/50 hover:bg-emerald-500 transition-all transform hover:scale-105 z-50 flex items-center justify-center"
                 >
                     <Plus size={28} />
@@ -417,10 +627,22 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         return (
             <div className="p-4 max-w-2xl mx-auto pb-24 animate-in slide-in-from-right duration-200 min-h-[80vh]">
                 <div className="flex items-center justify-between mb-6">
-                    <button onClick={() => { setDetailPrescription(null); setViewMode('LIST'); }} className="text-stone-400 hover:text-stone-200 flex items-center px-2 py-1 rounded-lg hover:bg-stone-900 transition-colors">
+                    <button onClick={() => { setDetailPrescription(null); changeViewMode('LIST'); }} className="text-stone-400 hover:text-stone-200 flex items-center px-2 py-1 rounded-lg hover:bg-stone-900 transition-colors">
                         <ArrowLeft size={20} className="mr-1" /> Listeye Dön
                     </button>
                     <div className="flex space-x-2">
+                        <button 
+                            type="button"
+                            onClick={(e) => toggleProcessed(e, detailPrescription)}
+                            className={`p-2.5 rounded-full border transition-all active:scale-90 ${
+                                detailPrescription.isProcessed 
+                                ? 'bg-blue-500/10 border-blue-500/20 text-blue-400' 
+                                : 'bg-red-500/10 border-red-500/20 text-red-400'
+                            }`}
+                            title={detailPrescription.isProcessed ? "İşlendi" : "İşlenmedi"}
+                        >
+                            {detailPrescription.isProcessed ? <Check size={20} /> : <X size={20} />}
+                        </button>
                         <button 
                             onClick={(e) => handleEdit(e, detailPrescription)} 
                             className="p-2 bg-stone-800 text-stone-300 rounded-full border border-white/5 hover:bg-stone-700 hover:text-emerald-400 transition-all"
@@ -445,6 +667,11 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                          <div>
                             <h3 className="font-bold text-2xl text-stone-900 tracking-tight">Zirai Reçete</h3>
                             <p className="text-xs text-stone-400 mt-1 uppercase font-bold tracking-widest">{detailPrescription.prescriptionNo}</p>
+                            {detailPrescription.fieldId && (
+                                <p className="text-[10px] text-emerald-600 font-bold mt-1">
+                                    Tarla: {selectedFarmer?.fields?.find(f => f.id === detailPrescription.fieldId)?.name || 'Bilinmiyor'}
+                                </p>
+                            )}
                          </div>
                          <div className="text-right">
                              <p className="font-bold text-emerald-700 text-xl">{selectedFarmer?.fullName}</p>
@@ -454,29 +681,69 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                     </div>
                     
                     <div className="min-h-[250px]">
-                        <table className="w-full text-sm">
-                            <thead className="bg-stone-50 text-stone-500 uppercase text-[10px] font-black tracking-widest">
-                                <tr>
-                                    <th className="p-4 text-left rounded-l-xl">Ürün / İlaç Adı</th>
-                                    <th className="p-4 text-right rounded-r-xl">Uygulama Dozajı</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-stone-100">
-                                {detailPrescription.items.map((item, idx) => (
-                                    <tr key={idx} className="group">
-                                        <td className="p-4 font-bold text-stone-800">
-                                            {item.pesticideName}
-                                            {item.quantity && (
-                                                <span className="ml-2 text-stone-500 font-bold text-xs bg-stone-100 px-2 py-0.5 rounded-full">
-                                                    {item.quantity} Adet
-                                                </span>
-                                            )}
-                                        </td>
-                                        <td className="p-4 text-right font-mono font-bold text-emerald-600">{item.dosage}</td>
+                        {detailPrescription.totalAmount && detailPrescription.totalAmount > 0 ? (
+                            <table className="w-full text-sm">
+                                <thead className="bg-stone-50 text-stone-500 uppercase text-[10px] font-black tracking-widest border-b border-stone-100">
+                                    <tr>
+                                        <th className="p-3 text-left w-[40%]">Ürün Adı</th>
+                                        <th className="p-3 text-center w-[15%]">Adet</th>
+                                        <th className="p-3 text-right w-[20%]">Birim Fiyat</th>
+                                        <th className="p-3 text-right w-[25%]">Toplam</th>
                                     </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                                </thead>
+                                <tbody className="divide-y divide-stone-100">
+                                    {detailPrescription.items.map((item, idx) => (
+                                        <tr key={idx}>
+                                            <td className="p-3">
+                                                <div className="font-bold text-stone-800">{item.pesticideName}</div>
+                                                <div className="text-[10px] text-stone-500 font-mono mt-0.5">Doz: {item.dosage}</div>
+                                            </td>
+                                            <td className="p-3 text-center font-bold text-stone-700">
+                                                {item.quantity || '-'}
+                                            </td>
+                                            <td className="p-3 text-right font-mono text-stone-600">
+                                                {item.unitPrice ? item.unitPrice.toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' ₺' : '-'}
+                                            </td>
+                                            <td className="p-3 text-right font-mono font-bold text-stone-800">
+                                                {item.totalPrice ? item.totalPrice.toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' ₺' : '-'}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                                <tfoot>
+                                    <tr className="bg-stone-50/50 border-t border-stone-200">
+                                        <td colSpan={3} className="p-3 text-right font-bold text-stone-500 uppercase text-[10px] tracking-widest pt-4">Reçete Toplamı</td>
+                                        <td className="p-3 text-right font-black text-emerald-600 font-mono text-lg pt-4">
+                                            {detailPrescription.totalAmount.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                                        </td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        ) : (
+                            <table className="w-full text-sm">
+                                <thead className="bg-stone-50 text-stone-500 uppercase text-[10px] font-black tracking-widest">
+                                    <tr>
+                                        <th className="p-4 text-left rounded-l-xl">Ürün / İlaç Adı</th>
+                                        <th className="p-4 text-right rounded-r-xl">Uygulama Dozajı</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-stone-100">
+                                    {detailPrescription.items.map((item, idx) => (
+                                        <tr key={idx} className="group">
+                                            <td className="p-4 font-bold text-stone-800">
+                                                {item.pesticideName}
+                                                {item.quantity && (
+                                                    <span className="ml-2 text-stone-500 font-bold text-xs bg-stone-100 px-2 py-0.5 rounded-full">
+                                                        {item.quantity} Adet
+                                                    </span>
+                                                )}
+                                            </td>
+                                            <td className="p-4 text-right font-mono font-bold text-emerald-600">{item.dosage}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
                     </div>
 
                     <div className="mt-12 pt-6 border-t-2 border-dashed border-stone-100 flex justify-between items-end">
@@ -540,6 +807,11 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                          <div>
                             <h3 className="font-bold text-2xl text-stone-900 tracking-tight">Zirai Reçete</h3>
                             <p className="text-xs text-stone-400 mt-1 uppercase font-bold tracking-widest">{savedPrescription.prescriptionNo}</p>
+                            {savedPrescription.fieldId && (
+                                <p className="text-[10px] text-emerald-600 font-bold mt-1">
+                                    Tarla: {selectedFarmer?.fields?.find(f => f.id === savedPrescription.fieldId)?.name || 'Bilinmiyor'}
+                                </p>
+                            )}
                          </div>
                          <div className="text-right">
                              <p className="font-bold text-emerald-700 text-xl">{selectedFarmer?.fullName}</p>
@@ -549,29 +821,69 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                     </div>
                     
                     <div className="min-h-[250px]">
-                        <table className="w-full text-sm">
-                            <thead className="bg-stone-50 text-stone-500 uppercase text-[10px] font-black tracking-widest">
-                                <tr>
-                                    <th className="p-4 text-left rounded-l-xl">Ürün / İlaç Adı</th>
-                                    <th className="p-4 text-right rounded-r-xl">Uygulama Dozajı</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-stone-100">
-                                {savedPrescription.items.map((item, idx) => (
-                                    <tr key={idx} className="group">
-                                        <td className="p-4 font-bold text-stone-800">
-                                            {item.pesticideName}
-                                            {item.quantity && (
-                                                <span className="ml-2 text-stone-500 font-bold text-xs bg-stone-100 px-2 py-0.5 rounded-full">
-                                                    {item.quantity} Adet
-                                                </span>
-                                            )}
-                                        </td>
-                                        <td className="p-4 text-right font-mono font-bold text-emerald-600">{item.dosage}</td>
+                        {savedPrescription.totalAmount && savedPrescription.totalAmount > 0 ? (
+                            <table className="w-full text-sm">
+                                <thead className="bg-stone-50 text-stone-500 uppercase text-[10px] font-black tracking-widest border-b border-stone-100">
+                                    <tr>
+                                        <th className="p-3 text-left w-[40%]">Ürün Adı</th>
+                                        <th className="p-3 text-center w-[15%]">Adet</th>
+                                        <th className="p-3 text-right w-[20%]">Birim Fiyat</th>
+                                        <th className="p-3 text-right w-[25%]">Toplam</th>
                                     </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                                </thead>
+                                <tbody className="divide-y divide-stone-100">
+                                    {savedPrescription.items.map((item, idx) => (
+                                        <tr key={idx}>
+                                            <td className="p-3">
+                                                <div className="font-bold text-stone-800">{item.pesticideName}</div>
+                                                <div className="text-[10px] text-stone-500 font-mono mt-0.5">Doz: {item.dosage}</div>
+                                            </td>
+                                            <td className="p-3 text-center font-bold text-stone-700">
+                                                {item.quantity || '-'}
+                                            </td>
+                                            <td className="p-3 text-right font-mono text-stone-600">
+                                                {item.unitPrice ? item.unitPrice.toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' ₺' : '-'}
+                                            </td>
+                                            <td className="p-3 text-right font-mono font-bold text-stone-800">
+                                                {item.totalPrice ? item.totalPrice.toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' ₺' : '-'}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                                <tfoot>
+                                    <tr className="bg-stone-50/50 border-t border-stone-200">
+                                        <td colSpan={3} className="p-3 text-right font-bold text-stone-500 uppercase text-[10px] tracking-widest pt-4">Reçete Toplamı</td>
+                                        <td className="p-3 text-right font-black text-emerald-600 font-mono text-lg pt-4">
+                                            {savedPrescription.totalAmount.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                                        </td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        ) : (
+                            <table className="w-full text-sm">
+                                <thead className="bg-stone-50 text-stone-500 uppercase text-[10px] font-black tracking-widest">
+                                    <tr>
+                                        <th className="p-4 text-left rounded-l-xl">Ürün / İlaç Adı</th>
+                                        <th className="p-4 text-right rounded-r-xl">Uygulama Dozajı</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-stone-100">
+                                    {savedPrescription.items.map((item, idx) => (
+                                        <tr key={idx} className="group">
+                                            <td className="p-4 font-bold text-stone-800">
+                                                {item.pesticideName}
+                                                {item.quantity && (
+                                                    <span className="ml-2 text-stone-500 font-bold text-xs bg-stone-100 px-2 py-0.5 rounded-full">
+                                                        {item.quantity} Adet
+                                                    </span>
+                                                )}
+                                            </td>
+                                            <td className="p-4 text-right font-mono font-bold text-emerald-600">{item.dosage}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
                     </div>
 
                     <div className="mt-12 pt-6 border-t-2 border-dashed border-stone-100 flex justify-between items-end">
@@ -657,34 +969,82 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                         )}
                     </div>
 
-                    <div className="space-y-2">
-                        {filteredFarmers.map(f => (
-                            <button 
-                                key={f.id} 
-                                onClick={() => { setSelectedFarmer(f); setStep(2); }}
-                                className={`w-full text-left p-4 rounded-xl border flex justify-between items-center group transition-colors ${
-                                    selectedFarmer?.id === f.id
-                                    ? 'bg-emerald-900/20 border-emerald-500'
-                                    : 'bg-stone-900 border-white/5 hover:border-emerald-500/50'
-                                }`}
-                            >
-                                <div>
-                                    <span className="font-bold text-stone-200 block group-hover:text-emerald-400">{f.fullName}</span>
-                                    <span className="text-xs text-stone-500 flex items-center mt-1"><MapPin size={10} className="mr-1"/> {f.village}</span>
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <label className="text-[10px] font-bold text-stone-500 uppercase tracking-widest ml-1">Çiftçi</label>
+                                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 no-scrollbar">
+                                    {filteredFarmers.map(f => (
+                                        <button 
+                                            key={f.id} 
+                                            onClick={() => { setSelectedFarmer(f); setSelectedFieldId(''); }}
+                                            className={`w-full text-left p-4 rounded-xl border flex justify-between items-center group transition-colors ${
+                                                selectedFarmer?.id === f.id
+                                                ? 'bg-emerald-900/20 border-emerald-500'
+                                                : 'bg-stone-900 border-white/5 hover:border-emerald-500/50'
+                                            }`}
+                                        >
+                                            <div>
+                                                <span className="font-bold text-stone-200 block group-hover:text-emerald-400">{f.fullName}</span>
+                                                <span className="text-xs text-stone-500 flex items-center mt-1"><MapPin size={10} className="mr-1"/> {f.village}</span>
+                                            </div>
+                                            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${selectedFarmer?.id === f.id ? 'bg-emerald-600 text-white' : 'bg-stone-800 text-stone-500 group-hover:bg-emerald-900/30 group-hover:text-emerald-500'}`}>
+                                                {selectedFarmer?.id === f.id ? <Check size={16} /> : <User size={16} />}
+                                            </div>
+                                        </button>
+                                    ))}
                                 </div>
-                                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${selectedFarmer?.id === f.id ? 'bg-emerald-600 text-white' : 'bg-stone-800 text-stone-500 group-hover:bg-emerald-900/30 group-hover:text-emerald-500'}`}>
-                                    {selectedFarmer?.id === f.id ? <Check size={16} /> : <User size={16} />}
+                            </div>
+
+                            <div className="space-y-2">
+                                <label className="text-[10px] font-bold text-stone-500 uppercase tracking-widest ml-1">Tarla</label>
+                                <div className="space-y-2">
+                                    {!selectedFarmer ? (
+                                        <div className="p-8 border-2 border-dashed border-stone-800 rounded-xl text-center text-stone-600 text-xs">
+                                            Önce çiftçi seçiniz
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-2">
+                                            {selectedFarmer.fields?.map(field => (
+                                                <button 
+                                                    key={field.id} 
+                                                    onClick={() => setSelectedFieldId(field.id)}
+                                                    className={`w-full text-left p-4 rounded-xl border flex justify-between items-center group transition-colors ${
+                                                        selectedFieldId === field.id
+                                                        ? 'bg-emerald-900/20 border-emerald-500'
+                                                        : 'bg-stone-900 border-white/5 hover:border-emerald-500/50'
+                                                    }`}
+                                                >
+                                                    <div>
+                                                        <span className="font-bold text-stone-200 block group-hover:text-emerald-400">{field.name}</span>
+                                                        <span className="text-xs text-stone-500 flex items-center mt-1">{field.crop} - {field.size} da</span>
+                                                    </div>
+                                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center ${selectedFieldId === field.id ? 'bg-emerald-600 text-white' : 'bg-stone-800 text-stone-500 group-hover:bg-emerald-900/30 group-hover:text-emerald-500'}`}>
+                                                        {selectedFieldId === field.id ? <Check size={16} /> : <MapPin size={16} />}
+                                                    </div>
+                                                </button>
+                                            ))}
+                                            {(!selectedFarmer.fields || selectedFarmer.fields.length === 0) && (
+                                                <div className="p-8 border-2 border-dashed border-stone-800 rounded-xl text-center text-stone-600 text-xs">
+                                                    Bu çiftçinin kayıtlı tarlası bulunamadı.
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
-                            </button>
-                        ))}
+                            </div>
+                        </div>
                     </div>
-                    {editingId && (
-                         <div className="mt-4 flex justify-end">
-                              <button onClick={() => setStep(2)} className="px-6 py-3 bg-stone-800 text-stone-300 rounded-xl font-bold flex items-center">
-                                  İlaçlara Geç <AlertCircle size={16} className="ml-2"/>
-                              </button>
-                         </div>
-                    )}
+                    
+                    <div className="mt-8 flex justify-end">
+                        <button 
+                            disabled={!selectedFarmer}
+                            onClick={() => setStep(2)} 
+                            className="px-8 py-4 bg-emerald-600 text-white rounded-2xl font-bold flex items-center shadow-lg shadow-emerald-900/30 disabled:opacity-50 active:scale-95 transition-all"
+                        >
+                            İlaç Seçimine Geç <Plus size={20} className="ml-2"/>
+                        </button>
+                    </div>
                 </div>
             )}
 
@@ -753,7 +1113,18 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                     </div>
 
                     <div className="space-y-4 pb-40">
-                        <label className="text-xs font-bold text-stone-500 mb-1 block uppercase tracking-widest">Seçilen İlaçlar ve Dozaj</label>
+                        <div className="flex items-center justify-between mb-1">
+                            <label className="text-xs font-bold text-stone-500 block uppercase tracking-widest">Seçilen İlaçlar ve Dozaj</label>
+                            <div className="flex items-center space-x-2">
+                                <span className="text-xs text-stone-400 font-medium">Fiyat Ekle</span>
+                                <button 
+                                    onClick={() => setShowPrices(!showPrices)}
+                                    className={`w-10 h-6 rounded-full p-1 transition-colors ${showPrices ? 'bg-emerald-600' : 'bg-stone-700'}`}
+                                >
+                                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${showPrices ? 'translate-x-4' : 'translate-x-0'}`}></div>
+                                </button>
+                            </div>
+                        </div>
                         {selectedItems.map((item, idx) => (
                             <div key={idx} className="bg-stone-900 p-4 rounded-xl shadow-sm border border-emerald-900/10 animate-in fade-in zoom-in-95 duration-200">
                                 <div className="flex justify-between items-start mb-2">
@@ -783,6 +1154,26 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                         />
                                     </div>
                                 </div>
+                                {showPrices && (
+                                    <div className="mt-2 pt-2 border-t border-white/5 flex items-center justify-between animate-in slide-in-from-top-2 duration-200">
+                                        <div className="flex items-center space-x-2 w-1/2">
+                                            <span className="text-xs text-stone-500">Birim Fiyat:</span>
+                                            <input 
+                                                type="number" 
+                                                value={item.unitPrice || ''}
+                                                onChange={(e) => updatePrice(item.pesticide.id, e.target.value)}
+                                                className="w-full p-2 bg-stone-950 border border-stone-800 rounded-lg font-medium outline-none focus:border-emerald-500 text-stone-200 transition-colors text-sm text-right"
+                                                placeholder="0.00"
+                                            />
+                                        </div>
+                                        <div className="text-right">
+                                            <span className="text-xs text-stone-500 block">Toplam</span>
+                                            <span className="text-emerald-400 font-bold font-mono">
+                                                {(item.totalPrice || 0).toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                                            </span>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         ))}
                         {selectedItems.length === 0 && (
@@ -828,9 +1219,26 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                          <span className="font-medium text-stone-400 block">{item.pesticide.name}</span>
                                          {item.quantity && <span className="text-xs text-stone-500 font-bold bg-stone-950 px-2 py-0.5 rounded-full inline-block mt-1">{item.quantity} Adet</span>}
                                      </div>
-                                     <span className="font-bold text-stone-200">{item.dosage}</span>
+                                     <div className="text-right">
+                                         <span className="font-bold text-stone-200 block">{item.dosage}</span>
+                                         {item.totalPrice && item.totalPrice > 0 ? (
+                                             <span className="text-xs text-emerald-400 font-mono block mt-1">
+                                                 {item.totalPrice.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                                             </span>
+                                         ) : null}
+                                     </div>
                                  </div>
                              ))}
+                             
+                             {/* Toplam Tutar Gösterimi */}
+                             {selectedItems.some(i => i.totalPrice && i.totalPrice > 0) && (
+                                 <div className="flex justify-between py-4 border-t border-white/10 mt-4">
+                                     <span className="font-bold text-stone-300">TOPLAM TUTAR</span>
+                                     <span className="font-bold text-emerald-400 text-lg font-mono">
+                                         {selectedItems.reduce((acc, item) => acc + (item.totalPrice || 0), 0).toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                                     </span>
+                                 </div>
+                             )}
                          </div>
                     </div>
                     <button 

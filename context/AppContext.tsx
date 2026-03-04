@@ -2,8 +2,9 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { dbService } from '../services/db';
 import { WeatherService, AGRI_CITIES } from '../services/weather';
-import { Farmer, UIScale, AppNotification, UserProfile, Reminder, VisitLog, AgriCity } from '../types';
+import { Farmer, UIScale, AppNotification, UserProfile, Reminder, VisitLog, AgriCity, InventoryItem, Prescription, Payment, ManualDebt } from '../types';
 import { LocalNotifications } from '@capacitor/local-notifications';
+import { Haptics, ImpactStyle, NotificationType } from '@capacitor/haptics';
 import { auth } from '../services/firebase';
 
 interface DashboardStats {
@@ -11,7 +12,14 @@ interface DashboardStats {
   todayPrescriptions: number;
   pendingVisits: number;
   activeReminders: number;
-  tomorrowReminders: number; // Yeni istatistik
+  tomorrowReminders: number;
+  totalArea: number;
+  totalSales: number;
+  cropDistribution: { crop: string, area: number }[];
+  inventoryValue: number;
+  potentialRevenue: number;
+  totalDebt: number;
+  regionalAlerts: { type: string, village: string, severity: string, count: number }[];
 }
 
 interface AppContextType {
@@ -38,6 +46,22 @@ interface AppContextType {
   addSystemNotification: (type: AppNotification['type'], title: string, message: string) => Promise<void>;
   updateVisit: (visit: VisitLog) => Promise<void>;
   deleteVisit: (id: string) => Promise<void>;
+  inventory: InventoryItem[];
+  refreshInventory: () => Promise<void>;
+  addInventoryItem: (item: InventoryItem) => Promise<void>;
+  updateInventoryItem: (item: InventoryItem) => Promise<void>;
+  deleteInventoryItem: (id: string) => Promise<void>;
+  prescriptions: Prescription[];
+  refreshPrescriptions: () => Promise<void>;
+  togglePrescriptionStatus: (id: string) => Promise<Prescription | null>;
+  payments: Payment[];
+  addPayment: (payment: Omit<Payment, 'id'>) => Promise<void>;
+  deletePayment: (id: string) => Promise<void>;
+  manualDebts: ManualDebt[];
+  addManualDebt: (debt: Omit<ManualDebt, 'id'>) => Promise<void>;
+  deleteManualDebt: (id: string) => Promise<void>;
+  showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
+  hapticFeedback: (type?: 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error') => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -56,12 +80,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     todayPrescriptions: 0,
     pendingVisits: 0,
     activeReminders: 0,
-    tomorrowReminders: 0
+    tomorrowReminders: 0,
+    totalArea: 0,
+    totalSales: 0,
+    cropDistribution: [],
+    inventoryValue: 0,
+    potentialRevenue: 0,
+    totalDebt: 0,
+    regionalAlerts: []
   });
 
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [farmers, setFarmers] = useState<Farmer[]>([]);
+  const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [manualDebts, setManualDebts] = useState<ManualDebt[]>([]);
+  const [toasts, setToasts] = useState<{id: string, message: string, type: 'success' | 'error' | 'info'}[]>([]);
   const isInitialized = useRef(false);
 
   const [uiScale, setUiScaleState] = useState<UIScale>(() => {
@@ -262,16 +298,172 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const refreshInventory = async () => {
+    const items = await dbService.getInventory();
+    setInventory(items);
+  };
+
+  const addInventoryItem = async (item: InventoryItem) => {
+    await dbService.addInventoryItem(item);
+    await refreshInventory();
+    await refreshStats();
+  };
+
+  const updateInventoryItem = async (item: InventoryItem) => {
+    await dbService.updateInventoryItem(item);
+    await refreshInventory();
+    await refreshStats();
+  };
+
+  const deleteInventoryItem = async (id: string) => {
+    await dbService.deleteInventoryItem(id);
+    // Manually update local state for immediate feedback
+    setInventory(prev => prev.filter(item => item.id !== id));
+    await refreshStats();
+  };
+
+  const refreshPrescriptions = async () => {
+    const items = await dbService.getAllPrescriptions();
+    setPrescriptions(items);
+  };
+
+  const togglePrescriptionStatus = async (id: string): Promise<Prescription | null> => {
+    const p = prescriptions.find(item => item.id === id);
+    if (!p) return null;
+
+    const updated: Prescription = { ...p, isProcessed: !p.isProcessed };
+    await dbService.updatePrescription(updated);
+    
+    // Inventory synchronization
+    if (updated.isProcessed && !updated.isInventoryProcessed) {
+        await dbService.processInventory(updated);
+    } else if (!updated.isProcessed && updated.isInventoryProcessed) {
+        await dbService.revertInventory(updated);
+    }
+
+    // Fetch the absolute latest state from DB to ensure isInventoryProcessed is correct
+    const latest = await dbService.getAllPrescriptions();
+    const finalUpdated = latest.find(item => item.id === id) || updated;
+
+    await refreshPrescriptions();
+    await refreshInventory();
+    await refreshStats();
+
+    return finalUpdated;
+  };
+
   const refreshStats = async (syncedReminders?: Reminder[]) => {
-    const [farmerList, prescriptions, visits, reminderListFromDB] = await Promise.all([
+    const [farmerList, prescriptions, visits, reminderListFromDB, inventoryData, paymentList, manualDebtList] = await Promise.all([
         dbService.getFarmers(),
         dbService.getAllPrescriptions(),
         dbService.getAllVisits(),
-        dbService.getReminders()
+        dbService.getReminders(),
+        dbService.getInventory(),
+        dbService.getPayments(),
+        dbService.getManualDebts()
     ]);
 
-    const finalReminders = syncedReminders || reminderListFromDB;
+    const finalReminders = [...(syncedReminders || reminderListFromDB)];
     
+    // --- SMART CALENDAR LOGIC ---
+    // Generate reminders based on crop stages if not already present
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+
+    farmerList.forEach(farmer => {
+        farmer.fields.forEach(field => {
+            if (field.crop && field.plantingDate) {
+                const pDate = new Date(field.plantingDate);
+                const diffDays = Math.floor((today.getTime() - pDate.getTime()) / (1000 * 60 * 60 * 24));
+                
+                let title = '';
+                let description = '';
+
+                // Example logic for Cotton
+                if (field.crop.toLowerCase().includes('pamuk')) {
+                    if (diffDays >= 20 && diffDays <= 25) {
+                        title = `${farmer.fullName} - Pamuk Üst Gübreleme`;
+                        description = `${field.name} tarlasında pamuk 4-6 yaprak evresinde. Üst gübreleme zamanı.`;
+                    } else if (diffDays >= 60 && diffDays <= 65) {
+                        title = `${farmer.fullName} - Pamuk Zararlı Kontrolü`;
+                        description = `${field.name} tarlasında pamuk taraklanma döneminde. Yeşil kurt ve emici böcek kontrolü yapılmalı.`;
+                    }
+                } 
+                // Example logic for Corn (Mısır)
+                else if (field.crop.toLowerCase().includes('mısır')) {
+                    if (diffDays >= 30 && diffDays <= 35) {
+                        title = `${farmer.fullName} - Mısır Üst Gübreleme`;
+                        description = `${field.name} tarlasında mısır diz boyu seviyesinde. Üst gübreleme ve boğaz doldurma zamanı.`;
+                    }
+                }
+                // Example logic for Wheat (Buğday)
+                else if (field.crop.toLowerCase().includes('buğday')) {
+                    if (diffDays >= 45 && diffDays <= 55) {
+                        title = `${farmer.fullName} - Buğday Ot İlacı`;
+                        description = `${field.name} tarlasında buğday kardeşlenme sonunda. Yabancı ot mücadelesi için uygun dönem.`;
+                    }
+                }
+
+                if (title && !finalReminders.find(r => r.title === title)) {
+                    finalReminders.push({
+                        id: `auto-${crypto.randomUUID()}`,
+                        title,
+                        description,
+                        date: todayStr,
+                        isCompleted: false,
+                        priority: 'MEDIUM',
+                        recurrence: 'NONE'
+                    });
+                }
+            }
+        });
+    });
+
+    // --- REGIONAL ALERTS LOGIC ---
+    const alerts: Record<string, { type: string, village: string, severity: string, count: number }> = {};
+    visits.forEach(v => {
+        if ((v.pestFound || v.diseaseFound) && v.severity === 'HIGH') {
+            const key = `${v.pestFound || v.diseaseFound}-${v.village || 'Bilinmeyen'}`;
+            if (!alerts[key]) {
+                alerts[key] = {
+                    type: v.pestFound || v.diseaseFound || 'Bilinmeyen',
+                    village: v.village || 'Bilinmeyen',
+                    severity: 'HIGH',
+                    count: 0
+                };
+            }
+            alerts[key].count++;
+        }
+    });
+    const regionalAlerts = Object.values(alerts).filter(a => a.count >= 2); // At least 2 findings in same village
+
+    // --- DEBT TRACKING LOGIC ---
+    const farmerDebts: Record<string, number> = {};
+    
+    // Add prescriptions to debt
+    prescriptions.forEach(p => {
+        farmerDebts[p.farmerId] = (farmerDebts[p.farmerId] || 0) + (p.totalAmount || 0);
+    });
+
+    // Add manual debts
+    manualDebtList.forEach(d => {
+        farmerDebts[d.farmerId] = (farmerDebts[d.farmerId] || 0) + d.amount;
+    });
+
+    // Subtract payments from debt
+    paymentList.forEach(pay => {
+        farmerDebts[pay.farmerId] = (farmerDebts[pay.farmerId] || 0) - pay.amount;
+    });
+
+    // Update farmer objects with balance
+    const updatedFarmerList = farmerList.map(f => ({
+        ...f,
+        balance: -(farmerDebts[f.id] || 0) // Balance is negative if they owe money
+    }));
+
+    // Total debt is the sum of all positive balances (money owed to the engineer)
+    const totalDebt = Object.values(farmerDebts).reduce((acc, val) => acc + (val > 0 ? val : 0), 0);
+
     if (syncedReminders) {
         await LocalNotifications.cancel({ notifications: syncedReminders.map(r => ({ id: Math.abs(r.id.split('').reduce((a, b) => { a = ((a << 5) - a) + b.charCodeAt(0); return a & a; }, 0)) })) });
         for (const r of syncedReminders) {
@@ -284,7 +476,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     tomorrow.setDate(tomorrow.getDate() + 1);
     const tomorrowStr = tomorrow.toISOString().split('T')[0];
 
-    const todayStr = new Date().toISOString().split('T')[0];
     const todaysPrescriptionsCount = prescriptions.filter(p => p.date.startsWith(todayStr)).length;
     
     // Yarının görevlerini hesapla
@@ -293,15 +484,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Günlük özeti planla (Her veri değişiminde o anki duruma göre 20:00'ı günceller)
     await scheduleDailyBriefing(tomorrowRemindersCount);
 
+    // Ürün dağılımı ve toplam alan hesapla
+    const distribution: Record<string, number> = {};
+    let totalArea = 0;
+    
+    updatedFarmerList.forEach(f => {
+        (f.fields || []).forEach(field => {
+            const area = Number(field.size) || 0;
+            const crop = field.crop || 'Belirtilmedi';
+            distribution[crop] = (distribution[crop] || 0) + area;
+            totalArea += area;
+        });
+    });
+
+    // Toplam Satış Tutarı Hesapla
+    const totalSales = prescriptions.reduce((acc, p) => acc + (p.totalAmount || 0), 0);
+
+    // Calculate Inventory Value and Potential Revenue
+    const inventoryValue = inventoryData.reduce((acc, item) => acc + (item.buyingPrice * item.quantity), 0);
+    const potentialRevenue = inventoryData.reduce((acc, item) => acc + (item.sellingPrice * item.quantity), 0);
+
+    const cropDistribution = Object.entries(distribution)
+        .map(([crop, area]) => ({ crop, area }))
+        .sort((a, b) => b.area - a.area);
+
     setReminders(finalReminders);
-    setFarmers(farmerList);
+    setFarmers(updatedFarmerList);
+    setInventory(inventoryData);
+    setPrescriptions(prescriptions);
+    setPayments(paymentList);
     
     setStats({
-      totalFarmers: farmerList.length,
+      totalFarmers: updatedFarmerList.length,
       todayPrescriptions: todaysPrescriptionsCount,
       pendingVisits: visits.length,
       activeReminders: finalReminders.filter(r => !r.isCompleted).length,
-      tomorrowReminders: tomorrowRemindersCount
+      tomorrowReminders: tomorrowRemindersCount,
+      totalArea,
+      totalSales,
+      cropDistribution,
+      inventoryValue,
+      potentialRevenue,
+      totalDebt,
+      regionalAlerts
     });
     
     await refreshNotifications();
@@ -409,9 +634,57 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await refreshStats();
   };
 
+  const addPayment = async (paymentData: Omit<Payment, 'id'>) => {
+    const newPayment: Payment = { ...paymentData, id: crypto.randomUUID() };
+    await dbService.addPayment(newPayment);
+    await refreshStats();
+  };
+
+  const deletePayment = async (id: string) => {
+    await dbService.deletePayment(id);
+    await refreshStats();
+  };
+
+  const addManualDebt = async (debt: Omit<ManualDebt, 'id'>) => {
+    const id = crypto.randomUUID();
+    await dbService.addManualDebt({ ...debt, id });
+    await refreshStats();
+  };
+
+  const deleteManualDebt = async (id: string) => {
+    await dbService.deleteManualDebt(id);
+    await refreshStats();
+  };
+
   const setUiScale = (scale: UIScale) => {
     setUiScaleState(scale);
     localStorage.setItem('mks_ui_scale', scale);
+  };
+
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 3000);
+  };
+
+  const hapticFeedback = async (type: 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error' = 'light') => {
+    try {
+      if (type === 'success' || type === 'warning' || type === 'error') {
+        const hType = type === 'success' ? NotificationType.Success : 
+                      type === 'warning' ? NotificationType.Warning : 
+                      NotificationType.Error;
+        await Haptics.notification({ type: hType });
+      } else {
+        const hStyle = type === 'heavy' ? ImpactStyle.Heavy : 
+                       type === 'medium' ? ImpactStyle.Medium : 
+                       ImpactStyle.Light;
+        await Haptics.impact({ style: hStyle });
+      }
+    } catch (e) {
+      // Ignore if not supported
+    }
   };
 
   useEffect(() => {
@@ -448,9 +721,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         uiScale, setUiScale, 
         notifications, unreadCount, clearNotifications, markAllAsRead,
         userProfile, updateUserProfile, addSystemNotification,
-        updateVisit, deleteVisit
+        updateVisit, deleteVisit,
+        inventory, refreshInventory, addInventoryItem, updateInventoryItem, deleteInventoryItem,
+        prescriptions, refreshPrescriptions, togglePrescriptionStatus,
+        payments, addPayment, deletePayment,
+        manualDebts, addManualDebt, deleteManualDebt,
+        showToast, hapticFeedback
     }}>
       {children}
+      {/* Toast Container */}
+      <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[9999] flex flex-col gap-2 w-full max-w-[90%] pointer-events-none">
+        {toasts.map(toast => (
+          <div 
+            key={toast.id}
+            className={`px-4 py-3 rounded-2xl shadow-2xl border flex items-center gap-3 animate-in slide-in-from-bottom-4 duration-300 pointer-events-auto ${
+              toast.type === 'success' ? 'bg-emerald-600 border-emerald-500 text-white' :
+              toast.type === 'error' ? 'bg-rose-600 border-rose-500 text-white' :
+              'bg-stone-800 border-stone-700 text-stone-100'
+            }`}
+          >
+            <div className="flex-1 font-bold text-sm">{toast.message}</div>
+          </div>
+        ))}
+      </div>
     </AppContext.Provider>
   );
 };

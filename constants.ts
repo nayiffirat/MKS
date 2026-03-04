@@ -65,3 +65,12 @@ export const NEWS_TEMPLATES: Record<string, { titles: string[], summaries: strin
     summaries: ['Tarım Bakanlığı tarafından açıklanan yeni paketle üreticilere ek destek sağlanacak.']
   }
 };
+
+export const COMMON_CROPS = [
+  "Buğday", "Arpa", "Mısır", "Pamuk", "Ayçiçeği", "Şeker Pancarı", 
+  "Domates", "Biber", "Patlıcan", "Hıyar", "Kavun", "Karpuz", 
+  "Elma", "Armut", "Kiraz", "Vişne", "Kayısı", "Şeftali", 
+  "Zeytin", "Üzüm", "Fındık", "Antep Fıstığı", "Ceviz", "Badem",
+  "Patates", "Soğan", "Sarımsak", "Fasulye", "Nohut", "Mercimek",
+  "Yonca", "Fiğ", "Silajlık Mısır", "Kanola", "Soya"
+].sort((a, b) => a.localeCompare(b, 'tr'));

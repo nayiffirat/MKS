@@ -1,8 +1,5 @@
 
-import { GoogleGenAI } from "@google/genai";
-
-// Strictly follow GenAI guidelines: use the API key directly from process.env.API_KEY
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 
 export const GeminiService = {
   /**
@@ -10,6 +7,8 @@ export const GeminiService = {
    */
   async analyzePlantImage(base64Image: string): Promise<string> {
     try {
+        const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+        const ai = new GoogleGenAI({ apiKey });
         const cleanBase64 = base64Image.replace(/^data:image\/(png|jpg|jpeg);base64,/, "");
 
         const response = await ai.models.generateContent({
@@ -28,8 +27,7 @@ export const GeminiService = {
                 ]
             },
             config: {
-                // Enabling thinking for better analysis accuracy with limited budget
-                thinkingConfig: { thinkingBudget: 1000 },
+                thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
                 maxOutputTokens: 2000
             }
         });
@@ -46,12 +44,14 @@ export const GeminiService = {
    */
   async askAgriBot(prompt: string): Promise<string> {
     try {
+        const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+        const ai = new GoogleGenAI({ apiKey });
         const response = await ai.models.generateContent({
             model: 'gemini-3-flash-preview',
             contents: prompt,
             config: {
                 systemInstruction: "Sen 'MKS Asistan' adında, deneyimli bir Kıdemli Ziraat Mühendisisin. Tarım mevzuatı, bitki koruma, bitki besleme ve akıllı tarım teknolojileri konularında uzmansın. Yanıtların profesyonel, yapıcı, kısa ve Türkçe olmalı. Gemini 3 motoru ile en güncel teknik verileri kullan.",
-                thinkingConfig: { thinkingBudget: 500 },
+                thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
                 maxOutputTokens: 1000
             }
         });

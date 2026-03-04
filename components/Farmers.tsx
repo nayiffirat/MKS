@@ -3,8 +3,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { dbService } from '../services/db';
 import { useAppViewModel } from '../context/AppContext';
 import { ContactService, ContactInfo } from '../services/contact';
-import { Farmer, VisitLog, Prescription } from '../types';
-import { Search, Phone, MessageCircle, MapPin, Wheat, ChevronLeft, ChevronRight, Contact, Loader2, User, Ruler, FileText, Calendar, Navigation, Plus, X, ArrowLeft, Edit2, Trash2, CheckSquare, Square, Check, FlaskConical, Clock, ImageIcon, Sparkles, Upload, AlertCircle, MessageSquare, Share2, Save, Download, FileJson } from 'lucide-react';
+import { Farmer, VisitLog, Prescription, ManualDebt } from '../types';
+import { COMMON_CROPS } from '../constants';
+import { Search, Phone, MessageCircle, MapPin, Wheat, ChevronLeft, ChevronRight, Contact, Loader2, User, Ruler, FileText, Calendar, Navigation, Plus, X, ArrowLeft, Edit2, Trash2, CheckSquare, Square, Check, FlaskConical, Clock, ImageIcon, Sparkles, Upload, AlertCircle, MessageSquare, Share2, Save, Download, FileJson, RefreshCw, Wallet, History, CreditCard, TrendingDown, TrendingUp as TrendingUpIcon } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 
@@ -31,8 +32,7 @@ interface FarmerModalProps {
         fullName: string;
         phoneNumber: string;
         village: string;
-        fieldSize: string;
-        crops: string;
+        fields: { id: string; name: string; size: string; crop: string; plantingDate?: string; currentStage?: string; }[];
     };
     setData: (data: any) => void;
     onSave: (e: React.FormEvent) => void;
@@ -48,24 +48,126 @@ const FarmerModal: React.FC<FarmerModalProps> = ({ isOpen, onClose, mode, isSavi
         else setData({ ...data, phoneNumber: val });
     };
 
+    const addField = () => {
+        setData({
+            ...data,
+            fields: [...(data.fields || []), { id: crypto.randomUUID() as string, name: '', size: '', crop: '' }]
+        });
+    };
+
+    const removeField = (id: string) => {
+        if (!data.fields || data.fields.length <= 1) return;
+        setData({
+            ...data,
+            fields: data.fields.filter(f => f.id !== id)
+        });
+    };
+
+    const updateField = (id: string, field: string, value: string) => {
+        setData({
+            ...data,
+            fields: (data.fields || []).map(f => f.id === id ? { ...f, [field]: value } : f)
+        });
+    };
+
     return (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-stone-900 rounded-3xl w-full max-w-md p-5 shadow-2xl relative border border-white/10 animate-in zoom-in-95 duration-200">
-            <button onClick={onClose} className="absolute top-3 right-3 p-1.5 bg-stone-800 rounded-full text-stone-400 hover:text-stone-200"><X size={16} /></button>
-            <div className="text-center mb-4"><h2 className="text-base font-bold text-stone-100">{mode === 'ADD' ? 'Yeni Çiftçi Ekle' : 'Çiftçiyi Düzenle'}</h2></div>
-            <form onSubmit={onSave} className="space-y-2.5">
-              <div><label className="text-[9px] font-bold text-stone-500 ml-1 uppercase">Ad Soyad</label><input required type="text" value={data.fullName} onChange={e => setData({...data, fullName: e.target.value})} className="w-full p-2.5 bg-stone-950 border border-stone-800 rounded-xl outline-none font-medium text-white text-xs" placeholder="İsim" /></div>
-              <div className="grid grid-cols-2 gap-2.5">
-                  <div><label className="text-[9px] font-bold text-stone-500 ml-1 uppercase">Telefon</label><input required type="tel" value={data.phoneNumber} onChange={handlePhoneChange} className="w-full p-2.5 bg-stone-950 border border-stone-800 rounded-xl outline-none font-medium text-white text-xs" /></div>
-                  <div><label className="text-[9px] font-bold text-stone-500 ml-1 uppercase">Köy</label><input required type="text" value={data.village} onChange={e => setData({...data, village: e.target.value})} className="w-full p-2.5 bg-stone-950 border border-stone-800 rounded-xl outline-none font-medium text-white text-xs" /></div>
+          <div className="bg-stone-900 rounded-3xl w-full max-w-md p-5 shadow-2xl relative border border-white/10 animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+            <button onClick={onClose} className="absolute top-3 right-3 p-1.5 bg-stone-800 rounded-full text-stone-400 hover:text-stone-200 z-10"><X size={16} /></button>
+            <div className="text-center mb-4 shrink-0"><h2 className="text-base font-bold text-stone-100">{mode === 'ADD' ? 'Yeni Çiftçi Ekle' : 'Çiftçiyi Düzenle'}</h2></div>
+            
+            <form onSubmit={onSave} className="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-4">
+              <div className="space-y-2.5">
+                <div><label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Ad Soyad</label><input required type="text" value={data.fullName} onChange={e => setData({...data, fullName: e.target.value})} className="w-full p-2.5 bg-stone-950 border border-stone-800 rounded-xl outline-none font-medium text-white text-xs focus:border-emerald-500/50 transition-all" placeholder="İsim" /></div>
+                <div className="grid grid-cols-2 gap-2.5">
+                    <div><label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Telefon</label><input required type="tel" value={data.phoneNumber} onChange={handlePhoneChange} className="w-full p-2.5 bg-stone-950 border border-stone-800 rounded-xl outline-none font-medium text-white text-xs focus:border-emerald-500/50 transition-all" /></div>
+                    <div><label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Köy</label><input required type="text" value={data.village} onChange={e => setData({...data, village: e.target.value})} className="w-full p-2.5 bg-stone-950 border border-stone-800 rounded-xl outline-none font-medium text-white text-xs focus:border-emerald-500/50 transition-all" /></div>
+                </div>
               </div>
-              <div className="grid grid-cols-2 gap-2.5">
-                  <div><label className="text-[9px] font-bold text-stone-500 ml-1 uppercase">Arazi (da)</label><input type="number" value={data.fieldSize} onChange={e => setData({...data, fieldSize: e.target.value})} className="w-full p-2.5 bg-stone-950 border border-stone-800 rounded-xl outline-none font-medium text-white text-xs" /></div>
-                  <div><label className="text-[9px] font-bold text-stone-500 ml-1 uppercase">Ürün</label><input type="text" value={data.crops} onChange={e => setData({...data, crops: e.target.value})} className="w-full p-2.5 bg-stone-950 border border-stone-800 rounded-xl outline-none font-medium text-white text-xs" /></div>
+
+              <div className="pt-2">
+                <div className="flex items-center justify-between mb-2">
+                    <label className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Tarlalar / Araziler</label>
+                    <button type="button" onClick={addField} className="flex items-center gap-1 text-[9px] font-bold bg-emerald-900/30 text-emerald-400 px-2 py-1 rounded-lg border border-emerald-500/20 hover:bg-emerald-900/50 transition-all">
+                        <Plus size={12} /> Tarla Ekle
+                    </button>
+                </div>
+
+                <div className="space-y-3">
+                    {(data.fields || []).map((field, idx) => (
+                        <div key={field.id} className="p-3 bg-stone-950/50 border border-stone-800 rounded-2xl relative animate-in slide-in-from-top-2 duration-200">
+                            {data.fields && data.fields.length > 1 && (
+                                <button type="button" onClick={() => removeField(field.id)} className="absolute -top-2 -right-2 w-5 h-5 bg-red-900/80 text-white rounded-full flex items-center justify-center border border-red-500/30 shadow-lg active:scale-90 transition-all">
+                                    <X size={10} />
+                                </button>
+                            )}
+                            <div className="grid grid-cols-12 gap-2">
+                                <div className="col-span-12">
+                                    <input 
+                                        type="text" 
+                                        placeholder="Tarla Adı (Örn: Ev Arkası)" 
+                                        value={field.name} 
+                                        onChange={e => updateField(field.id, 'name', e.target.value)}
+                                        className="w-full bg-transparent border-b border-stone-800 py-1 text-[11px] text-stone-200 outline-none focus:border-emerald-500/50"
+                                    />
+                                </div>
+                                <div className="col-span-5">
+                                    <label className="text-[8px] font-bold text-stone-600 uppercase ml-1">Alan (da)</label>
+                                    <input 
+                                        required
+                                        type="number" 
+                                        value={field.size} 
+                                        onChange={e => updateField(field.id, 'size', e.target.value)}
+                                        className="w-full p-2 bg-stone-900 border border-stone-800 rounded-lg outline-none font-medium text-white text-[11px]" 
+                                    />
+                                </div>
+                                <div className="col-span-7">
+                                    <label className="text-[8px] font-bold text-stone-600 uppercase ml-1">Ürün</label>
+                                    <input 
+                                        required
+                                        type="text" 
+                                        list="crop-options"
+                                        value={field.crop} 
+                                        onChange={e => updateField(field.id, 'crop', e.target.value)}
+                                        className="w-full p-2 bg-stone-900 border border-stone-800 rounded-lg outline-none font-medium text-white text-[11px]" 
+                                        placeholder="Ürün Seçin veya Yazın"
+                                    />
+                                    <datalist id="crop-options">
+                                        {COMMON_CROPS.map(crop => (
+                                            <option key={crop} value={crop} />
+                                        ))}
+                                    </datalist>
+                                </div>
+                                <div className="col-span-6">
+                                    <label className="text-[8px] font-bold text-stone-600 uppercase ml-1">Ekim Tarihi</label>
+                                    <input 
+                                        type="date" 
+                                        value={field.plantingDate || ''} 
+                                        onChange={e => updateField(field.id, 'plantingDate', e.target.value)}
+                                        className="w-full p-2 bg-stone-900 border border-stone-800 rounded-lg outline-none font-medium text-white text-[11px]" 
+                                    />
+                                </div>
+                                <div className="col-span-6">
+                                    <label className="text-[8px] font-bold text-stone-600 uppercase ml-1">Mevcut Evre</label>
+                                    <input 
+                                        type="text" 
+                                        value={field.currentStage || ''} 
+                                        onChange={e => updateField(field.id, 'currentStage', e.target.value)}
+                                        className="w-full p-2 bg-stone-900 border border-stone-800 rounded-lg outline-none font-medium text-white text-[11px]" 
+                                        placeholder="Örn: Çimlenme"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
               </div>
-              <button disabled={isSaving} type="submit" className="w-full bg-emerald-700 text-white py-3 rounded-xl font-bold text-xs shadow-lg mt-2 flex justify-center items-center">
-                  {isSaving ? <Loader2 size={16} className="animate-spin" /> : 'Kaydet'}
-              </button>
+
+              <div className="pt-2 shrink-0">
+                <button disabled={isSaving} type="submit" className="w-full bg-emerald-700 text-white py-3.5 rounded-2xl font-bold text-xs shadow-xl shadow-emerald-900/20 flex justify-center items-center active:scale-95 transition-all border border-emerald-500/20">
+                    {isSaving ? <Loader2 size={18} className="animate-spin" /> : 'Çiftçiyi Kaydet'}
+                </button>
+              </div>
             </form>
           </div>
         </div>
@@ -73,16 +175,48 @@ const FarmerModal: React.FC<FarmerModalProps> = ({ isOpen, onClose, mode, isSavi
 };
 
 export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescription }) => {
-  const { bulkAddFarmers, addFarmer, updateFarmer, deleteFarmer, userProfile, updateVisit, deleteVisit } = useAppViewModel();
   const [farmers, setFarmers] = useState<Farmer[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedFarmer, setSelectedFarmer] = useState<Farmer | null>(null);
+
+  // Sub-navigation sync
+  useEffect(() => {
+    const handlePop = (e: PopStateEvent) => {
+      const state = e.state;
+      if (state?.view === 'FARMERS') {
+        if (state.farmerId) {
+          const target = farmers.find(f => f.id === state.farmerId);
+          if (target) setSelectedFarmer(target);
+        } else {
+          setSelectedFarmer(null);
+        }
+      }
+    };
+    window.addEventListener('popstate', handlePop);
+    return () => window.removeEventListener('popstate', handlePop);
+  }, [farmers]);
+
+  const changeFarmerSelection = (farmer: Farmer | null) => {
+    if (farmer === selectedFarmer) return;
+
+    if (!farmer) {
+      if (window.history.state?.farmerId) {
+        window.history.back();
+      } else {
+        setSelectedFarmer(null);
+      }
+    } else {
+      window.history.pushState({ ...window.history.state, farmerId: farmer.id }, '');
+      setSelectedFarmer(farmer);
+    }
+  };
   const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Specific Data for Selected Farmer
   const [farmerVisits, setFarmerVisits] = useState<VisitLog[]>([]);
   const [farmerPrescriptions, setFarmerPrescriptions] = useState<Prescription[]>([]);
+  const [farmerManualDebts, setFarmerManualDebts] = useState<ManualDebt[]>([]);
   const [isDataLoading, setIsDataLoading] = useState(false);
 
   // Prescription Detail & Sharing
@@ -98,6 +232,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const [importPreviewList, setImportPreviewList] = useState<TempContact[]>([]);
   const [selectedImportIds, setSelectedImportIds] = useState<Set<string>>(new Set());
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   // Add/Edit Farmer Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -108,12 +243,31 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       fullName: '',
       phoneNumber: '+90 ',
       village: '',
-      fieldSize: '',
-      crops: ''
+      fields: [{ id: crypto.randomUUID() as string, name: '', size: '', crop: '', plantingDate: '', currentStage: '' }]
   });
   
   // Detail View Tab State
-  const [activeTab, setActiveTab] = useState<'GENERAL' | 'VISITS' | 'PRESCRIPTIONS'>('GENERAL');
+  const [activeTab, setActiveTab] = useState<'GENERAL' | 'VISITS' | 'PRESCRIPTIONS' | 'DEBT'>('GENERAL');
+
+  // Payment Modal State
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentNote, setPaymentNote] = useState('');
+  const [isSavingPayment, setIsSavingPayment] = useState(false);
+
+  // Manual Debt Modal State
+  const [isManualDebtModalOpen, setIsManualDebtModalOpen] = useState(false);
+  const [debtAmount, setDebtAmount] = useState('');
+  const [debtNote, setDebtNote] = useState('');
+  const [isSavingDebt, setIsSavingDebt] = useState(false);
+
+  // Report Modal State
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [reportStartDate, setReportStartDate] = useState('');
+  const [reportEndDate, setReportEndDate] = useState('');
+  const [isViewingReport, setIsViewingReport] = useState(false);
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+  const reportRef = useRef<HTMLDivElement>(null);
 
   const loadFarmers = async () => {
       const list = await dbService.getFarmers();
@@ -134,14 +288,16 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const loadFarmerDetails = async () => {
       if (!selectedFarmer) return;
       setIsDataLoading(true);
-      const [visits, prescriptions] = await Promise.all([
+      const [visits, prescriptions, debts] = await Promise.all([
           dbService.getVisitsByFarmer(selectedFarmer.id),
-          dbService.getPrescriptionsByFarmer(selectedFarmer.id)
+          dbService.getPrescriptionsByFarmer(selectedFarmer.id),
+          dbService.getManualDebtsByFarmer(selectedFarmer.id)
       ]);
       
       // Sort by date descending (newest first)
       setFarmerVisits(visits.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
       setFarmerPrescriptions(prescriptions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+      setFarmerManualDebts(debts.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
       setIsDataLoading(false);
   };
 
@@ -149,6 +305,8 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const handleDeleteVisit = async (visitId: string) => {
       if (window.confirm("Bu ziyaret kaydını silmek istediğinize emin misiniz?")) {
           await deleteVisit(visitId);
+          showToast('Ziyaret kaydı silindi', 'success');
+          hapticFeedback('medium');
           await loadFarmerDetails(); // Listeyi yenile
       }
   };
@@ -164,6 +322,8 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           ...editingVisit,
           note: editVisitNote
       });
+      showToast('Ziyaret notu güncellendi', 'success');
+      hapticFeedback('success');
       setEditingVisit(null);
       setEditVisitNote('');
       await loadFarmerDetails();
@@ -289,7 +449,12 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   };
 
   const confirmBulkImport = async () => {
-      const toAdd = importPreviewList.filter(c => selectedImportIds.has(c.id)).map(c => ({ fullName: c.fullName, phoneNumber: c.phoneNumber, village: 'Rehberden Aktarıldı', fieldSize: 0, crops: '' }));
+      const toAdd = importPreviewList.filter(c => selectedImportIds.has(c.id)).map(c => ({ 
+          fullName: c.fullName, 
+          phoneNumber: c.phoneNumber, 
+          village: 'Rehberden Aktarıldı', 
+          fields: [{ id: crypto.randomUUID(), name: 'Genel', size: 0, crop: 'Belirtilmedi' }] 
+      }));
       if (toAdd.length > 0) {
           setIsImporting(true);
           await bulkAddFarmers(toAdd);
@@ -312,7 +477,17 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       e.preventDefault();
       setIsSavingFarmer(true);
       try {
-          const farmerData = { fullName: editFarmerData.fullName, phoneNumber: editFarmerData.phoneNumber, village: editFarmerData.village, fieldSize: Number(editFarmerData.fieldSize) || 0, crops: editFarmerData.crops };
+          const farmerData = { 
+              fullName: editFarmerData.fullName, 
+              phoneNumber: editFarmerData.phoneNumber, 
+              village: editFarmerData.village, 
+              fields: (editFarmerData.fields || []).map(f => ({
+                  ...f,
+                  size: Number(f.size) || 0,
+                  plantingDate: f.plantingDate || undefined,
+                  currentStage: f.currentStage || undefined
+              }))
+          };
           
           if (modalMode === 'ADD') {
               await addFarmer(farmerData);
@@ -333,23 +508,240 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
 
   const resetModal = () => {
       setIsModalOpen(false); setModalMode('ADD');
-      setEditFarmerData({ id: '', fullName: '', phoneNumber: '+90 ', village: '', fieldSize: '', crops: '' });
+      setEditFarmerData({ 
+          id: '', 
+          fullName: '', 
+          phoneNumber: '+90 ', 
+          village: '', 
+          fields: [{ id: crypto.randomUUID() as string, name: '', size: '', crop: '', plantingDate: '', currentStage: '' }] 
+      });
   };
 
   const openEditModal = () => {
       if (!selectedFarmer) return;
-      setEditFarmerData({ id: selectedFarmer.id, fullName: selectedFarmer.fullName, phoneNumber: selectedFarmer.phoneNumber, village: selectedFarmer.village, fieldSize: selectedFarmer.fieldSize.toString(), crops: selectedFarmer.crops || '' });
+      setEditFarmerData({ 
+          id: selectedFarmer.id, 
+          fullName: selectedFarmer.fullName, 
+          phoneNumber: selectedFarmer.phoneNumber, 
+          village: selectedFarmer.village, 
+          fields: (selectedFarmer.fields || []).map(f => ({ 
+              ...f, 
+              size: f.size.toString(),
+              plantingDate: f.plantingDate || '',
+              currentStage: f.currentStage || ''
+          }))
+      });
       setModalMode('EDIT'); setIsModalOpen(true);
   };
+
+  const { addPayment, deletePayment: removePayment, addManualDebt, deleteManualDebt, payments, bulkAddFarmers, addFarmer, updateFarmer, deleteFarmer, userProfile, updateUserProfile, updateVisit, deleteVisit, showToast, hapticFeedback } = useAppViewModel();
+
+  const handleSavePayment = async () => {
+      if (!selectedFarmer || !paymentAmount) return;
+      setIsSavingPayment(true);
+      try {
+          await addPayment({
+              farmerId: selectedFarmer.id,
+              amount: Number(paymentAmount),
+              date: new Date().toISOString(),
+              method: 'CASH',
+              note: paymentNote
+          });
+          showToast('Ödeme kaydedildi', 'success');
+          hapticFeedback('success');
+          setIsPaymentModalOpen(false);
+          setPaymentAmount('');
+          setPaymentNote('');
+          await loadFarmerDetails();
+      } catch (e) {
+          showToast('Ödeme kaydedilemedi', 'error');
+      } finally {
+          setIsSavingPayment(false);
+      }
+  };
+
+  const handleSaveManualDebt = async () => {
+      if (!selectedFarmer || !debtAmount) return;
+      setIsSavingDebt(true);
+      try {
+          await addManualDebt({
+              farmerId: selectedFarmer.id,
+              amount: Number(debtAmount),
+              date: new Date().toISOString(),
+              note: debtNote
+          });
+          showToast('Borç kaydedildi', 'success');
+          hapticFeedback('success');
+          setIsManualDebtModalOpen(false);
+          setDebtAmount('');
+          setDebtNote('');
+          await loadFarmerDetails();
+      } catch (e) {
+          showToast('Borç kaydedilemedi', 'error');
+      } finally {
+          setIsSavingDebt(false);
+      }
+  };
+
+  const handleDeleteManualDebt = async (id: string) => {
+      if (window.confirm("Bu borç kaydını silmek istediğinize emin misiniz?")) {
+          await deleteManualDebt(id);
+          showToast('Borç kaydı silindi', 'success');
+          hapticFeedback('medium');
+          await loadFarmerDetails();
+      }
+  };
+
+  const handleReportWhatsAppText = () => {
+      if (!selectedFarmer) return;
+      
+      let text = `*CARİ HESAP EKSTRESİ*\n`;
+      text += `Sayın *${selectedFarmer.fullName}*,\n\n`;
+      text += `Dönem: ${reportStartDate ? new Date(reportStartDate).toLocaleDateString('tr-TR') : 'Başlangıç'} - ${reportEndDate ? new Date(reportEndDate).toLocaleDateString('tr-TR') : 'Güncel'}\n\n`;
+      
+      const filteredItems = [
+          ...farmerPrescriptions.map(p => ({ ...p, type: 'DEBT', label: 'Reçete Satışı' })),
+          ...farmerPayments.map(p => ({ ...p, type: 'PAYMENT', label: 'Tahsilat' })),
+          ...farmerManualDebts.map(d => ({ ...d, type: 'DEBT', label: 'Manuel Borç' }))
+      ]
+      .filter(item => {
+          const itemDate = new Date(item.date);
+          if (reportStartDate && itemDate < new Date(reportStartDate)) return false;
+          if (reportEndDate && itemDate > new Date(reportEndDate)) return false;
+          return true;
+      })
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+      filteredItems.forEach(item => {
+          const date = new Date(item.date).toLocaleDateString('tr-TR');
+          const amount = (item as any).amount || (item as any).totalAmount;
+          text += `${date} | ${item.label}: *${item.type === 'DEBT' ? '-' : '+'}${amount.toLocaleString('tr-TR')} ₺*\n`;
+      });
+
+      text += `\n*TOPLAM DURUM:*\n`;
+      text += `Toplam Alış: *${totalDebt.toLocaleString('tr-TR')} ₺*\n`;
+      text += `Toplam Ödeme: *${totalPaid.toLocaleString('tr-TR')} ₺*\n`;
+      text += `*KALAN BAKİYE: ${Math.abs(balance).toLocaleString('tr-TR')} ₺ ${balance >= 0 ? 'ALACAK' : 'BORÇ'}*\n`;
+      
+      const url = `https://wa.me/${selectedFarmer.phoneNumber.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`;
+      window.open(url, '_blank');
+  };
+
+  const handleReportPdfAction = async (action: 'SHARE' | 'DOWNLOAD') => {
+      if (!selectedFarmer || !reportRef.current) return;
+      setIsGeneratingReport(true);
+      try {
+          const canvas = await html2canvas(reportRef.current, {
+              scale: 2,
+              backgroundColor: '#ffffff',
+              useCORS: true,
+              logging: false,
+              allowTaint: true
+          });
+          const imgData = canvas.toDataURL('image/jpeg', 0.95);
+          const pdf = new jsPDF('p', 'mm', 'a4');
+          const pdfWidth = pdf.internal.pageSize.getWidth();
+          const pdfHeight = pdf.internal.pageSize.getHeight();
+          const imgWidth = canvas.width;
+          const imgHeight = canvas.height;
+          const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight);
+          
+          pdf.addImage(imgData, 'JPEG', 0, 0, imgWidth * ratio, imgHeight * ratio);
+          
+          const safeName = selectedFarmer.fullName.replace(/[^a-zA-Z0-9]/g, '_');
+          const fileName = `${safeName}_Cari_Rapor.pdf`;
+
+          if (action === 'DOWNLOAD') {
+              pdf.save(fileName);
+              showToast('Rapor indirildi', 'success');
+          } else {
+              const pdfBlob = pdf.output('blob');
+              const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
+              const shareData = {
+                  files: [file],
+                  title: 'Cari Hesap Raporu'
+              };
+
+              try {
+                  if (navigator.canShare && navigator.canShare(shareData)) {
+                      await navigator.share(shareData);
+                  } else {
+                      throw new Error("Paylaşım desteklenmiyor");
+                  }
+              } catch (shareError) {
+                  console.warn("Share failed, trying fallback.", shareError);
+                  pdf.save(fileName);
+              }
+          }
+      } catch (e) {
+          showToast('Rapor işlemi başarısız', 'error');
+      } finally {
+          setIsGeneratingReport(false);
+      }
+  };
+
+  const getDueDate = (item: any) => {
+      if (item.type === 'PAYMENT') return null;
+      if (!selectedFarmer) return null;
+      
+      let crop = '';
+      if (item.fieldId) {
+          const field = selectedFarmer.fields.find(f => f.id === item.fieldId);
+          if (field) crop = field.crop;
+      } else if (item.note) {
+          crop = item.note; // Manual debt might have crop in note
+      }
+      
+      const d = new Date(item.date);
+      const year = d.getFullYear();
+      const cropLower = crop.toLowerCase();
+      
+      if (cropLower.includes('buğday') || cropLower.includes('arpa')) {
+          return `30 Haz ${d.getMonth() > 5 ? year + 1 : year}`;
+      }
+      if (cropLower.includes('pamuk') || cropLower.includes('mısır')) {
+          return `30 Kas ${d.getMonth() > 10 ? year + 1 : year}`;
+      }
+      return null;
+  };
+
+  const handleDeletePayment = async (id: string) => {
+      if (window.confirm("Bu ödeme kaydını silmek istediğinize emin misiniz?")) {
+          await removePayment(id);
+          showToast('Ödeme kaydı silindi', 'success');
+      }
+  };
+
+  const farmerPayments = payments.filter(p => p.farmerId === selectedFarmer?.id);
+  const totalPaid = farmerPayments.reduce((acc, p) => acc + p.amount, 0);
+  const totalDebt = farmerPrescriptions.reduce((acc, p) => acc + (p.totalAmount || 0), 0) + farmerManualDebts.reduce((acc, d) => acc + d.amount, 0);
+  const balance = totalPaid - totalDebt;
 
   const handleDeleteFarmer = async () => {
       if (!selectedFarmer) return;
       if (window.confirm("Bu çiftçiyi ve tüm kayıtlarını silmek istediğinize emin misiniz?")) {
-          await deleteFarmer(selectedFarmer.id); setSelectedFarmer(null); await loadFarmers();
+          await deleteFarmer(selectedFarmer.id); 
+          showToast('Çiftçi kaydı silindi', 'success');
+          hapticFeedback('medium');
+          changeFarmerSelection(null); 
+          await loadFarmers();
       }
   };
 
   const filteredFarmers = farmers.filter(f => f.fullName.toLowerCase().includes(searchTerm.toLowerCase()) || f.village.toLowerCase().includes(searchTerm.toLowerCase()));
+
+  const handleSync = async () => {
+      setIsSyncing(true);
+      try {
+          const result = await dbService.backupAllData();
+          updateUserProfile({ ...userProfile, lastSyncTime: result.timestamp });
+          alert("Tüm veriler başarıyla Firebase'e yedeklendi.");
+      } catch (error) {
+          alert("Yedekleme hatası: " + (error as any).message);
+      } finally {
+          setIsSyncing(false);
+      }
+  };
 
   // --- DETAIL VIEW ---
   if (selectedFarmer) {
@@ -402,11 +794,137 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
          );
      }
 
+     if (isViewingReport) {
+         return (
+            <div className="pb-24 animate-in slide-in-from-right duration-300">
+                <div className="flex items-center justify-between mb-4 sticky top-0 bg-stone-950/90 backdrop-blur z-20 py-3 border-b border-white/5">
+                    <button onClick={() => setIsViewingReport(false)} className="flex items-center text-stone-400 hover:text-stone-200 font-medium px-2 py-1 -ml-2 rounded-lg hover:bg-white/5 transition-colors text-xs">
+                        <ChevronLeft className="mr-1" size={18}/> Cari Hesaba Dön
+                    </button>
+                </div>
+                
+                <div className="overflow-x-auto pb-4">
+                    <div ref={reportRef} className="bg-white p-8 rounded-2xl shadow-xl w-[210mm] mx-auto text-stone-900 border border-stone-300 mt-2">
+                        <div className="flex justify-between items-start border-b-2 border-stone-900 pb-6 mb-8">
+                            <div>
+                                <h1 className="text-3xl font-black uppercase tracking-tighter mb-1">Cari Hesap Ekstresi</h1>
+                                <p className="text-stone-500 font-bold uppercase tracking-widest text-xs">Ziraat Mühendisi Otomasyon Sistemi</p>
+                            </div>
+                            <div className="text-right">
+                                <p className="text-sm font-bold">{new Date().toLocaleDateString('tr-TR')}</p>
+                                <p className="text-[10px] text-stone-500">Rapor No: {Math.random().toString(36).substring(7).toUpperCase()}</p>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-10 mb-10">
+                            <div className="bg-stone-50 p-6 rounded-2xl border border-stone-200">
+                                <h2 className="text-[10px] font-black uppercase tracking-widest text-stone-400 mb-3">Müşteri Bilgileri</h2>
+                                <p className="text-xl font-black mb-1">{selectedFarmer.fullName}</p>
+                                <p className="text-sm text-stone-600 mb-1">{selectedFarmer.village}</p>
+                                <p className="text-sm font-mono text-stone-500">{selectedFarmer.phoneNumber}</p>
+                            </div>
+                            <div className="bg-stone-50 p-6 rounded-2xl border border-stone-200">
+                                <h2 className="text-[10px] font-black uppercase tracking-widest text-stone-400 mb-3">Rapor Dönemi</h2>
+                                <p className="text-lg font-bold">
+                                    {reportStartDate ? new Date(reportStartDate).toLocaleDateString('tr-TR') : 'Başlangıç'} - {reportEndDate ? new Date(reportEndDate).toLocaleDateString('tr-TR') : 'Güncel'}
+                                </p>
+                            </div>
+                        </div>
+
+                        <table className="w-full mb-10">
+                            <thead>
+                                <tr className="border-b-2 border-stone-900 text-left">
+                                    <th className="py-4 text-[10px] font-black uppercase tracking-widest">Tarih</th>
+                                    <th className="py-4 text-[10px] font-black uppercase tracking-widest">İşlem</th>
+                                    <th className="py-4 text-[10px] font-black uppercase tracking-widest">Açıklama</th>
+                                    <th className="py-4 text-[10px] font-black uppercase tracking-widest text-right">Borç</th>
+                                    <th className="py-4 text-[10px] font-black uppercase tracking-widest text-right">Alacak</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {[
+                                    ...farmerPrescriptions.map(p => ({ ...p, type: 'DEBT', label: 'Reçete Satışı' })),
+                                    ...farmerPayments.map(p => ({ ...p, type: 'PAYMENT', label: 'Tahsilat' })),
+                                    ...farmerManualDebts.map(d => ({ ...d, type: 'DEBT', label: 'Manuel Borç' }))
+                                ]
+                                .filter(item => {
+                                    const itemDate = new Date(item.date);
+                                    if (reportStartDate && itemDate < new Date(reportStartDate)) return false;
+                                    if (reportEndDate && itemDate > new Date(reportEndDate)) return false;
+                                    return true;
+                                })
+                                .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+                                .map((item, idx) => (
+                                    <tr key={idx} className="border-b border-stone-100">
+                                        <td className="py-4 text-sm">{new Date(item.date).toLocaleDateString('tr-TR')}</td>
+                                        <td className="py-4 text-sm font-bold">{item.label}</td>
+                                        <td className="py-4 text-sm text-stone-500">{(item as any).note || '-'}</td>
+                                        <td className="py-4 text-sm text-right font-bold text-rose-600">{item.type === 'DEBT' ? `${((item as any).amount || (item as any).totalAmount).toLocaleString('tr-TR')} ₺` : '-'}</td>
+                                        <td className="py-4 text-sm text-right font-bold text-emerald-600">{item.type === 'PAYMENT' ? `${(item as any).amount.toLocaleString('tr-TR')} ₺` : '-'}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+
+                        <div className="flex justify-end">
+                            <div className="w-80 space-y-3">
+                                <div className="flex justify-between items-center py-2 border-b border-stone-100">
+                                    <span className="text-xs font-bold text-stone-500 uppercase">Toplam Alışlar</span>
+                                    <span className="text-lg font-bold text-rose-600">{totalDebt.toLocaleString('tr-TR')} ₺</span>
+                                </div>
+                                <div className="flex justify-between items-center py-2 border-b border-stone-100">
+                                    <span className="text-xs font-bold text-stone-500 uppercase">Toplam Ödemeler</span>
+                                    <span className="text-lg font-bold text-emerald-600">{totalPaid.toLocaleString('tr-TR')} ₺</span>
+                                </div>
+                                <div className="flex justify-between items-center py-4 bg-stone-900 text-white px-6 rounded-2xl shadow-xl">
+                                    <span className="text-sm font-black uppercase tracking-widest">Kalan Bakiye</span>
+                                    <span className="text-2xl font-black">{Math.abs(balance).toLocaleString('tr-TR')} ₺ {balance >= 0 ? 'ALACAK' : 'BORÇ'}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="mt-20 pt-10 border-t border-stone-100 text-center">
+                            <p className="text-[10px] text-stone-400 font-bold uppercase tracking-[0.2em]">Bu belge dijital olarak oluşturulmuştur.</p>
+                        </div>
+                    </div>
+                </div>
+
+                {/* ACTION BUTTONS */}
+                <div className="max-w-sm mx-auto flex gap-2 mt-4 px-4">
+                    <button 
+                        onClick={() => handleReportPdfAction('SHARE')} 
+                        disabled={isGeneratingReport} 
+                        className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-bold shadow-xl shadow-blue-900/30 hover:bg-blue-500 active:scale-95 transition-all flex items-center justify-center disabled:opacity-70 text-xs"
+                    >
+                        {isGeneratingReport ? <Loader2 size={16} className="animate-spin mr-2"/> : <Share2 size={16} className="mr-2"/>} 
+                        PDF Paylaş
+                    </button>
+                    
+                    <button 
+                        onClick={handleReportWhatsAppText}
+                        className="flex-1 py-3 rounded-xl bg-[#25D366] text-white font-bold shadow-xl hover:bg-[#20bd5a] active:scale-95 transition-all flex items-center justify-center text-xs"
+                    >
+                        <MessageCircle size={16} className="mr-2"/> 
+                        WP Özet
+                    </button>
+
+                    <button 
+                        onClick={() => handleReportPdfAction('DOWNLOAD')} 
+                        disabled={isGeneratingReport} 
+                        className="px-4 py-3 rounded-xl bg-stone-800 text-stone-200 font-bold border border-white/10 hover:bg-stone-700 active:scale-95 transition-all flex items-center justify-center disabled:opacity-70 text-xs"
+                    >
+                        {isGeneratingReport ? <Loader2 size={16} className="animate-spin"/> : <Download size={16}/>} 
+                    </button>
+                </div>
+            </div>
+         );
+     }
+
      return (
         <div className="pb-24 animate-in slide-in-from-right duration-300">
             {/* STABILIZED HEADER: Sticky & Better Buttons */}
             <div className="sticky top-0 z-20 bg-stone-950/90 backdrop-blur-xl border-b border-white/5 py-3 mb-4 -mx-4 px-4 flex justify-between items-center shadow-lg shadow-black/20">
-                 <button onClick={() => setSelectedFarmer(null)} className="flex items-center text-stone-400 hover:text-stone-200 font-bold px-3 py-2 -ml-2 rounded-xl hover:bg-white/5 transition-colors text-xs">
+                 <button onClick={() => changeFarmerSelection(null)} className="flex items-center text-stone-400 hover:text-stone-200 font-bold px-3 py-2 -ml-2 rounded-xl hover:bg-white/5 transition-colors text-xs">
                      <ChevronLeft className="mr-1" size={18}/> Geri
                  </button>
                  <div className="flex items-center space-x-2">
@@ -461,9 +979,9 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
 
             {/* Tabs */}
             <div className="flex p-1 bg-stone-900/60 backdrop-blur rounded-xl mb-4 border border-white/5">
-                {(['GENERAL', 'VISITS', 'PRESCRIPTIONS'] as const).map(tab => (
+                {(['GENERAL', 'VISITS', 'PRESCRIPTIONS', 'DEBT'] as const).map(tab => (
                     <button key={tab} onClick={() => setActiveTab(tab)} className={`flex-1 py-2 text-[10px] font-black uppercase tracking-wide rounded-lg transition-all ${activeTab === tab ? 'bg-stone-700 text-white shadow-sm' : 'text-stone-500 hover:text-stone-300'}`}>
-                        {tab === 'GENERAL' ? 'Genel' : (tab === 'VISITS' ? 'Ziyaretler' : 'Reçeteler')}
+                        {tab === 'GENERAL' ? 'Genel' : (tab === 'VISITS' ? 'Ziyaretler' : (tab === 'PRESCRIPTIONS' ? 'Reçeteler' : 'Cari'))}
                     </button>
                 ))}
             </div>
@@ -474,20 +992,145 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                     <div className="space-y-3">
                         <div className="bg-stone-900/80 backdrop-blur p-4 rounded-2xl border border-white/5 shadow-sm">
                             <h3 className="font-bold text-stone-200 text-xs mb-3 flex items-center uppercase tracking-wider opacity-70"><Wheat size={14} className="mr-1.5 text-amber-500"/> Tarla Bilgileri</h3>
-                            <div className="grid grid-cols-2 gap-3">
-                                <div className="p-3 bg-stone-950/50 rounded-xl border border-white/5">
-                                    <p className="text-[8px] text-stone-500 uppercase font-bold mb-1">Arazi Büyüklüğü</p>
-                                    <p className="text-base font-bold text-stone-200">{selectedFarmer.fieldSize} <span className="text-[10px] font-normal text-stone-400">da</span></p>
-                                </div>
-                                <div className="p-3 bg-stone-950/50 rounded-xl border border-white/5">
-                                    <p className="text-[8px] text-stone-500 uppercase font-bold mb-1">Ekili Ürün</p>
-                                    <p className="text-base font-bold text-stone-200">{selectedFarmer.crops || '-'}</p>
+                            <div className="space-y-2">
+                                {(selectedFarmer.fields || []).map((field, idx) => (
+                                    <div key={field.id} className="p-3 bg-stone-950/50 rounded-xl border border-white/5">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div className="flex-1">
+                                                <p className="text-[8px] text-stone-500 uppercase font-bold mb-0.5">{field.name || `Tarla ${idx + 1}`}</p>
+                                                <p className="text-sm font-bold text-stone-200">{field.crop}</p>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="text-[8px] text-stone-500 uppercase font-bold mb-0.5">Alan</p>
+                                                <p className="text-sm font-bold text-emerald-500">{field.size} <span className="text-[10px] font-normal text-stone-400">da</span></p>
+                                            </div>
+                                        </div>
+                                        {(field.plantingDate || field.currentStage) && (
+                                            <div className="flex gap-4 pt-2 border-t border-white/5">
+                                                {field.plantingDate && (
+                                                    <div>
+                                                        <p className="text-[7px] text-stone-500 uppercase font-bold">Ekim</p>
+                                                        <p className="text-[10px] text-stone-300">{new Date(field.plantingDate).toLocaleDateString('tr-TR')}</p>
+                                                    </div>
+                                                )}
+                                                {field.currentStage && (
+                                                    <div>
+                                                        <p className="text-[7px] text-stone-500 uppercase font-bold">Evre</p>
+                                                        <p className="text-[10px] text-stone-300">{field.currentStage}</p>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                                <div className="pt-2 border-t border-white/5 flex justify-between items-center">
+                                    <span className="text-[9px] font-bold text-stone-500 uppercase">Toplam Arazi</span>
+                                    <span className="text-xs font-black text-stone-200">{(selectedFarmer.fields || []).reduce((acc, f) => acc + f.size, 0)} da</span>
                                 </div>
                             </div>
                         </div>
                         <button onClick={() => onNavigateToPrescription(selectedFarmer.id)} className="w-full py-3.5 bg-emerald-700 text-white rounded-2xl font-bold shadow-lg hover:bg-emerald-600 active:scale-95 transition-all flex items-center justify-center text-xs uppercase tracking-wider">
                             <FileText className="mr-2" size={16}/> Yeni Reçete Yaz
                         </button>
+                    </div>
+                )}
+
+                {activeTab === 'DEBT' && (
+                    <div className="space-y-3">
+                        {/* Balance Card */}
+                        <div className="bg-stone-900/80 backdrop-blur p-4 rounded-2xl border border-white/5 shadow-sm">
+                            <div className="flex justify-between items-center mb-4">
+                                <h3 className="font-bold text-stone-200 text-xs flex items-center uppercase tracking-wider opacity-70"><Wallet size={14} className="mr-1.5 text-emerald-500"/> Cari Durum</h3>
+                                <div className="flex gap-2">
+                                    <button onClick={() => setIsReportModalOpen(true)} className="bg-blue-600 text-white px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider shadow-lg shadow-blue-900/20 active:scale-95 transition-all flex items-center">
+                                        <Download size={12} className="mr-1"/> Raporla
+                                    </button>
+                                    <button onClick={() => setIsManualDebtModalOpen(true)} className="bg-rose-600 text-white px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider shadow-lg shadow-rose-900/20 active:scale-95 transition-all flex items-center">
+                                        <Plus size={12} className="mr-1"/> Borç Ekle
+                                    </button>
+                                    <button onClick={() => setIsPaymentModalOpen(true)} className="bg-emerald-600 text-white px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider shadow-lg shadow-emerald-900/20 active:scale-95 transition-all flex items-center">
+                                        <CreditCard size={12} className="mr-1"/> Tahsilat Al
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 gap-3 mb-4">
+                                <div className="bg-stone-950/50 p-3 rounded-xl border border-white/5">
+                                    <p className="text-[8px] text-stone-500 uppercase font-black mb-1">Toplam Borç</p>
+                                    <p className="text-lg font-black text-rose-500">{totalDebt.toLocaleString('tr-TR')} ₺</p>
+                                </div>
+                                <div className="bg-stone-950/50 p-3 rounded-xl border border-white/5">
+                                    <p className="text-[8px] text-stone-500 uppercase font-black mb-1">Toplam Ödeme</p>
+                                    <p className="text-lg font-black text-emerald-500">{totalPaid.toLocaleString('tr-TR')} ₺</p>
+                                </div>
+                            </div>
+
+                            <div className={`p-4 rounded-xl border flex items-center justify-between ${balance >= 0 ? 'bg-emerald-900/20 border-emerald-500/20' : 'bg-rose-900/20 border-rose-500/20'}`}>
+                                <div>
+                                    <p className="text-[9px] text-stone-400 uppercase font-black mb-0.5">Güncel Bakiye</p>
+                                    <p className={`text-xl font-black ${balance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                        {Math.abs(balance).toLocaleString('tr-TR')} ₺
+                                        <span className="text-xs font-bold ml-1">{balance >= 0 ? 'Alacaklı' : 'Borçlu'}</span>
+                                    </p>
+                                </div>
+                                {balance < 0 ? <TrendingDown size={24} className="text-rose-500 opacity-50" /> : <TrendingUpIcon size={24} className="text-emerald-500 opacity-50" />}
+                            </div>
+                        </div>
+
+                        {/* History */}
+                        <div className="bg-stone-900/80 backdrop-blur p-4 rounded-2xl border border-white/5 shadow-sm">
+                            <h3 className="font-bold text-stone-200 text-xs mb-3 flex items-center uppercase tracking-wider opacity-70"><History size={14} className="mr-1.5 text-blue-500"/> İşlem Geçmişi</h3>
+                            <div className="space-y-2 max-h-[400px] overflow-y-auto custom-scrollbar pr-1">
+                                {[
+                                    ...farmerPrescriptions.map(p => ({ ...p, type: 'DEBT', label: 'Reçete Satışı' })), 
+                                    ...farmerPayments.map(p => ({ ...p, type: 'PAYMENT', label: 'Tahsilat' })),
+                                    ...farmerManualDebts.map(d => ({ ...d, type: 'DEBT', label: 'Manuel Borç' }))
+                                ]
+                                    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                                    .map((item, idx) => {
+                                        const dueDate = getDueDate(item);
+                                        const isOverdue = dueDate && new Date() > new Date(dueDate.replace('Haz', 'Jun').replace('Kas', 'Nov'));
+                                        
+                                        return (
+                                            <div key={idx} className="p-3 bg-stone-950/50 rounded-xl border border-white/5 flex items-center justify-between group relative">
+                                                <div className="flex items-center gap-3">
+                                                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${item.type === 'DEBT' ? 'bg-rose-900/20 text-rose-500' : 'bg-emerald-900/20 text-emerald-500'}`}>
+                                                        {item.type === 'DEBT' ? <FileText size={14} /> : <CreditCard size={14} />}
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-[10px] font-bold text-stone-200">{item.label}</p>
+                                                        <p className="text-[8px] text-stone-500">{new Date(item.date).toLocaleDateString('tr-TR')}</p>
+                                                        {dueDate && (
+                                                            <p className={`text-[7px] font-bold mt-0.5 ${isOverdue ? 'text-rose-500 animate-pulse' : 'text-amber-500'}`}>
+                                                                Vade: {dueDate}
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                <div className="text-right flex items-center gap-3">
+                                                    <div>
+                                                        <p className={`text-xs font-black ${item.type === 'DEBT' ? 'text-rose-400' : 'text-emerald-400'}`}>
+                                                            {item.type === 'DEBT' ? '-' : '+'}{(item as any).amount?.toLocaleString('tr-TR') || (item as any).totalAmount?.toLocaleString('tr-TR')} ₺
+                                                        </p>
+                                                        {(item as any).note && <p className="text-[7px] text-stone-500 italic truncate max-w-[60px]">{(item as any).note}</p>}
+                                                    </div>
+                                                    {item.type === 'PAYMENT' ? (
+                                                        <button onClick={() => handleDeletePayment(item.id)} className="opacity-0 group-hover:opacity-100 p-1 text-stone-500 hover:text-rose-500 transition-all">
+                                                            <Trash2 size={12}/>
+                                                        </button>
+                                                    ) : (
+                                                        (item as any).id.startsWith('manual') && (
+                                                            <button onClick={() => handleDeleteManualDebt(item.id)} className="opacity-0 group-hover:opacity-100 p-1 text-stone-500 hover:text-rose-500 transition-all">
+                                                                <Trash2 size={12}/>
+                                                            </button>
+                                                        )
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                            </div>
+                        </div>
                     </div>
                 )}
 
@@ -547,6 +1190,51 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                 onSave={handleSaveFarmer}
             />
             
+            {/* Payment Modal */}
+            {isPaymentModalOpen && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+                    <div className="bg-stone-900 rounded-3xl w-full max-w-md p-5 shadow-2xl relative border border-white/10 animate-in zoom-in-95 duration-200">
+                        <button onClick={() => setIsPaymentModalOpen(false)} className="absolute top-3 right-3 p-1.5 bg-stone-800 rounded-full text-stone-400 hover:text-stone-200 z-10"><X size={16} /></button>
+                        <div className="text-center mb-6">
+                            <div className="w-12 h-12 bg-emerald-900/30 text-emerald-500 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                                <Wallet size={24} />
+                            </div>
+                            <h2 className="text-base font-bold text-stone-100">Tahsilat Kaydı</h2>
+                            <p className="text-[10px] text-stone-500 mt-1">{selectedFarmer.fullName}</p>
+                        </div>
+                        
+                        <div className="space-y-4">
+                            <div>
+                                <label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Ödeme Tutarı (₺)</label>
+                                <input 
+                                    type="number" 
+                                    value={paymentAmount} 
+                                    onChange={e => setPaymentAmount(e.target.value)}
+                                    className="w-full p-3.5 bg-stone-950 border border-stone-800 rounded-2xl outline-none font-black text-emerald-500 text-xl focus:border-emerald-500/50 transition-all text-center" 
+                                    placeholder="0.00"
+                                />
+                            </div>
+                            <div>
+                                <label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Not (Opsiyonel)</label>
+                                <textarea 
+                                    value={paymentNote} 
+                                    onChange={e => setPaymentNote(e.target.value)}
+                                    className="w-full p-3 bg-stone-950 border border-stone-800 rounded-xl outline-none text-stone-200 text-xs focus:border-emerald-500/50 transition-all h-20 resize-none" 
+                                    placeholder="Ödeme açıklaması..."
+                                />
+                            </div>
+                            <button 
+                                onClick={handleSavePayment}
+                                disabled={isSavingPayment || !paymentAmount}
+                                className="w-full bg-emerald-700 text-white py-3.5 rounded-2xl font-bold text-xs shadow-xl shadow-emerald-900/20 flex justify-center items-center active:scale-95 transition-all border border-emerald-500/20 disabled:opacity-50"
+                            >
+                                {isSavingPayment ? <Loader2 size={18} className="animate-spin" /> : 'Tahsilatı Onayla'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {selectedPrescription && !isProcessingPdf && (
                 <div className="hidden"></div>
             )}
@@ -561,27 +1249,43 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
 
       <div className="flex items-center justify-between mb-3 mt-2 px-1">
           <button onClick={onBack} className="flex items-center text-stone-400 hover:text-stone-200 font-medium py-1 rounded-lg transition-colors text-xs"><ArrowLeft size={16} className="mr-1"/> Geri</button>
-          <span className="text-[9px] font-bold text-stone-500 uppercase tracking-widest">{farmers.length} Çiftçi</span>
+          <div className="text-right">
+              <span className="text-[9px] font-bold text-stone-500 uppercase tracking-widest block">{farmers.length} Çiftçi</span>
+              {userProfile.lastSyncTime && (
+                  <span className="text-[8px] text-emerald-500/80 flex items-center justify-end mt-0.5">
+                      <Check size={8} className="mr-0.5" />
+                      Son Yedek: {new Date(userProfile.lastSyncTime).toLocaleTimeString('tr-TR', {hour: '2-digit', minute:'2-digit'})}
+                  </span>
+              )}
+          </div>
       </div>
 
       <div className="sticky top-0 z-10 bg-stone-950/80 backdrop-blur-md pb-2.5 pt-0">
          <div className="bg-stone-900 rounded-2xl shadow-sm border border-white/5 flex items-center p-1">
              <Search className="text-stone-500 ml-3" size={16} />
              <input type="text" placeholder="Çiftçi adı veya köy ara..." className="w-full p-2.5 bg-transparent outline-none font-medium text-stone-200 placeholder-stone-600 text-xs" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+             <button onClick={handleSync} disabled={isSyncing} className={`px-3 py-1.5 rounded-xl transition-all m-1 flex items-center justify-center gap-1.5 text-[10px] font-bold uppercase tracking-wider ${isSyncing ? 'bg-emerald-900/30 text-emerald-500' : 'bg-stone-800 hover:bg-stone-700 text-stone-400 hover:text-emerald-400'}`}>
+                 {isSyncing ? <Loader2 size={12} className="animate-spin"/> : <RefreshCw size={12}/>}
+                 {isSyncing ? 'Yedekleniyor...' : 'Senkronize'}
+             </button>
              <button onClick={handleContactImport} disabled={isImporting} className={`p-1.5 rounded-xl transition-all m-1 flex items-center justify-center ${isImporting ? 'bg-emerald-900/30 text-emerald-500' : 'bg-stone-800 hover:bg-stone-700 text-emerald-500'}`}>{isImporting ? <Loader2 size={16} className="animate-spin"/> : <Contact size={16}/>}</button>
          </div>
       </div>
 
       <div className="space-y-2">
         {filteredFarmers.map(farmer => (
-            <div key={farmer.id} onClick={() => setSelectedFarmer(farmer)} className="bg-stone-900/80 backdrop-blur rounded-2xl p-2.5 shadow-sm border border-white/5 flex items-center justify-between hover:bg-stone-800/80 hover:shadow-md transition-all cursor-pointer group active:scale-[0.98]">
+            <div key={farmer.id} onClick={() => changeFarmerSelection(farmer)} className="bg-stone-900/80 backdrop-blur rounded-2xl p-2.5 shadow-sm border border-white/5 flex items-center justify-between hover:bg-stone-800/80 hover:shadow-md transition-all cursor-pointer group active:scale-[0.98]">
                 <div className="flex items-center space-x-3">
                     <div className="w-10 h-10 rounded-full bg-stone-800 text-stone-500 flex items-center justify-center font-bold text-sm group-hover:bg-emerald-900/30 group-hover:text-emerald-400 transition-colors border border-white/5">{farmer.fullName.charAt(0)}</div>
                     <div>
                         <h3 className="font-bold text-stone-200 text-sm">{farmer.fullName}</h3>
                         <div className="flex items-center space-x-2 mt-0.5">
                              <span className="text-[9px] text-stone-500 flex items-center bg-stone-950/50 px-1.5 py-0.5 rounded border border-white/5"><MapPin size={8} className="mr-1"/> {farmer.village}</span>
-                             {farmer.crops && <span className="text-[9px] text-amber-500 bg-amber-900/20 px-1.5 py-0.5 rounded border border-amber-800/30 font-medium">{farmer.crops}</span>}
+                             {farmer.fields && farmer.fields.length > 0 && (
+                                <span className="text-[9px] text-amber-500 bg-amber-900/20 px-1.5 py-0.5 rounded border border-amber-800/30 font-medium">
+                                    {farmer.fields.length} Tarla
+                                </span>
+                             )}
                         </div>
                     </div>
                 </div>
@@ -614,6 +1318,60 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
         setData={setEditFarmerData}
         onSave={handleSaveFarmer}
       />
+
+      {/* Manual Debt Modal */}
+      {isManualDebtModalOpen && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[80] flex items-center justify-center p-4 animate-in fade-in duration-200">
+              <div className="bg-stone-900 rounded-3xl w-full max-w-sm shadow-2xl border border-white/10 overflow-hidden">
+                  <div className="p-4 border-b border-white/5 flex justify-between items-center">
+                      <h2 className="text-sm font-bold text-stone-100 flex items-center"><Plus className="mr-2 text-rose-500" size={16}/> Borç Ekle</h2>
+                      <button onClick={() => setIsManualDebtModalOpen(false)} className="text-stone-500 hover:text-stone-300"><X size={18}/></button>
+                  </div>
+                  <div className="p-4 space-y-4">
+                      <div>
+                          <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Tutar (₺)</label>
+                          <input type="number" value={debtAmount} onChange={(e) => setDebtAmount(e.target.value)} className="w-full bg-stone-950 border border-white/10 rounded-xl px-4 py-3 text-stone-100 text-sm focus:border-rose-500 outline-none transition-all" placeholder="0.00" />
+                      </div>
+                      <div>
+                          <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Açıklama / Ürün</label>
+                          <textarea value={debtNote} onChange={(e) => setDebtNote(e.target.value)} className="w-full bg-stone-950 border border-white/10 rounded-xl px-4 py-3 text-stone-100 text-sm focus:border-rose-500 outline-none transition-all h-24 resize-none" placeholder="Örn: Geçmiş borç, Gübre borcu vb." />
+                      </div>
+                      <button disabled={isSavingDebt || !debtAmount} onClick={handleSaveManualDebt} className="w-full bg-rose-700 text-white py-3.5 rounded-xl font-bold text-xs shadow-lg disabled:opacity-50 flex items-center justify-center">
+                          {isSavingDebt ? <Loader2 className="animate-spin mr-2" size={16}/> : <Save className="mr-2" size={16}/>} Kaydet
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* Report Modal */}
+      {isReportModalOpen && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[80] flex items-center justify-center p-4 animate-in fade-in duration-200">
+              <div className="bg-stone-900 rounded-3xl w-full max-w-sm shadow-2xl border border-white/10 overflow-hidden">
+                  <div className="p-4 border-b border-white/5 flex justify-between items-center">
+                      <h2 className="text-sm font-bold text-stone-100 flex items-center"><Download className="mr-2 text-blue-500" size={16}/> Cari Rapor Oluştur</h2>
+                      <button onClick={() => setIsReportModalOpen(false)} className="text-stone-500 hover:text-stone-300"><X size={18}/></button>
+                  </div>
+                  <div className="p-4 space-y-4">
+                      <div className="grid grid-cols-2 gap-3">
+                          <div>
+                              <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Başlangıç</label>
+                              <input type="date" value={reportStartDate} onChange={(e) => setReportStartDate(e.target.value)} className="w-full bg-stone-950 border border-white/10 rounded-xl px-3 py-2 text-stone-100 text-xs outline-none focus:border-blue-500" />
+                          </div>
+                          <div>
+                              <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Bitiş</label>
+                              <input type="date" value={reportEndDate} onChange={(e) => setReportEndDate(e.target.value)} className="w-full bg-stone-950 border border-white/10 rounded-xl px-3 py-2 text-stone-100 text-xs outline-none focus:border-blue-500" />
+                          </div>
+                      </div>
+                      <p className="text-[9px] text-stone-500 italic">Tarih seçmezseniz tüm zamanların raporu oluşturulur.</p>
+                      <button onClick={() => { setIsViewingReport(true); setIsReportModalOpen(false); }} className="w-full bg-blue-700 text-white py-3.5 rounded-xl font-bold text-xs shadow-lg flex items-center justify-center">
+                          <FileText className="mr-2" size={16}/> Raporu Görüntüle
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
     </div>
   );
 };

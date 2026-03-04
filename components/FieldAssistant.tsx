@@ -162,7 +162,7 @@ export const FieldAssistant: React.FC<{ onBack: () => void }> = ({ onBack }) => 
             console.log("Connection opened");
           },
           onmessage: async (msg) => {
-            if (msg.toolCall) {
+            if (msg.toolCall?.functionCalls) {
                 for (const fc of msg.toolCall.functionCalls) {
                      // In a real app, you would verify arguments and execute function here
                      // For this demo, we acknowledge success to keep conversation flowing
@@ -175,10 +175,10 @@ export const FieldAssistant: React.FC<{ onBack: () => void }> = ({ onBack }) => 
             }
 
             if (msg.serverContent?.outputTranscription) {
-              setTranscription(prev => (prev + ' ' + msg.serverContent.outputTranscription.text).slice(-150));
+              setTranscription(prev => (prev + ' ' + msg.serverContent!.outputTranscription!.text).slice(-150));
             }
             
-            const audioData = msg.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
+            const audioData = msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
             if (audioData && audioContextRef.current) {
               setIsAiSpeaking(true);
               const ctx = audioContextRef.current;

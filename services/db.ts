@@ -1,6 +1,6 @@
 
 import { openDB, DBSchema } from 'idb';
-import { Farmer, Pesticide, VisitLog, Prescription, AppNotification, UserProfile, Reminder } from '../types';
+import { Farmer, Pesticide, VisitLog, Prescription, AppNotification, UserProfile, Reminder, InventoryItem, PesticideCategory, Payment, ManualDebt } from '../types';
 import { MOCK_PESTICIDES } from '../constants';
 import { db as firestore, auth } from './firebase';
 import { doc, setDoc, deleteDoc, collection, getDocs, writeBatch, query, where, getDoc } from 'firebase/firestore';
@@ -34,14 +34,54 @@ interface AgriDB extends DBSchema {
     value: Reminder;
     indexes: { 'by-date': string };
   };
+  inventory: {
+    key: string;
+    value: InventoryItem;
+    indexes: { 'by-pesticide': string };
+  };
+  payments: {
+    key: string;
+    value: Payment;
+    indexes: { 'by-farmer': string };
+  };
+  manualDebts: {
+    key: string;
+    value: ManualDebt;
+    indexes: { 'by-farmer': string };
+  };
 }
 
 const DB_NAME = 'agri-engineer-db';
-const DB_VERSION = 10;
+const DB_VERSION = 13;
 
 const FS_ROOT = "MKS";
 const FS_ORG = "g892bEaJyGfEq1Fa67yb";
 const FS_USERS = "users";
+
+const sanitizeForFirestore = (obj: any): any => {
+  if (obj === undefined) return null;
+  if (obj === null) return null;
+  if (obj instanceof Date) return obj;
+  
+  if (Array.isArray(obj)) {
+    return obj.map(sanitizeForFirestore);
+  }
+  
+  if (typeof obj === 'object') {
+    const newObj: any = {};
+    Object.keys(obj).forEach(key => {
+      const val = obj[key];
+      if (val === undefined) {
+        newObj[key] = null;
+      } else {
+        newObj[key] = sanitizeForFirestore(val);
+      }
+    });
+    return newObj;
+  }
+  
+  return obj;
+};
 
 export const initDB = async () => {
   return openDB<AgriDB>(DB_NAME, DB_VERSION, {
@@ -68,6 +108,18 @@ export const initDB = async () => {
         const reminderStore = db.createObjectStore('reminders', { keyPath: 'id' });
         reminderStore.createIndex('by-date', 'date');
       }
+      if (!db.objectStoreNames.contains('inventory')) {
+        const inventoryStore = db.createObjectStore('inventory', { keyPath: 'id' });
+        inventoryStore.createIndex('by-pesticide', 'pesticideId');
+      }
+      if (!db.objectStoreNames.contains('payments')) {
+        const paymentStore = db.createObjectStore('payments', { keyPath: 'id' });
+        paymentStore.createIndex('by-farmer', 'farmerId');
+      }
+      if (!db.objectStoreNames.contains('manualDebts')) {
+        const debtStore = db.createObjectStore('manualDebts', { keyPath: 'id' });
+        debtStore.createIndex('by-farmer', 'farmerId');
+      }
     },
   });
 };
@@ -81,8 +133,10 @@ const backgroundSync = async (collectionName: string, data: any) => {
   const user = auth.currentUser;
   if (!user) return;
 
+  const cleanData = sanitizeForFirestore(data);
+
   // UI'ı engellememek için async/await'siz arka plana atıyoruz
-  setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, user.uid, collectionName, data.id), data, { merge: true })
+  setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, user.uid, collectionName, data.id), cleanData, { merge: true })
     .catch(err => console.warn(`Background sync failed for ${collectionName}:`, err));
 };
 
@@ -116,7 +170,8 @@ export const dbService = {
   async saveUserProfile(uid: string, profile: UserProfile) {
     localStorage.setItem('mks_user_profile', JSON.stringify(profile));
     if (navigator.onLine) {
-        setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid), { ...profile, lastUpdate: new Date().toISOString() }, { merge: true })
+        const cleanProfile = sanitizeForFirestore({ ...profile, lastUpdate: new Date().toISOString() });
+        setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid), cleanProfile, { merge: true })
             .catch(() => {});
     }
   },
@@ -128,7 +183,7 @@ export const dbService = {
     if (!navigator.onLine) return;
     const db = await initDB();
     const userPath = [FS_ROOT, FS_ORG, FS_USERS, uid].join("/");
-    const collections = ["farmers", "notifications", "visits", "prescriptions", "reminders"] as const;
+    const collections = ["farmers", "notifications", "visits", "prescriptions", "reminders", "inventory", "payments"] as const;
 
     for (const col of collections) {
       try {
@@ -169,14 +224,18 @@ export const dbService = {
 
   async clearLocalUserData() {
     const db = await initDB();
-    const stores = ['farmers', 'visits', 'prescriptions', 'notifications', 'reminders'] as const;
+    const stores = ['farmers', 'visits', 'prescriptions', 'notifications', 'reminders', 'inventory', 'payments'] as const;
     for (const store of stores) await db.clear(store);
     localStorage.removeItem('mks_user_profile');
   },
 
   async getFarmers() {
     const db = await initDB();
-    return (await db.getAll('farmers')).sort((a, b) => a.fullName.localeCompare(b.fullName, 'tr'));
+    const farmers = await db.getAll('farmers');
+    return farmers.map(f => ({
+        ...f,
+        fields: f.fields || []
+    })).sort((a, b) => a.fullName.localeCompare(b.fullName, 'tr'));
   },
   
   async addFarmer(farmer: Farmer) {
@@ -208,7 +267,8 @@ export const dbService = {
       const db = await initDB();
       await db.put('pesticides', pesticide);
       if (navigator.onLine) {
-          setDoc(doc(firestore, 'pesticides', pesticide.id), pesticide).catch(() => {});
+          const cleanPesticide = sanitizeForFirestore(pesticide);
+          setDoc(doc(firestore, 'pesticides', pesticide.id), cleanPesticide).catch(() => {});
       }
       return pesticide.id;
   },
@@ -320,6 +380,179 @@ export const dbService = {
     backgroundDelete('notifications', id);
   },
 
+  async getInventory() {
+    const db = await initDB();
+    return (await db.getAll('inventory')).sort((a, b) => a.pesticideName.localeCompare(b.pesticideName, 'tr'));
+  },
+
+  async addInventoryItem(item: InventoryItem) {
+    const db = await initDB();
+    await db.put('inventory', item);
+    backgroundSync('inventory', item);
+  },
+
+  async updateInventoryItem(item: InventoryItem) {
+    const db = await initDB();
+    await db.put('inventory', item);
+    backgroundSync('inventory', item);
+  },
+
+  async deleteInventoryItem(id: string) {
+    const db = await initDB();
+    await db.delete('inventory', id);
+    backgroundDelete('inventory', id);
+  },
+
+  async initializeInventoryFromPrescriptions() {
+    const db = await initDB();
+    const prescriptions = await db.getAll('prescriptions');
+    const pesticides = await db.getAll('pesticides');
+    const inventory = await db.getAll('inventory');
+    
+    const tx = db.transaction('inventory', 'readwrite');
+    const store = tx.objectStore('inventory');
+    
+    const uniquePesticideIds = new Set<string>();
+    prescriptions.forEach(p => {
+        p.items.forEach(item => {
+            uniquePesticideIds.add(item.pesticideId);
+        });
+    });
+
+    const updates: InventoryItem[] = [];
+
+    for (const pestId of uniquePesticideIds) {
+        const existing = inventory.find(i => i.pesticideId === pestId);
+        const pesticide = pesticides.find(p => p.id === pestId);
+        
+        // Find pesticide name from prescriptions if not in library
+        let pesticideName = pesticide?.name;
+        let category = pesticide?.category || PesticideCategory.OTHER;
+
+        if (!pesticideName) {
+            for (const p of prescriptions) {
+                const item = p.items.find(i => i.pesticideId === pestId);
+                if (item) {
+                    pesticideName = item.pesticideName;
+                    break;
+                }
+            }
+        }
+
+        const item: InventoryItem = {
+            id: existing?.id || crypto.randomUUID(),
+            pesticideId: pestId,
+            pesticideName: pesticideName || 'Bilinmeyen İlaç',
+            category: category,
+            quantity: 1000,
+            unit: 'Adet',
+            buyingPrice: 1,
+            sellingPrice: existing?.sellingPrice || 0,
+            lastUpdated: new Date().toISOString()
+        };
+
+        await store.put(item);
+        updates.push(item);
+    }
+
+    await tx.done;
+    updates.forEach(item => backgroundSync('inventory', item));
+  },
+
+  async processInventory(prescription: Prescription) {
+    if (prescription.isInventoryProcessed) return;
+
+    const db = await initDB();
+    const tx = db.transaction(['inventory', 'prescriptions'], 'readwrite');
+    const inventoryStore = tx.objectStore('inventory');
+    const prescriptionStore = tx.objectStore('prescriptions');
+    
+    const allInventory = await inventoryStore.getAll();
+    const inventoryUpdates: InventoryItem[] = [];
+    
+    for (const item of prescription.items) {
+        if (!item.quantity) continue;
+        
+        const qty = parseInt(item.quantity);
+        if (isNaN(qty) || qty <= 0) continue;
+
+        const existingItem = allInventory.find(i => i.pesticideId === item.pesticideId);
+        
+        if (existingItem) {
+            const updatedItem = {
+                ...existingItem,
+                quantity: existingItem.quantity - qty,
+                lastUpdated: new Date().toISOString()
+            };
+            await inventoryStore.put(updatedItem);
+            inventoryUpdates.push(updatedItem);
+        } else {
+            const newItem: InventoryItem = {
+                id: crypto.randomUUID(),
+                pesticideId: item.pesticideId,
+                pesticideName: item.pesticideName,
+                category: PesticideCategory.OTHER,
+                quantity: -qty,
+                unit: 'Adet',
+                buyingPrice: 0,
+                sellingPrice: item.unitPrice || 0,
+                lastUpdated: new Date().toISOString()
+            };
+            await inventoryStore.put(newItem);
+            inventoryUpdates.push(newItem);
+        }
+    }
+
+    const updatedPrescription: Prescription = { ...prescription, isInventoryProcessed: true };
+    await prescriptionStore.put(updatedPrescription);
+    
+    await tx.done;
+
+    // Sync to Firestore after successful local transaction
+    inventoryUpdates.forEach(item => backgroundSync('inventory', item));
+    backgroundSync('prescriptions', updatedPrescription);
+  },
+
+  async revertInventory(prescription: Prescription) {
+    if (!prescription.isInventoryProcessed) return;
+
+    const db = await initDB();
+    const tx = db.transaction(['inventory', 'prescriptions'], 'readwrite');
+    const inventoryStore = tx.objectStore('inventory');
+    const prescriptionStore = tx.objectStore('prescriptions');
+    
+    const allInventory = await inventoryStore.getAll();
+    const inventoryUpdates: InventoryItem[] = [];
+    
+    for (const item of prescription.items) {
+        if (!item.quantity) continue;
+        
+        const qty = parseInt(item.quantity);
+        if (isNaN(qty) || qty <= 0) continue;
+
+        const existingItem = allInventory.find(i => i.pesticideId === item.pesticideId);
+        
+        if (existingItem) {
+            const updatedItem = {
+                ...existingItem,
+                quantity: existingItem.quantity + qty,
+                lastUpdated: new Date().toISOString()
+            };
+            await inventoryStore.put(updatedItem);
+            inventoryUpdates.push(updatedItem);
+        }
+    }
+
+    const updatedPrescription: Prescription = { ...prescription, isInventoryProcessed: false };
+    await prescriptionStore.put(updatedPrescription);
+    
+    await tx.done;
+
+    // Sync to Firestore after successful local transaction
+    inventoryUpdates.forEach(item => backgroundSync('inventory', item));
+    backgroundSync('prescriptions', updatedPrescription);
+  },
+
   async cleanupOldNotifications() {
     const db = await initDB();
     const list = await db.getAll('notifications');
@@ -333,5 +566,74 @@ export const dbService = {
         }
     }
     await tx.done;
+  },
+
+  async backupAllData() {
+    if (!navigator.onLine) throw new Error("İnternet bağlantısı yok.");
+    
+    const user = auth.currentUser;
+    if (!user) throw new Error("Oturum açılmamış. Lütfen tekrar giriş yapın.");
+
+    const db = await initDB();
+    const stores = ['farmers', 'visits', 'prescriptions', 'notifications', 'reminders', 'inventory', 'payments', 'manualDebts'] as const;
+    
+    let total = 0;
+    for (const storeName of stores) {
+        const items = await db.getAll(storeName);
+        await Promise.all(items.map(item => backgroundSync(storeName, item)));
+        total += items.length;
+    }
+    
+    const timestamp = new Date().toISOString();
+    // Update lastSyncTime in Firestore user profile
+    await setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, user.uid), { lastSyncTime: timestamp }, { merge: true });
+
+    return { total, timestamp };
+  },
+
+  async getPayments() {
+    const db = await initDB();
+    return (await db.getAll('payments')).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  },
+
+  async getPaymentsByFarmer(farmerId: string) {
+    const db = await initDB();
+    return db.getAllFromIndex('payments', 'by-farmer', farmerId);
+  },
+
+  async addPayment(payment: Payment) {
+    const db = await initDB();
+    await db.put('payments', payment);
+    backgroundSync('payments', payment);
+    return payment.id;
+  },
+
+  async deletePayment(id: string) {
+    const db = await initDB();
+    await db.delete('payments', id);
+    backgroundDelete('payments', id);
+  },
+  
+  async getManualDebts() {
+    const db = await initDB();
+    return (await db.getAll('manualDebts')).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  },
+
+  async getManualDebtsByFarmer(farmerId: string) {
+    const db = await initDB();
+    return db.getAllFromIndex('manualDebts', 'by-farmer', farmerId);
+  },
+
+  async addManualDebt(debt: ManualDebt) {
+    const db = await initDB();
+    await db.put('manualDebts', debt);
+    backgroundSync('manualDebts', debt);
+    return debt.id;
+  },
+
+  async deleteManualDebt(id: string) {
+    const db = await initDB();
+    await db.delete('manualDebts', id);
+    backgroundDelete('manualDebts', id);
   }
 };

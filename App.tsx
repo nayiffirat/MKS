@@ -16,6 +16,7 @@ import { LoginScreen } from './components/Login';
 import { StatisticsScreen } from './components/Statistics';
 import { FieldAssistant } from './components/FieldAssistant';
 import { RemindersScreen } from './components/Reminders';
+import { InventoryScreen } from './components/Inventory';
 import { AppProvider, useAppViewModel } from './context/AppContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { dbService } from './services/db';
@@ -88,22 +89,45 @@ function MainApp() {
     initializeAppData();
   }, [currentUser, loading]);
 
+  // Refs for stable access in back button callback
+  const currentViewRef = useRef<ViewState>('DASHBOARD');
+  const isModeActiveRef = useRef<boolean>(false);
+
   useEffect(() => {
-    const setupBackListener = async () => {
+    currentViewRef.current = currentView;
+    isModeActiveRef.current = isPrescriptionMode || isVisitMode || isReminderAddMode || isTomorrowMode;
+  }, [currentView, isPrescriptionMode, isVisitMode, isReminderAddMode, isTomorrowMode]);
+
+  useEffect(() => {
+    let listenerHandle: any;
+    
+    const initBackButton = async () => {
         try {
-            const listener = await CapacitorApp.addListener('backButton', () => {
-                if (isPrescriptionMode || isVisitMode || isReminderAddMode || currentView !== 'DASHBOARD') {
+            listenerHandle = await CapacitorApp.addListener('backButton', () => {
+                // Check history state first for sub-views (like in PrescriptionForm)
+                const historyState = window.history.state;
+                
+                const hasSubView = historyState?.subView;
+                const isDashboard = currentViewRef.current === 'DASHBOARD';
+                const hasMode = isModeActiveRef.current;
+
+                if (hasSubView || hasMode || !isDashboard) {
                     window.history.back();
                 } else {
                     CapacitorApp.exitApp();
                 }
             });
-            return listener;
-        } catch (e) { return null; }
+        } catch (err) {
+            console.error('Back button listener error:', err);
+        }
     };
-    const promise = setupBackListener();
-    return () => { promise.then(l => l?.remove()); };
-  }, [currentView, isPrescriptionMode, isVisitMode, isReminderAddMode]);
+
+    initBackButton();
+
+    return () => {
+        if (listenerHandle) listenerHandle.remove();
+    };
+  }, []);
 
   useEffect(() => {
     const handlePopState = (event: PopStateEvent) => {
@@ -180,7 +204,7 @@ function MainApp() {
     if (currentView === 'REMINDERS') return <RemindersScreen onBack={() => window.history.back()} initialAddMode={isReminderAddMode} initialFilter={isTomorrowMode ? 'TOMORROW' : undefined} />;
     if (currentView === 'FIELD_ASSISTANT') return <FieldAssistant onBack={() => window.history.back()} />;
 
-    switch (currentView) {
+    switch (currentView as any) {
         case 'DASHBOARD': return <Dashboard onNavigate={handleNavigate} />;
         case 'FARMERS': return <Farmers onBack={() => window.history.back()} onNavigateToPrescription={handleStartPrescription} />;
         case 'PESTICIDES': return <Pesticides />;
@@ -193,6 +217,7 @@ function MainApp() {
         case 'PROFILE': return <ProfileScreen onBack={() => window.history.back()} />;
         case 'STATISTICS': return <StatisticsScreen />;
         case 'REMINDERS': return <RemindersScreen onBack={() => window.history.back()} />;
+        case 'INVENTORY': return <InventoryScreen />;
         default: return <Dashboard onNavigate={handleNavigate} />;
     }
   };
