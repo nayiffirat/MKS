@@ -2,7 +2,7 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { dbService } from '../services/db';
 import { WeatherService, AGRI_CITIES } from '../services/weather';
-import { Farmer, UIScale, AppNotification, UserProfile, Reminder, VisitLog, AgriCity, InventoryItem, Prescription, Payment, ManualDebt } from '../types';
+import { Farmer, UIScale, AppNotification, UserProfile, Reminder, VisitLog, AgriCity, InventoryItem, Prescription, Payment, ManualDebt, Supplier, SupplierPurchase, SupplierPayment, MyPayment, PesticideCategory, ViewState } from '../types';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Haptics, ImpactStyle, NotificationType } from '@capacitor/haptics';
 import { auth } from '../services/firebase';
@@ -60,6 +60,16 @@ interface AppContextType {
   manualDebts: ManualDebt[];
   addManualDebt: (debt: Omit<ManualDebt, 'id'>) => Promise<void>;
   deleteManualDebt: (id: string) => Promise<void>;
+  suppliers: Supplier[];
+  addSupplier: (supplier: Omit<Supplier, 'id' | 'totalDebt' | 'balance'>) => Promise<void>;
+  updateSupplier: (supplier: Supplier) => Promise<void>;
+  deleteSupplier: (id: string) => Promise<void>;
+  addSupplierPurchase: (purchase: Omit<SupplierPurchase, 'id'>) => Promise<void>;
+  addSupplierPayment: (payment: Omit<SupplierPayment, 'id'>) => Promise<void>;
+  myPayments: MyPayment[];
+  addMyPayment: (payment: Omit<MyPayment, 'id'>) => Promise<void>;
+  updateMyPayment: (payment: MyPayment) => Promise<void>;
+  deleteMyPayment: (id: string) => Promise<void>;
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
   hapticFeedback: (type?: 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error') => Promise<void>;
 }
@@ -97,6 +107,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [manualDebts, setManualDebts] = useState<ManualDebt[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [myPayments, setMyPayments] = useState<MyPayment[]>([]);
   const [toasts, setToasts] = useState<{id: string, message: string, type: 'success' | 'error' | 'info'}[]>([]);
   const isInitialized = useRef(false);
 
@@ -353,17 +365,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const refreshStats = async (syncedReminders?: Reminder[]) => {
-    const [farmerList, prescriptions, visits, reminderListFromDB, inventoryData, paymentList, manualDebtList] = await Promise.all([
+    const [farmerList, prescriptions, visits, reminderListFromDB, inventoryData, paymentList, manualDebtList, supplierList, myPaymentList] = await Promise.all([
         dbService.getFarmers(),
         dbService.getAllPrescriptions(),
         dbService.getAllVisits(),
         dbService.getReminders(),
         dbService.getInventory(),
         dbService.getPayments(),
-        dbService.getManualDebts()
+        dbService.getManualDebts(),
+        dbService.getSuppliers(),
+        dbService.getMyPayments()
     ]);
 
     const finalReminders = [...(syncedReminders || reminderListFromDB)];
+    
+    // Fetch all purchases and payments for all suppliers to calculate balances
+    const supplierPurchasesPromises = supplierList.map(s => dbService.getSupplierPurchases(s.id));
+    const supplierPaymentsPromises = supplierList.map(s => dbService.getSupplierPayments(s.id));
+    
+    const allPurchases = await Promise.all(supplierPurchasesPromises);
+    const allPayments = await Promise.all(supplierPaymentsPromises);
+    
+    const updatedSupplierList = supplierList.map((s, idx) => {
+        const purchases = allPurchases[idx];
+        const payments = allPayments[idx];
+        
+        const totalPurchased = purchases.reduce((acc, p) => acc + p.totalAmount, 0);
+        const totalPaid = payments.reduce((acc, p) => acc + p.amount, 0);
+        
+        return {
+            ...s,
+            totalDebt: totalPurchased,
+            balance: totalPaid - totalPurchased // Negative means we owe money
+        };
+    });
     
     // --- SMART CALENDAR LOGIC ---
     // Generate reminders based on crop stages if not already present
@@ -513,6 +548,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setInventory(inventoryData);
     setPrescriptions(prescriptions);
     setPayments(paymentList);
+    setSuppliers(updatedSupplierList);
+    setMyPayments(myPaymentList);
     
     setStats({
       totalFarmers: updatedFarmerList.length,
@@ -656,6 +693,114 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await refreshStats();
   };
 
+  const addSupplier = async (supplierData: Omit<Supplier, 'id' | 'totalDebt' | 'balance'>) => {
+    const newSupplier: Supplier = { 
+        ...supplierData, 
+        id: crypto.randomUUID(),
+        totalDebt: 0,
+        balance: 0
+    };
+    await dbService.addSupplier(newSupplier);
+    await refreshStats();
+  };
+
+  const updateSupplier = async (supplier: Supplier) => {
+    await dbService.updateSupplier(supplier);
+    await refreshStats();
+  };
+
+  const deleteSupplier = async (id: string) => {
+    await dbService.deleteSupplier(id);
+    await refreshStats();
+  };
+
+  const addSupplierPurchase = async (purchaseData: Omit<SupplierPurchase, 'id'>) => {
+    const purchaseId = crypto.randomUUID();
+    const purchase: SupplierPurchase = { ...purchaseData, id: purchaseId };
+    
+    await dbService.addSupplierPurchase(purchase);
+    
+    // Update Inventory
+    for (const item of purchase.items) {
+        const existing = inventory.find(i => i.pesticideId === item.pesticideId);
+        if (existing) {
+            await dbService.updateInventoryItem({
+                ...existing,
+                quantity: existing.quantity + item.quantity,
+                buyingPrice: item.buyingPrice, // Update buying price to latest
+                lastUpdated: new Date().toISOString()
+            });
+        } else {
+            // If it's a new pesticide (tempId from UI), we add it to the library too
+            let finalPesticideId = item.pesticideId;
+            if (item.pesticideId.startsWith('new-')) {
+                finalPesticideId = crypto.randomUUID();
+                await dbService.addGlobalPesticide({
+                    id: finalPesticideId,
+                    name: item.pesticideName,
+                    activeIngredient: 'Belirtilmedi',
+                    defaultDosage: '100ml/100L',
+                    category: PesticideCategory.OTHER,
+                    description: 'Tedarikçi alımı ile otomatik eklendi.'
+                });
+            }
+
+            await dbService.addInventoryItem({
+                id: crypto.randomUUID(),
+                pesticideId: finalPesticideId,
+                pesticideName: item.pesticideName,
+                category: PesticideCategory.OTHER,
+                quantity: item.quantity,
+                unit: item.unit,
+                buyingPrice: item.buyingPrice,
+                sellingPrice: item.buyingPrice * 1.2, // Default 20% margin
+                lastUpdated: new Date().toISOString()
+            });
+        }
+    }
+    
+    await refreshStats();
+  };
+
+  const addSupplierPayment = async (paymentData: Omit<SupplierPayment, 'id'>) => {
+    const payment: SupplierPayment = { ...paymentData, id: crypto.randomUUID() };
+    await dbService.addSupplierPayment(payment);
+    
+    // If it's a check or promissory note, add to MyPayments
+    if (payment.method === 'CHECK' || payment.method === 'PROMISSORY_NOTE') {
+        const supplier = suppliers.find(s => s.id === payment.supplierId);
+        await dbService.addMyPayment({
+            id: crypto.randomUUID(),
+            supplierId: payment.supplierId,
+            supplierName: supplier?.name || 'Bilinmeyen Tedarikçi',
+            amount: payment.amount,
+            issueDate: payment.date,
+            dueDate: payment.dueDate || payment.date,
+            type: payment.method === 'CHECK' ? 'CHECK' : 'PROMISSORY_NOTE',
+            status: 'PENDING',
+            note: payment.note
+        });
+    }
+    
+    await refreshStats();
+  };
+
+  const addMyPayment = async (paymentData: Omit<MyPayment, 'id'>) => {
+    const payment: MyPayment = { ...paymentData, id: crypto.randomUUID() };
+    await dbService.addMyPayment(payment);
+    await refreshStats();
+  };
+
+  const updateMyPayment = async (payment: MyPayment) => {
+    await dbService.updateMyPayment(payment);
+    await refreshStats();
+  };
+
+  const deleteMyPayment = async (id: string) => {
+    await dbService.deleteMyPayment(id);
+    await refreshStats();
+  };
+
   const setUiScale = (scale: UIScale) => {
     setUiScaleState(scale);
     localStorage.setItem('mks_ui_scale', scale);
@@ -726,6 +871,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         prescriptions, refreshPrescriptions, togglePrescriptionStatus,
         payments, addPayment, deletePayment,
         manualDebts, addManualDebt, deleteManualDebt,
+        suppliers, addSupplier, updateSupplier, deleteSupplier, addSupplierPurchase, addSupplierPayment,
+        myPayments, addMyPayment, updateMyPayment, deleteMyPayment,
         showToast, hapticFeedback
     }}>
       {children}

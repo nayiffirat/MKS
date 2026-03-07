@@ -1,6 +1,6 @@
 
 import { openDB, DBSchema } from 'idb';
-import { Farmer, Pesticide, VisitLog, Prescription, AppNotification, UserProfile, Reminder, InventoryItem, PesticideCategory, Payment, ManualDebt } from '../types';
+import { Farmer, Pesticide, VisitLog, Prescription, AppNotification, UserProfile, Reminder, InventoryItem, PesticideCategory, Payment, ManualDebt, Supplier, SupplierPurchase, SupplierPayment, MyPayment } from '../types';
 import { MOCK_PESTICIDES } from '../constants';
 import { db as firestore, auth } from './firebase';
 import { doc, setDoc, deleteDoc, collection, getDocs, writeBatch, query, where, getDoc } from 'firebase/firestore';
@@ -49,10 +49,29 @@ interface AgriDB extends DBSchema {
     value: ManualDebt;
     indexes: { 'by-farmer': string };
   };
+  suppliers: {
+    key: string;
+    value: Supplier;
+  };
+  supplierPurchases: {
+    key: string;
+    value: SupplierPurchase;
+    indexes: { 'by-supplier': string };
+  };
+  supplierPayments: {
+    key: string;
+    value: SupplierPayment;
+    indexes: { 'by-supplier': string };
+  };
+  myPayments: {
+    key: string;
+    value: MyPayment;
+    indexes: { 'by-due-date': string };
+  };
 }
 
 const DB_NAME = 'agri-engineer-db';
-const DB_VERSION = 13;
+const DB_VERSION = 15;
 
 const FS_ROOT = "MKS";
 const FS_ORG = "g892bEaJyGfEq1Fa67yb";
@@ -120,6 +139,21 @@ export const initDB = async () => {
         const debtStore = db.createObjectStore('manualDebts', { keyPath: 'id' });
         debtStore.createIndex('by-farmer', 'farmerId');
       }
+      if (!db.objectStoreNames.contains('suppliers')) {
+        db.createObjectStore('suppliers', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('supplierPurchases')) {
+        const purchaseStore = db.createObjectStore('supplierPurchases', { keyPath: 'id' });
+        purchaseStore.createIndex('by-supplier', 'supplierId');
+      }
+      if (!db.objectStoreNames.contains('supplierPayments')) {
+        const paymentStore = db.createObjectStore('supplierPayments', { keyPath: 'id' });
+        paymentStore.createIndex('by-supplier', 'supplierId');
+      }
+      if (!db.objectStoreNames.contains('myPayments')) {
+        const myPaymentStore = db.createObjectStore('myPayments', { keyPath: 'id' });
+        myPaymentStore.createIndex('by-due-date', 'dueDate');
+      }
     },
   });
 };
@@ -183,7 +217,7 @@ export const dbService = {
     if (!navigator.onLine) return;
     const db = await initDB();
     const userPath = [FS_ROOT, FS_ORG, FS_USERS, uid].join("/");
-    const collections = ["farmers", "notifications", "visits", "prescriptions", "reminders", "inventory", "payments"] as const;
+    const collections = ["farmers", "notifications", "visits", "prescriptions", "reminders", "inventory", "payments", "suppliers", "supplierPurchases", "supplierPayments", "myPayments"] as const;
 
     for (const col of collections) {
       try {
@@ -224,7 +258,7 @@ export const dbService = {
 
   async clearLocalUserData() {
     const db = await initDB();
-    const stores = ['farmers', 'visits', 'prescriptions', 'notifications', 'reminders', 'inventory', 'payments'] as const;
+    const stores = ['farmers', 'visits', 'prescriptions', 'notifications', 'reminders', 'inventory', 'payments', 'suppliers', 'supplierPurchases', 'supplierPayments', 'myPayments'] as const;
     for (const store of stores) await db.clear(store);
     localStorage.removeItem('mks_user_profile');
   },
@@ -236,6 +270,40 @@ export const dbService = {
         ...f,
         fields: f.fields || []
     })).sort((a, b) => a.fullName.localeCompare(b.fullName, 'tr'));
+  },
+
+  /**
+   * Üretici portalı için Firestore'dan veri çeker.
+   * Bu metod engineerId parametresi ile çalışır, böylece farmer kendi telefonundan erişebilir.
+   */
+  async getFarmerPortalData(engineerId: string, farmerId: string) {
+    try {
+        const userPath = [FS_ROOT, FS_ORG, FS_USERS, engineerId].join("/");
+        
+        // 1. Farmer verisini çek
+        const farmerDoc = await getDoc(doc(firestore, userPath, "farmers", farmerId));
+        if (!farmerDoc.exists()) return null;
+        const farmer = farmerDoc.data() as Farmer;
+
+        // 2. Reçeteleri çek
+        const pQuery = query(collection(firestore, userPath, "prescriptions"), where("farmerId", "==", farmerId));
+        const pSnap = await getDocs(pQuery);
+        const prescriptions = pSnap.docs.map(d => d.data() as Prescription);
+
+        // 3. Ziyaretleri çek
+        const vQuery = query(collection(firestore, userPath, "visits"), where("farmerId", "==", farmerId));
+        const vSnap = await getDocs(vQuery);
+        const visits = vSnap.docs.map(d => d.data() as VisitLog);
+
+        // 4. Mühendis profilini çek
+        const profileDoc = await getDoc(doc(firestore, userPath));
+        const profile = profileDoc.exists() ? profileDoc.data() as UserProfile : undefined;
+
+        return { farmer, prescriptions, visits, profile };
+    } catch (error) {
+        console.error("Error fetching portal data:", error);
+        return null;
+    }
   },
   
   async addFarmer(farmer: Farmer) {
@@ -575,7 +643,7 @@ export const dbService = {
     if (!user) throw new Error("Oturum açılmamış. Lütfen tekrar giriş yapın.");
 
     const db = await initDB();
-    const stores = ['farmers', 'visits', 'prescriptions', 'notifications', 'reminders', 'inventory', 'payments', 'manualDebts'] as const;
+    const stores = ['farmers', 'visits', 'prescriptions', 'notifications', 'reminders', 'inventory', 'payments', 'manualDebts', 'suppliers', 'supplierPurchases', 'supplierPayments', 'myPayments'] as const;
     
     let total = 0;
     for (const storeName of stores) {
@@ -635,5 +703,79 @@ export const dbService = {
     const db = await initDB();
     await db.delete('manualDebts', id);
     backgroundDelete('manualDebts', id);
+  },
+
+  async getSuppliers() {
+    const db = await initDB();
+    return (await db.getAll('suppliers')).sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+  },
+
+  async addSupplier(supplier: Supplier) {
+    const db = await initDB();
+    await db.put('suppliers', supplier);
+    backgroundSync('suppliers', supplier);
+    return supplier.id;
+  },
+
+  async updateSupplier(supplier: Supplier) {
+    const db = await initDB();
+    await db.put('suppliers', supplier);
+    backgroundSync('suppliers', supplier);
+    return supplier.id;
+  },
+
+  async deleteSupplier(id: string) {
+    const db = await initDB();
+    await db.delete('suppliers', id);
+    backgroundDelete('suppliers', id);
+  },
+
+  async getSupplierPurchases(supplierId: string) {
+    const db = await initDB();
+    return db.getAllFromIndex('supplierPurchases', 'by-supplier', supplierId);
+  },
+
+  async addSupplierPurchase(purchase: SupplierPurchase) {
+    const db = await initDB();
+    await db.put('supplierPurchases', purchase);
+    backgroundSync('supplierPurchases', purchase);
+    return purchase.id;
+  },
+
+  async getSupplierPayments(supplierId: string) {
+    const db = await initDB();
+    return db.getAllFromIndex('supplierPayments', 'by-supplier', supplierId);
+  },
+
+  async addSupplierPayment(payment: SupplierPayment) {
+    const db = await initDB();
+    await db.put('supplierPayments', payment);
+    backgroundSync('supplierPayments', payment);
+    return payment.id;
+  },
+
+  async getMyPayments() {
+    const db = await initDB();
+    return (await db.getAll('myPayments')).sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
+  },
+
+  async addMyPayment(payment: MyPayment) {
+    const db = await initDB();
+    await db.put('myPayments', payment);
+    backgroundSync('myPayments', payment);
+    return payment.id;
+  },
+
+  async updateMyPayment(payment: MyPayment) {
+    const db = await initDB();
+    await db.put('myPayments', payment);
+    backgroundSync('myPayments', payment);
+    return payment.id;
+  },
+
+  async deleteMyPayment(id: string) {
+    const db = await initDB();
+    await db.delete('myPayments', id);
+    backgroundDelete('myPayments', id);
   }
 };

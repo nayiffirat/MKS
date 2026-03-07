@@ -17,6 +17,12 @@ import { StatisticsScreen } from './components/Statistics';
 import { FieldAssistant } from './components/FieldAssistant';
 import { RemindersScreen } from './components/Reminders';
 import { InventoryScreen } from './components/Inventory';
+import { Suppliers } from './components/Suppliers';
+import { Payments } from './components/Payments';
+import { DiseaseDiagnosis } from './components/DiseaseDiagnosis';
+import { FarmerMap } from './components/FarmerMap';
+import { ProducerPortal } from './components/ProducerPortal';
+import { PesticideCompatibility } from './components/PesticideCompatibility';
 import { AppProvider, useAppViewModel } from './context/AppContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { dbService } from './services/db';
@@ -32,14 +38,27 @@ function MainApp() {
   
   const [currentView, setCurrentView] = useState<ViewState>('DASHBOARD');
   const [prescriptionFarmerId, setPrescriptionFarmerId] = useState<string | undefined>(undefined);
+  const [editPrescriptionId, setEditPrescriptionId] = useState<string | undefined>(undefined);
+  const [editVisitId, setEditVisitId] = useState<string | undefined>(undefined);
   const [isPrescriptionMode, setIsPrescriptionMode] = useState(false);
   const [isVisitMode, setIsVisitMode] = useState(false);
   const [isReminderAddMode, setIsReminderAddMode] = useState(false);
   const [isTomorrowMode, setIsTomorrowMode] = useState(false);
   const [initialDataLoaded, setInitialDataLoaded] = useState(false);
+  const [portalFarmerId, setPortalFarmerId] = useState<string | null>(null);
+  const [portalEngineerId, setPortalEngineerId] = useState<string | null>(null);
   
   // Native Features Initialization (StatusBar & AdMob)
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const portalId = params.get('portalId');
+    const engineerId = params.get('engineerId');
+    if (portalId) {
+      setPortalFarmerId(portalId);
+      setPortalEngineerId(engineerId);
+      setCurrentView('PRODUCER_PORTAL');
+    }
+
     const initNativeFeatures = async () => {
       if (Capacitor.isNativePlatform()) {
         try {
@@ -134,11 +153,13 @@ function MainApp() {
         const state = event.state;
         if (state?.view) {
             setCurrentView(state.view);
-            setIsPrescriptionMode(state.mode === 'prescription_new');
-            setIsVisitMode(state.mode === 'visit_new');
+            setIsPrescriptionMode(state.mode === 'prescription_new' || state.mode === 'prescription_edit');
+            setIsVisitMode(state.mode === 'visit_new' || state.mode === 'visit_edit');
             setIsReminderAddMode(state.mode === 'reminders_new');
             setIsTomorrowMode(state.mode === 'reminders_tomorrow');
             setPrescriptionFarmerId(state.farmerId);
+            setEditPrescriptionId(state.prescriptionId);
+            setEditVisitId(state.visitId);
         } else {
             setCurrentView('DASHBOARD');
             setIsPrescriptionMode(false);
@@ -182,12 +203,27 @@ function MainApp() {
   const handleStartPrescription = (fId: string) => {
       window.history.pushState({ view: 'PRESCRIPTIONS', mode: 'prescription_new', farmerId: fId }, '');
       setPrescriptionFarmerId(fId);
+      setEditPrescriptionId(undefined);
       setIsPrescriptionMode(true);
       setCurrentView('PRESCRIPTIONS');
   };
 
-  // Auth loading
-  if (loading || (currentUser && !initialDataLoaded)) {
+  const handleEditPrescription = (pId: string) => {
+      window.history.pushState({ view: 'PRESCRIPTIONS', mode: 'prescription_edit', prescriptionId: pId }, '');
+      setEditPrescriptionId(pId);
+      setPrescriptionFarmerId(undefined);
+      setIsPrescriptionMode(true);
+      setCurrentView('PRESCRIPTIONS');
+  };
+
+  const handleEditVisit = (vId: string) => {
+      window.history.pushState({ view: 'VISITS', mode: 'visit_edit', visitId: vId }, '');
+      setEditVisitId(vId);
+      setIsVisitMode(true);
+      setCurrentView('VISITS');
+  };
+
+  if (loading || (currentUser && !initialDataLoaded && currentView !== 'PRODUCER_PORTAL')) {
       return (
           <div className="min-h-screen bg-stone-950 flex flex-col items-center justify-center">
               <Loader2 size={32} className="animate-spin text-emerald-500 mb-4" />
@@ -196,17 +232,32 @@ function MainApp() {
       );
   }
 
+  if (currentView === 'PRODUCER_PORTAL' && portalFarmerId) {
+    return <ProducerPortal 
+      farmerId={portalFarmerId} 
+      engineerId={portalEngineerId || undefined}
+      onBack={() => {
+        setPortalFarmerId(null);
+        setPortalEngineerId(null);
+        setCurrentView('DASHBOARD');
+        window.history.replaceState({}, '', window.location.pathname);
+    }} />;
+  }
+
   if (!currentUser) return <LoginScreen />;
 
   const renderContent = () => {
-    if (isPrescriptionMode) return <PrescriptionForm onBack={() => window.history.back()} initialFarmerId={prescriptionFarmerId} />;
-    if (currentView === 'VISITS' && isVisitMode) return <VisitLogForm onBack={() => window.history.back()} />;
+    if (isPrescriptionMode) return <PrescriptionForm onBack={() => window.history.back()} initialFarmerId={prescriptionFarmerId} initialPrescriptionId={editPrescriptionId} />;
+    if (currentView === 'VISITS' && isVisitMode) return <VisitLogForm onBack={() => window.history.back()} initialVisitId={editVisitId} />;
     if (currentView === 'REMINDERS') return <RemindersScreen onBack={() => window.history.back()} initialAddMode={isReminderAddMode} initialFilter={isTomorrowMode ? 'TOMORROW' : undefined} />;
     if (currentView === 'FIELD_ASSISTANT') return <FieldAssistant onBack={() => window.history.back()} />;
+    if (currentView === 'DISEASE_DIAGNOSIS') return <DiseaseDiagnosis onBack={() => window.history.back()} />;
+    if (currentView === 'MAP_VIEW') return <FarmerMap onBack={() => window.history.back()} />;
+    if (currentView === 'COMPATIBILITY_CHECK') return <PesticideCompatibility onBack={() => window.history.back()} />;
 
     switch (currentView as any) {
         case 'DASHBOARD': return <Dashboard onNavigate={handleNavigate} />;
-        case 'FARMERS': return <Farmers onBack={() => window.history.back()} onNavigateToPrescription={handleStartPrescription} />;
+        case 'FARMERS': return <Farmers onBack={() => window.history.back()} onNavigateToPrescription={handleStartPrescription} onEditPrescription={handleEditPrescription} onEditVisit={handleEditVisit} />;
         case 'PESTICIDES': return <Pesticides />;
         case 'PRESCRIPTIONS': return <PrescriptionForm onBack={() => window.history.back()} />;
         case 'VISITS': return <VisitLogForm onBack={() => window.history.back()} />;
@@ -218,6 +269,8 @@ function MainApp() {
         case 'STATISTICS': return <StatisticsScreen />;
         case 'REMINDERS': return <RemindersScreen onBack={() => window.history.back()} />;
         case 'INVENTORY': return <InventoryScreen />;
+        case 'SUPPLIERS': return <Suppliers onBack={() => window.history.back()} />;
+        case 'PAYMENTS': return <Payments onBack={() => window.history.back()} />;
         default: return <Dashboard onNavigate={handleNavigate} />;
     }
   };

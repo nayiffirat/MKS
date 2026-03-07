@@ -3,12 +3,14 @@ import {
     Search, Plus, Package, DollarSign, TrendingUp, 
     Trash2, Edit2, Save, X, AlertCircle, Filter,
     ArrowUpRight, ArrowDownRight, BarChart3, PieChart, RefreshCw, Loader2, FlaskConical,
-    History, User, Calendar
+    History, User, Calendar, List, Download
 } from 'lucide-react';
 import { 
     ResponsiveContainer, BarChart, Bar, XAxis, YAxis, 
     CartesianGrid, Tooltip, Cell, PieChart as RePieChart, Pie
 } from 'recharts';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { dbService } from '../services/db';
 import { InventoryItem, Pesticide, PesticideCategory } from '../types';
 import { useAppViewModel } from '../context/AppContext';
@@ -24,7 +26,9 @@ export const InventoryScreen: React.FC = () => {
         showToast,
         hapticFeedback,
         farmers,
-        prescriptions
+        prescriptions,
+        userProfile,
+        updateUserProfile
     } = useAppViewModel();
     
     const [pesticides, setPesticides] = useState<Pesticide[]>([]);
@@ -40,6 +44,7 @@ export const InventoryScreen: React.FC = () => {
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+    const [isListMenuOpen, setIsListMenuOpen] = useState(false);
     const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
     const [selectedDetailItem, setSelectedDetailItem] = useState<InventoryItem | null>(null);
     
@@ -50,7 +55,8 @@ export const InventoryScreen: React.FC = () => {
         quantity: '',
         unit: 'Adet',
         buyingPrice: '',
-        sellingPrice: ''
+        sellingPrice: '',
+        lowStockThreshold: ''
     });
 
     useEffect(() => {
@@ -80,23 +86,6 @@ export const InventoryScreen: React.FC = () => {
         ).slice(0, 10);
     }, [pesticides, searchPesticideTerm]);
 
-    const handleInitializeStocks = async () => {
-        if (confirm('Tüm reçetelerdeki ilaçlar 1000 adet ve 1 TL alış fiyatıyla depoya eklenecek. Emin misiniz?')) {
-            setSyncing(true);
-            try {
-                await dbService.initializeInventoryFromPrescriptions();
-                await refreshInventory();
-                await refreshStats();
-                alert('Stoklar başarıyla başlatıldı.');
-            } catch (error) {
-                console.error('Initialize stocks error:', error);
-                alert('Stoklar başlatılırken bir hata oluştu.');
-            } finally {
-                setSyncing(false);
-            }
-        }
-    };
-
     const handleAddItem = async () => {
         if (!selectedPesticide) return;
         
@@ -109,7 +98,8 @@ export const InventoryScreen: React.FC = () => {
             unit: formData.unit,
             buyingPrice: Number(formData.buyingPrice) || 0,
             sellingPrice: Number(formData.sellingPrice) || 0,
-            lastUpdated: new Date().toISOString()
+            lastUpdated: new Date().toISOString(),
+            lowStockThreshold: Number(formData.lowStockThreshold) || 0
         };
 
         await addInventoryItem(newItem);
@@ -127,7 +117,8 @@ export const InventoryScreen: React.FC = () => {
             unit: formData.unit,
             buyingPrice: Number(formData.buyingPrice) || 0,
             sellingPrice: Number(formData.sellingPrice) || 0,
-            lastUpdated: new Date().toISOString()
+            lastUpdated: new Date().toISOString(),
+            lowStockThreshold: Number(formData.lowStockThreshold) || 0
         };
 
         await updateInventoryItem(updatedItem);
@@ -188,7 +179,7 @@ export const InventoryScreen: React.FC = () => {
     };
 
     const openAddModal = () => {
-        setFormData({ quantity: '', unit: 'Adet', buyingPrice: '', sellingPrice: '' });
+        setFormData({ quantity: '', unit: 'Adet', buyingPrice: '', sellingPrice: '', lowStockThreshold: '5' });
         setSelectedPesticide(null);
         setSearchPesticideTerm('');
         setIsAddModalOpen(true);
@@ -200,7 +191,8 @@ export const InventoryScreen: React.FC = () => {
             quantity: item.quantity.toString(),
             unit: item.unit,
             buyingPrice: item.buyingPrice.toString(),
-            sellingPrice: item.sellingPrice.toString()
+            sellingPrice: item.sellingPrice.toString(),
+            lowStockThreshold: (item.lowStockThreshold || 0).toString()
         });
         setIsEditModalOpen(true);
     };
@@ -215,8 +207,183 @@ export const InventoryScreen: React.FC = () => {
         setIsAddModalOpen(false);
         setIsEditModalOpen(false);
         setIsDetailModalOpen(false);
+        setIsListMenuOpen(false);
         setSelectedItem(null);
         setSelectedDetailItem(null);
+    };
+
+    const generateInventoryPDF = (type: 'CUSTOMER' | 'INTERNAL' | 'FULL') => {
+        const doc = new jsPDF();
+        const dateStr = new Date().toLocaleDateString('tr-TR');
+        const timeStr = new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+        const engineerName = userProfile.fullName || 'Ziraat Mühendisi';
+        
+        // Helper for Turkish characters (jsPDF default fonts don't support them well without custom fonts)
+        const tr = (text: string) => {
+            if (!text) return '';
+            return text
+                .replace(/ğ/g, 'g').replace(/Ğ/g, 'G')
+                .replace(/ü/g, 'u').replace(/Ü/g, 'U')
+                .replace(/ş/g, 's').replace(/Ş/g, 'S')
+                .replace(/ı/g, 'i').replace(/İ/g, 'I')
+                .replace(/ö/g, 'o').replace(/Ö/g, 'O')
+                .replace(/ç/g, 'c').replace(/Ç/g, 'C');
+        };
+
+        // --- CORPORATE HEADER ---
+        // Emerald Header Bar
+        doc.setFillColor(16, 185, 129);
+        doc.rect(0, 0, 210, 40, 'F');
+        
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(24);
+        doc.setFont('helvetica', 'bold');
+        doc.text(tr('MÜHENDİS KAYIT SİSTEMİ'), 14, 20);
+        
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'normal');
+        doc.text(tr('Dijital Tarim ve Stok Yönetim Sistemi'), 14, 28);
+        
+        // Right side header info
+        doc.setFontSize(9);
+        doc.text(tr(`Tarih: ${dateStr} ${timeStr}`), 196, 15, { align: 'right' });
+        doc.text(tr(`Rapor No: #INV-${Math.floor(Math.random() * 10000)}`), 196, 22, { align: 'right' });
+        doc.text(tr(`Sorumlu: ${engineerName}`), 196, 29, { align: 'right' });
+
+        // --- REPORT TITLE ---
+        doc.setTextColor(40, 40, 40);
+        doc.setFontSize(16);
+        doc.setFont('helvetica', 'bold');
+        
+        let title = '';
+        let head: string[][] = [];
+        let body: any[] = [];
+        
+        const sortedInventory = [...filteredInventory].sort((a, b) => a.category.localeCompare(b.category));
+
+        if (type === 'CUSTOMER') {
+            title = 'MUSTERI FIYAT LISTESI';
+            head = [[tr('Ürün Adı'), tr('Kategori'), tr('Birim'), tr('Satış Fiyatı')]];
+            body = sortedInventory.map(item => [
+                tr(item.pesticideName),
+                tr(item.category),
+                tr(item.unit),
+                `${item.sellingPrice.toLocaleString('tr-TR')} TL`
+            ]);
+        } else if (type === 'INTERNAL') {
+            title = 'IC STOK VE MALIYET LISTESI';
+            head = [[tr('Ürün Adı'), tr('Kategori'), tr('Stok'), tr('Birim'), tr('Alış Fiyatı')]];
+            body = sortedInventory.map(item => [
+                tr(item.pesticideName),
+                tr(item.category),
+                item.quantity,
+                tr(item.unit),
+                `${item.buyingPrice.toLocaleString('tr-TR')} TL`
+            ]);
+        } else {
+            title = 'TAM STOK VE FINANSAL RAPOR';
+            head = [[tr('Ürün Adı'), tr('Kategori'), tr('Stok'), tr('Alış'), tr('Satış'), tr('Toplam Maliyet')]];
+            body = sortedInventory.map(item => [
+                tr(item.pesticideName),
+                tr(item.category),
+                `${item.quantity} ${tr(item.unit)}`,
+                `${item.buyingPrice.toLocaleString('tr-TR')} TL`,
+                `${item.sellingPrice.toLocaleString('tr-TR')} TL`,
+                `${(item.quantity * item.buyingPrice).toLocaleString('tr-TR')} TL`
+            ]);
+        }
+
+        doc.text(tr(title), 14, 55);
+        
+        // Horizontal line under title
+        doc.setDrawColor(16, 185, 129);
+        doc.setLineWidth(0.5);
+        doc.line(14, 58, 60, 58);
+
+        // --- TABLE ---
+        autoTable(doc, {
+            startY: 65,
+            head: head,
+            body: body,
+            theme: 'grid',
+            headStyles: { 
+                fillColor: [16, 185, 129], 
+                textColor: 255,
+                fontSize: 10,
+                fontStyle: 'bold',
+                halign: 'center'
+            },
+            styles: { 
+                fontSize: 9, 
+                cellPadding: 4,
+                font: 'helvetica',
+                textColor: [60, 60, 60],
+                lineColor: [230, 230, 230]
+            },
+            columnStyles: {
+                0: { fontStyle: 'bold', textColor: [20, 20, 20] }
+            },
+            alternateRowStyles: { fillColor: [250, 252, 251] },
+            margin: { left: 14, right: 14 }
+        });
+
+        // --- SUMMARY BOXES (For Internal and Full) ---
+        if (type !== 'CUSTOMER') {
+            const finalY = (doc as any).lastAutoTable.finalY + 15;
+            const totalCost = sortedInventory.reduce((acc, i) => acc + (i.quantity * i.buyingPrice), 0);
+            const totalRevenue = sortedInventory.reduce((acc, i) => acc + (i.quantity * i.sellingPrice), 0);
+            
+            // Summary Box Background
+            doc.setFillColor(245, 247, 246);
+            doc.roundedRect(14, finalY, 182, type === 'FULL' ? 35 : 20, 3, 3, 'F');
+            
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(100, 100, 100);
+            doc.text(tr('FINANSAL OZET'), 20, finalY + 8);
+            
+            doc.setFontSize(11);
+            doc.setTextColor(40, 40, 40);
+            doc.text(tr(`Toplam Stok Maliyeti:`), 20, finalY + 16);
+            doc.text(`${totalCost.toLocaleString('tr-TR')} TL`, 190, finalY + 16, { align: 'right' });
+            
+            if (type === 'FULL') {
+                doc.text(tr(`Toplam Potansiyel Ciro:`), 20, finalY + 23);
+                doc.text(`${totalRevenue.toLocaleString('tr-TR')} TL`, 190, finalY + 23, { align: 'right' });
+                
+                doc.setDrawColor(220, 220, 220);
+                doc.line(20, finalY + 26, 190, finalY + 26);
+                
+                doc.setFontSize(12);
+                doc.setTextColor(16, 185, 129);
+                doc.text(tr(`Tahmini Net Kar:`), 20, finalY + 31);
+                doc.text(`${(totalRevenue - totalCost).toLocaleString('tr-TR')} TL`, 190, finalY + 31, { align: 'right' });
+            }
+        }
+
+        // --- FOOTER ---
+        const pageCount = (doc as any).internal.getNumberOfPages();
+        for (let i = 1; i <= pageCount; i++) {
+            doc.setPage(i);
+            doc.setFontSize(8);
+            doc.setTextColor(150, 150, 150);
+            doc.text(
+                tr(`Mühendis Kayıt Sistemi - Profesyonel Stok Yönetim Raporu | Sayfa ${i} / ${pageCount}`),
+                105,
+                285,
+                { align: 'center' }
+            );
+            doc.text(
+                tr('Bu belge dijital olarak olusturulmustur.'),
+                105,
+                290,
+                { align: 'center' }
+            );
+        }
+
+        doc.save(`MKS_Depo_Raporu_${type}_${dateStr.replace(/\./g, '_')}.pdf`);
+        setIsListMenuOpen(false);
+        showToast('Kurumsal PDF Raporu oluşturuldu', 'success');
     };
 
     // Sales History for Detail View
@@ -319,16 +486,49 @@ export const InventoryScreen: React.FC = () => {
                     </h1>
                     <p className="text-stone-500 text-xs font-bold uppercase tracking-widest mt-1">Stok ve Maliyet Yönetimi</p>
                 </div>
-                <div className="flex gap-2">
-                    <button 
-                        onClick={handleInitializeStocks}
-                        disabled={syncing}
-                        className={`bg-amber-600/20 hover:bg-amber-600/30 text-amber-400 px-3 py-2 rounded-xl font-bold text-[10px] border border-amber-500/20 active:scale-95 transition-all flex items-center gap-2 ${syncing ? 'opacity-50 cursor-not-allowed' : ''}`}
-                        title="Reçetelerdeki tüm ilaçları 1000 adet olarak depoya ekler"
-                    >
-                        <FlaskConical size={14} />
-                        Stokları Başlat
-                    </button>
+                <div className="flex gap-2 relative">
+                    <div className="relative">
+                        <button 
+                            onClick={() => setIsListMenuOpen(!isListMenuOpen)}
+                            className="bg-stone-800 hover:bg-stone-700 text-stone-300 px-3 py-2 rounded-xl font-bold text-xs border border-white/5 active:scale-95 transition-all flex items-center gap-2"
+                        >
+                            <List size={16} />
+                            Listele
+                        </button>
+                        
+                        {isListMenuOpen && (
+                            <>
+                                <div className="fixed inset-0 z-30" onClick={() => setIsListMenuOpen(false)}></div>
+                                <div className="absolute top-full right-0 mt-2 w-56 bg-stone-900 border border-white/10 rounded-2xl shadow-2xl z-40 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                                    <div className="p-2 border-b border-white/5 bg-stone-950/50">
+                                        <span className="text-[10px] font-black text-stone-500 uppercase tracking-widest px-2">PDF Rapor Seçenekleri</span>
+                                    </div>
+                                    <button 
+                                        onClick={() => generateInventoryPDF('CUSTOMER')}
+                                        className="w-full text-left px-4 py-3 text-xs font-bold text-stone-300 hover:bg-stone-800 hover:text-emerald-400 flex items-center gap-3 transition-colors"
+                                    >
+                                        <User size={14} className="text-blue-400" />
+                                        Müşteri Fiyat Listesi
+                                    </button>
+                                    <button 
+                                        onClick={() => generateInventoryPDF('INTERNAL')}
+                                        className="w-full text-left px-4 py-3 text-xs font-bold text-stone-300 hover:bg-stone-800 hover:text-emerald-400 flex items-center gap-3 transition-colors"
+                                    >
+                                        <Package size={14} className="text-amber-400" />
+                                        İç Stok & Maliyet Listesi
+                                    </button>
+                                    <button 
+                                        onClick={() => generateInventoryPDF('FULL')}
+                                        className="w-full text-left px-4 py-3 text-xs font-bold text-stone-300 hover:bg-stone-800 hover:text-emerald-400 flex items-center gap-3 transition-colors"
+                                    >
+                                        <TrendingUp size={14} className="text-emerald-400" />
+                                        Tam Finansal Rapor
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+
                     <button 
                         onClick={syncOldPrescriptions}
                         disabled={syncing}
@@ -403,56 +603,60 @@ export const InventoryScreen: React.FC = () => {
                                 <div 
                                     key={item.id} 
                                     onClick={() => openDetailModal(item)}
-                                    className="bg-stone-900 border border-white/5 rounded-2xl p-4 shadow-sm hover:border-emerald-500/30 transition-all group cursor-pointer active:scale-[0.98]"
+                                    className={`bg-stone-900/80 backdrop-blur border rounded-xl p-2 shadow-sm transition-all group cursor-pointer active:scale-[0.98] ${
+                                        item.quantity === 0 
+                                        ? 'border-red-500/50 shadow-[0_0_10px_rgba(239,68,68,0.1)]' 
+                                        : 'border-white/5 hover:border-emerald-500/20'
+                                    }`}
                                 >
-                                    <div className="flex justify-between items-start mb-3">
-                                        <div>
-                                            <h3 className="font-bold text-stone-200 text-lg">{item.pesticideName}</h3>
-                                            <span className="text-[10px] font-bold text-stone-500 bg-stone-950 px-2 py-1 rounded-md uppercase tracking-wider mt-1 inline-block">
+                                    <div className="flex justify-between items-start mb-1.5">
+                                        <div className="flex-1 min-w-0">
+                                            <h3 className="font-bold text-stone-100 text-xs truncate tracking-tight">{item.pesticideName}</h3>
+                                            <span className="text-[7px] font-bold text-stone-500 bg-stone-950/50 px-1 py-0.5 rounded border border-white/5 uppercase tracking-widest mt-0.5 inline-block">
                                                 {item.category}
                                             </span>
                                         </div>
-                                        <div className="flex gap-1">
+                                        <div className="flex gap-1 ml-2">
                                             <button 
                                                 onClick={(e) => {
                                                     e.stopPropagation();
                                                     openEditModal(item);
                                                 }} 
-                                                className="p-2 bg-stone-800 text-stone-400 rounded-lg hover:text-emerald-400 hover:bg-stone-700 transition-colors active:scale-90"
+                                                className="p-1 bg-stone-800/60 text-stone-400 rounded-lg hover:text-emerald-400 hover:bg-stone-700 transition-all active:scale-90 border border-white/5"
                                                 title="Düzenle"
                                             >
-                                                <Edit2 size={16} />
+                                                <Edit2 size={12} />
                                             </button>
                                             <button 
                                                 onClick={(e) => {
                                                     e.stopPropagation();
                                                     handleDeleteItem(item.id);
                                                 }} 
-                                                className="p-2 bg-stone-800 text-stone-400 rounded-lg hover:text-red-400 hover:bg-red-900/20 transition-colors active:scale-90"
+                                                className="p-1 bg-stone-800/60 text-stone-400 rounded-lg hover:text-red-400 hover:bg-red-900/20 transition-all active:scale-90 border border-white/5"
                                                 title="Sil"
                                             >
-                                                <Trash2 size={16} />
+                                                <Trash2 size={12} />
                                             </button>
                                         </div>
                                     </div>
                                     
-                                    <div className="grid grid-cols-3 gap-2 mt-4">
-                                        <div className="bg-stone-950/50 p-2 rounded-xl border border-white/5">
-                                            <span className="text-[10px] text-stone-500 font-bold uppercase block mb-1">Stok</span>
-                                            <span className="text-emerald-400 font-black font-mono text-lg">
-                                                {item.quantity} <span className="text-xs text-stone-600 font-sans">{item.unit}</span>
+                                    <div className="grid grid-cols-3 gap-1.5 mt-2">
+                                        <div className="bg-stone-950/30 p-1.5 rounded-lg border border-white/5">
+                                            <span className="text-[7px] text-stone-500 font-bold uppercase block mb-0.5 tracking-wider">Stok</span>
+                                            <span className="text-emerald-400 font-black font-mono text-xs">
+                                                {item.quantity} <span className="text-[7px] text-stone-600 font-bold font-sans uppercase">{item.unit}</span>
                                             </span>
                                         </div>
-                                        <div className="bg-stone-950/50 p-2 rounded-xl border border-white/5">
-                                            <span className="text-[10px] text-stone-500 font-bold uppercase block mb-1">Alış</span>
-                                            <span className="text-stone-300 font-bold font-mono">
-                                                {item.buyingPrice.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                                        <div className="bg-stone-950/30 p-1.5 rounded-lg border border-white/5">
+                                            <span className="text-[7px] text-stone-500 font-bold uppercase block mb-0.5 tracking-wider">Alış</span>
+                                            <span className="text-stone-300 font-black font-mono text-xs">
+                                                {Math.round(item.buyingPrice).toLocaleString('tr-TR')} <span className="text-[7px] text-stone-600 font-bold font-sans uppercase">₺</span>
                                             </span>
                                         </div>
-                                        <div className="bg-stone-950/50 p-2 rounded-xl border border-white/5">
-                                            <span className="text-[10px] text-stone-500 font-bold uppercase block mb-1">Satış</span>
-                                            <span className="text-stone-300 font-bold font-mono">
-                                                {item.sellingPrice.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                                        <div className="bg-stone-950/30 p-1.5 rounded-lg border border-white/5">
+                                            <span className="text-[7px] text-stone-500 font-bold uppercase block mb-0.5 tracking-wider">Satış</span>
+                                            <span className="text-amber-400 font-black font-mono text-xs">
+                                                {Math.round(item.sellingPrice).toLocaleString('tr-TR')} <span className="text-[7px] text-stone-600 font-bold font-sans uppercase">₺</span>
                                             </span>
                                         </div>
                                     </div>
@@ -797,6 +1001,19 @@ export const InventoryScreen: React.FC = () => {
                                             value={formData.sellingPrice}
                                             onChange={(e) => setFormData({...formData, sellingPrice: e.target.value})}
                                             placeholder="0.00"
+                                        />
+                                    </div>
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-xs font-bold text-stone-500 uppercase tracking-widest">Kritik Stok Seviyesi</label>
+                                    <div className="relative">
+                                        <AlertCircle className="absolute left-3 top-3 text-stone-600" size={14} />
+                                        <input 
+                                            type="number" 
+                                            className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 pl-8 text-stone-200 text-sm outline-none focus:border-emerald-500/50 font-mono"
+                                            value={formData.lowStockThreshold}
+                                            onChange={(e) => setFormData({...formData, lowStockThreshold: e.target.value})}
+                                            placeholder="5"
                                         />
                                     </div>
                                 </div>

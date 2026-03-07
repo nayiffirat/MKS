@@ -8,9 +8,10 @@ import { useAppViewModel } from '../context/AppContext';
 
 interface VisitsProps {
     onBack: () => void;
+    initialVisitId?: string;
 }
 
-export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
+export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) => {
     const { userProfile, updateVisit, deleteVisit, updateUserProfile, showToast, hapticFeedback } = useAppViewModel();
     // Yeni mod eklendi: 'AI_WIZARD'
     const [viewMode, setViewMode] = useState<'LIST' | 'FORM' | 'SUCCESS' | 'DETAIL' | 'AI_WIZARD'>('LIST');
@@ -70,6 +71,7 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
     const [diseaseFound, setDiseaseFound] = useState('');
     const [severity, setSeverity] = useState<'LOW' | 'MEDIUM' | 'HIGH'>('LOW');
     const [isRecording, setIsRecording] = useState(false);
+    const [isGeneratingReport, setIsGeneratingReport] = useState(false);
     
     // GPS State
     const [coords, setCoords] = useState<{ lat: number, lng: number } | null>(null);
@@ -78,6 +80,7 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
     const videoRef = useRef<HTMLVideoElement>(null);
     const streamRef = useRef<MediaStream | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const wizardFileInputRef = useRef<HTMLInputElement>(null);
     
     // AI Wizard State
     const [photo, setPhoto] = useState<string | null>(null);
@@ -93,6 +96,15 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
         loadData();
         return () => stopCamera();
     }, []);
+
+    useEffect(() => {
+        if (initialVisitId && visits.length > 0) {
+            const v = visits.find(visit => visit.id === initialVisitId);
+            if (v) {
+                handleEdit(v);
+            }
+        }
+    }, [initialVisitId, visits]);
 
     // Effect to handle video stream attachment when camera opens
     useEffect(() => {
@@ -190,6 +202,13 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
 
     const runAnalysis = async () => {
         if (!photo) return;
+        
+        // Check for API Key
+        if (window.aistudio && !(await window.aistudio.hasSelectedApiKey())) {
+            await window.aistudio.openSelectKey();
+            // After opening, we don't know if they selected it, but we proceed
+        }
+
         setIsAnalyzing(true);
         setIsReportAddedToNotes(false);
         try {
@@ -197,6 +216,9 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
             setAnalysis(result);
         } catch (error) { 
             console.error("AI Error:", error); 
+            if (error instanceof Error && error.message.includes("entity was not found")) {
+                window.aistudio?.openSelectKey();
+            }
             alert("AI Analizi sırasında hata oluştu. İnternet bağlantınızı kontrol edin.");
         } finally { 
             setIsAnalyzing(false); 
@@ -297,9 +319,63 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
     };
 
     const toggleMic = () => {
-        if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) { alert("Cihazınızda sesle yazma desteklenmiyor."); return; }
-        setIsRecording(!isRecording);
-        if (!isRecording) { setTimeout(() => { setNote(prev => prev + " Arazide kontrol yapıldı."); setIsRecording(false); }, 1500); }
+        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            alert("Cihazınızda sesle yazma desteklenmiyor.");
+            return;
+        }
+
+        if (isRecording) {
+            setIsRecording(false);
+            return;
+        }
+
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'tr-TR';
+        recognition.interimResults = false;
+        recognition.maxAlternatives = 1;
+
+        recognition.onstart = () => {
+            setIsRecording(true);
+            hapticFeedback('light');
+        };
+
+        recognition.onresult = (event: any) => {
+            const transcript = event.results[0][0].transcript;
+            setNote(prev => prev ? prev + ' ' + transcript : transcript);
+            hapticFeedback('medium');
+        };
+
+        recognition.onerror = (event: any) => {
+            console.error('Speech recognition error:', event.error);
+            setIsRecording(false);
+        };
+
+        recognition.onend = () => {
+            setIsRecording(false);
+        };
+
+        recognition.start();
+    };
+
+    const handleGenerateAIReport = async () => {
+        if (!note.trim()) {
+            showToast('Lütfen önce bir not yazın veya sesli giriş yapın.', 'error');
+            return;
+        }
+
+        setIsGeneratingReport(true);
+        try {
+            const structuredReport = await GeminiService.generateVisitReportFromVoice(note);
+            setNote(structuredReport);
+            showToast('Rapor başarıyla yapılandırıldı.', 'success');
+            hapticFeedback('success');
+        } catch (error) {
+            console.error("AI Report Error:", error);
+            showToast('Rapor oluşturulurken bir hata oluştu.', 'error');
+        } finally {
+            setIsGeneratingReport(false);
+        }
     };
 
     const openMap = (lat: number, lng: number) => { window.open(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`, '_blank'); };
@@ -402,9 +478,28 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
                                     </div>
                                     <h3 className="text-stone-100 text-xl font-bold mb-3 tracking-tight">Bitki Teşhis Uzmanı</h3>
                                     <p className="text-stone-500 text-sm leading-relaxed mb-10 max-w-[240px]">Hastalık, zararlı veya besin eksikliği tespiti için bir fotoğraf çekin.</p>
-                                    <button onClick={startCamera} className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-emerald-900/40 flex items-center justify-center gap-2 active:scale-95 transition-all">
-                                        <Camera size={20} /> Kamerayı Başlat
-                                    </button>
+                                    <div className="flex flex-col gap-3 w-full">
+                                        <button 
+                                            onClick={startCamera} 
+                                            className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-emerald-900/40 flex items-center justify-center gap-2 active:scale-95 transition-all"
+                                        >
+                                            <Camera size={20} /> Kamerayı Başlat
+                                        </button>
+                                        <button 
+                                            onClick={() => wizardFileInputRef.current?.click()} 
+                                            className="w-full py-4 bg-stone-800 text-stone-300 rounded-2xl font-bold text-sm border border-white/5 flex items-center justify-center gap-2 active:scale-95 transition-all"
+                                        >
+                                            <Upload size={20} /> Fotoğraf Yükle / Çek
+                                        </button>
+                                        <input 
+                                            type="file" 
+                                            ref={wizardFileInputRef} 
+                                            className="hidden" 
+                                            accept="image/*" 
+                                            capture="environment" 
+                                            onChange={handleFileUpload} 
+                                        />
+                                    </div>
                                 </div>
                             )
                         ) : (
@@ -531,7 +626,7 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
                 <p className="text-stone-400 text-center text-xs mb-6"><span className="text-emerald-400 font-bold">{lastVisitedFarmer.fullName}</span> için rapor oluşturuldu.</p>
                 <div className="w-full max-sm space-y-2.5">
                     <a href={`tel:${lastVisitedFarmer.phoneNumber}`} className="flex items-center justify-center w-full py-3 bg-stone-800 text-stone-200 border border-white/5 rounded-2xl font-bold hover:bg-stone-700 transition-all text-xs"><Phone size={16} className="mr-2 text-emerald-500"/> Üreticiyi Ara</a>
-                    <a href={`sms:${lastVisitedFarmer.phoneNumber}?body=Rapor`} className="flex items-center justify-center w-full py-3 bg-emerald-700 text-white rounded-2xl font-bold hover:bg-emerald-600 transition-all text-xs"><MessageSquare size={16} className="mr-2"/> SMS ile Raporla</a>
+                    <a href={`sms:${lastVisitedFarmer.phoneNumber}?body=${encodeURIComponent('Sayın çiftçi araziniz kontrol edildi bilgi için arayınız')}`} className="flex items-center justify-center w-full py-3 bg-emerald-700 text-white rounded-2xl font-bold hover:bg-emerald-600 transition-all text-xs"><MessageSquare size={16} className="mr-2"/> SMS ile Raporla</a>
                 </div>
                 <button onClick={() => changeViewMode('LIST')} className="mt-6 text-stone-500 hover:text-stone-300 font-medium py-2 px-4 text-xs">Listeye Dön</button>
             </div>
@@ -860,7 +955,19 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack }) => {
                 </div>
 
                 <div>
-                    <label className="block text-[9px] font-bold text-stone-500 mb-1.5 uppercase tracking-widest">Notlar</label>
+                    <div className="flex justify-between items-center mb-1.5">
+                        <label className="block text-[9px] font-bold text-stone-500 uppercase tracking-widest">Notlar</label>
+                        {note.trim().length > 10 && (
+                            <button 
+                                onClick={handleGenerateAIReport}
+                                disabled={isGeneratingReport}
+                                className="flex items-center gap-1.5 text-[9px] font-bold text-emerald-400 bg-emerald-950/30 px-2 py-1 rounded-lg border border-emerald-500/20 hover:bg-emerald-900/40 transition-all disabled:opacity-50"
+                            >
+                                {isGeneratingReport ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
+                                {isGeneratingReport ? 'Raporlanıyor...' : 'AI İle Yapılandır'}
+                            </button>
+                        )}
+                    </div>
                     <div className="relative">
                         <textarea className="w-full p-3 rounded-2xl bg-stone-900 border border-white/5 h-32 outline-none focus:border-emerald-500 transition-all text-stone-200 text-xs resize-none" placeholder="Gözlemlerinizi buraya yazın veya AI raporunu düzenleyin..." value={note} onChange={e => setNote(e.target.value)}></textarea>
                         <button onClick={toggleMic} className={`absolute bottom-3 right-3 p-2.5 rounded-xl shadow-lg transition-all ${isRecording ? 'bg-red-600 animate-pulse' : 'bg-stone-800 text-emerald-400'}`}><Mic size={16} /></button>

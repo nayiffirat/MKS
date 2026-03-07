@@ -166,19 +166,19 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
             </div>
 
             {/* Filter Tabs */}
-            <div className="px-4 mb-5">
-                <div className="flex p-0.5 bg-stone-900/60 backdrop-blur rounded-lg border border-white/5">
+            <div className="px-4 mb-6">
+                <div className="flex p-1 bg-stone-900/60 backdrop-blur-xl rounded-2xl border border-white/5 shadow-inner">
                     {(['PENDING', 'TOMORROW', 'COMPLETED', 'ALL'] as const).map(f => (
                         <button
                             key={f}
                             onClick={() => setFilter(f)}
-                            className={`flex-1 py-1.5 rounded-md text-[9px] font-black tracking-wider transition-all duration-300 flex items-center justify-center ${
+                            className={`flex-1 py-2.5 rounded-xl text-[10px] font-black tracking-widest transition-all duration-300 flex items-center justify-center ${
                                 filter === f 
-                                ? 'bg-stone-100 text-stone-950 shadow shadow-white/10' 
+                                ? 'bg-stone-100 text-stone-950 shadow-lg shadow-white/5 scale-[1.02]' 
                                 : 'text-stone-500 hover:text-stone-300'
                             }`}
                         >
-                            {f === 'TOMORROW' && <CalendarClock size={10} className="mr-1" />}
+                            {f === 'TOMORROW' && <CalendarClock size={12} className="mr-1.5" />}
                             {f === 'PENDING' ? 'YAPILACAK' : f === 'COMPLETED' ? 'BİTEN' : f === 'TOMORROW' ? 'YARIN' : 'HEPSİ'}
                         </button>
                     ))}
@@ -186,93 +186,93 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
             </div>
 
             {/* Reminders List */}
-            <div className="px-4 space-y-2.5">
+            <div className="px-4 space-y-3.5">
                 {filteredReminders.length === 0 ? (
-                    <div className="text-center py-20 bg-stone-900/20 rounded-[2rem] border border-dashed border-stone-800 mx-1">
-                        <div className="w-14 h-14 bg-stone-900 rounded-xl flex items-center justify-center mx-auto mb-3 opacity-50">
-                            <Bell size={28} className="text-stone-600" />
+                    <div className="text-center py-24 bg-stone-900/20 rounded-[3rem] border border-dashed border-stone-800/50 mx-1">
+                        <div className="w-16 h-16 bg-stone-900/50 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-white/5">
+                            <Bell size={32} className="text-stone-700" />
                         </div>
-                        <p className="text-stone-500 text-xs font-semibold">
-                            {filter === 'TOMORROW' ? 'Yarın için planlanmış bir görev yok.' : 'Görev bulunmuyor.'}
+                        <p className="text-stone-500 text-sm font-bold tracking-tight">
+                            {filter === 'TOMORROW' ? 'Yarın için planlanmış bir görev yok.' : 'Henüz bir görev bulunmuyor.'}
                         </p>
                     </div>
                 ) : (
                     filteredReminders.map(item => (
                         <div 
                             key={item.id}
-                            className={`p-3 rounded-2xl border transition-all duration-500 relative overflow-hidden group ${
+                            className={`p-4 rounded-[2rem] border transition-all duration-500 relative overflow-hidden group ${
                                 item.isCompleted 
                                 ? 'bg-stone-950/40 border-stone-900 grayscale opacity-60' 
-                                : 'bg-stone-900/40 border-white/5 hover:border-emerald-500/30 hover:bg-stone-900/60'
+                                : 'bg-stone-900/80 backdrop-blur border-white/10 hover:border-emerald-500/30 shadow-xl'
                             }`}
                         >
                             <div className="flex items-start justify-between relative z-10">
-                                <div className="shrink-0 pt-1">
+                                <div className="shrink-0 pt-0.5">
                                     <button 
                                         onClick={(e) => { e.stopPropagation(); toggleReminder(item.id); }}
-                                        className={`w-8 h-8 rounded-full flex items-center justify-center border transition-all active:scale-90 ${item.isCompleted ? 'bg-emerald-900/20 border-emerald-500/30 text-emerald-500' : 'bg-stone-800 border-white/10 text-stone-500 hover:border-emerald-500/50'}`}
+                                        className={`w-10 h-10 rounded-2xl flex items-center justify-center border-2 transition-all active:scale-90 ${item.isCompleted ? 'bg-emerald-900/20 border-emerald-500/30 text-emerald-500' : 'bg-stone-800 border-white/10 text-stone-500 hover:border-emerald-500/50 shadow-inner'}`}
                                     >
-                                        {item.isCompleted ? <Check size={16} strokeWidth={3} /> : <Circle size={16} />}
+                                        {item.isCompleted ? <Check size={20} strokeWidth={3} /> : <Circle size={20} />}
                                     </button>
                                 </div>
                                 
-                                <div className="flex-1 ml-3 mr-2 min-w-0 cursor-pointer" onClick={() => setSelectedReminder(item)}>
-                                    <div className="flex items-center gap-1.5 mb-0.5">
-                                         <h4 className={`font-bold text-stone-100 text-[12px] leading-tight truncate ${item.isCompleted ? 'line-through opacity-50' : ''}`}>
+                                <div className="flex-1 ml-4 mr-2 min-w-0 cursor-pointer" onClick={() => setSelectedReminder(item)}>
+                                    <div className="flex items-center gap-2 mb-1">
+                                         <h4 className={`font-black text-stone-100 text-sm leading-tight truncate tracking-tight ${item.isCompleted ? 'line-through opacity-50' : ''}`}>
                                             {item.title}
                                          </h4>
                                          {!item.isCompleted && (
-                                             <span className={`text-[6px] px-1 py-0 rounded border font-black uppercase tracking-tighter ${getPriorityColor(item.priority)}`}>
+                                             <span className={`text-[8px] px-1.5 py-0.5 rounded-lg border font-black uppercase tracking-widest ${getPriorityColor(item.priority)}`}>
                                                 {item.priority === 'HIGH' ? 'ACİL' : item.priority === 'MEDIUM' ? 'ORTA' : 'DÜŞÜK'}
                                              </span>
                                          )}
                                     </div>
                                     
-                                    <div className="flex flex-wrap items-center gap-2">
-                                        <div className={`flex items-center text-[8px] font-black uppercase tracking-wide ${!item.isCompleted && isOverdue(item.date) ? 'text-rose-400' : 'text-stone-500'}`}>
-                                            <Calendar size={9} className="mr-1" />
+                                    <div className="flex flex-wrap items-center gap-3">
+                                        <div className={`flex items-center text-[10px] font-black uppercase tracking-widest ${!item.isCompleted && isOverdue(item.date) ? 'text-rose-400' : 'text-stone-500'}`}>
+                                            <Calendar size={11} className="mr-1.5" />
                                             {new Date(item.date).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })}
                                         </div>
                                         
                                         {item.recurrence !== 'NONE' && (
-                                            <div className="flex items-center text-[8px] font-black text-blue-400/70 uppercase tracking-wide">
-                                                <Repeat size={9} className="mr-1" />
+                                            <div className="flex items-center text-[10px] font-black text-blue-400/70 uppercase tracking-widest">
+                                                <Repeat size={11} className="mr-1.5" />
                                                 {getRecurrenceLabel(item.recurrence)}
                                             </div>
                                         )}
                                     </div>
                                 </div>
 
-                                <div className="flex flex-col items-end gap-1.5">
+                                <div className="flex flex-col items-end gap-2">
                                     {/* Action Buttons */}
                                     {!item.isCompleted ? (
                                         <button 
                                             onClick={(e) => { e.stopPropagation(); toggleReminder(item.id); }}
-                                            className="flex items-center px-3 py-1.5 bg-emerald-600/10 hover:bg-emerald-600 text-emerald-500 hover:text-white rounded-lg border border-emerald-500/30 transition-all active:scale-95 shadow-sm group/btn"
+                                            className="flex items-center px-4 py-2 bg-emerald-600/10 hover:bg-emerald-600 text-emerald-500 hover:text-white rounded-xl border border-emerald-500/30 transition-all active:scale-95 shadow-sm group/btn"
                                         >
-                                            <CheckCircle2 size={12} className="mr-1.5" />
-                                            <span className="text-[9px] font-black uppercase tracking-wider">Tamamla</span>
+                                            <CheckCircle2 size={14} className="mr-2" />
+                                            <span className="text-[10px] font-black uppercase tracking-widest">BİTİR</span>
                                         </button>
                                     ) : (
-                                        <div className="flex items-center px-2 py-1 bg-stone-900 rounded-lg border border-white/5">
-                                            <span className="text-[8px] font-bold text-stone-500 uppercase tracking-widest">Tamamlandı</span>
+                                        <div className="flex items-center px-3 py-1.5 bg-stone-900 rounded-xl border border-white/5">
+                                            <span className="text-[9px] font-black text-stone-500 uppercase tracking-widest">BİTTİ</span>
                                         </div>
                                     )}
 
-                                    <div className="flex items-center space-x-1">
+                                    <div className="flex items-center space-x-2">
                                         {!item.isCompleted && (
                                             <button 
                                                 onClick={(e) => { e.stopPropagation(); handleEditClick(item); }}
-                                                className="p-1.5 text-stone-600 hover:text-stone-300 transition-all active:scale-90 bg-stone-900/50 rounded-lg hover:bg-stone-800"
+                                                className="p-2.5 text-stone-500 hover:text-stone-200 transition-all active:scale-90 bg-stone-800/50 rounded-xl hover:bg-stone-800 border border-white/5"
                                             >
-                                                <Edit2 size={12} />
+                                                <Edit2 size={14} />
                                             </button>
                                         )}
                                         <button 
                                             onClick={(e) => { e.stopPropagation(); if(confirm('Bu görevi silmek istediğinize emin misiniz?')) deleteReminder(item.id); }}
-                                            className="p-1.5 text-stone-600 hover:text-rose-500 transition-all active:scale-90 bg-stone-900/50 rounded-lg hover:bg-stone-800 hover:border-rose-500/20 border border-transparent"
+                                            className="p-2.5 text-stone-500 hover:text-rose-400 transition-all active:scale-90 bg-stone-800/50 rounded-xl hover:bg-rose-950/20 hover:border-rose-500/30 border border-white/5"
                                         >
-                                            <Trash2 size={12} />
+                                            <Trash2 size={14} />
                                         </button>
                                     </div>
                                 </div>

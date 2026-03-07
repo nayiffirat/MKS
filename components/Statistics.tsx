@@ -8,7 +8,7 @@ import {
     Download, Users, Ruler, Sprout, MapPin, Loader2, ArrowUpRight, 
     FileText, X, Calendar, Activity, Zap, ClipboardCheck, 
     AlertTriangle, TrendingUp, History, Scale, BookOpen, 
-    ChevronRight, PieChart as PieIcon, BarChart3, LineChart as LineIcon
+    ChevronRight, PieChart as PieIcon, BarChart3, LineChart as LineIcon, Truck, DollarSign
 } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
@@ -16,10 +16,10 @@ import { dbService } from '../services/db';
 import { useAppViewModel } from '../context/AppContext';
 import { Prescription } from '../types';
 
-    type StatTab = 'OVERVIEW' | 'LAND' | 'PESTICIDES' | 'VISITS' | 'CONSUMPTION' | 'SALES';
+    type StatTab = 'OVERVIEW' | 'LAND' | 'PESTICIDES' | 'VISITS' | 'CONSUMPTION' | 'SALES' | 'DEBTS' | 'RECEIVABLES';
 
     export const StatisticsScreen: React.FC = () => {
-    const { stats, farmers, reminders, notifications, inventory } = useAppViewModel();
+    const { stats, farmers, reminders, notifications, inventory, suppliers } = useAppViewModel();
     const [activeTab, setActiveTab] = useState<StatTab>('OVERVIEW');
     const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
     const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
@@ -103,6 +103,40 @@ import { Prescription } from '../types';
             productChartData
         };
     }, [prescriptions, inventory]);
+
+    const supplierDebtData = React.useMemo(() => {
+        const debts = suppliers
+            .filter((s: any) => s.balance < 0)
+            .map((s: any) => ({
+                name: s.name,
+                debt: Math.abs(s.balance)
+            }))
+            .sort((a: any, b: any) => b.debt - a.debt);
+        
+        const totalSupplierDebt = debts.reduce((acc: number, curr: any) => acc + curr.debt, 0);
+        
+        return {
+            debts,
+            totalSupplierDebt
+        };
+    }, [suppliers]);
+
+    const farmerReceivableData = React.useMemo(() => {
+        const receivables = farmers
+            .filter((f: any) => (f.balance || 0) < 0)
+            .map((f: any) => ({
+                name: f.fullName,
+                amount: Math.abs(f.balance || 0)
+            }))
+            .sort((a: any, b: any) => b.amount - a.amount);
+        
+        const totalFarmerReceivables = receivables.reduce((acc: number, curr: any) => acc + curr.amount, 0);
+        
+        return {
+            receivables,
+            totalFarmerReceivables
+        };
+    }, [farmers]);
 
     const handleDownloadPDF = async () => {
         if (!reportRef.current) return;
@@ -521,6 +555,90 @@ import { Prescription } from '../types';
                         </div>
                     </div>
                 );
+            case 'DEBTS':
+                return (
+                    <div className="animate-in fade-in slide-in-from-bottom-2 duration-500 space-y-6">
+                        <div className="bg-stone-900 p-6 rounded-2xl border border-white/5 shadow-sm relative overflow-hidden group">
+                            <div className="absolute top-0 right-0 w-32 h-32 bg-rose-500/10 rounded-full blur-3xl group-hover:bg-rose-500/20 transition-all"></div>
+                            <div className="relative z-10">
+                                <h3 className="text-stone-400 text-[10px] font-bold uppercase tracking-widest mb-1">Toplam Tedarikçi Borcu</h3>
+                                <p className="text-3xl font-black text-rose-400 font-mono">
+                                    {Math.round(supplierDebtData.totalSupplierDebt).toLocaleString('tr-TR')}
+                                </p>
+                                <p className="text-[10px] text-stone-500 mt-2 font-medium">Toplam {supplierDebtData.debts.length} tedarikçiye borç bulunmaktadır.</p>
+                            </div>
+                        </div>
+
+                        <div className="bg-stone-900 rounded-2xl border border-white/5 overflow-hidden">
+                            <div className="p-4 border-b border-white/5 bg-stone-950/30">
+                                <h3 className="text-xs font-black text-stone-300 uppercase tracking-widest">Tedarikçi Bazlı Borç Dağılımı</h3>
+                            </div>
+                            <div className="divide-y divide-white/5">
+                                {supplierDebtData.debts.length === 0 ? (
+                                    <div className="p-10 text-center">
+                                        <p className="text-stone-500 text-xs font-medium">Şu an kayıtlı bir borç bulunmamaktadır.</p>
+                                    </div>
+                                ) : (
+                                    supplierDebtData.debts.map((s: any, i: number) => (
+                                        <div key={i} className="p-4 flex items-center justify-between hover:bg-white/5 transition-colors">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-8 h-8 rounded-lg bg-stone-800 flex items-center justify-center text-rose-500 font-bold text-xs">
+                                                    {i + 1}
+                                                </div>
+                                                <span className="text-xs font-bold text-stone-200">{s.name}</span>
+                                            </div>
+                                            <span className="text-sm font-black text-rose-400 font-mono">
+                                                {Math.round(s.debt).toLocaleString('tr-TR')}
+                                            </span>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                );
+            case 'RECEIVABLES':
+                return (
+                    <div className="animate-in fade-in slide-in-from-bottom-2 duration-500 space-y-6">
+                        <div className="bg-stone-900 p-6 rounded-2xl border border-white/5 shadow-sm relative overflow-hidden group">
+                            <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-3xl group-hover:bg-emerald-500/20 transition-all"></div>
+                            <div className="relative z-10">
+                                <h3 className="text-stone-400 text-[10px] font-bold uppercase tracking-widest mb-1">Toplam Üretici Alacağı</h3>
+                                <p className="text-3xl font-black text-emerald-400 font-mono">
+                                    {Math.round(farmerReceivableData.totalFarmerReceivables).toLocaleString('tr-TR')}
+                                </p>
+                                <p className="text-[10px] text-stone-500 mt-2 font-medium">Toplam {farmerReceivableData.receivables.length} üreticiden alacak bulunmaktadır.</p>
+                            </div>
+                        </div>
+
+                        <div className="bg-stone-900 rounded-2xl border border-white/5 overflow-hidden">
+                            <div className="p-4 border-b border-white/5 bg-stone-950/30">
+                                <h3 className="text-xs font-black text-stone-300 uppercase tracking-widest">Üretici Bazlı Alacak Dağılımı</h3>
+                            </div>
+                            <div className="divide-y divide-white/5">
+                                {farmerReceivableData.receivables.length === 0 ? (
+                                    <div className="p-10 text-center">
+                                        <p className="text-stone-500 text-xs font-medium">Şu an kayıtlı bir alacak bulunmamaktadır.</p>
+                                    </div>
+                                ) : (
+                                    farmerReceivableData.receivables.map((f: any, i: number) => (
+                                        <div key={i} className="p-4 flex items-center justify-between hover:bg-white/5 transition-colors">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-8 h-8 rounded-lg bg-stone-800 flex items-center justify-center text-emerald-500 font-bold text-xs">
+                                                    {i + 1}
+                                                </div>
+                                                <span className="text-xs font-bold text-stone-200">{f.name}</span>
+                                            </div>
+                                            <span className="text-sm font-black text-emerald-400 font-mono">
+                                                {Math.round(f.amount).toLocaleString('tr-TR')}
+                                            </span>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                );
             default:
                 return null;
         }
@@ -570,6 +688,18 @@ import { Prescription } from '../types';
                     onClick={() => setActiveTab('SALES')} 
                     icon={TrendingUp} 
                     label="Satışlar" 
+                />
+                <TabButton 
+                    active={activeTab === 'DEBTS'} 
+                    onClick={() => setActiveTab('DEBTS')} 
+                    icon={Truck} 
+                    label="Borçlar" 
+                />
+                <TabButton 
+                    active={activeTab === 'RECEIVABLES'} 
+                    onClick={() => setActiveTab('RECEIVABLES')} 
+                    icon={DollarSign} 
+                    label="Alacaklar" 
                 />
             </div>
 

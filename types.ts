@@ -41,6 +41,8 @@ export interface Farmer {
   avatarUrl?: string;
   totalDebt?: number; // Calculated or stored
   balance?: number; // Current balance (negative means debt)
+  latitude?: number;
+  longitude?: number;
 }
 
 export enum PesticideCategory {
@@ -163,8 +165,65 @@ export interface InventoryItem {
   buyingPrice: number;
   sellingPrice: number;
   lastUpdated: string;
+  lowStockThreshold?: number; // Threshold for alerts
 }
 
-export type ViewState = 'DASHBOARD' | 'FARMERS' | 'PESTICIDES' | 'PRESCRIPTIONS' | 'VISITS' | 'NEWS' | 'CONTACT' | 'SETTINGS' | 'NOTIFICATIONS' | 'PROFILE' | 'STATISTICS' | 'FIELD_ASSISTANT' | 'REMINDERS' | 'INVENTORY' | 'DEBT_TRACKING' | 'REGIONAL_ALERTS';
+export interface Supplier {
+  id: string;
+  name: string;
+  phoneNumber: string;
+  address?: string;
+  totalDebt: number; // Total amount purchased
+  balance: number; // Current balance (negative means we owe money)
+}
+
+export interface SupplierPurchase {
+  id: string;
+  supplierId: string;
+  date: string;
+  items: {
+    pesticideId: string;
+    pesticideName: string;
+    quantity: number;
+    unit: string;
+    buyingPrice: number;
+  }[];
+  totalAmount: number;
+  note?: string;
+}
+
+export interface SupplierPayment {
+  id: string;
+  supplierId: string;
+  amount: number;
+  date: string;
+  method: 'CASH' | 'CARD' | 'CHECK' | 'PROMISSORY_NOTE' | 'OTHER';
+  dueDate?: string; // For checks and promissory notes
+  isPaid?: boolean;
+  note?: string;
+}
+
+export interface MyPayment {
+  id: string;
+  supplierId: string;
+  supplierName: string;
+  amount: number;
+  issueDate: string;
+  dueDate: string;
+  type: 'CHECK' | 'PROMISSORY_NOTE' | 'OTHER';
+  status: 'PENDING' | 'PAID' | 'CANCELLED';
+  note?: string;
+}
+
+export type ViewState = 'DASHBOARD' | 'FARMERS' | 'PESTICIDES' | 'PRESCRIPTIONS' | 'VISITS' | 'NEWS' | 'CONTACT' | 'SETTINGS' | 'NOTIFICATIONS' | 'PROFILE' | 'STATISTICS' | 'FIELD_ASSISTANT' | 'REMINDERS' | 'INVENTORY' | 'DEBT_TRACKING' | 'REGIONAL_ALERTS' | 'DISEASE_DIAGNOSIS' | 'MAP_VIEW' | 'PRODUCER_PORTAL' | 'COMPATIBILITY_CHECK' | 'SUPPLIERS' | 'PAYMENTS';
 
 export type UIScale = 'SMALL' | 'MEDIUM' | 'LARGE';
+
+declare global {
+  interface Window {
+    aistudio: {
+      hasSelectedApiKey: () => Promise<boolean>;
+      openSelectKey: () => Promise<void>;
+    };
+  }
+}

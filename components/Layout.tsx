@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { Home, Users, BookOpen, FileText, ClipboardList, Menu, X, LogOut, Settings, ChevronRight, User, Bell, Phone, UserCircle, Plus, PieChart, Sprout, Newspaper, CalendarCheck, ChevronLeft, Package } from 'lucide-react';
+import { Home, Users, BookOpen, FileText, ClipboardList, Menu, X, LogOut, Settings, ChevronRight, User, Bell, Phone, UserCircle, Plus, PieChart, Sprout, Newspaper, CalendarCheck, ChevronLeft, Package, Truck, CreditCard } from 'lucide-react';
 import { ViewState } from '../types';
 import { useAppViewModel } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
@@ -19,7 +19,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
 
   const navGroups = [
     { title: "Genel", items: [{ id: 'DASHBOARD', icon: Home, label: 'Ana Sayfa' }, { id: 'NEWS', icon: Newspaper, label: 'Haberler' }, { id: 'REMINDERS', icon: CalendarCheck, label: 'Hatırlatıcılar', badge: stats.activeReminders }, { id: 'STATISTICS', icon: PieChart, label: 'İstatistikler' }] },
-    { title: "Saha & Kayıt", items: [{ id: 'FARMERS', icon: Users, label: 'Çiftçiler' }, { id: 'PESTICIDES', icon: BookOpen, label: 'İlaçlar' }, { id: 'INVENTORY', icon: Package, label: 'Depom' }, { id: 'PRESCRIPTIONS', icon: FileText, label: 'Reçete Defteri' }, { id: 'VISITS', icon: ClipboardList, label: 'Ziyaretler' }] },
+    { title: "Saha & Kayıt", items: [{ id: 'FARMERS', icon: Users, label: 'Çiftçiler' }, { id: 'PESTICIDES', icon: BookOpen, label: 'İlaçlar' }, { id: 'INVENTORY', icon: Package, label: 'Depom' }, { id: 'SUPPLIERS', icon: Truck, label: 'Tedarikçiler' }, { id: 'PAYMENTS', icon: CreditCard, label: 'Ödemelerim' }, { id: 'PRESCRIPTIONS', icon: FileText, label: 'Reçete Defteri' }, { id: 'VISITS', icon: ClipboardList, label: 'Ziyaretler' }] },
     { title: "Destek", items: [{ id: 'CONTACT', icon: Phone, label: 'Bize Ulaşın' }, { id: 'SETTINGS', icon: Settings, label: 'Ayarlar' }] }
   ];
 
@@ -64,13 +64,13 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
         <div className="p-3 bg-stone-900/50 border-t border-white/5 shrink-0"><button onClick={handleLogout} className="w-full py-2 rounded-xl border border-red-900/20 text-red-400 bg-red-900/5 text-xs font-bold flex items-center justify-center"><LogOut size={14} className="mr-2"/> Çıkış</button></div>
       </div>
 
-      <main className="flex-1 w-full max-w-5xl mx-auto md:p-4 transition-all duration-300 relative z-10 pb-28 pt-8">
+      <main className="flex-1 w-full max-w-5xl mx-auto md:p-4 transition-all duration-300 relative pb-28 pt-8">
              <div className="w-full flex justify-center py-1 opacity-30 mb-1"><div className="w-10 h-1 rounded-full bg-white/10"></div></div>
              {children}
       </main>
 
-      <nav className="fixed bottom-0 left-0 right-0 z-40 bg-stone-950/90 backdrop-blur-xl border-t border-white/5 pt-1 px-4 shadow-2xl" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 2px)' }}>
-           <div className="flex justify-between items-center max-w-md mx-auto">
+      <nav className="fixed bottom-0 left-0 right-0 z-40 bg-stone-950/95 backdrop-blur-2xl border-t border-white/10 pt-1 px-1 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 4px)' }}>
+           <div className="flex justify-around items-center max-w-lg mx-auto h-12">
                <NavButton active={currentView === 'DASHBOARD'} onClick={() => onNavigate('DASHBOARD')} icon={Home} label="Ana Sayfa" />
                <NavButton active={currentView === 'FARMERS'} onClick={() => onNavigate('FARMERS')} icon={Users} label="Çiftçiler" />
                <NavButton active={currentView === 'NOTIFICATIONS'} onClick={() => onNavigate('NOTIFICATIONS')} icon={Bell} label="Bildirim" badge={unreadCount} />
@@ -82,8 +82,17 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
 };
 
 const NavButton = ({ active, onClick, icon: Icon, label, badge }: { active: boolean, onClick: () => void, icon: any, label: string, badge?: number }) => (
-    <button onClick={onClick} className={`flex flex-col items-center justify-center p-1 rounded-xl w-14 transition-all active:scale-90 ${active ? 'text-emerald-400' : 'text-stone-500'}`}>
-        <div className={`relative p-1.5 rounded-xl transition-all ${active ? 'bg-emerald-900/30 -translate-y-1' : ''}`}><Icon size={18} strokeWidth={active ? 2.5 : 2} />{badge !== undefined && badge > 0 && <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 text-white text-[7px] flex items-center justify-center rounded-full border-2 border-stone-950 font-bold">{badge > 9 ? '9' : badge}</span>}</div>
-        <span className={`text-[8px] font-medium transition-all absolute bottom-0 ${active ? 'opacity-100' : 'opacity-0 scale-0'}`}>{label}</span>
+    <button onClick={onClick} className={`flex flex-col items-center justify-center py-0.5 px-1 rounded-xl flex-1 h-full transition-all active:scale-95 ${active ? 'text-emerald-400' : 'text-stone-500'}`}>
+        <div className={`relative p-1.5 rounded-lg transition-all ${active ? 'bg-emerald-500/10 -translate-y-0.5' : ''}`}>
+            <Icon size={18} strokeWidth={active ? 2.5 : 2} />
+            {badge !== undefined && badge > 0 && (
+                <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-rose-500 text-white text-[8px] flex items-center justify-center rounded-full border border-stone-950 font-black">
+                    {badge > 9 ? '9+' : badge}
+                </span>
+            )}
+        </div>
+        <span className={`text-[8px] font-bold mt-0.5 transition-all ${active ? 'opacity-100' : 'opacity-60'}`}>
+            {label}
+        </span>
     </button>
 );

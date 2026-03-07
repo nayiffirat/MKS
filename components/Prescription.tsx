@@ -2,18 +2,19 @@
 // ... imports ...
 import React, { useState, useEffect, useRef } from 'react';
 import { dbService } from '../services/db';
-import { Farmer, Pesticide, Prescription, PesticideCategory } from '../types';
+import { Farmer, Pesticide, Prescription, PesticideCategory, VisitLog, AppNotification } from '../types';
 import { useAppViewModel } from '../context/AppContext';
-import { Check, Plus, Trash2, FileOutput, Share2, FileText, Calendar, MapPin, X, User, Loader2, Search, FlaskConical, MessageCircle, Edit2, AlertCircle, ArrowLeft, Printer, Package, Download, MessageSquare, RefreshCw } from 'lucide-react';
+import { Check, Plus, Trash2, FileOutput, Share2, FileText, Calendar, MapPin, X, User, Loader2, Search, FlaskConical, MessageCircle, Edit2, AlertCircle, ArrowLeft, Printer, Package, Download, MessageSquare, RefreshCw, Mic, MicOff } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 
 interface PrescriptionFormProps {
     onBack: () => void;
     initialFarmerId?: string;
+    initialPrescriptionId?: string;
 }
 
-export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, initialFarmerId }) => {
+export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, initialFarmerId, initialPrescriptionId }) => {
     const { 
         userProfile, 
         refreshStats, 
@@ -94,7 +95,43 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     const [filterMode, setFilterMode] = useState<'ALL' | 'PROCESSED' | 'UNPROCESSED'>('ALL');
     const [isProcessingPdf, setIsProcessingPdf] = useState(false);
     const [isSyncing, setIsSyncing] = useState(false);
+    const [isListening, setIsListening] = useState(false);
     const receiptRef = useRef<HTMLDivElement>(null);
+
+    const startVoiceInput = () => {
+        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            showToast('Tarayıcınız sesli girişi desteklemiyor.', 'error');
+            return;
+        }
+
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'tr-TR';
+        recognition.interimResults = false;
+        recognition.maxAlternatives = 1;
+
+        recognition.onstart = () => {
+            setIsListening(true);
+            hapticFeedback('light');
+        };
+
+        recognition.onresult = (event: any) => {
+            const transcript = event.results[0][0].transcript;
+            setPesticideSearchTerm(transcript);
+            hapticFeedback('medium');
+        };
+
+        recognition.onerror = (event: any) => {
+            console.error('Speech recognition error:', event.error);
+            setIsListening(false);
+        };
+
+        recognition.onend = () => {
+            setIsListening(false);
+        };
+
+        recognition.start();
+    };
 
     useEffect(() => {
         loadData();
@@ -109,6 +146,15 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
             }
         }
     }, [initialFarmerId, farmers]);
+
+    useEffect(() => {
+        if (initialPrescriptionId && contextPrescriptions.length > 0 && pesticides.length > 0) {
+            const p = contextPrescriptions.find(presc => presc.id === initialPrescriptionId);
+            if (p) {
+                handleEdit(null as any, p);
+            }
+        }
+    }, [initialPrescriptionId, contextPrescriptions, pesticides]);
 
     const loadData = async () => {
         const [fList, pestList] = await Promise.all([
@@ -148,8 +194,21 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
 
     const addItem = (pesticide: Pesticide) => {
         if (!selectedItems.find(i => i.pesticide.id === pesticide.id)) {
-            // Initialize quantity as empty string
-            setSelectedItems([...selectedItems, { pesticide, dosage: pesticide.defaultDosage, quantity: '', unitPrice: '', totalPrice: 0 }]);
+            // Find inventory item to get selling price
+            const inventoryItem = contextInventory.find(inv => inv.pesticideId === pesticide.id);
+            const sellingPrice = inventoryItem ? inventoryItem.sellingPrice.toString() : '';
+
+            // Initialize quantity as '1'
+            const initialQty = 1;
+            const initialPrice = inventoryItem ? inventoryItem.sellingPrice : 0;
+            
+            setSelectedItems([...selectedItems, { 
+                pesticide, 
+                dosage: pesticide.defaultDosage, 
+                quantity: initialQty.toString(), 
+                unitPrice: sellingPrice, 
+                totalPrice: initialQty * initialPrice 
+            }]);
             setPesticideSearchTerm(''); // Seçimden sonra aramayı temizle
         }
     };
@@ -203,8 +262,8 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         }
     };
 
-    const handleEdit = (e: React.MouseEvent, p: Prescription) => {
-        e.stopPropagation();
+    const handleEdit = (e: React.MouseEvent | null, p: Prescription) => {
+        if (e) e.stopPropagation();
         
         const farmer = farmerMap[p.farmerId];
         if (farmer) {
@@ -335,6 +394,29 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
             };
 
             await dbService.addPrescription(newPrescription);
+            
+            // Create a visit log entry automatically
+            const newVisit: VisitLog = {
+                id: crypto.randomUUID(),
+                farmerId: selectedFarmer.id,
+                fieldId: selectedFieldId || undefined,
+                date: new Date().toISOString(),
+                note: `Reçete verildi (${newPrescription.prescriptionNo})`,
+                village: selectedFarmer.village
+            };
+            await dbService.addVisit(newVisit);
+            
+            // Add a notification
+            const newNotification: AppNotification = {
+                id: crypto.randomUUID(),
+                type: 'SUCCESS',
+                title: 'Reçete ve Ziyaret Kaydı',
+                message: `${selectedFarmer.fullName} için reçete yazıldı ve ziyaret kaydı oluşturuldu.`,
+                date: new Date().toISOString(),
+                isRead: false
+            };
+            await dbService.addNotification(newNotification);
+            
             setSavedPrescription(newPrescription);
         }
 
@@ -512,12 +594,12 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                     </div>
 
                     {/* Filter Buttons */}
-                    <div className="flex p-0.5 bg-stone-900/80 rounded-lg border border-white/5 mb-6 w-fit">
+                    <div className="flex p-1 bg-stone-900/80 backdrop-blur-xl rounded-2xl border border-white/5 mb-8 w-fit shadow-inner">
                         <button 
                             onClick={() => setFilterMode('ALL')}
-                            className={`px-2.5 py-1 rounded-md text-[8px] font-black uppercase tracking-widest transition-all ${
+                            className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
                                 filterMode === 'ALL' 
-                                ? 'bg-emerald-600 text-white shadow-sm' 
+                                ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/20 scale-[1.02]' 
                                 : 'text-stone-500 hover:text-stone-300'
                             }`}
                         >
@@ -525,33 +607,36 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                         </button>
                         <button 
                             onClick={() => setFilterMode('UNPROCESSED')}
-                            className={`px-2.5 py-1 rounded-md text-[8px] font-black uppercase tracking-widest transition-all flex items-center gap-1 ${
+                            className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${
                                 filterMode === 'UNPROCESSED' 
-                                ? 'bg-red-600 text-white shadow-sm' 
+                                ? 'bg-rose-600 text-white shadow-lg shadow-rose-900/20 scale-[1.02]' 
                                 : 'text-stone-500 hover:text-stone-300'
                             }`}
                         >
-                            <div className={`w-1 h-1 rounded-full ${filterMode === 'UNPROCESSED' ? 'bg-white' : 'bg-red-500'}`}></div>
+                            <div className={`w-1.5 h-1.5 rounded-full ${filterMode === 'UNPROCESSED' ? 'bg-white animate-pulse' : 'bg-rose-500'}`}></div>
                             İşlenmeyenler
                         </button>
                         <button 
                             onClick={() => setFilterMode('PROCESSED')}
-                            className={`px-2.5 py-1 rounded-md text-[8px] font-black uppercase tracking-widest transition-all flex items-center gap-1 ${
+                            className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${
                                 filterMode === 'PROCESSED' 
-                                ? 'bg-blue-600 text-white shadow-sm' 
+                                ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20 scale-[1.02]' 
                                 : 'text-stone-500 hover:text-stone-300'
                             }`}
                         >
-                            <div className={`w-1 h-1 rounded-full ${filterMode === 'PROCESSED' ? 'bg-white' : 'bg-blue-500'}`}></div>
+                            <div className={`w-1.5 h-1.5 rounded-full ${filterMode === 'PROCESSED' ? 'bg-white' : 'bg-blue-500'}`}></div>
                             İşlenenler
                         </button>
                     </div>
 
-                    <div className="space-y-4">
+                    <div className="space-y-5">
                         {filteredPrescriptions.length === 0 ? (
-                            <div className="text-center py-20 text-stone-600 border-2 border-dashed border-stone-800 rounded-xl">
-                                <p>{prescriptionSearchTerm ? 'Aranan kriterlere uygun reçete bulunamadı.' : 'Henüz reçete oluşturulmadı.'}</p>
-                                {!prescriptionSearchTerm && <p className="text-sm mt-2 text-stone-500">Sağ alttaki butona basarak yeni reçete yazın.</p>}
+                            <div className="text-center py-24 text-stone-600 border-2 border-dashed border-stone-800/50 rounded-[2.5rem] mx-1">
+                                <div className="w-16 h-16 bg-stone-900/50 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-white/5">
+                                    <FileText size={32} className="text-stone-700" />
+                                </div>
+                                <p className="font-bold tracking-tight">{prescriptionSearchTerm ? 'Aranan kriterlere uygun reçete bulunamadı.' : 'Henüz reçete oluşturulmadı.'}</p>
+                                {!prescriptionSearchTerm && <p className="text-xs mt-2 text-stone-500 font-medium">Yeni reçete yazmak için + butonuna basın.</p>}
                             </div>
                         ) : (
                             filteredPrescriptions.map(p => {
@@ -562,45 +647,52 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                     <div 
                                         key={p.id} 
                                         onClick={() => handleViewDetail(p)}
-                                        className="bg-stone-900/80 p-4 rounded-xl shadow-sm border border-white/5 hover:shadow-md transition-all relative overflow-hidden group cursor-pointer active:scale-[0.98]"
+                                        className="bg-stone-900/80 backdrop-blur-xl p-5 rounded-[2rem] shadow-xl border border-white/10 hover:border-emerald-500/30 transition-all relative overflow-hidden group cursor-pointer active:scale-[0.98]"
                                     >
-                                        <div className="flex justify-between items-start mb-2">
-                                            <div className="flex items-center space-x-3">
-                                                <div className="w-10 h-10 rounded-full bg-blue-900/30 text-blue-400 flex items-center justify-center font-bold">
-                                                    <FileText size={20} />
+                                        <div className="flex justify-between items-start mb-4">
+                                            <div className="flex items-center space-x-4">
+                                                <div className="w-12 h-12 rounded-2xl bg-blue-900/20 text-blue-400 flex items-center justify-center font-bold border border-blue-500/20 shadow-inner">
+                                                    <FileText size={24} />
                                                 </div>
-                                                <div>
-                                                    <h3 className="font-bold text-stone-200">{farmer?.fullName || 'Bilinmeyen Çiftçi'}</h3>
-                                                    <p className="text-xs text-stone-500 font-mono">{p.prescriptionNo}</p>
+                                                <div className="min-w-0">
+                                                    <h3 className="font-black text-stone-100 text-lg leading-tight truncate tracking-tight">{farmer?.fullName || 'Bilinmeyen Çiftçi'}</h3>
+                                                    <p className="text-[10px] text-stone-500 font-black uppercase tracking-widest mt-1">{p.prescriptionNo}</p>
                                                 </div>
                                             </div>
-                                            <div className="flex flex-col items-end gap-2">
-                                                <span className="text-xs font-bold text-stone-400 flex items-center bg-stone-950/50 px-2 py-1 rounded border border-white/5">
-                                                    <Calendar size={10} className="mr-1" />
-                                                    {dateObj.toLocaleDateString('tr-TR')}
-                                                </span>
+                                            <div className="flex flex-col items-end gap-2.5">
+                                                <div className="flex items-center gap-2">
+                                                    {p.totalAmount && p.totalAmount > 0 && (
+                                                        <span className="text-[11px] font-black text-emerald-400 font-mono bg-emerald-950/50 px-2.5 py-1 rounded-lg border border-emerald-500/20 shadow-sm">
+                                                            {p.totalAmount.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ₺
+                                                        </span>
+                                                    )}
+                                                    <span className="text-[10px] font-black text-stone-400 flex items-center bg-stone-950/50 px-2.5 py-1 rounded-lg border border-white/5 shadow-sm uppercase tracking-widest">
+                                                        <Calendar size={11} className="mr-1.5" />
+                                                        {dateObj.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })}
+                                                    </span>
+                                                </div>
                                                 <button 
                                                     type="button"
                                                     onClick={(e) => toggleProcessed(e, p)}
-                                                    className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all border active:scale-90 relative z-30 ${
+                                                    className={`w-11 h-11 rounded-2xl flex items-center justify-center transition-all border-2 active:scale-90 relative z-30 shadow-lg ${
                                                         p.isProcessed 
-                                                        ? 'bg-blue-500/10 border-blue-500/20 text-blue-400' 
-                                                        : 'bg-red-500/10 border-red-500/20 text-red-400'
+                                                        ? 'bg-blue-600/10 border-blue-500/30 text-blue-400' 
+                                                        : 'bg-rose-600/10 border-rose-500/30 text-rose-400'
                                                     }`}
                                                 >
-                                                    {p.isProcessed ? <Check size={18} /> : <X size={18} />}
+                                                    {p.isProcessed ? <Check size={22} strokeWidth={3} /> : <X size={22} strokeWidth={3} />}
                                                 </button>
                                             </div>
                                         </div>
-                                        <div className="pl-12 mt-2">
-                                            <div className="flex flex-wrap gap-1">
+                                        <div className="pl-16 mt-1">
+                                            <div className="flex flex-wrap gap-2">
                                                 {p.items.slice(0, 3).map((item, idx) => (
-                                                    <span key={idx} className="text-[10px] bg-stone-800 text-stone-400 px-2 py-1 rounded-full border border-stone-700">
+                                                    <span key={idx} className="text-[9px] font-black uppercase tracking-widest bg-stone-950/50 text-stone-500 px-3 py-1.5 rounded-xl border border-white/5">
                                                         {item.pesticideName} {item.quantity && `(x${item.quantity})`}
                                                     </span>
                                                 ))}
                                                 {p.items.length > 3 && (
-                                                    <span className="text-[10px] bg-stone-800 text-stone-500 px-2 py-1 rounded-full border border-stone-700">
+                                                    <span className="text-[9px] font-black uppercase tracking-widest bg-stone-950/50 text-stone-600 px-3 py-1.5 rounded-xl border border-white/5">
                                                         +{p.items.length - 3}
                                                     </span>
                                                 )}
@@ -1063,6 +1155,12 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                             value={pesticideSearchTerm}
                             onChange={e => setPesticideSearchTerm(e.target.value)}
                         />
+                        <button 
+                            onClick={startVoiceInput}
+                            className={`p-2 rounded-xl transition-all mr-1 ${isListening ? 'bg-rose-500 text-white animate-pulse' : 'text-stone-500 hover:text-emerald-400 hover:bg-stone-800'}`}
+                        >
+                            {isListening ? <MicOff size={18} /> : <Mic size={18} />}
+                        </button>
                         {pesticideSearchTerm && (
                             <button onClick={() => setPesticideSearchTerm('')} className="p-2 text-stone-500 hover:text-stone-300">
                                 <X size={16} />

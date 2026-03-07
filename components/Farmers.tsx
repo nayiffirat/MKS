@@ -1,17 +1,20 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { dbService } from '../services/db';
 import { useAppViewModel } from '../context/AppContext';
+import { useAuth } from '../context/AuthContext';
 import { ContactService, ContactInfo } from '../services/contact';
 import { Farmer, VisitLog, Prescription, ManualDebt } from '../types';
 import { COMMON_CROPS } from '../constants';
-import { Search, Phone, MessageCircle, MapPin, Wheat, ChevronLeft, ChevronRight, Contact, Loader2, User, Ruler, FileText, Calendar, Navigation, Plus, X, ArrowLeft, Edit2, Trash2, CheckSquare, Square, Check, FlaskConical, Clock, ImageIcon, Sparkles, Upload, AlertCircle, MessageSquare, Share2, Save, Download, FileJson, RefreshCw, Wallet, History, CreditCard, TrendingDown, TrendingUp as TrendingUpIcon } from 'lucide-react';
+import { Search, Phone, MessageCircle, MapPin, Wheat, ChevronLeft, ChevronRight, Contact, Loader2, User, Ruler, FileText, Calendar, Navigation, Plus, X, ArrowLeft, Edit2, Trash2, CheckSquare, Square, Check, FlaskConical, Clock, ImageIcon, Sparkles, Upload, AlertCircle, MessageSquare, Share2, Save, Download, FileJson, RefreshCw, Wallet, History, CreditCard, TrendingDown, TrendingUp as TrendingUpIcon, Send, Copy } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 
 interface FarmersProps {
   onBack: () => void;
   onNavigateToPrescription: (farmerId: string) => void;
+  onEditPrescription: (prescriptionId: string) => void;
+  onEditVisit: (visitId: string) => void;
 }
 
 interface TempContact {
@@ -174,7 +177,8 @@ const FarmerModal: React.FC<FarmerModalProps> = ({ isOpen, onClose, mode, isSavi
     );
 };
 
-export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescription }) => {
+export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescription, onEditPrescription, onEditVisit }) => {
+  const { currentUser } = useAuth();
   const [farmers, setFarmers] = useState<Farmer[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedFarmer, setSelectedFarmer] = useState<Farmer | null>(null);
@@ -225,9 +229,6 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const receiptRef = useRef<HTMLDivElement>(null);
 
   // Visit Editing State
-  const [editingVisit, setEditingVisit] = useState<VisitLog | null>(null);
-  const [editVisitNote, setEditVisitNote] = useState('');
-
   // Contact Selection States
   const [importPreviewList, setImportPreviewList] = useState<TempContact[]>([]);
   const [selectedImportIds, setSelectedImportIds] = useState<Set<string>>(new Set());
@@ -269,6 +270,12 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const reportRef = useRef<HTMLDivElement>(null);
 
+  // Bulk Message Modal State
+  const [isBulkMessageModalOpen, setIsBulkMessageModalOpen] = useState(false);
+  const [bulkMessage, setBulkMessage] = useState('');
+  const [bulkTargetVillage, setBulkTargetVillage] = useState('ALL');
+  const [selectedBulkFarmerIds, setSelectedBulkFarmerIds] = useState<Set<string>>(new Set());
+
   const loadFarmers = async () => {
       const list = await dbService.getFarmers();
       setFarmers(list);
@@ -309,24 +316,6 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           hapticFeedback('medium');
           await loadFarmerDetails(); // Listeyi yenile
       }
-  };
-
-  const openEditVisitModal = (visit: VisitLog) => {
-      setEditingVisit(visit);
-      setEditVisitNote(visit.note);
-  };
-
-  const handleSaveVisit = async () => {
-      if (!editingVisit) return;
-      await updateVisit({
-          ...editingVisit,
-          note: editVisitNote
-      });
-      showToast('Ziyaret notu güncellendi', 'success');
-      hapticFeedback('success');
-      setEditingVisit(null);
-      setEditVisitNote('');
-      await loadFarmerDetails();
   };
 
   const handleWhatsAppText = () => {
@@ -743,6 +732,21 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       }
   };
 
+  const villages = useMemo(() => {
+    const v = new Set(farmers.map(f => f.village));
+    return Array.from(v).sort();
+  }, [farmers]);
+
+  const bulkTargetFarmers = useMemo(() => {
+    return farmers.filter(f => bulkTargetVillage === 'ALL' || f.village === bulkTargetVillage);
+  }, [farmers, bulkTargetVillage]);
+
+  const handleSendBulkWhatsApp = (farmer: Farmer) => {
+    const text = bulkMessage;
+    const url = `https://wa.me/${farmer.phoneNumber.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`;
+    window.open(url, '_blank');
+  };
+
   // --- DETAIL VIEW ---
   if (selectedFarmer) {
      if (selectedPrescription) {
@@ -751,6 +755,13 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                 <div className="flex items-center justify-between mb-4 sticky top-0 bg-stone-950/90 backdrop-blur z-20 py-3 border-b border-white/5">
                     <button onClick={() => setSelectedPrescription(null)} className="flex items-center text-stone-400 hover:text-stone-200 font-medium px-2 py-1 -ml-2 rounded-lg hover:bg-white/5 transition-colors text-xs">
                         <ChevronLeft className="mr-1" size={18}/> Reçeteye Dön
+                    </button>
+                    <button 
+                        onClick={() => onEditPrescription(selectedPrescription.id)}
+                        className="flex items-center px-3 py-1.5 bg-stone-800 text-stone-300 rounded-xl border border-white/5 hover:text-emerald-400 hover:bg-stone-700 transition-all active:scale-95"
+                    >
+                        <Edit2 size={14} className="mr-1.5" />
+                        <span className="text-[10px] font-black uppercase tracking-wide">Düzenle</span>
                     </button>
                 </div>
                 <div ref={receiptRef} className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-sm mx-auto relative overflow-hidden text-stone-900 mb-6 border border-stone-300 mt-2">
@@ -878,7 +889,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                 </div>
                                 <div className="flex justify-between items-center py-4 bg-stone-900 text-white px-6 rounded-2xl shadow-xl">
                                     <span className="text-sm font-black uppercase tracking-widest">Kalan Bakiye</span>
-                                    <span className="text-2xl font-black">{Math.abs(balance).toLocaleString('tr-TR')} ₺ {balance >= 0 ? 'ALACAK' : 'BORÇ'}</span>
+                                    <span className="text-2xl font-black">{Math.round(Math.abs(balance)).toLocaleString('tr-TR')} ₺ {balance >= 0 ? 'ALACAK' : 'BORÇ'}</span>
                                 </div>
                             </div>
                         </div>
@@ -939,17 +950,17 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
             </div>
 
             {/* Compact Profile Card */}
-            <div className="bg-stone-900/80 backdrop-blur rounded-2xl p-4 shadow-sm border border-white/5 mb-4 flex flex-col items-center relative overflow-hidden">
-                <div className="absolute top-0 left-0 w-full h-12 bg-gradient-to-b from-emerald-900/20 to-transparent -z-10"></div>
+            <div className="bg-stone-900/80 backdrop-blur rounded-3xl p-4 shadow-lg border border-white/5 mb-4 flex flex-col items-center relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-16 bg-gradient-to-b from-emerald-900/10 to-transparent -z-10"></div>
                 
-                <div className="flex items-center space-x-3 w-full mb-3">
-                    <div className="w-14 h-14 bg-stone-800 border-2 border-emerald-900/50 rounded-full flex items-center justify-center text-xl font-bold text-emerald-500 shadow-md">
+                <div className="flex items-center space-x-3 w-full mb-4">
+                    <div className="w-12 h-12 bg-stone-800 border border-emerald-500/20 rounded-2xl flex items-center justify-center text-xl font-black text-emerald-500 shadow-lg">
                         {selectedFarmer.fullName.charAt(0)}
                     </div>
                     <div className="flex-1 min-w-0 text-left">
-                        <h2 className="text-lg font-bold text-stone-100 truncate">{selectedFarmer.fullName}</h2>
-                        <div className="flex items-center text-stone-400 text-xs mt-0.5">
-                            <MapPin size={10} className="mr-1 text-emerald-500"/> {selectedFarmer.village}
+                        <h2 className="text-base font-black text-stone-100 truncate tracking-tight">{selectedFarmer.fullName}</h2>
+                        <div className="flex items-center text-stone-500 text-xs mt-0.5 font-bold">
+                            <MapPin size={10} className="mr-1 text-emerald-500/70"/> {selectedFarmer.village}
                         </div>
                     </div>
                 </div>
@@ -957,20 +968,20 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                 <div className="grid grid-cols-4 gap-2 w-full">
                     {/* Buttons condensed */}
                     {[
-                        { icon: Phone, label: 'Ara', href: `tel:${selectedFarmer.phoneNumber}`, color: 'emerald' },
-                        { icon: MessageCircle, label: 'WP', href: `https://wa.me/${selectedFarmer.phoneNumber.replace(/[^0-9]/g, '')}`, color: 'green', target: '_blank' },
-                        { icon: MessageSquare, label: 'SMS', href: `sms:${selectedFarmer.phoneNumber}`, color: 'blue' },
-                        { icon: Navigation, label: 'Yol', action: () => window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedFarmer.village)}`, '_blank'), color: 'amber' }
+                        { icon: Phone, label: 'Ara', href: `tel:${selectedFarmer.phoneNumber}` },
+                        { icon: MessageCircle, label: 'WP', href: `https://wa.me/${selectedFarmer.phoneNumber.replace(/[^0-9]/g, '')}`, target: '_blank' },
+                        { icon: MessageSquare, label: 'SMS', href: `sms:${selectedFarmer.phoneNumber}` },
+                        { icon: Navigation, label: 'Yol', action: () => window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedFarmer.village)}`, '_blank') }
                     ].map((btn, i) => (
                         btn.href ? (
-                            <a key={i} href={btn.href} target={btn.target} className="flex flex-col items-center justify-center p-2 bg-stone-800/60 rounded-xl hover:bg-stone-800 transition-colors border border-white/5 active:scale-95">
-                                <btn.icon size={16} className={`mb-1 text-stone-400 group-hover:text-${btn.color}-500`}/>
-                                <span className="text-[9px] font-bold text-stone-500">{btn.label}</span>
+                            <a key={i} href={btn.href} target={btn.target} className="flex flex-col items-center justify-center py-2 bg-stone-800/40 rounded-xl hover:bg-stone-800 transition-all border border-white/5 active:scale-95">
+                                <btn.icon size={16} className="mb-1 text-stone-400"/>
+                                <span className="text-[8px] font-bold text-stone-500 uppercase tracking-tighter">{btn.label}</span>
                             </a>
                         ) : (
-                            <button key={i} onClick={btn.action} className="flex flex-col items-center justify-center p-2 bg-stone-800/60 rounded-xl hover:bg-stone-800 transition-colors border border-white/5 active:scale-95">
-                                <btn.icon size={16} className={`mb-1 text-stone-400`}/>
-                                <span className="text-[9px] font-bold text-stone-500">{btn.label}</span>
+                            <button key={i} onClick={btn.action} className="flex flex-col items-center justify-center py-2 bg-stone-800/40 rounded-xl hover:bg-stone-800 transition-all border border-white/5 active:scale-95">
+                                <btn.icon size={16} className="mb-1 text-stone-400"/>
+                                <span className="text-[8px] font-bold text-stone-500 uppercase tracking-tighter">{btn.label}</span>
                             </button>
                         )
                     ))}
@@ -978,10 +989,10 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
             </div>
 
             {/* Tabs */}
-            <div className="flex p-1 bg-stone-900/60 backdrop-blur rounded-xl mb-4 border border-white/5">
+            <div className="flex p-1 bg-stone-900/60 backdrop-blur rounded-xl mb-4 border border-white/5 shadow-inner">
                 {(['GENERAL', 'VISITS', 'PRESCRIPTIONS', 'DEBT'] as const).map(tab => (
-                    <button key={tab} onClick={() => setActiveTab(tab)} className={`flex-1 py-2 text-[10px] font-black uppercase tracking-wide rounded-lg transition-all ${activeTab === tab ? 'bg-stone-700 text-white shadow-sm' : 'text-stone-500 hover:text-stone-300'}`}>
-                        {tab === 'GENERAL' ? 'Genel' : (tab === 'VISITS' ? 'Ziyaretler' : (tab === 'PRESCRIPTIONS' ? 'Reçeteler' : 'Cari'))}
+                    <button key={tab} onClick={() => setActiveTab(tab)} className={`flex-1 py-2 text-[9px] font-black uppercase tracking-wider rounded-lg transition-all duration-200 ${activeTab === tab ? 'bg-stone-700 text-white shadow-md' : 'text-stone-500 hover:text-stone-300'}`}>
+                        {tab === 'GENERAL' ? 'Genel' : (tab === 'VISITS' ? 'Ziyaret' : (tab === 'PRESCRIPTIONS' ? 'Reçete' : 'Cari'))}
                     </button>
                 ))}
             </div>
@@ -1029,9 +1040,11 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                 </div>
                             </div>
                         </div>
-                        <button onClick={() => onNavigateToPrescription(selectedFarmer.id)} className="w-full py-3.5 bg-emerald-700 text-white rounded-2xl font-bold shadow-lg hover:bg-emerald-600 active:scale-95 transition-all flex items-center justify-center text-xs uppercase tracking-wider">
-                            <FileText className="mr-2" size={16}/> Yeni Reçete Yaz
-                        </button>
+                        <div className="flex gap-2">
+                            <button onClick={() => onNavigateToPrescription(selectedFarmer.id)} className="flex-1 py-3.5 bg-emerald-700 text-white rounded-2xl font-bold shadow-lg hover:bg-emerald-600 active:scale-95 transition-all flex items-center justify-center text-xs uppercase tracking-wider">
+                                <FileText className="mr-2" size={16}/> Yeni Reçete Yaz
+                            </button>
+                        </div>
                     </div>
                 )}
 
@@ -1069,7 +1082,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                 <div>
                                     <p className="text-[9px] text-stone-400 uppercase font-black mb-0.5">Güncel Bakiye</p>
                                     <p className={`text-xl font-black ${balance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                        {Math.abs(balance).toLocaleString('tr-TR')} ₺
+                                        {Math.round(Math.abs(balance)).toLocaleString('tr-TR')} ₺
                                         <span className="text-xs font-bold ml-1">{balance >= 0 ? 'Alacaklı' : 'Borçlu'}</span>
                                     </p>
                                 </div>
@@ -1145,7 +1158,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                 <p className="text-[11px] text-stone-300 italic mb-1.5 leading-relaxed line-clamp-3">"{visit.note}"</p>
                                 <div className="flex justify-between items-center pt-1.5 border-t border-white/5">
                                     <div className="flex gap-1.5">{visit.photoUri && <ImageIcon size={12} className="text-blue-400"/>}{visit.aiAnalysis && <Sparkles size={12} className="text-purple-400"/>}</div>
-                                    <div className="flex gap-1.5"><button onClick={() => openEditVisitModal(visit)} className="text-stone-500 hover:text-emerald-400"><Edit2 size={12}/></button><button onClick={() => handleDeleteVisit(visit.id)} className="text-stone-500 hover:text-red-400"><Trash2 size={12}/></button></div>
+                                    <div className="flex gap-1.5"><button onClick={() => onEditVisit(visit.id)} className="text-stone-500 hover:text-emerald-400"><Edit2 size={12}/></button><button onClick={() => handleDeleteVisit(visit.id)} className="text-stone-500 hover:text-red-400"><Trash2 size={12}/></button></div>
                                 </div>
                             </div>
                         )) : <div className="text-center py-6 text-stone-600 text-[10px]">Kayıt yok.</div>}
@@ -1168,17 +1181,6 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
             </div>
 
             {/* Modals Code */}
-            {editingVisit && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[70] flex items-center justify-center p-4 animate-in fade-in duration-200">
-                    <div className="bg-stone-900 rounded-3xl w-full max-w-md p-5 shadow-2xl relative border border-white/10">
-                        <button onClick={() => setEditingVisit(null)} className="absolute top-3 right-3 p-1.5 bg-stone-800 rounded-full text-stone-400 hover:text-stone-200"><X size={16} /></button>
-                        <h3 className="text-base font-bold text-stone-100 mb-3 flex items-center"><Edit2 size={16} className="mr-2 text-emerald-500" /> Notu Düzenle</h3>
-                        <textarea value={editVisitNote} onChange={(e) => setEditVisitNote(e.target.value)} className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 text-xs text-stone-200 outline-none focus:border-emerald-500/50 transition-all h-28 resize-none mb-3" placeholder="Not..." />
-                        <button onClick={handleSaveVisit} className="w-full bg-emerald-700 text-white py-2.5 rounded-xl font-bold shadow-lg hover:bg-emerald-600 active:scale-95 transition-all text-xs">Kaydet</button>
-                    </div>
-                </div>
-            )}
-            
             {/* HERE IS THE FIX: Using the separated FarmerModal component */}
             <FarmerModal 
                 isOpen={isModalOpen}
@@ -1235,12 +1237,66 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                 </div>
             )}
 
+
+            {/* Manual Debt Modal */}
+            {isManualDebtModalOpen && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+                    <div className="bg-stone-900 rounded-3xl w-full max-w-sm shadow-2xl border border-white/10 overflow-hidden animate-in zoom-in-95 duration-200">
+                        <div className="p-4 border-b border-white/5 flex justify-between items-center">
+                            <h2 className="text-sm font-bold text-stone-100 flex items-center"><Plus className="mr-2 text-rose-500" size={16}/> Borç Ekle</h2>
+                            <button onClick={() => setIsManualDebtModalOpen(false)} className="text-stone-500 hover:text-stone-300"><X size={18}/></button>
+                        </div>
+                        <div className="p-4 space-y-4">
+                            <div>
+                                <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Tutar (₺)</label>
+                                <input type="number" value={debtAmount} onChange={(e) => setDebtAmount(e.target.value)} className="w-full bg-stone-950 border border-white/10 rounded-xl px-4 py-3 text-stone-100 text-sm focus:border-rose-500 outline-none transition-all" placeholder="0.00" />
+                            </div>
+                            <div>
+                                <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Açıklama / Ürün</label>
+                                <textarea value={debtNote} onChange={(e) => setDebtNote(e.target.value)} className="w-full bg-stone-950 border border-white/10 rounded-xl px-4 py-3 text-stone-100 text-sm focus:border-rose-500 outline-none transition-all h-24 resize-none" placeholder="Örn: Geçmiş borç, Gübre borcu vb." />
+                            </div>
+                            <button disabled={isSavingDebt || !debtAmount} onClick={handleSaveManualDebt} className="w-full bg-rose-700 text-white py-3.5 rounded-xl font-bold text-xs shadow-lg disabled:opacity-50 flex items-center justify-center">
+                                {isSavingDebt ? <Loader2 className="animate-spin mr-2" size={16}/> : <Save className="mr-2" size={16}/>} Kaydet
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Report Modal */}
+            {isReportModalOpen && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+                    <div className="bg-stone-900 rounded-3xl w-full max-w-sm shadow-2xl border border-white/10 overflow-hidden animate-in zoom-in-95 duration-200">
+                        <div className="p-4 border-b border-white/5 flex justify-between items-center">
+                            <h2 className="text-sm font-bold text-stone-100 flex items-center"><Download className="mr-2 text-blue-500" size={16}/> Cari Rapor Oluştur</h2>
+                            <button onClick={() => setIsReportModalOpen(false)} className="text-stone-500 hover:text-stone-300"><X size={18}/></button>
+                        </div>
+                        <div className="p-4 space-y-4">
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Başlangıç</label>
+                                    <input type="date" value={reportStartDate} onChange={(e) => setReportStartDate(e.target.value)} className="w-full bg-stone-950 border border-white/10 rounded-xl px-3 py-2 text-stone-100 text-xs outline-none focus:border-blue-500" />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Bitiş</label>
+                                    <input type="date" value={reportEndDate} onChange={(e) => setReportEndDate(e.target.value)} className="w-full bg-stone-950 border border-white/10 rounded-xl px-3 py-2 text-stone-100 text-xs outline-none focus:border-blue-500" />
+                                </div>
+                            </div>
+                            <p className="text-[9px] text-stone-500 italic">Tarih seçmezseniz tüm zamanların raporu oluşturulur.</p>
+                            <button onClick={() => { setIsViewingReport(true); setIsReportModalOpen(false); }} className="w-full bg-blue-700 text-white py-3.5 rounded-xl font-bold text-xs shadow-lg flex items-center justify-center">
+                                <FileText className="mr-2" size={16}/> Raporu Görüntüle
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {selectedPrescription && !isProcessingPdf && (
                 <div className="hidden"></div>
             )}
         </div>
-     );
-  }
+    );
+}
 
   // --- LIST VIEW ---
   return (
@@ -1260,42 +1316,124 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           </div>
       </div>
 
-      <div className="sticky top-0 z-10 bg-stone-950/80 backdrop-blur-md pb-2.5 pt-0">
-         <div className="bg-stone-900 rounded-2xl shadow-sm border border-white/5 flex items-center p-1">
-             <Search className="text-stone-500 ml-3" size={16} />
-             <input type="text" placeholder="Çiftçi adı veya köy ara..." className="w-full p-2.5 bg-transparent outline-none font-medium text-stone-200 placeholder-stone-600 text-xs" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-             <button onClick={handleSync} disabled={isSyncing} className={`px-3 py-1.5 rounded-xl transition-all m-1 flex items-center justify-center gap-1.5 text-[10px] font-bold uppercase tracking-wider ${isSyncing ? 'bg-emerald-900/30 text-emerald-500' : 'bg-stone-800 hover:bg-stone-700 text-stone-400 hover:text-emerald-400'}`}>
-                 {isSyncing ? <Loader2 size={12} className="animate-spin"/> : <RefreshCw size={12}/>}
-                 {isSyncing ? 'Yedekleniyor...' : 'Senkronize'}
+      <div className="sticky top-0 z-10 bg-stone-950/80 backdrop-blur-md pb-2 pt-0">
+         <div className="bg-stone-900 rounded-xl shadow-sm border border-white/5 flex items-center p-0.5">
+             <Search className="text-stone-500 ml-2" size={14} />
+             <input type="text" placeholder="Çiftçi adı veya köy ara..." className="w-full p-2 bg-transparent outline-none font-medium text-stone-200 placeholder-stone-600 text-[11px]" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+             <button onClick={handleSync} disabled={isSyncing} className={`px-2 py-1.5 rounded-lg transition-all m-0.5 flex items-center justify-center gap-1 text-[9px] font-bold uppercase tracking-wider ${isSyncing ? 'bg-emerald-900/30 text-emerald-500' : 'bg-stone-800 hover:bg-stone-700 text-stone-400 hover:text-emerald-400'}`}>
+                 {isSyncing ? <Loader2 size={10} className="animate-spin"/> : <RefreshCw size={10}/>}
+                 {isSyncing ? '...' : 'Senk'}
              </button>
-             <button onClick={handleContactImport} disabled={isImporting} className={`p-1.5 rounded-xl transition-all m-1 flex items-center justify-center ${isImporting ? 'bg-emerald-900/30 text-emerald-500' : 'bg-stone-800 hover:bg-stone-700 text-emerald-500'}`}>{isImporting ? <Loader2 size={16} className="animate-spin"/> : <Contact size={16}/>}</button>
+             <button 
+                onClick={() => setIsBulkMessageModalOpen(true)}
+                className="p-1.5 bg-stone-800 hover:bg-stone-700 text-blue-400 rounded-lg transition-all m-0.5 flex items-center justify-center"
+             >
+                 <MessageSquare size={14}/>
+             </button>
+             <button onClick={handleContactImport} disabled={isImporting} className={`p-1.5 rounded-lg transition-all m-0.5 flex items-center justify-center ${isImporting ? 'bg-emerald-900/30 text-emerald-500' : 'bg-stone-800 hover:bg-stone-700 text-emerald-500'}`}>{isImporting ? <Loader2 size={14} className="animate-spin"/> : <Contact size={14}/>}</button>
          </div>
       </div>
 
-      <div className="space-y-2">
+      <div className="space-y-1">
         {filteredFarmers.map(farmer => (
-            <div key={farmer.id} onClick={() => changeFarmerSelection(farmer)} className="bg-stone-900/80 backdrop-blur rounded-2xl p-2.5 shadow-sm border border-white/5 flex items-center justify-between hover:bg-stone-800/80 hover:shadow-md transition-all cursor-pointer group active:scale-[0.98]">
-                <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 rounded-full bg-stone-800 text-stone-500 flex items-center justify-center font-bold text-sm group-hover:bg-emerald-900/30 group-hover:text-emerald-400 transition-colors border border-white/5">{farmer.fullName.charAt(0)}</div>
+            <div key={farmer.id} onClick={() => changeFarmerSelection(farmer)} className="bg-stone-900/80 backdrop-blur rounded-xl p-2 shadow-sm border border-white/5 flex items-center justify-between hover:bg-stone-800/80 transition-all cursor-pointer group active:scale-[0.98]">
+                <div className="flex items-center space-x-2">
+                    <div className="w-8 h-8 rounded-lg bg-stone-800 text-stone-500 flex items-center justify-center font-bold text-xs group-hover:bg-emerald-900/30 group-hover:text-emerald-400 transition-colors border border-white/5 shadow-inner">{farmer.fullName.charAt(0)}</div>
                     <div>
-                        <h3 className="font-bold text-stone-200 text-sm">{farmer.fullName}</h3>
-                        <div className="flex items-center space-x-2 mt-0.5">
-                             <span className="text-[9px] text-stone-500 flex items-center bg-stone-950/50 px-1.5 py-0.5 rounded border border-white/5"><MapPin size={8} className="mr-1"/> {farmer.village}</span>
+                        <h3 className="font-bold text-stone-200 text-xs tracking-tight">{farmer.fullName}</h3>
+                        <div className="flex items-center space-x-1.5 mt-0.5">
+                             <span className="text-[8px] text-stone-500 flex items-center bg-stone-950/50 px-1 py-0.5 rounded border border-white/5 font-medium"><MapPin size={7} className="mr-1 text-emerald-500/70"/> {farmer.village}</span>
                              {farmer.fields && farmer.fields.length > 0 && (
-                                <span className="text-[9px] text-amber-500 bg-amber-900/20 px-1.5 py-0.5 rounded border border-amber-800/30 font-medium">
+                                <span className="text-[8px] text-amber-500/80 bg-amber-900/10 px-1 py-0.5 rounded border border-amber-800/20 font-bold">
                                     {farmer.fields.length} Tarla
                                 </span>
                              )}
                         </div>
                     </div>
                 </div>
-                <div className="bg-stone-800 p-1 rounded-full text-stone-500 group-hover:text-emerald-400 transition-colors"><ChevronRight size={14} /></div>
+                <div className="bg-stone-800/50 p-1 rounded-lg text-stone-600 group-hover:text-emerald-400 transition-colors"><ChevronRight size={12} /></div>
             </div>
         ))}
         {filteredFarmers.length === 0 && <div className="text-center py-10"><User size={28} className="mx-auto mb-2 text-stone-700"/><p className="text-stone-500 text-[10px]">Kayıt yok.</p></div>}
       </div>
 
       <button onClick={() => { setModalMode('ADD'); setIsModalOpen(true); }} className="fixed bottom-32 right-5 bg-emerald-600 text-white p-3 rounded-full shadow-lg shadow-emerald-900/50 hover:bg-emerald-500 transition-all transform hover:scale-105 z-50 flex items-center justify-center"><Plus size={22} /></button>
+
+      {/* Bulk Message Modal */}
+      {isBulkMessageModalOpen && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+              <div className="bg-stone-900 rounded-3xl w-full max-w-md flex flex-col max-h-[90vh] shadow-2xl border border-white/10">
+                  <div className="p-4 border-b border-white/5 shrink-0 flex justify-between items-center">
+                      <h2 className="text-base font-bold text-stone-100 flex items-center gap-2">
+                          <MessageSquare className="text-blue-500" size={18}/> 
+                          Toplu Mesaj Gönder
+                      </h2>
+                      <button onClick={() => setIsBulkMessageModalOpen(false)} className="text-stone-500 hover:text-stone-300">
+                          <X size={18}/>
+                      </button>
+                  </div>
+                  
+                  <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+                      <div>
+                          <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Hedef Grup (Köy)</label>
+                          <select 
+                            value={bulkTargetVillage}
+                            onChange={(e) => setBulkTargetVillage(e.target.value)}
+                            className="w-full bg-stone-950 border border-white/10 rounded-xl px-3 py-2.5 text-stone-200 text-xs outline-none focus:border-blue-500"
+                          >
+                              <option value="ALL">Tüm Çiftçiler ({farmers.length})</option>
+                              {villages.map((v: string) => (
+                                  <option key={v} value={v}>{v} ({farmers.filter((f: Farmer) => f.village === v).length})</option>
+                              ))}
+                          </select>
+                      </div>
+
+                      <div>
+                          <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Mesaj İçeriği</label>
+                          <textarea 
+                            value={bulkMessage}
+                            onChange={(e) => setBulkMessage(e.target.value)}
+                            placeholder="Örn: Değerli üreticilerimiz, yarın beklenen don olayına karşı önlem alınız..."
+                            className="w-full bg-stone-950 border border-white/10 rounded-xl px-4 py-3 text-stone-100 text-sm focus:border-blue-500 outline-none transition-all h-32 resize-none"
+                          />
+                      </div>
+
+                      <div className="space-y-2">
+                          <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Alıcı Listesi ({bulkTargetFarmers.length})</label>
+                          <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
+                              {bulkTargetFarmers.map((f: Farmer) => (
+                                  <div key={f.id} className="flex items-center justify-between p-2 bg-stone-950/50 rounded-lg border border-white/5">
+                                      <div className="flex flex-col">
+                                          <span className="text-[11px] font-bold text-stone-200">{f.fullName}</span>
+                                          <span className="text-[9px] text-stone-500">{f.phoneNumber}</span>
+                                      </div>
+                                      <button 
+                                        onClick={() => handleSendBulkWhatsApp(f)}
+                                        disabled={!bulkMessage.trim()}
+                                        className="p-1.5 bg-emerald-600/20 text-emerald-400 rounded-lg hover:bg-emerald-600 hover:text-white transition-all disabled:opacity-30"
+                                      >
+                                          <Send size={12} />
+                                      </button>
+                                  </div>
+                              ))}
+                          </div>
+                      </div>
+                  </div>
+
+                  <div className="p-4 border-t border-white/5 bg-stone-900/80">
+                      <p className="text-[9px] text-stone-500 mb-3 leading-tight">
+                          * WhatsApp kısıtlamaları nedeniyle mesajlar tek tek gönderilmelidir. Her alıcı için butona basmanız gerekmektedir.
+                      </p>
+                      <button 
+                        onClick={() => setIsBulkMessageModalOpen(false)}
+                        className="w-full bg-stone-800 text-stone-300 py-3 rounded-xl font-bold text-xs hover:bg-stone-700 transition-all"
+                      >
+                          Kapat
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
 
       {/* Modals (Import & Add/Edit) */}
       {isImportModalOpen && (
@@ -1318,59 +1456,6 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
         setData={setEditFarmerData}
         onSave={handleSaveFarmer}
       />
-
-      {/* Manual Debt Modal */}
-      {isManualDebtModalOpen && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[80] flex items-center justify-center p-4 animate-in fade-in duration-200">
-              <div className="bg-stone-900 rounded-3xl w-full max-w-sm shadow-2xl border border-white/10 overflow-hidden">
-                  <div className="p-4 border-b border-white/5 flex justify-between items-center">
-                      <h2 className="text-sm font-bold text-stone-100 flex items-center"><Plus className="mr-2 text-rose-500" size={16}/> Borç Ekle</h2>
-                      <button onClick={() => setIsManualDebtModalOpen(false)} className="text-stone-500 hover:text-stone-300"><X size={18}/></button>
-                  </div>
-                  <div className="p-4 space-y-4">
-                      <div>
-                          <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Tutar (₺)</label>
-                          <input type="number" value={debtAmount} onChange={(e) => setDebtAmount(e.target.value)} className="w-full bg-stone-950 border border-white/10 rounded-xl px-4 py-3 text-stone-100 text-sm focus:border-rose-500 outline-none transition-all" placeholder="0.00" />
-                      </div>
-                      <div>
-                          <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Açıklama / Ürün</label>
-                          <textarea value={debtNote} onChange={(e) => setDebtNote(e.target.value)} className="w-full bg-stone-950 border border-white/10 rounded-xl px-4 py-3 text-stone-100 text-sm focus:border-rose-500 outline-none transition-all h-24 resize-none" placeholder="Örn: Geçmiş borç, Gübre borcu vb." />
-                      </div>
-                      <button disabled={isSavingDebt || !debtAmount} onClick={handleSaveManualDebt} className="w-full bg-rose-700 text-white py-3.5 rounded-xl font-bold text-xs shadow-lg disabled:opacity-50 flex items-center justify-center">
-                          {isSavingDebt ? <Loader2 className="animate-spin mr-2" size={16}/> : <Save className="mr-2" size={16}/>} Kaydet
-                      </button>
-                  </div>
-              </div>
-          </div>
-      )}
-
-      {/* Report Modal */}
-      {isReportModalOpen && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[80] flex items-center justify-center p-4 animate-in fade-in duration-200">
-              <div className="bg-stone-900 rounded-3xl w-full max-w-sm shadow-2xl border border-white/10 overflow-hidden">
-                  <div className="p-4 border-b border-white/5 flex justify-between items-center">
-                      <h2 className="text-sm font-bold text-stone-100 flex items-center"><Download className="mr-2 text-blue-500" size={16}/> Cari Rapor Oluştur</h2>
-                      <button onClick={() => setIsReportModalOpen(false)} className="text-stone-500 hover:text-stone-300"><X size={18}/></button>
-                  </div>
-                  <div className="p-4 space-y-4">
-                      <div className="grid grid-cols-2 gap-3">
-                          <div>
-                              <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Başlangıç</label>
-                              <input type="date" value={reportStartDate} onChange={(e) => setReportStartDate(e.target.value)} className="w-full bg-stone-950 border border-white/10 rounded-xl px-3 py-2 text-stone-100 text-xs outline-none focus:border-blue-500" />
-                          </div>
-                          <div>
-                              <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Bitiş</label>
-                              <input type="date" value={reportEndDate} onChange={(e) => setReportEndDate(e.target.value)} className="w-full bg-stone-950 border border-white/10 rounded-xl px-3 py-2 text-stone-100 text-xs outline-none focus:border-blue-500" />
-                          </div>
-                      </div>
-                      <p className="text-[9px] text-stone-500 italic">Tarih seçmezseniz tüm zamanların raporu oluşturulur.</p>
-                      <button onClick={() => { setIsViewingReport(true); setIsReportModalOpen(false); }} className="w-full bg-blue-700 text-white py-3.5 rounded-xl font-bold text-xs shadow-lg flex items-center justify-center">
-                          <FileText className="mr-2" size={16}/> Raporu Görüntüle
-                      </button>
-                  </div>
-              </div>
-          </div>
-      )}
 
     </div>
   );
