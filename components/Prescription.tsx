@@ -4,7 +4,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { dbService } from '../services/db';
 import { Farmer, Pesticide, Prescription, PesticideCategory, VisitLog, AppNotification } from '../types';
 import { useAppViewModel } from '../context/AppContext';
-import { Check, Plus, Trash2, FileOutput, Share2, FileText, Calendar, MapPin, X, User, Loader2, Search, FlaskConical, MessageCircle, Edit2, AlertCircle, ArrowLeft, Printer, Package, Download, MessageSquare, RefreshCw, Mic, MicOff } from 'lucide-react';
+import { GeminiService } from '../services/gemini';
+import { Check, Plus, Trash2, FileOutput, Share2, FileText, Calendar, MapPin, X, User, Loader2, Search, FlaskConical, MessageCircle, Edit2, AlertCircle, ArrowLeft, Printer, Package, Download, MessageSquare, RefreshCw, Mic, MicOff, Sparkles, Waves } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 
@@ -96,7 +97,154 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     const [isProcessingPdf, setIsProcessingPdf] = useState(false);
     const [isSyncing, setIsSyncing] = useState(false);
     const [isListening, setIsListening] = useState(false);
+    const [isParsingVoice, setIsParsingVoice] = useState(false);
+    const [voiceTranscript, setVoiceTranscript] = useState('');
+    const [prescriptionListeningTime, setPrescriptionListeningTime] = useState(0);
     const receiptRef = useRef<HTMLDivElement>(null);
+    const prescriptionTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+    const startFullVoicePrescription = () => {
+        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            showToast('Tarayıcınız sesli girişi desteklemiyor.', 'error');
+            return;
+        }
+
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'tr-TR';
+        recognition.interimResults = true;
+        recognition.continuous = true;
+        recognition.maxAlternatives = 1;
+
+        const transcriptRef = { current: '' };
+        let silenceTimer: NodeJS.Timeout | null = null;
+
+        const stopRecognition = () => {
+            if (silenceTimer) clearTimeout(silenceTimer);
+            if (prescriptionTimerRef.current) clearInterval(prescriptionTimerRef.current);
+            try {
+                recognition.stop();
+            } catch (e) {}
+            setIsListening(false);
+            setPrescriptionListeningTime(0);
+        };
+
+        recognition.onstart = () => {
+            setIsListening(true);
+            setVoiceTranscript('');
+            transcriptRef.current = '';
+            hapticFeedback('light');
+            showToast('Reçete bilgilerini söyleyin...', 'info');
+            
+            setPrescriptionListeningTime(10);
+            prescriptionTimerRef.current = setInterval(() => {
+                setPrescriptionListeningTime(prev => {
+                    if (prev <= 1) {
+                        if (prescriptionTimerRef.current) clearInterval(prescriptionTimerRef.current);
+                        return 0;
+                    }
+                    return prev - 1;
+                });
+            }, 1000);
+
+            // Auto-stop after 12 seconds total (giving a bit of buffer)
+            silenceTimer = setTimeout(() => {
+                stopRecognition();
+            }, 12000);
+        };
+
+        recognition.onresult = (event: any) => {
+            let interimTranscript = '';
+            let currentFinal = '';
+            for (let i = event.resultIndex; i < event.results.length; ++i) {
+                if (event.results[i].isFinal) {
+                    currentFinal += event.results[i][0].transcript;
+                } else {
+                    interimTranscript += event.results[i][0].transcript;
+                }
+            }
+            
+            transcriptRef.current += currentFinal;
+            setVoiceTranscript(transcriptRef.current + interimTranscript);
+        };
+
+        recognition.onend = async () => {
+            setIsListening(false);
+            setPrescriptionListeningTime(0);
+            if (silenceTimer) clearTimeout(silenceTimer);
+            if (prescriptionTimerRef.current) clearInterval(prescriptionTimerRef.current);
+            
+            // Use transcriptRef directly to avoid closure issues with state
+            // Also include any remaining interim transcript if possible, though onend usually means it's final
+            const transcriptToParse = (transcriptRef.current || voiceTranscript).trim();
+            
+            if (!transcriptToParse) {
+                setIsParsingVoice(false);
+                return;
+            }
+
+            setIsParsingVoice(true);
+            hapticFeedback('medium');
+            
+            try {
+                const parsedData = await GeminiService.parsePrescriptionFromVoice(transcriptToParse);
+                
+                if (parsedData) {
+                    // Try to match farmer
+                    if (parsedData.farmerName) {
+                        const matchedFarmer = farmers.find(f => 
+                            f.fullName.toLowerCase().includes(parsedData.farmerName.toLowerCase())
+                        );
+                        if (matchedFarmer) setSelectedFarmer(matchedFarmer);
+                    }
+
+                    // Map items
+                    const newItems: any[] = [];
+                    if (parsedData.items && Array.isArray(parsedData.items)) {
+                        for (const item of parsedData.items) {
+                            const matchedPesticide = pesticides.find(p => 
+                                p.name.toLowerCase().includes(item.pesticideName.toLowerCase())
+                            );
+                            
+                            if (matchedPesticide) {
+                                const inventoryItem = contextInventory.find(inv => inv.pesticideId === matchedPesticide.id);
+                                const sellingPrice = inventoryItem ? inventoryItem.sellingPrice : 0;
+                                const qty = 1;
+
+                                newItems.push({
+                                    pesticide: matchedPesticide,
+                                    dosage: item.dosage || matchedPesticide.defaultDosage,
+                                    quantity: qty.toString(),
+                                    unitPrice: sellingPrice ? sellingPrice.toString() : '',
+                                    totalPrice: qty * sellingPrice
+                                });
+                            }
+                        }
+                    }
+
+                    if (newItems.length > 0) {
+                        setSelectedItems(newItems);
+                        setStep(2);
+                        showToast('Reçete başarıyla analiz edildi.', 'success');
+                    } else {
+                        showToast('İlaçlar kütüphanede bulunamadı.', 'info');
+                    }
+                }
+            } catch (error) {
+                console.error("Voice parse error:", error);
+                showToast('Ses analizi başarısız oldu.', 'error');
+            } finally {
+                setIsParsingVoice(false);
+            }
+        };
+
+        recognition.onerror = (event: any) => {
+            console.error('Speech recognition error:', event.error);
+            setIsListening(false);
+        };
+
+        recognition.start();
+    };
 
     const startVoiceInput = () => {
         const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -107,7 +255,8 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
 
         const recognition = new SpeechRecognition();
         recognition.lang = 'tr-TR';
-        recognition.interimResults = false;
+        recognition.interimResults = true;
+        recognition.continuous = false;
         recognition.maxAlternatives = 1;
 
         recognition.onstart = () => {
@@ -118,7 +267,11 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         recognition.onresult = (event: any) => {
             const transcript = event.results[0][0].transcript;
             setPesticideSearchTerm(transcript);
-            hapticFeedback('medium');
+            if (event.results[0].isFinal) {
+                hapticFeedback('medium');
+                setIsListening(false);
+                recognition.stop();
+            }
         };
 
         recognition.onerror = (event: any) => {
@@ -1041,9 +1194,37 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
 
             {step === 1 && (
                 <div>
-                    <h2 className="text-2xl font-bold mb-4 text-stone-100">
-                        {editingId ? 'Reçete Düzenle: Çiftçi' : 'Çiftçi Seçimi'}
-                    </h2>
+                    <div className="flex items-center justify-between mb-4">
+                        <h2 className="text-2xl font-bold text-stone-100">
+                            {editingId ? 'Reçete Düzenle: Çiftçi' : 'Çiftçi Seçimi'}
+                        </h2>
+                        <button 
+                            onClick={startFullVoicePrescription}
+                            disabled={isParsingVoice}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                                isListening 
+                                ? 'bg-rose-600 text-white animate-pulse' 
+                                : 'bg-amber-600/20 text-amber-500 border border-amber-500/30 hover:bg-amber-600 hover:text-white'
+                            }`}
+                        >
+                            {isParsingVoice ? (
+                                <Loader2 size={14} className="animate-spin" />
+                            ) : (
+                                <Sparkles size={14} />
+                            )}
+                            {isListening ? (prescriptionListeningTime > 0 ? `Dinleniyor (${prescriptionListeningTime}s)` : 'Dinleniyor...') : (isParsingVoice ? 'Analiz Ediliyor...' : 'Sesle Reçete Oluştur')}
+                        </button>
+                    </div>
+
+                    {isListening && voiceTranscript && (
+                        <div className="mb-4 p-4 bg-emerald-900/20 border border-emerald-500/30 rounded-2xl animate-in fade-in slide-in-from-top-2 duration-300">
+                            <div className="flex items-center gap-2 mb-2">
+                                <Waves size={14} className="text-emerald-500 animate-pulse" />
+                                <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">Canlı Döküm</span>
+                            </div>
+                            <p className="text-stone-300 text-sm italic">"{voiceTranscript}"</p>
+                        </div>
+                    )}
                     
                     <div className="bg-stone-900 rounded-2xl shadow-sm border border-white/5 flex items-center p-1 mb-4">
                         <Search className="text-stone-500 ml-3" size={18} />

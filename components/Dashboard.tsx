@@ -6,7 +6,7 @@ import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, 
   Tooltip, CartesianGrid 
 } from 'recharts';
-import { Users, FileText, Sprout, Plus, X, Calendar, Newspaper, ChevronRight, Droplet, ArrowRight, Zap, MapPin, Sparkles, Send, Loader2, Bot, BrainCircuit, CalendarCheck, Clock, Mic, Bell, CalendarClock, TrendingUp, AlertCircle, Bug, Package, Route, FlaskConical, Star, Truck, Search, DollarSign, Trash2 } from 'lucide-react';
+import { Users, FileText, Sprout, Plus, X, Calendar, ChevronRight, Droplet, ArrowRight, Zap, MapPin, Sparkles, Send, Loader2, Bot, BrainCircuit, CalendarCheck, Clock, Mic, Bell, CalendarClock, TrendingUp, AlertCircle, Bug, Package, Route, FlaskConical, Star, Truck, Search, DollarSign, Trash2, Wallet } from 'lucide-react';
 import { ViewState, Pesticide, PesticideCategory, SupplierPurchase } from '../types';
 import { GeminiService } from '../services/gemini';
 import { dbService } from '../services/db';
@@ -355,15 +355,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
 
         <div className="grid grid-cols-2 gap-2">
             <button 
-                onClick={() => onNavigate('VISIT_NEW')}
+                onClick={() => onNavigate('KASA')}
                 className="group flex items-center gap-2.5 p-3 bg-stone-900/60 backdrop-blur-sm rounded-2xl border border-white/10 active:scale-95 transition-all shadow-md"
             >
-                <div className="bg-orange-600/20 text-orange-400 p-2 rounded-xl border border-orange-500/20 group-hover:bg-orange-600 group-hover:text-white transition-colors">
-                    <Calendar size={16}/>
+                <div className="bg-blue-600/20 text-blue-400 p-2 rounded-xl border border-blue-500/20 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                    <Wallet size={16}/>
                 </div>
                 <div className="text-left">
-                    <span className="block font-black text-[9px] text-stone-200 uppercase tracking-wider">ZİYARET</span>
-                    <span className="text-[7px] text-stone-600 font-bold uppercase">Saha Takibi</span>
+                    <span className="block font-black text-[9px] text-stone-200 uppercase tracking-wider">KASA</span>
+                    <span className="text-[7px] text-stone-600 font-bold uppercase">Banka & Nakit</span>
                 </div>
             </button>
 
@@ -383,7 +383,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
 
         <div className="grid grid-cols-4 gap-2 mt-3">
             <ActionButton onClick={() => onNavigate('DISEASE_DIAGNOSIS')} icon={Sparkles} label="AI TEŞHİS" color="emerald" />
-            <ActionButton onClick={() => onNavigate('MAP_VIEW')} icon={Route} label="ROTA" color="blue" />
+            <ActionButton onClick={() => onNavigate('VISIT_NEW')} icon={Calendar} label="ZİYARET" color="blue" />
             <ActionButton onClick={() => onNavigate('REMINDERS_NEW')} icon={Bell} label="PLAN" color="amber" />
             <ActionButton onClick={() => onNavigate('COMPATIBILITY_CHECK')} icon={FlaskConical} label="KARIŞIM" color="purple" />
         </div>

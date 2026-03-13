@@ -254,6 +254,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentNote, setPaymentNote] = useState('');
+  const [selectedAccountId, setSelectedAccountId] = useState('');
   const [isSavingPayment, setIsSavingPayment] = useState(false);
 
   // Manual Debt Modal State
@@ -268,6 +269,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const [reportEndDate, setReportEndDate] = useState('');
   const [isViewingReport, setIsViewingReport] = useState(false);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const reportRef = useRef<HTMLDivElement>(null);
 
   // Bulk Message Modal State
@@ -523,7 +525,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       setModalMode('EDIT'); setIsModalOpen(true);
   };
 
-  const { addPayment, deletePayment: removePayment, addManualDebt, deleteManualDebt, payments, bulkAddFarmers, addFarmer, updateFarmer, deleteFarmer, userProfile, updateUserProfile, updateVisit, deleteVisit, showToast, hapticFeedback } = useAppViewModel();
+  const { accounts, addPayment, deletePayment: removePayment, addManualDebt, deleteManualDebt, payments, bulkAddFarmers, addFarmer, updateFarmer, deleteFarmer, userProfile, updateUserProfile, updateVisit, deleteVisit, showToast, hapticFeedback } = useAppViewModel();
 
   const handleSavePayment = async () => {
       if (!selectedFarmer || !paymentAmount) return;
@@ -534,13 +536,15 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
               amount: Number(paymentAmount),
               date: new Date().toISOString(),
               method: 'CASH',
-              note: paymentNote
+              note: paymentNote,
+              accountId: selectedAccountId || undefined
           });
           showToast('Ödeme kaydedildi', 'success');
           hapticFeedback('success');
           setIsPaymentModalOpen(false);
           setPaymentAmount('');
           setPaymentNote('');
+          setSelectedAccountId('');
           await loadFarmerDetails();
       } catch (e) {
           showToast('Ödeme kaydedilemedi', 'error');
@@ -701,9 +705,61 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       }
   };
 
-  const farmerPayments = payments.filter(p => p.farmerId === selectedFarmer?.id);
+  const farmerPayments = useMemo(() => payments.filter(p => p.farmerId === selectedFarmer?.id), [payments, selectedFarmer]);
+  
+  // Calculate available years for filtering
+  const availableYears = useMemo(() => {
+      const years = new Set<number>();
+      years.add(new Date().getFullYear());
+      
+      farmerPrescriptions.forEach(p => years.add(new Date(p.date).getFullYear()));
+      farmerPayments.forEach(p => years.add(new Date(p.date).getFullYear()));
+      farmerManualDebts.forEach(d => years.add(new Date(d.date).getFullYear()));
+      
+      return Array.from(years).sort((a, b) => b - a);
+  }, [farmerPrescriptions, farmerPayments, farmerManualDebts]);
+
+  // Filter transactions by selected year
+  const filteredPrescriptions = useMemo(() => 
+      farmerPrescriptions.filter(p => new Date(p.date).getFullYear() === selectedYear),
+  [farmerPrescriptions, selectedYear]);
+
+  const filteredPayments = useMemo(() => 
+      farmerPayments.filter(p => new Date(p.date).getFullYear() === selectedYear),
+  [farmerPayments, selectedYear]);
+
+  const filteredManualDebts = useMemo(() => 
+      farmerManualDebts.filter(d => new Date(d.date).getFullYear() === selectedYear),
+  [farmerManualDebts, selectedYear]);
+
+  // Calculate opening balance for the selected year
+  const openingBalance = useMemo(() => {
+      let balance = 0;
+      
+      // Sum all transactions BEFORE the selected year
+      farmerPrescriptions.forEach(p => {
+          if (new Date(p.date).getFullYear() < selectedYear) {
+              balance -= (p.totalAmount || 0);
+          }
+      });
+      
+      farmerManualDebts.forEach(d => {
+          if (new Date(d.date).getFullYear() < selectedYear && !d.id.startsWith('turnover-')) {
+              balance -= d.amount;
+          }
+      });
+      
+      farmerPayments.forEach(p => {
+          if (new Date(p.date).getFullYear() < selectedYear) {
+              balance += p.amount;
+          }
+      });
+      
+      return balance;
+  }, [farmerPrescriptions, farmerManualDebts, farmerPayments, selectedYear]);
+
   const totalPaid = farmerPayments.reduce((acc, p) => acc + p.amount, 0);
-  const totalDebt = farmerPrescriptions.reduce((acc, p) => acc + (p.totalAmount || 0), 0) + farmerManualDebts.reduce((acc, d) => acc + d.amount, 0);
+  const totalDebt = farmerPrescriptions.reduce((acc, p) => acc + (p.totalAmount || 0), 0) + farmerManualDebts.filter(d => !d.id.startsWith('turnover-')).reduce((acc, d) => acc + d.amount, 0);
   const balance = totalPaid - totalDebt;
 
   const handleDeleteFarmer = async () => {
@@ -1092,12 +1148,46 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
 
                         {/* History */}
                         <div className="bg-stone-900/80 backdrop-blur p-4 rounded-2xl border border-white/5 shadow-sm">
-                            <h3 className="font-bold text-stone-200 text-xs mb-3 flex items-center uppercase tracking-wider opacity-70"><History size={14} className="mr-1.5 text-blue-500"/> İşlem Geçmişi</h3>
+                            <div className="flex justify-between items-center mb-4">
+                                <h3 className="font-bold text-stone-200 text-xs flex items-center uppercase tracking-wider opacity-70"><History size={14} className="mr-1.5 text-blue-500"/> İşlem Geçmişi</h3>
+                                <div className="flex gap-1 overflow-x-auto no-scrollbar max-w-[150px]">
+                                    {availableYears.map(year => (
+                                        <button 
+                                            key={year}
+                                            onClick={() => setSelectedYear(year)}
+                                            className={`px-2 py-1 rounded-lg text-[9px] font-bold transition-all border ${selectedYear === year ? 'bg-emerald-600 text-white border-emerald-500' : 'bg-stone-800 text-stone-500 border-white/5'}`}
+                                        >
+                                            {year}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
                             <div className="space-y-2 max-h-[400px] overflow-y-auto custom-scrollbar pr-1">
+                                {/* Opening Balance Row */}
+                                {openingBalance !== 0 && (
+                                    <div className="p-3 bg-emerald-900/10 rounded-xl border border-emerald-500/10 flex items-center justify-between">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-8 h-8 rounded-lg bg-emerald-900/20 text-emerald-500 flex items-center justify-center">
+                                                <RefreshCw size={14} />
+                                            </div>
+                                            <div>
+                                                <p className="text-[10px] font-bold text-stone-200">{selectedYear} Devir Bakiyesi</p>
+                                                <p className="text-[8px] text-stone-500">01.01.{selectedYear}</p>
+                                            </div>
+                                        </div>
+                                        <div className="text-right">
+                                            <p className={`text-xs font-black ${openingBalance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                {openingBalance >= 0 ? '+' : ''}{openingBalance.toLocaleString('tr-TR')} ₺
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
+
                                 {[
-                                    ...farmerPrescriptions.map(p => ({ ...p, type: 'DEBT', label: 'Reçete Satışı' })), 
-                                    ...farmerPayments.map(p => ({ ...p, type: 'PAYMENT', label: 'Tahsilat' })),
-                                    ...farmerManualDebts.map(d => ({ ...d, type: 'DEBT', label: 'Manuel Borç' }))
+                                    ...filteredPrescriptions.map(p => ({ ...p, type: 'DEBT', label: 'Reçete Satışı' })), 
+                                    ...filteredPayments.map(p => ({ ...p, type: 'PAYMENT', label: 'Tahsilat' })),
+                                    ...filteredManualDebts.map(d => ({ ...d, type: 'DEBT', label: 'Manuel Borç' }))
                                 ]
                                     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
                                     .map((item, idx) => {
@@ -1217,6 +1307,19 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                 />
                             </div>
                             <div>
+                                <label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Hesap Seçin</label>
+                                <select 
+                                    value={selectedAccountId}
+                                    onChange={e => setSelectedAccountId(e.target.value)}
+                                    className="w-full p-3.5 bg-stone-950 border border-stone-800 rounded-2xl outline-none text-stone-200 text-xs focus:border-emerald-500/50 transition-all"
+                                >
+                                    <option value="">Hesap Seçilmedi</option>
+                                    {accounts.map(acc => (
+                                        <option key={acc.id} value={acc.id}>{acc.name} ({new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(acc.balance)})</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
                                 <label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Not (Opsiyonel)</label>
                                 <textarea 
                                     value={paymentNote} 
@@ -1272,6 +1375,20 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                             <button onClick={() => setIsReportModalOpen(false)} className="text-stone-500 hover:text-stone-300"><X size={18}/></button>
                         </div>
                         <div className="p-4 space-y-4">
+                            <div className="flex gap-2 mb-2 overflow-x-auto no-scrollbar pb-1">
+                                {availableYears.map(year => (
+                                    <button 
+                                        key={year}
+                                        onClick={() => {
+                                            setReportStartDate(`${year}-01-01`);
+                                            setReportEndDate(`${year}-12-31`);
+                                        }}
+                                        className="px-3 py-1.5 bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-xl text-[10px] font-bold border border-white/5 whitespace-nowrap active:scale-95 transition-all"
+                                    >
+                                        {year} Yılı
+                                    </button>
+                                ))}
+                            </div>
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
                                     <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Başlangıç</label>

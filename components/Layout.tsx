@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { Home, Users, BookOpen, FileText, ClipboardList, Menu, X, LogOut, Settings, ChevronRight, User, Bell, Phone, UserCircle, Plus, PieChart, Sprout, Newspaper, CalendarCheck, ChevronLeft, Package, Truck, CreditCard } from 'lucide-react';
+import { Home, Users, BookOpen, FileText, ClipboardList, Menu, X, LogOut, Settings, ChevronRight, User, Bell, Phone, UserCircle, Plus, PieChart, Sprout, CalendarCheck, ChevronLeft, Package, Truck, CreditCard, Receipt, Wallet } from 'lucide-react';
 import { ViewState } from '../types';
 import { useAppViewModel } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
@@ -16,9 +16,10 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const { unreadCount, userProfile, stats } = useAppViewModel();
   const { logout } = useAuth();
-
+  const isHighContrast = userProfile.highContrastMode;
+  
   const navGroups = [
-    { title: "Genel", items: [{ id: 'DASHBOARD', icon: Home, label: 'Ana Sayfa' }, { id: 'NEWS', icon: Newspaper, label: 'Haberler' }, { id: 'REMINDERS', icon: CalendarCheck, label: 'Hatırlatıcılar', badge: stats.activeReminders }, { id: 'STATISTICS', icon: PieChart, label: 'İstatistikler' }] },
+    { title: "Genel", items: [{ id: 'DASHBOARD', icon: Home, label: 'Ana Sayfa' }, { id: 'REMINDERS', icon: CalendarCheck, label: 'Hatırlatıcılar', badge: stats.activeReminders }, { id: 'KASA', icon: Wallet, label: 'Kasa & Banka' }, { id: 'EXPENSES', icon: Receipt, label: 'Giderler' }, { id: 'STATISTICS', icon: PieChart, label: 'İstatistikler' }] },
     { title: "Saha & Kayıt", items: [{ id: 'FARMERS', icon: Users, label: 'Çiftçiler' }, { id: 'PESTICIDES', icon: BookOpen, label: 'İlaçlar' }, { id: 'INVENTORY', icon: Package, label: 'Depom' }, { id: 'SUPPLIERS', icon: Truck, label: 'Tedarikçiler' }, { id: 'PAYMENTS', icon: CreditCard, label: 'Ödemelerim' }, { id: 'PRESCRIPTIONS', icon: FileText, label: 'Reçete Defteri' }, { id: 'VISITS', icon: ClipboardList, label: 'Ziyaretler' }] },
     { title: "Destek", items: [{ id: 'CONTACT', icon: Phone, label: 'Bize Ulaşın' }, { id: 'SETTINGS', icon: Settings, label: 'Ayarlar' }] }
   ];
@@ -27,7 +28,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
   const handleLogout = async () => { try { await dbService.clearLocalUserData(); await logout(); } catch (error) { console.error("Logout failed", error); } };
 
   return (
-    <div className="min-h-screen relative font-sans text-stone-200 bg-stone-950 flex flex-col">
+    <div className={`min-h-screen relative font-sans text-stone-200 bg-stone-950 flex flex-col ${isHighContrast ? 'high-contrast' : ''}`}>
       <div className="fixed inset-0 z-0 pointer-events-none"><div className="absolute inset-0 bg-cover bg-center bg-no-repeat transform scale-105 blur-[3px] opacity-40" style={{ backgroundImage: 'url("https://images.unsplash.com/photo-1500382017468-9049fed747ef?q=80&w=2832&auto=format&fit=crop")' }}></div><div className="absolute inset-0 bg-gradient-to-br from-stone-950 via-stone-900/95 to-black/90"></div></div>
 
       {/* Global Back Button */}

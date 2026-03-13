@@ -1,9 +1,10 @@
 
+import { safeStringify } from '../utils/json';
 import { openDB, DBSchema } from 'idb';
-import { Farmer, Pesticide, VisitLog, Prescription, AppNotification, UserProfile, Reminder, InventoryItem, PesticideCategory, Payment, ManualDebt, Supplier, SupplierPurchase, SupplierPayment, MyPayment } from '../types';
+import { Farmer, Pesticide, VisitLog, Prescription, AppNotification, UserProfile, Reminder, InventoryItem, PesticideCategory, Payment, ManualDebt, Supplier, SupplierPurchase, SupplierPayment, MyPayment, TurnoverLog, Expense, Account, Transaction } from '../types';
 import { MOCK_PESTICIDES } from '../constants';
 import { db as firestore, auth } from './firebase';
-import { doc, setDoc, deleteDoc, collection, getDocs, writeBatch, query, where, getDoc } from 'firebase/firestore';
+import { doc, setDoc, deleteDoc, collection, getDocs, writeBatch, query, where, getDoc, onSnapshot } from 'firebase/firestore';
 
 interface AgriDB extends DBSchema {
   farmers: {
@@ -68,10 +69,29 @@ interface AgriDB extends DBSchema {
     value: MyPayment;
     indexes: { 'by-due-date': string };
   };
+  turnoverLogs: {
+    key: string;
+    value: TurnoverLog;
+    indexes: { 'by-year': number };
+  };
+  expenses: {
+    key: string;
+    value: Expense;
+    indexes: { 'by-date': string };
+  };
+  accounts: {
+    key: string;
+    value: Account;
+  };
+  transactions: {
+    key: string;
+    value: Transaction;
+    indexes: { 'by-account': string, 'by-date': string };
+  };
 }
 
 const DB_NAME = 'agri-engineer-db';
-const DB_VERSION = 15;
+const DB_VERSION = 18;
 
 const FS_ROOT = "MKS";
 const FS_ORG = "g892bEaJyGfEq1Fa67yb";
@@ -154,6 +174,22 @@ export const initDB = async () => {
         const myPaymentStore = db.createObjectStore('myPayments', { keyPath: 'id' });
         myPaymentStore.createIndex('by-due-date', 'dueDate');
       }
+      if (!db.objectStoreNames.contains('turnoverLogs')) {
+        const turnoverStore = db.createObjectStore('turnoverLogs', { keyPath: 'id' });
+        turnoverStore.createIndex('by-year', 'year');
+      }
+      if (!db.objectStoreNames.contains('expenses')) {
+        const expenseStore = db.createObjectStore('expenses', { keyPath: 'id' });
+        expenseStore.createIndex('by-date', 'date');
+      }
+      if (!db.objectStoreNames.contains('accounts')) {
+        db.createObjectStore('accounts', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('transactions')) {
+        const transactionStore = db.createObjectStore('transactions', { keyPath: 'id' });
+        transactionStore.createIndex('by-account', 'accountId');
+        transactionStore.createIndex('by-date', 'date');
+      }
     },
   });
 };
@@ -193,7 +229,7 @@ export const dbService = {
             const snap = await getDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid));
             if (snap.exists()) {
                 const profile = snap.data() as UserProfile;
-                localStorage.setItem('mks_user_profile', JSON.stringify(profile));
+                localStorage.setItem('mks_user_profile', safeStringify(profile));
                 return profile;
             }
         } catch (e) {}
@@ -202,7 +238,7 @@ export const dbService = {
   },
 
   async saveUserProfile(uid: string, profile: UserProfile) {
-    localStorage.setItem('mks_user_profile', JSON.stringify(profile));
+    localStorage.setItem('mks_user_profile', safeStringify(profile));
     if (navigator.onLine) {
         const cleanProfile = sanitizeForFirestore({ ...profile, lastUpdate: new Date().toISOString() });
         setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid), cleanProfile, { merge: true })
@@ -217,7 +253,7 @@ export const dbService = {
     if (!navigator.onLine) return;
     const db = await initDB();
     const userPath = [FS_ROOT, FS_ORG, FS_USERS, uid].join("/");
-    const collections = ["farmers", "notifications", "visits", "prescriptions", "reminders", "inventory", "payments", "suppliers", "supplierPurchases", "supplierPayments", "myPayments"] as const;
+    const collections = ["farmers", "notifications", "visits", "prescriptions", "reminders", "inventory", "payments", "manualDebts", "suppliers", "supplierPurchases", "supplierPayments", "myPayments", "expenses", "accounts", "transactions"] as const;
 
     for (const col of collections) {
       try {
@@ -258,7 +294,7 @@ export const dbService = {
 
   async clearLocalUserData() {
     const db = await initDB();
-    const stores = ['farmers', 'visits', 'prescriptions', 'notifications', 'reminders', 'inventory', 'payments', 'suppliers', 'supplierPurchases', 'supplierPayments', 'myPayments'] as const;
+    const stores = ['farmers', 'visits', 'prescriptions', 'notifications', 'reminders', 'inventory', 'payments', 'manualDebts', 'suppliers', 'supplierPurchases', 'supplierPayments', 'myPayments', 'expenses', 'accounts', 'transactions'] as const;
     for (const store of stores) await db.clear(store);
     localStorage.removeItem('mks_user_profile');
   },
@@ -643,7 +679,7 @@ export const dbService = {
     if (!user) throw new Error("Oturum açılmamış. Lütfen tekrar giriş yapın.");
 
     const db = await initDB();
-    const stores = ['farmers', 'visits', 'prescriptions', 'notifications', 'reminders', 'inventory', 'payments', 'manualDebts', 'suppliers', 'supplierPurchases', 'supplierPayments', 'myPayments'] as const;
+    const stores = ['farmers', 'visits', 'prescriptions', 'notifications', 'reminders', 'inventory', 'payments', 'manualDebts', 'suppliers', 'supplierPurchases', 'supplierPayments', 'myPayments', 'expenses', 'accounts', 'transactions'] as const;
     
     let total = 0;
     for (const storeName of stores) {
@@ -777,5 +813,218 @@ export const dbService = {
     const db = await initDB();
     await db.delete('myPayments', id);
     backgroundDelete('myPayments', id);
+  },
+
+  // --- TURNOVER LOGS ---
+  async getTurnoverLogs(): Promise<TurnoverLog[]> {
+    const db = await initDB();
+    return db.getAll('turnoverLogs');
+  },
+
+  async addTurnoverLog(log: TurnoverLog): Promise<void> {
+    const db = await initDB();
+    await db.put('turnoverLogs', log);
+    
+    // Sync to Firestore
+    const user = auth.currentUser;
+    if (user) {
+      await setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, user.uid, 'turnoverLogs', log.id), sanitizeForFirestore(log));
+    }
+  },
+
+  async performFinancialTurnover(year: number, farmerBalances: Record<string, number>): Promise<void> {
+    const db = await initDB();
+    const tx = db.transaction(['manualDebts', 'turnoverLogs'], 'readwrite');
+    const debtStore = tx.objectStore('manualDebts');
+    const logStore = tx.objectStore('turnoverLogs');
+    
+    const date = `${year}-01-01T00:00:01Z`;
+    const note = `${year} Devir Bakiyesi`;
+    
+    for (const [farmerId, balance] of Object.entries(farmerBalances)) {
+      if (balance === 0) continue;
+      
+      const turnoverEntry: ManualDebt = {
+        id: `turnover-${year}-${farmerId}`,
+        farmerId,
+        amount: balance,
+        date,
+        note
+      };
+      
+      await debtStore.put(turnoverEntry);
+      
+      // Sync to Firestore (optional, but good for consistency)
+      const user = auth.currentUser;
+      if (user) {
+        await setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, user.uid, 'manualDebts', turnoverEntry.id), sanitizeForFirestore(turnoverEntry));
+      }
+    }
+    
+    const log: TurnoverLog = {
+      id: `turnover-log-fin-${year}`,
+      year,
+      date: new Date().toISOString(),
+      type: 'FINANCIAL'
+    };
+    
+    await logStore.put(log);
+    if (auth.currentUser) {
+      await setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, auth.currentUser.uid, 'turnoverLogs', log.id), sanitizeForFirestore(log));
+    }
+    
+    await tx.done;
+  },
+
+  async performInventoryTurnover(year: number, inventoryItems: InventoryItem[]): Promise<void> {
+    const db = await initDB();
+    const tx = db.transaction(['turnoverLogs'], 'readwrite');
+    const logStore = tx.objectStore('turnoverLogs');
+    
+    // For inventory, we just log that it happened. 
+    // The user might want a snapshot, but for now we just mark the log.
+    const log: TurnoverLog = {
+      id: `turnover-log-inv-${year}`,
+      year,
+      date: new Date().toISOString(),
+      type: 'INVENTORY'
+    };
+    
+    await logStore.put(log);
+    if (auth.currentUser) {
+      await setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, auth.currentUser.uid, 'turnoverLogs', log.id), sanitizeForFirestore(log));
+    }
+    
+    await tx.done;
+  },
+
+  // --- EXPENSES ---
+  async getExpenses() {
+    const db = await initDB();
+    return (await db.getAll('expenses')).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  },
+
+  async addExpense(expense: Expense) {
+    const db = await initDB();
+    await db.put('expenses', expense);
+    backgroundSync('expenses', expense);
+    return expense.id;
+  },
+
+  // --- ACCOUNTS & TRANSACTIONS ---
+  async getAccounts() {
+    const db = await initDB();
+    return db.getAll('accounts');
+  },
+
+  async addAccount(account: Account) {
+    const db = await initDB();
+    await db.put('accounts', account);
+    backgroundSync('accounts', account);
+    return account.id;
+  },
+
+  async updateAccount(account: Account) {
+    const db = await initDB();
+    await db.put('accounts', account);
+    backgroundSync('accounts', account);
+    return account.id;
+  },
+
+  async deleteAccount(id: string) {
+    const db = await initDB();
+    await db.delete('accounts', id);
+    backgroundDelete('accounts', id);
+  },
+
+  async getTransactions() {
+    const db = await initDB();
+    return (await db.getAll('transactions')).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  },
+
+  async addTransaction(transaction: Transaction) {
+    const db = await initDB();
+    await db.put('transactions', transaction);
+    backgroundSync('transactions', transaction);
+    
+    // Update account balance
+    const account = await db.get('accounts', transaction.accountId);
+    if (account) {
+      if (transaction.type === 'INCOME') {
+        account.balance += transaction.amount;
+      } else {
+        account.balance -= transaction.amount;
+      }
+      await db.put('accounts', account);
+      backgroundSync('accounts', account);
+    }
+    return transaction.id;
+  },
+
+  async deleteTransaction(id: string) {
+    const db = await initDB();
+    const transaction = await db.get('transactions', id);
+    if (transaction) {
+      const account = await db.get('accounts', transaction.accountId);
+      if (account) {
+        if (transaction.type === 'INCOME') {
+          account.balance -= transaction.amount;
+        } else {
+          account.balance += transaction.amount;
+        }
+        await db.put('accounts', account);
+        backgroundSync('accounts', account);
+      }
+    }
+    await db.delete('transactions', id);
+    backgroundDelete('transactions', id);
+  },
+
+  async deleteExpense(id: string) {
+    const db = await initDB();
+    await db.delete('expenses', id);
+    backgroundDelete('expenses', id);
+  },
+
+  /**
+   * Gerçek zamanlı senkronizasyon için Firestore dinleyicilerini kurar.
+   * Diğer cihazlardan gelen değişiklikleri yerel veritabanına yansıtır.
+   */
+  setupRealtimeSync(uid: string, onSync: () => void) {
+    const userPath = [FS_ROOT, FS_ORG, FS_USERS, uid].join("/");
+    const collections = ["farmers", "notifications", "visits", "prescriptions", "reminders", "inventory", "payments", "manualDebts", "suppliers", "supplierPurchases", "supplierPayments", "myPayments", "expenses", "accounts", "transactions"] as const;
+    
+    const unsubscribes: (() => void)[] = [];
+
+    collections.forEach(col => {
+      const q = collection(firestore, userPath, col);
+      const unsub = onSnapshot(q, async (snapshot) => {
+        // Yerel değişiklikleri (pending writes) senkronize etmeye gerek yok, 
+        // çünkü onlar zaten IndexedDB'ye yazıldı.
+        if (snapshot.metadata.hasPendingWrites) return;
+
+        const db = await initDB();
+        const tx = db.transaction(col, 'readwrite');
+        
+        // Firestore'dan gelen tüm verileri yerel DB ile senkronize et
+        // Not: Performans için sadece değişen dökümanları (snapshot.docChanges()) kullanmak daha iyidir.
+        for (const change of snapshot.docChanges()) {
+          if (change.type === 'added' || change.type === 'modified') {
+            await tx.store.put(change.doc.data() as any);
+          } else if (change.type === 'removed') {
+            await tx.store.delete(change.doc.id);
+          }
+        }
+        
+        await tx.done;
+        onSync(); // UI'ı bilgilendir
+      }, (error) => {
+        console.warn(`Realtime sync error for ${col}:`, error);
+      });
+      
+      unsubscribes.push(unsub);
+    });
+
+    return () => unsubscribes.forEach(unsub => unsub());
   }
 };

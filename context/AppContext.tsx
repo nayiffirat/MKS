@@ -1,8 +1,9 @@
 
+import { safeStringify } from '../utils/json';
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { dbService } from '../services/db';
 import { WeatherService, AGRI_CITIES } from '../services/weather';
-import { Farmer, UIScale, AppNotification, UserProfile, Reminder, VisitLog, AgriCity, InventoryItem, Prescription, Payment, ManualDebt, Supplier, SupplierPurchase, SupplierPayment, MyPayment, PesticideCategory, ViewState } from '../types';
+import { Farmer, UIScale, AppNotification, UserProfile, Reminder, VisitLog, AgriCity, InventoryItem, Prescription, Payment, ManualDebt, Supplier, SupplierPurchase, SupplierPayment, MyPayment, PesticideCategory, ViewState, Expense, Account, Transaction } from '../types';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Haptics, ImpactStyle, NotificationType } from '@capacitor/haptics';
 import { auth } from '../services/firebase';
@@ -19,6 +20,7 @@ interface DashboardStats {
   inventoryValue: number;
   potentialRevenue: number;
   totalDebt: number;
+  totalExpenses: number;
   regionalAlerts: { type: string, village: string, severity: string, count: number }[];
 }
 
@@ -70,6 +72,16 @@ interface AppContextType {
   addMyPayment: (payment: Omit<MyPayment, 'id'>) => Promise<void>;
   updateMyPayment: (payment: MyPayment) => Promise<void>;
   deleteMyPayment: (id: string) => Promise<void>;
+  expenses: Expense[];
+  addExpense: (expense: Omit<Expense, 'id'>) => Promise<void>;
+  deleteExpense: (id: string) => Promise<void>;
+  accounts: Account[];
+  addAccount: (account: Omit<Account, 'id' | 'balance'>) => Promise<void>;
+  updateAccount: (account: Account) => Promise<void>;
+  deleteAccount: (id: string) => Promise<void>;
+  transactions: Transaction[];
+  addTransaction: (transaction: Omit<Transaction, 'id'>) => Promise<void>;
+  deleteTransaction: (id: string) => Promise<void>;
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
   hapticFeedback: (type?: 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error') => Promise<void>;
 }
@@ -81,7 +93,8 @@ const DEFAULT_PROFILE: UserProfile = {
   phoneNumber: '',
   companyName: '',
   title: '',
-  assistantVoice: 'FEMALE'
+  assistantVoice: 'FEMALE',
+  highContrastMode: false
 };
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -97,6 +110,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     inventoryValue: 0,
     potentialRevenue: 0,
     totalDebt: 0,
+    totalExpenses: 0,
     regionalAlerts: []
   });
 
@@ -109,6 +123,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [manualDebts, setManualDebts] = useState<ManualDebt[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [myPayments, setMyPayments] = useState<MyPayment[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [toasts, setToasts] = useState<{id: string, message: string, type: 'success' | 'error' | 'info'}[]>([]);
   const isInitialized = useRef(false);
 
@@ -146,7 +163,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateUserProfile = (profile: UserProfile) => {
       setUserProfile(profile);
-      localStorage.setItem('mks_user_profile', JSON.stringify(profile));
+      localStorage.setItem('mks_user_profile', safeStringify(profile));
       
       // Firebase Sync
       const user = auth.currentUser;
@@ -303,7 +320,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
 
         // Logu kaydet
-        localStorage.setItem('mks_daily_alert_log', JSON.stringify(dailyLog));
+        localStorage.setItem('mks_daily_alert_log', safeStringify(dailyLog));
 
     } catch (e) {
         console.error("Weather alert check failed:", e);
@@ -365,7 +382,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const refreshStats = async (syncedReminders?: Reminder[]) => {
-    const [farmerList, prescriptions, visits, reminderListFromDB, inventoryData, paymentList, manualDebtList, supplierList, myPaymentList] = await Promise.all([
+    const [farmerList, prescriptions, visits, reminderListFromDB, inventoryData, paymentList, manualDebtList, supplierList, myPaymentList, expenseList] = await Promise.all([
         dbService.getFarmers(),
         dbService.getAllPrescriptions(),
         dbService.getAllVisits(),
@@ -374,7 +391,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         dbService.getPayments(),
         dbService.getManualDebts(),
         dbService.getSuppliers(),
-        dbService.getMyPayments()
+        dbService.getMyPayments(),
+        dbService.getExpenses()
     ]);
 
     const finalReminders = [...(syncedReminders || reminderListFromDB)];
@@ -480,9 +498,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         farmerDebts[p.farmerId] = (farmerDebts[p.farmerId] || 0) + (p.totalAmount || 0);
     });
 
-    // Add manual debts
+    // Add manual debts (excluding turnover entries to avoid double counting in grand total)
     manualDebtList.forEach(d => {
-        farmerDebts[d.farmerId] = (farmerDebts[d.farmerId] || 0) + d.amount;
+        if (!d.id.startsWith('turnover-')) {
+            farmerDebts[d.farmerId] = (farmerDebts[d.farmerId] || 0) + d.amount;
+        }
     });
 
     // Subtract payments from debt
@@ -490,14 +510,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         farmerDebts[pay.farmerId] = (farmerDebts[pay.farmerId] || 0) - pay.amount;
     });
 
+    // Total debt is the sum of all positive balances (money owed to the engineer)
+    // IMPORTANT: We ignore turnover entries for the overall total debt calculation to avoid doubling
+    const totalDebt = Object.values(farmerDebts).reduce((acc, val) => acc + (val > 0 ? val : 0), 0);
+
     // Update farmer objects with balance
     const updatedFarmerList = farmerList.map(f => ({
         ...f,
         balance: -(farmerDebts[f.id] || 0) // Balance is negative if they owe money
     }));
-
-    // Total debt is the sum of all positive balances (money owed to the engineer)
-    const totalDebt = Object.values(farmerDebts).reduce((acc, val) => acc + (val > 0 ? val : 0), 0);
 
     if (syncedReminders) {
         await LocalNotifications.cancel({ notifications: syncedReminders.map(r => ({ id: Math.abs(r.id.split('').reduce((a, b) => { a = ((a << 5) - a) + b.charCodeAt(0); return a & a; }, 0)) })) });
@@ -535,6 +556,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Toplam Satış Tutarı Hesapla
     const totalSales = prescriptions.reduce((acc, p) => acc + (p.totalAmount || 0), 0);
 
+    // Toplam Gider Hesapla
+    const totalExpenses = expenseList.reduce((acc, e) => acc + e.amount, 0);
+
     // Calculate Inventory Value and Potential Revenue
     const inventoryValue = inventoryData.reduce((acc, item) => acc + (item.buyingPrice * item.quantity), 0);
     const potentialRevenue = inventoryData.reduce((acc, item) => acc + (item.sellingPrice * item.quantity), 0);
@@ -550,6 +574,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setPayments(paymentList);
     setSuppliers(updatedSupplierList);
     setMyPayments(myPaymentList);
+    setExpenses(expenseList);
+    
+    const accountList = await dbService.getAccounts();
+    const transactionList = await dbService.getTransactions();
+    setAccounts(accountList);
+    setTransactions(transactionList);
     
     setStats({
       totalFarmers: updatedFarmerList.length,
@@ -563,6 +593,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       inventoryValue,
       potentialRevenue,
       totalDebt,
+      totalExpenses,
       regionalAlerts
     });
     
@@ -674,6 +705,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addPayment = async (paymentData: Omit<Payment, 'id'>) => {
     const newPayment: Payment = { ...paymentData, id: crypto.randomUUID() };
     await dbService.addPayment(newPayment);
+    
+    if (newPayment.accountId) {
+      const farmer = farmers.find(f => f.id === newPayment.farmerId);
+      await dbService.addTransaction({
+        id: crypto.randomUUID(),
+        accountId: newPayment.accountId,
+        type: 'INCOME',
+        amount: newPayment.amount,
+        date: newPayment.date,
+        description: `${farmer?.fullName || 'Çiftçi'} ödemesi`,
+        relatedId: newPayment.id,
+        category: 'Çiftçi Ödemesi'
+      });
+    }
+    
     await refreshStats();
   };
 
@@ -769,8 +815,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // If it's a check or promissory note, add to MyPayments
     if (payment.method === 'CHECK' || payment.method === 'PROMISSORY_NOTE') {
         const supplier = suppliers.find(s => s.id === payment.supplierId);
-        await dbService.addMyPayment({
-            id: crypto.randomUUID(),
+        await addMyPayment({
             supplierId: payment.supplierId,
             supplierName: supplier?.name || 'Bilinmeyen Tedarikçi',
             amount: payment.amount,
@@ -778,7 +823,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             dueDate: payment.dueDate || payment.date,
             type: payment.method === 'CHECK' ? 'CHECK' : 'PROMISSORY_NOTE',
             status: 'PENDING',
-            note: payment.note
+            note: payment.note,
+            accountId: payment.accountId
+        });
+    } else if (payment.accountId) {
+        const supplier = suppliers.find(s => s.id === payment.supplierId);
+        await dbService.addTransaction({
+            id: crypto.randomUUID(),
+            accountId: payment.accountId,
+            type: 'EXPENSE',
+            amount: payment.amount,
+            date: payment.date,
+            description: `${supplier?.name || 'Tedarikçi'} ödemesi`,
+            relatedId: payment.id,
+            category: 'Tedarikçi Ödemesi'
         });
     }
     
@@ -792,12 +850,85 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateMyPayment = async (payment: MyPayment) => {
+    const oldPayment = myPayments.find(p => p.id === payment.id);
     await dbService.updateMyPayment(payment);
+    
+    // If status changed to PAID and accountId is present, create transaction
+    if (payment.status === 'PAID' && oldPayment?.status !== 'PAID' && payment.accountId) {
+      await dbService.addTransaction({
+        id: crypto.randomUUID(),
+        accountId: payment.accountId,
+        type: 'EXPENSE',
+        amount: payment.amount,
+        date: new Date().toISOString(),
+        description: `${payment.supplierName} - ${payment.type === 'CHECK' ? 'Çek' : 'Senet'} Ödemesi`,
+        relatedId: payment.id,
+        category: 'Çek/Senet Ödemesi'
+      });
+    }
+    
     await refreshStats();
   };
 
   const deleteMyPayment = async (id: string) => {
     await dbService.deleteMyPayment(id);
+    await refreshStats();
+  };
+
+  const addExpense = async (expenseData: Omit<Expense, 'id'>) => {
+    const newExpense: Expense = { ...expenseData, id: crypto.randomUUID() };
+    await dbService.addExpense(newExpense);
+    
+    if (newExpense.accountId) {
+      await dbService.addTransaction({
+        id: crypto.randomUUID(),
+        accountId: newExpense.accountId,
+        type: 'EXPENSE',
+        amount: newExpense.amount,
+        date: newExpense.date,
+        description: newExpense.title,
+        relatedId: newExpense.id,
+        category: 'Gider'
+      });
+    }
+    
+    await refreshStats();
+  };
+
+  const deleteExpense = async (id: string) => {
+    // Find if there is a related transaction
+    const relatedTx = transactions.find(tx => tx.relatedId === id);
+    if (relatedTx) {
+      await dbService.deleteTransaction(relatedTx.id);
+    }
+    await dbService.deleteExpense(id);
+    await refreshStats();
+  };
+
+  const addAccount = async (accountData: Omit<Account, 'id' | 'balance'>) => {
+    const newAccount: Account = { ...accountData, id: crypto.randomUUID(), balance: 0 };
+    await dbService.addAccount(newAccount);
+    await refreshStats();
+  };
+
+  const updateAccount = async (account: Account) => {
+    await dbService.updateAccount(account);
+    await refreshStats();
+  };
+
+  const deleteAccount = async (id: string) => {
+    await dbService.deleteAccount(id);
+    await refreshStats();
+  };
+
+  const addTransaction = async (txData: Omit<Transaction, 'id'>) => {
+    const newTx: Transaction = { ...txData, id: crypto.randomUUID() };
+    await dbService.addTransaction(newTx);
+    await refreshStats();
+  };
+
+  const deleteTransaction = async (id: string) => {
+    await dbService.deleteTransaction(id);
     await refreshStats();
   };
 
@@ -841,9 +972,63 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [uiScale]);
 
+  const checkTurnover = async (currentFarmers: Farmer[], currentPrescriptions: Prescription[], currentPayments: Payment[], currentManualDebts: ManualDebt[], currentInventory: InventoryItem[]) => {
+    try {
+      const logs = await dbService.getTurnoverLogs();
+      const currentYear = new Date().getFullYear();
+      
+      // Check if financial turnover for current year exists
+      const finLog = logs.find(l => l.year === currentYear && l.type === 'FINANCIAL');
+      if (!finLog) {
+        // Calculate balances up to the end of previous year
+        const lastYear = currentYear - 1;
+        const farmerBalances: Record<string, number> = {};
+        
+        // We need to calculate balance for ALL transactions BEFORE currentYear
+        currentPrescriptions.forEach(p => {
+          const pYear = new Date(p.date).getFullYear();
+          if (pYear <= lastYear) {
+            farmerBalances[p.farmerId] = (farmerBalances[p.farmerId] || 0) + (p.totalAmount || 0);
+          }
+        });
+        
+        currentManualDebts.forEach(d => {
+          const dYear = new Date(d.date).getFullYear();
+          // Ignore previous turnovers to avoid compounding
+          if (dYear <= lastYear && !d.note?.includes('Devir Bakiyesi')) {
+            farmerBalances[d.farmerId] = (farmerBalances[d.farmerId] || 0) + d.amount;
+          }
+        });
+        
+        currentPayments.forEach(p => {
+          const pYear = new Date(p.date).getFullYear();
+          if (pYear <= lastYear) {
+            farmerBalances[p.farmerId] = (farmerBalances[p.farmerId] || 0) - p.amount;
+          }
+        });
+        
+        await dbService.performFinancialTurnover(currentYear, farmerBalances);
+        addSystemNotification('SUCCESS', `${currentYear} Yılı Devri`, `${currentYear} yılı için finansal devir işlemleri başarıyla tamamlandı.`);
+      }
+      
+      // Check if inventory turnover for current year exists
+      const invLog = logs.find(l => l.year === currentYear && l.type === 'INVENTORY');
+      if (!invLog) {
+        await dbService.performInventoryTurnover(currentYear, currentInventory);
+      }
+      
+      if (!finLog || !invLog) {
+        await refreshStats();
+      }
+    } catch (e) {
+      console.error("Turnover check failed:", e);
+    }
+  };
+
   useEffect(() => {
     const init = async () => {
         if (isInitialized.current) return;
+        isInitialized.current = true;
         
         await cleanupOldData();
         await refreshStats();
@@ -854,7 +1039,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             if (permission.display !== 'granted') console.warn("Bildirim izinleri verilmedi.");
         } catch (e) {}
 
-        isInitialized.current = true;
+        // Run turnover check
+        const [f, p, pay, d, inv] = await Promise.all([
+          dbService.getFarmers(),
+          dbService.getAllPrescriptions(),
+          dbService.getPayments(),
+          dbService.getManualDebts(),
+          dbService.getInventory()
+        ]);
+        await checkTurnover(f, p, pay, d, inv);
     };
     init();
   }, []);
@@ -873,6 +1066,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         manualDebts, addManualDebt, deleteManualDebt,
         suppliers, addSupplier, updateSupplier, deleteSupplier, addSupplierPurchase, addSupplierPayment,
         myPayments, addMyPayment, updateMyPayment, deleteMyPayment,
+        expenses, addExpense, deleteExpense,
+        accounts, addAccount, updateAccount, deleteAccount,
+        transactions, addTransaction, deleteTransaction,
         showToast, hapticFeedback
     }}>
       {children}

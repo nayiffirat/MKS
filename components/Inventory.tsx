@@ -27,6 +27,7 @@ export const InventoryScreen: React.FC = () => {
         hapticFeedback,
         farmers,
         prescriptions,
+        stats,
         userProfile,
         updateUserProfile
     } = useAppViewModel();
@@ -463,17 +464,18 @@ export const InventoryScreen: React.FC = () => {
             });
         });
 
-        const totalProfit = totalSoldRevenue - totalSoldCost;
-        const margin = totalSoldCost > 0 ? (totalProfit / totalSoldCost) * 100 : 0;
+        const totalProfit = totalSoldRevenue - totalSoldCost - stats.totalExpenses;
+        const margin = totalSoldCost > 0 ? (totalProfit / (totalSoldCost + stats.totalExpenses)) * 100 : 0;
 
         return {
             totalSoldCost,
             totalSoldRevenue,
             totalProfit,
             margin,
-            processedCount: processed.length
+            processedCount: processed.length,
+            totalExpenses: stats.totalExpenses
         };
-    }, [inventory, prescriptions]);
+    }, [inventory, prescriptions, stats.totalExpenses]);
 
     return (
         <div className="p-4 pb-32 max-w-5xl mx-auto animate-in fade-in duration-500">
@@ -869,6 +871,10 @@ export const InventoryScreen: React.FC = () => {
                             <div className="flex justify-between items-center pb-4 border-b border-white/5">
                                 <span className="text-stone-400 font-medium">Toplam Ürün Maliyeti</span>
                                 <span className="text-stone-100 font-black text-red-400">-{profitLossData.totalSoldCost.toLocaleString('tr-TR')} TL</span>
+                            </div>
+                            <div className="flex justify-between items-center pb-4 border-b border-white/5">
+                                <span className="text-stone-400 font-medium">İşletme Giderleri</span>
+                                <span className="text-stone-100 font-black text-red-400">-{profitLossData.totalExpenses.toLocaleString('tr-TR')} TL</span>
                             </div>
                             <div className="flex justify-between items-center pt-2">
                                 <span className="text-stone-100 font-black text-lg">Toplam Kar</span>

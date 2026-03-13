@@ -7,7 +7,6 @@ import { Farmers } from './components/Farmers';
 import { Pesticides } from './components/Pesticides';
 import { PrescriptionForm } from './components/Prescription';
 import { VisitLogForm } from './components/Visits';
-import { NewsScreen } from './components/News';
 import { SettingsScreen } from './components/Settings';
 import { ContactScreen } from './components/Contact';
 import { NotificationsScreen } from './components/Notifications';
@@ -17,10 +16,11 @@ import { StatisticsScreen } from './components/Statistics';
 import { FieldAssistant } from './components/FieldAssistant';
 import { RemindersScreen } from './components/Reminders';
 import { InventoryScreen } from './components/Inventory';
+import { ExpensesScreen } from './components/Expenses';
+import { Kasa } from './components/Kasa';
 import { Suppliers } from './components/Suppliers';
 import { Payments } from './components/Payments';
 import { DiseaseDiagnosis } from './components/DiseaseDiagnosis';
-import { FarmerMap } from './components/FarmerMap';
 import { ProducerPortal } from './components/ProducerPortal';
 import { PesticideCompatibility } from './components/PesticideCompatibility';
 import { AppProvider, useAppViewModel } from './context/AppContext';
@@ -97,8 +97,17 @@ function MainApp() {
                     // Verileri buluttan çek ve yerelle birleştir
                     await dbService.syncAllDataOnLogin(currentUser.uid);
                     
+                    // 3. ADIM: Gerçek zamanlı senkronizasyonu başlat (Çoklu cihaz desteği)
+                    const cleanupSync = dbService.setupRealtimeSync(currentUser.uid, () => {
+                        refreshStats();
+                    });
+
                     // Veriler güncellenmiş olabilir, tekrar arayüzü yenile
                     await refreshStats();
+
+                    return () => {
+                        if (cleanupSync) cleanupSync();
+                    };
                 } catch (e) {
                     console.warn("Background sync failed, using local data.");
                 }
@@ -178,6 +187,15 @@ function MainApp() {
     let mode: string | undefined = undefined;
     let farmerId: string | undefined = undefined;
 
+    // Reset all special modes when navigating to a new view
+    setIsPrescriptionMode(false);
+    setIsVisitMode(false);
+    setIsReminderAddMode(false);
+    setIsTomorrowMode(false);
+    setPrescriptionFarmerId(undefined);
+    setEditPrescriptionId(undefined);
+    setEditVisitId(undefined);
+
     if (view === 'PRESCRIPTION_NEW') {
         nextView = 'PRESCRIPTIONS';
         mode = 'prescription_new';
@@ -252,7 +270,6 @@ function MainApp() {
     if (currentView === 'REMINDERS') return <RemindersScreen onBack={() => window.history.back()} initialAddMode={isReminderAddMode} initialFilter={isTomorrowMode ? 'TOMORROW' : undefined} />;
     if (currentView === 'FIELD_ASSISTANT') return <FieldAssistant onBack={() => window.history.back()} />;
     if (currentView === 'DISEASE_DIAGNOSIS') return <DiseaseDiagnosis onBack={() => window.history.back()} />;
-    if (currentView === 'MAP_VIEW') return <FarmerMap onBack={() => window.history.back()} />;
     if (currentView === 'COMPATIBILITY_CHECK') return <PesticideCompatibility onBack={() => window.history.back()} />;
 
     switch (currentView as any) {
@@ -261,7 +278,6 @@ function MainApp() {
         case 'PESTICIDES': return <Pesticides />;
         case 'PRESCRIPTIONS': return <PrescriptionForm onBack={() => window.history.back()} />;
         case 'VISITS': return <VisitLogForm onBack={() => window.history.back()} />;
-        case 'NEWS': return <NewsScreen onBackToDashboard={() => window.history.back()} />;
         case 'CONTACT': return <ContactScreen />;
         case 'SETTINGS': return <SettingsScreen onNavigate={handleNavigate} />;
         case 'NOTIFICATIONS': return <NotificationsScreen onBack={() => window.history.back()} />;
@@ -269,6 +285,8 @@ function MainApp() {
         case 'STATISTICS': return <StatisticsScreen />;
         case 'REMINDERS': return <RemindersScreen onBack={() => window.history.back()} />;
         case 'INVENTORY': return <InventoryScreen />;
+        case 'KASA': return <Kasa onBack={() => window.history.back()} />;
+        case 'EXPENSES': return <ExpensesScreen onBack={() => window.history.back()} />;
         case 'SUPPLIERS': return <Suppliers onBack={() => window.history.back()} />;
         case 'PAYMENTS': return <Payments onBack={() => window.history.back()} />;
         default: return <Dashboard onNavigate={handleNavigate} />;

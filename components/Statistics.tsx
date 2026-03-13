@@ -23,17 +23,40 @@ import { Prescription } from '../types';
     const [activeTab, setActiveTab] = useState<StatTab>('OVERVIEW');
     const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
     const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
+    const [visitLogs, setVisitLogs] = useState<any[]>([]);
     const reportRef = useRef<HTMLDivElement>(null);
 
     const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#f43f5e', '#06b6d4'];
 
     React.useEffect(() => {
-        const loadPrescriptions = async () => {
-            const data = await dbService.getAllPrescriptions();
-            setPrescriptions(data);
+        const loadData = async () => {
+            const pData = await dbService.getAllPrescriptions();
+            const vData = await dbService.getAllVisits();
+            setPrescriptions(pData);
+            setVisitLogs(vData);
         };
-        loadPrescriptions();
+        loadData();
     }, []);
+
+    const visitLogsWithNames = React.useMemo(() => {
+        return visitLogs.map(v => {
+            const farmer = farmers.find(f => f.id === v.farmerId);
+            return {
+                ...v,
+                farmerName: farmer ? farmer.fullName : 'Bilinmeyen Üretici'
+            };
+        }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    }, [visitLogs, farmers]);
+
+    const prescriptionsWithNames = React.useMemo(() => {
+        return prescriptions.map(p => {
+            const farmer = farmers.find(f => f.id === p.farmerId);
+            return {
+                ...p,
+                farmerName: farmer ? farmer.fullName : 'Bilinmeyen Üretici'
+            };
+        }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    }, [prescriptions, farmers]);
 
     // Calculate Sales Data
     const salesData = React.useMemo(() => {
@@ -142,16 +165,49 @@ import { Prescription } from '../types';
         if (!reportRef.current) return;
         setIsGeneratingPdf(true);
         try {
+            // Ensure the report is visible for capturing
+            const originalStyle = reportRef.current.style.cssText;
+            reportRef.current.style.position = 'absolute';
+            reportRef.current.style.left = '0';
+            reportRef.current.style.top = '0';
+            reportRef.current.style.opacity = '1';
+            reportRef.current.style.zIndex = '-1';
+
             const canvas = await html2canvas(reportRef.current, {
                 scale: 2,
                 backgroundColor: '#0c0a09',
                 logging: false,
-                useCORS: true
+                useCORS: true,
+                allowTaint: true,
+                windowWidth: 1200
             });
-            const pdf = new jsPDF('p', 'mm', 'a4');
+
+            // Restore original style
+            reportRef.current.style.cssText = originalStyle;
+
             const imgData = canvas.toDataURL('image/png');
-            pdf.addImage(imgData, 'PNG', 0, 0, 210, (canvas.height * 210) / canvas.width);
-            pdf.save(`MKS_Istatistik_Raporu_${new Date().toISOString().split('T')[0]}.pdf`);
+            const pdf = new jsPDF('p', 'mm', 'a4');
+            
+            const imgWidth = 210; 
+            const pageHeight = 295; // Slightly less than 297 to avoid overflow
+            const imgHeight = (canvas.height * imgWidth) / canvas.width;
+            let heightLeft = imgHeight;
+
+            let position = 0;
+
+            // First page
+            pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
+            heightLeft -= pageHeight;
+
+            // Subsequent pages
+            while (heightLeft > 0) {
+                position = heightLeft - imgHeight;
+                pdf.addPage();
+                pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
+                heightLeft -= pageHeight;
+            }
+
+            pdf.save(`MKS_Detayli_Analiz_Raporu_${new Date().toISOString().split('T')[0]}.pdf`);
         } catch (e) {
             console.error("PDF Generation Error:", e);
             alert("Rapor oluşturulurken bir hata oluştu.");
@@ -706,10 +762,10 @@ import { Prescription } from '../types';
             {renderTabContent()}
 
             {/* Hidden Report View for PDF Generation */}
-            <div className="fixed left-[-9999px] top-0 w-[210mm] bg-stone-950 p-10 text-stone-200 font-sans" ref={reportRef}>
+            <div className="fixed left-[-9999px] top-0 w-[210mm] bg-stone-950 p-10 text-stone-200 font-sans" ref={reportRef} style={{ visibility: 'hidden', pointerEvents: 'none' }}>
                 <div className="border-b border-white/10 pb-6 mb-8 flex justify-between items-end">
                     <div>
-                        <h1 className="text-3xl font-black text-emerald-500 mb-2 tracking-tighter">MKS ANALİTİK RAPORU</h1>
+                        <h1 className="text-3xl font-black text-emerald-500 mb-2 tracking-tighter">MKS DETAYLI ANALİZ RAPORU</h1>
                         <p className="text-stone-500 text-xs font-bold uppercase tracking-[0.3em]">Dijital Tarım Yönetim Sistemi</p>
                     </div>
                     <div className="text-right">
@@ -777,6 +833,128 @@ import { Prescription } from '../types';
                                 ))}
                             </tbody>
                         </table>
+                    </section>
+
+                    <section>
+                        <h3 className="text-emerald-500 font-black text-xs uppercase tracking-widest mb-4 border-l-2 border-emerald-500 pl-3">Envanter Durumu</h3>
+                        <table className="w-full text-left text-[10px]">
+                            <thead>
+                                <tr className="text-stone-500 border-b border-white/5">
+                                    <th className="py-2 font-bold uppercase tracking-wider">Ürün</th>
+                                    <th className="py-2 font-bold uppercase tracking-wider text-right">Mevcut Stok</th>
+                                    <th className="py-2 font-bold uppercase tracking-wider text-right">Birim</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {inventory.map((item, i) => (
+                                    <tr key={i} className="border-b border-white/5 text-stone-300">
+                                        <td className="py-2">{item.pesticideName}</td>
+                                        <td className={`py-2 text-right font-mono ${item.quantity < 5 ? 'text-rose-400' : 'text-emerald-400'}`}>{item.quantity}</td>
+                                        <td className="py-2 text-right">{item.unit}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </section>
+
+                    <section>
+                        <h3 className="text-emerald-500 font-black text-xs uppercase tracking-widest mb-4 border-l-2 border-emerald-500 pl-3">Satış ve Finansal Analiz</h3>
+                        <div className="grid grid-cols-2 gap-4 mb-6">
+                            <div className="p-4 bg-white/5 rounded-xl border border-white/5">
+                                <p className="text-stone-500 text-[10px] font-bold uppercase mb-1">Toplam Gelir</p>
+                                <p className="text-emerald-400 font-mono text-lg font-black">{salesData.totalRevenue.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}</p>
+                            </div>
+                            <div className="p-4 bg-white/5 rounded-xl border border-white/5">
+                                <p className="text-stone-500 text-[10px] font-bold uppercase mb-1">Toplam Maliyet</p>
+                                <p className="text-red-400 font-mono text-lg font-black">{salesData.totalCost.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}</p>
+                            </div>
+                            <div className="p-4 bg-white/5 rounded-xl border border-white/5">
+                                <p className="text-stone-500 text-[10px] font-bold uppercase mb-1">Net Kar/Zarar</p>
+                                <p className={`font-mono text-lg font-black ${salesData.totalProfit >= 0 ? 'text-blue-400' : 'text-rose-400'}`}>
+                                    {salesData.totalProfit.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                                </p>
+                            </div>
+                            <div className="p-4 bg-white/5 rounded-xl border border-white/5">
+                                <p className="text-stone-500 text-[10px] font-bold uppercase mb-1">Kar Marjı</p>
+                                <p className="text-stone-100 font-mono text-lg font-black">%{salesData.margin.toFixed(1)}</p>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section>
+                        <h3 className="text-emerald-500 font-black text-xs uppercase tracking-widest mb-4 border-l-2 border-emerald-500 pl-3">Borç ve Alacak Durumu</h3>
+                        <div className="grid grid-cols-2 gap-6">
+                            <div>
+                                <h4 className="text-rose-400 font-bold text-[10px] uppercase tracking-wider mb-3">Tedarikçi Borçları</h4>
+                                <table className="w-full text-left text-[10px]">
+                                    <tbody>
+                                        {supplierDebtData.totalSupplierDebt === 0 ? (
+                                            <tr><td className="py-2 text-stone-500 italic">Kayıtlı borç yok</td></tr>
+                                        ) : (
+                                            supplierDebtData.debts.map((s, i) => (
+                                                <tr key={i} className="border-b border-white/5 text-stone-300">
+                                                    <td className="py-2">{s.name}</td>
+                                                    <td className="py-2 text-right font-mono text-rose-400">{s.debt.toLocaleString('tr-TR')} TL</td>
+                                                </tr>
+                                            ))
+                                        )}
+                                        <tr className="font-black text-rose-500">
+                                            <td className="py-3 uppercase">Toplam</td>
+                                            <td className="py-3 text-right font-mono">{supplierDebtData.totalSupplierDebt.toLocaleString('tr-TR')} TL</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div>
+                                <h4 className="text-emerald-400 font-bold text-[10px] uppercase tracking-wider mb-3">Üretici Alacakları</h4>
+                                <table className="w-full text-left text-[10px]">
+                                    <tbody>
+                                        {farmerReceivableData.totalFarmerReceivables === 0 ? (
+                                            <tr><td className="py-2 text-stone-500 italic">Kayıtlı alacak yok</td></tr>
+                                        ) : (
+                                            farmerReceivableData.receivables.map((f, i) => (
+                                                <tr key={i} className="border-b border-white/5 text-stone-300">
+                                                    <td className="py-2">{f.name}</td>
+                                                    <td className="py-2 text-right font-mono text-emerald-400">{f.amount.toLocaleString('tr-TR')} TL</td>
+                                                </tr>
+                                            ))
+                                        )}
+                                        <tr className="font-black text-emerald-500">
+                                            <td className="py-3 uppercase">Toplam</td>
+                                            <td className="py-3 text-right font-mono">{farmerReceivableData.totalFarmerReceivables.toLocaleString('tr-TR')} TL</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section>
+                        <h3 className="text-emerald-500 font-black text-xs uppercase tracking-widest mb-4 border-l-2 border-emerald-500 pl-3">Son Ziyaretler ve Notlar</h3>
+                        <div className="space-y-4">
+                            {visitLogsWithNames.slice(0, 10).map((v, i) => (
+                                <div key={i} className="p-3 bg-white/5 rounded-xl border border-white/5">
+                                    <div className="flex justify-between mb-1">
+                                        <span className="text-emerald-400 font-bold text-[10px]">{v.farmerName}</span>
+                                        <span className="text-stone-500 text-[9px]">{new Date(v.date).toLocaleDateString('tr-TR')}</span>
+                                    </div>
+                                    <p className="text-stone-300 text-[10px] line-clamp-2">
+                                        {v.pestFound || v.diseaseFound ? `${v.pestFound || ''} ${v.diseaseFound || ''}` : v.note}
+                                    </p>
+                                    {v.severity && (
+                                        <div className="mt-1">
+                                            <span className={`text-[8px] px-1 rounded ${
+                                                v.severity === 'HIGH' ? 'bg-red-500/20 text-red-400' :
+                                                v.severity === 'MEDIUM' ? 'bg-amber-500/20 text-amber-400' :
+                                                'bg-emerald-500/20 text-emerald-400'
+                                            }`}>
+                                                Şiddet: {v.severity}
+                                            </span>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
                     </section>
                 </div>
 

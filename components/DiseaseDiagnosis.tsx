@@ -36,11 +36,6 @@ export const DiseaseDiagnosis: React.FC<DiseaseDiagnosisProps> = ({ onBack }) =>
     const analyzeImage = async () => {
         if (!selectedImage) return;
         
-        // Check for API Key
-        if (window.aistudio && !(await window.aistudio.hasSelectedApiKey())) {
-            await window.aistudio.openSelectKey();
-        }
-
         setIsAnalyzing(true);
         hapticFeedback('medium');
         
@@ -57,10 +52,8 @@ export const DiseaseDiagnosis: React.FC<DiseaseDiagnosisProps> = ({ onBack }) =>
             }
         } catch (error) {
             console.error("Analysis error:", error);
-            if (error instanceof Error && error.message.includes("entity was not found")) {
-                window.aistudio?.openSelectKey();
-            }
-            showToast('Bir hata oluştu. Lütfen internet bağlantınızı kontrol edin.', 'error');
+            const errorMsg = error instanceof Error ? error.message : 'Bir hata oluştu.';
+            showToast(errorMsg, 'error');
         } finally {
             setIsAnalyzing(false);
         }

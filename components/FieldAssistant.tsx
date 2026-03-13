@@ -3,6 +3,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { GoogleGenAI, Modality, Type, FunctionDeclaration } from '@google/genai';
 import { Mic, MicOff, X, Volume2, Sparkles, Loader2, Waves, Bot, AudioLines, Zap, Activity, CheckCircle2 } from 'lucide-react';
 import { useAppViewModel } from '../context/AppContext';
+import { dbService } from '../services/db';
+import { Prescription } from '../types';
 
 function encode(bytes: Uint8Array) {
   let binary = '';
@@ -83,27 +85,52 @@ const updateReminderTool: FunctionDeclaration = {
     }
 };
 
+const createPrescriptionTool: FunctionDeclaration = {
+    name: "createPrescription",
+    description: "Çiftçi için yeni bir reçete oluşturur.",
+    parameters: {
+        type: Type.OBJECT,
+        properties: {
+            farmerName: { type: Type.STRING, description: "Çiftçinin tam adı" },
+            pesticideName: { type: Type.STRING, description: "İlacın adı" },
+            quantity: { type: Type.STRING, description: "Miktar (örn: 3 adet, 5 litre)" },
+            unitPrice: { type: Type.NUMBER, description: "Birim fiyat" }
+        },
+        required: ["farmerName", "pesticideName", "quantity"]
+    }
+};
+
 export const FieldAssistant: React.FC<{ onBack: () => void }> = ({ onBack }) => {
-  const { userProfile, farmers, reminders, addReminder, deleteReminder, editReminder } = useAppViewModel();
+  const { userProfile, farmers, reminders, addReminder, deleteReminder, editReminder, showToast, refreshStats } = useAppViewModel();
   const [isActive, setIsActive] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [transcription, setTranscription] = useState<string>('');
   const [isAiSpeaking, setIsAiSpeaking] = useState(false);
+  const [listeningTimeLeft, setListeningTimeLeft] = useState(0);
+  const [isListening, setIsListening] = useState(false);
   
   const aiRef = useRef<any>(null);
-  const sessionRef = useRef<any>(null); // Store the active session here
+  const sessionRef = useRef<any>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const inputContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const nextStartTimeRef = useRef<number>(0);
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
+  const listeningTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const transcriptRef = useRef<string>('');
 
   const assistantVoiceName = userProfile.assistantVoice === 'MALE' ? 'Fenrir' : 'Zephyr';
 
   const stopAssistant = () => {
     try {
+        if (listeningTimerRef.current) {
+            clearInterval(listeningTimerRef.current);
+            listeningTimerRef.current = null;
+        }
+        setListeningTimeLeft(0);
+        setIsListening(false);
+
         if (sessionRef.current) {
-            // Try/catch for session close as it might already be closed
             try { sessionRef.current.close(); } catch(e) {}
             sessionRef.current = null;
         }
@@ -130,9 +157,21 @@ export const FieldAssistant: React.FC<{ onBack: () => void }> = ({ onBack }) => 
   };
 
   const startAssistant = async () => {
+    // Check for API Key
+    if (window.aistudio && !(await window.aistudio.hasSelectedApiKey())) {
+      await window.aistudio.openSelectKey();
+    }
+
     setIsConnecting(true);
+    setTranscription('');
+    transcriptRef.current = '';
+    
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        throw new Error("API anahtarı bulunamadı.");
+      }
+      const ai = new GoogleGenAI({ apiKey });
       aiRef.current = ai;
 
       const todayDate = new Date().toISOString().split('T')[0];
@@ -143,7 +182,7 @@ export const FieldAssistant: React.FC<{ onBack: () => void }> = ({ onBack }) => 
 
       // 1. Establish Connection FIRST
       const session = await ai.live.connect({
-        model: 'gemini-2.5-flash-native-audio-preview-12-2025',
+        model: 'gemini-2.5-flash-native-audio-preview-09-2025',
         config: {
           responseModalities: [Modality.AUDIO],
           speechConfig: { 
@@ -151,7 +190,7 @@ export const FieldAssistant: React.FC<{ onBack: () => void }> = ({ onBack }) => 
                   prebuiltVoiceConfig: { voiceName: assistantVoiceName } 
               } 
           },
-          tools: [{ functionDeclarations: [createReminderTool, deleteReminderTool, updateReminderTool] }],
+          tools: [{ functionDeclarations: [createReminderTool, deleteReminderTool, updateReminderTool, createPrescriptionTool] }],
           systemInstruction: `Sen 'MKS Saha Asistanı'sın. Bugün: ${todayDate}. ${farmers.length} çiftçi kayıtlı.
           Kullanıcının adı: ${userProfile.fullName}.
           MEVCUT GÖREVLER: ${activeRemindersContext || "Yok."}
@@ -160,27 +199,107 @@ export const FieldAssistant: React.FC<{ onBack: () => void }> = ({ onBack }) => 
         callbacks: {
           onopen: () => {
             console.log("Connection opened");
+            setIsListening(true);
           },
           onmessage: async (msg) => {
+            if (msg.serverContent?.outputTranscription) {
+              const newText = msg.serverContent.outputTranscription.text;
+              transcriptRef.current += ' ' + newText;
+              setTranscription(transcriptRef.current.slice(-150));
+            }
+            
             if (msg.toolCall?.functionCalls) {
+                const functionResponses = [];
                 for (const fc of msg.toolCall.functionCalls) {
-                     // In a real app, you would verify arguments and execute function here
-                     // For this demo, we acknowledge success to keep conversation flowing
-                     if (sessionRef.current) {
-                        sessionRef.current.sendToolResponse({
-                            functionResponses: [{ id: fc.id, name: fc.name, response: { result: "success" } }]
-                        });
+                     try {
+                         if (fc.name === 'createReminder') {
+                             const { title, date, priority, recurrence } = fc.args as any;
+                             await addReminder({
+                                 title,
+                                 description: 'Saha asistanı tarafından oluşturuldu.',
+                                 date,
+                                 priority: priority || 'MEDIUM',
+                                 recurrence: recurrence || 'NONE',
+                                 isCompleted: false
+                             });
+                             functionResponses.push({ id: fc.id, name: fc.name, response: { result: "Hatırlatıcı başarıyla oluşturuldu." } });
+                         } else if (fc.name === 'deleteReminder') {
+                             const { id } = fc.args as any;
+                             await deleteReminder(id);
+                             functionResponses.push({ id: fc.id, name: fc.name, response: { result: "Hatırlatıcı silindi." } });
+                         } else if (fc.name === 'updateReminder') {
+                             const { id, title, date, priority, recurrence } = fc.args as any;
+                             await editReminder(id, {
+                                 title,
+                                 date,
+                                 priority: priority || 'MEDIUM',
+                                 recurrence: recurrence || 'NONE'
+                             });
+                             functionResponses.push({ id: fc.id, name: fc.name, response: { result: "Hatırlatıcı güncellendi." } });
+                         } else if (fc.name === 'createPrescription') {
+                             const { farmerName, pesticideName, quantity, unitPrice } = fc.args as any;
+                             
+                             // 1. Find Farmer
+                             const farmer = farmers.find(f => 
+                                f.fullName.toLowerCase().includes(farmerName.toLowerCase())
+                             );
+                             
+                             if (!farmer) {
+                                 functionResponses.push({ id: fc.id, name: fc.name, response: { error: "Çiftçi bulunamadı." } });
+                                 continue;
+                             }
+
+                             // 2. Find Pesticide (Optional, but good for ID)
+                             const allPesticides = await dbService.getPesticides();
+                             const pesticide = allPesticides.find(p => 
+                                p.name.toLowerCase().includes(pesticideName.toLowerCase())
+                             );
+
+                             const pId = pesticide ? pesticide.id : crypto.randomUUID();
+                             const pName = pesticide ? pesticide.name : pesticideName;
+                             const pDosage = pesticide ? pesticide.defaultDosage : 'Saha asistanı ile eklendi';
+
+                             // 3. Create Prescription
+                             const newPrescription: Prescription = {
+                                 id: `REC-${new Date().getFullYear()}-${Math.floor(Math.random() * 10000)}`,
+                                 farmerId: farmer.id,
+                                 date: new Date().toISOString(),
+                                 prescriptionNo: `VOICE-${Date.now()}`,
+                                 engineerName: userProfile.fullName,
+                                 items: [{
+                                     pesticideId: pId,
+                                     pesticideName: pName,
+                                     dosage: pDosage,
+                                     quantity: quantity,
+                                     unitPrice: unitPrice,
+                                     totalPrice: unitPrice ? (parseFloat(quantity) * unitPrice) : 0
+                                 }],
+                                 isOfficial: false,
+                                 totalAmount: unitPrice ? (parseFloat(quantity) * unitPrice) : 0
+                             };
+
+                             await dbService.addPrescription(newPrescription);
+                             await refreshStats();
+                             functionResponses.push({ id: fc.id, name: fc.name, response: { result: `${farmer.fullName} için reçete başarıyla oluşturuldu.` } });
+                         }
+                     } catch (e) {
+                         functionResponses.push({ id: fc.id, name: fc.name, response: { error: "İşlem başarısız oldu." } });
                      }
+                }
+                
+                if (functionResponses.length > 0 && sessionRef.current) {
+                    sessionRef.current.sendToolResponse({ functionResponses });
                 }
             }
 
             if (msg.serverContent?.outputTranscription) {
-              setTranscription(prev => (prev + ' ' + msg.serverContent!.outputTranscription!.text).slice(-150));
+              // Handled above
             }
             
             const audioData = msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
             if (audioData && audioContextRef.current) {
               setIsAiSpeaking(true);
+              setIsListening(false); // Stop listening while AI is speaking
               const ctx = audioContextRef.current;
               nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);
               const buffer = await decodeAudioData(decode(audioData), ctx, 24000, 1);
@@ -192,7 +311,10 @@ export const FieldAssistant: React.FC<{ onBack: () => void }> = ({ onBack }) => 
               sourcesRef.current.add(source);
               source.onended = () => {
                   sourcesRef.current.delete(source);
-                  if (sourcesRef.current.size === 0) setIsAiSpeaking(false);
+                  if (sourcesRef.current.size === 0) {
+                      setIsAiSpeaking(false);
+                      setIsListening(true); // Resume listening after AI finishes
+                  }
               };
             }
           },
@@ -208,6 +330,18 @@ export const FieldAssistant: React.FC<{ onBack: () => void }> = ({ onBack }) => 
       sessionRef.current = session;
       setIsConnecting(false);
       setIsActive(true);
+      
+      // Start 10 second countdown for initial listening
+      setListeningTimeLeft(10);
+      listeningTimerRef.current = setInterval(() => {
+          setListeningTimeLeft(prev => {
+              if (prev <= 1) {
+                  if (listeningTimerRef.current) clearInterval(listeningTimerRef.current);
+                  return 0;
+              }
+              return prev - 1;
+          });
+      }, 1000);
 
       // 3. Start Audio Input AFTER session is established
       const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
@@ -240,7 +374,8 @@ export const FieldAssistant: React.FC<{ onBack: () => void }> = ({ onBack }) => 
     } catch (err) {
       console.error(err);
       setIsConnecting(false);
-      alert("Bağlantı hatası: Lütfen mikrofon izinlerini kontrol edin ve tekrar deneyin.");
+      const errorMsg = err instanceof Error ? err.message : "Bağlantı hatası oluştu.";
+      showToast(errorMsg, 'error');
       stopAssistant();
     }
   };
@@ -292,10 +427,10 @@ export const FieldAssistant: React.FC<{ onBack: () => void }> = ({ onBack }) => 
         {/* Status Text - Centered */}
         <div className="text-center max-w-xs mx-auto space-y-2">
             <h3 className="text-xl font-bold text-stone-100 tracking-tight">
-                {isConnecting ? "Güçlendiriliyor..." : isActive ? (isAiSpeaking ? "Asistan Cevaplıyor" : "Dinliyorum...") : "Saha Asistanı"}
+                {isConnecting ? "Güçlendiriliyor..." : isActive ? (isAiSpeaking ? "Asistan Cevaplıyor" : (listeningTimeLeft > 0 ? `Dinliyorum (${listeningTimeLeft}s)` : "Sizi Dinliyorum")) : "Saha Asistanı"}
             </h3>
             <p className="text-stone-500 text-xs font-medium leading-relaxed opacity-80 h-8 line-clamp-2">
-                {isActive ? transcription || "Ses verileri işleniyor..." : `${assistantVoiceName} sesi ile akıllı asistanı başlatın.`}
+                {isActive ? transcription || (listeningTimeLeft > 0 ? "Asistan sizi 10 saniye boyunca kesintisiz dinleyecek..." : "Konuşmaya devam edebilirsiniz...") : `${assistantVoiceName} sesi ile akıllı asistanı başlatın.`}
             </p>
         </div>
 

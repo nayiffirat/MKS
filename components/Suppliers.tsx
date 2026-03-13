@@ -15,7 +15,8 @@ export const Suppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         suppliers, addSupplier, updateSupplier, deleteSupplier, 
         addSupplierPurchase, addSupplierPayment, 
         inventory, addInventoryItem, showToast, hapticFeedback,
-        prescriptions
+        prescriptions,
+        accounts
     } = useAppViewModel();
 
     const [searchTerm, setSearchTerm] = useState('');
@@ -29,7 +30,7 @@ export const Suppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
     // Form States
     const [newSupplier, setNewSupplier] = useState({ name: '', phoneNumber: '', address: '' });
-    const [newPayment, setNewPayment] = useState({ amount: '', method: 'CASH' as any, note: '', dueDate: new Date().toISOString().split('T')[0] });
+    const [newPayment, setNewPayment] = useState({ amount: '', method: 'CASH' as any, note: '', dueDate: new Date().toISOString().split('T')[0], accountId: '' });
     const [newPurchase, setNewPurchase] = useState<{
         items: { pesticideId: string, pesticideName: string, quantity: number, unit: string, buyingPrice: number }[],
         note: string
@@ -93,11 +94,12 @@ export const Suppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             date: new Date().toISOString(),
             method: newPayment.method,
             dueDate: (newPayment.method === 'CHECK' || newPayment.method === 'PROMISSORY_NOTE') ? newPayment.dueDate : undefined,
-            note: newPayment.note
+            note: newPayment.note,
+            accountId: newPayment.accountId || undefined
         });
         
         setIsPaymentModalOpen(false);
-        setNewPayment({ amount: '', method: 'CASH', note: '', dueDate: new Date().toISOString().split('T')[0] });
+        setNewPayment({ amount: '', method: 'CASH', note: '', dueDate: new Date().toISOString().split('T')[0], accountId: '' });
         showToast('Ödeme kaydedildi', 'success');
     };
 
@@ -171,6 +173,7 @@ export const Suppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                 showToast={showToast}
                 onEdit={(s: Supplier) => { setEditingSupplier(s); setIsEditModalOpen(true); }}
                 onDelete={(id: string) => { handleDeleteSupplier(id); setSelectedSupplier(null); }}
+                accounts={accounts}
             />
         );
     }
@@ -432,7 +435,7 @@ const SupplierDetailView = ({
     isAddingNewPesticide, setIsAddingNewPesticide, newPesticide, setNewPesticide, handleAddNewPesticideToPurchase,
     isPaymentModalOpen, setIsPaymentModalOpen, handleAddPayment, newPayment, setNewPayment,
     isDebtModalOpen, setIsDebtModalOpen, addSupplierPurchase, showToast,
-    onEdit, onDelete
+    onEdit, onDelete, accounts
 }: any) => {
     const [activeTab, setActiveTab] = useState<'PURCHASES' | 'PAYMENTS'>('PURCHASES');
     const [purchases, setPurchases] = useState<SupplierPurchase[]>([]);
@@ -690,6 +693,7 @@ const SupplierDetailView = ({
                     onSave={handleAddPayment}
                     newPayment={newPayment}
                     setNewPayment={setNewPayment}
+                    accounts={accounts}
                 />
             )}
 
@@ -925,7 +929,7 @@ const PurchaseModal = ({
     );
 };
 
-const PaymentModal = ({ supplier, onClose, onSave, newPayment, setNewPayment }: any) => {
+const PaymentModal = ({ supplier, onClose, onSave, newPayment, setNewPayment, accounts }: any) => {
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
             <div className="bg-stone-900 border border-white/10 w-full max-w-md rounded-[2.5rem] p-6 shadow-2xl animate-in zoom-in-95 duration-300">
@@ -943,6 +947,19 @@ const PaymentModal = ({ supplier, onClose, onSave, newPayment, setNewPayment }: 
                             value={newPayment.amount}
                             onChange={(e) => setNewPayment({...newPayment, amount: e.target.value})}
                         />
+                    </div>
+                    <div>
+                        <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest ml-1 mb-1.5 block">Hesap Seçin</label>
+                        <select 
+                            className="w-full bg-stone-950 border border-white/5 rounded-2xl p-4 text-sm text-stone-100 outline-none focus:border-blue-500/50 transition-all"
+                            value={newPayment.accountId}
+                            onChange={(e) => setNewPayment({...newPayment, accountId: e.target.value})}
+                        >
+                            <option value="">Hesap Seçilmedi</option>
+                            {accounts.map((acc: any) => (
+                                <option key={acc.id} value={acc.id}>{acc.name} ({new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(acc.balance)})</option>
+                            ))}
+                        </select>
                     </div>
                     <div>
                         <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest ml-1 mb-1.5 block">Ödeme Yöntemi</label>

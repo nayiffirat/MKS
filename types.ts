@@ -30,6 +30,28 @@ export interface Payment {
   date: string;
   method: 'CASH' | 'CARD' | 'CHECK' | 'OTHER';
   note?: string;
+  accountId?: string; // Linked account (Cash or Bank)
+}
+
+export interface Account {
+  id: string;
+  name: string;
+  type: 'CASH' | 'BANK';
+  balance: number;
+  iban?: string;
+  accountHolder?: string;
+  bankLogo?: string;
+}
+
+export interface Transaction {
+  id: string;
+  accountId: string;
+  type: 'INCOME' | 'EXPENSE';
+  amount: number;
+  date: string;
+  description: string;
+  relatedId?: string;
+  category?: string;
 }
 
 export interface Farmer {
@@ -113,29 +135,6 @@ export interface Reminder {
   recurrence: 'NONE' | 'DAILY' | 'WEEKLY' | 'MONTHLY';
 }
 
-export enum NewsCategory {
-  AGRICULTURE = 'TARIM',
-  TECHNOLOGY = 'TEKNOLOJİ',
-  ECONOMY = 'EKONOMİ',
-  POLITICS = 'SİYASET',
-  SPORTS = 'SPOR',
-  HEALTH = 'SAĞLIK',
-  AUTOMOTIVE = 'OTOMOTİV',
-  MAGAZİN = 'MAGAZİN',
-  WORLD = 'DÜNYA'
-}
-
-export interface NewsItem {
-  id: string;
-  category: NewsCategory;
-  title: string;
-  summary: string;
-  detailText: string;
-  imageUrl?: string;
-  sourceUrl: string;
-  date: string; // ISO String
-}
-
 export interface AppNotification {
   id: string;
   type: 'WARNING' | 'INFO' | 'SUCCESS' | 'SYSTEM';
@@ -153,6 +152,7 @@ export interface UserProfile {
   assistantVoice?: 'MALE' | 'FEMALE';
   selectedCity?: AgriCity;
   lastSyncTime?: string;
+  highContrastMode?: boolean;
 }
 
 export interface InventoryItem {
@@ -201,6 +201,7 @@ export interface SupplierPayment {
   dueDate?: string; // For checks and promissory notes
   isPaid?: boolean;
   note?: string;
+  accountId?: string;
 }
 
 export interface MyPayment {
@@ -213,9 +214,27 @@ export interface MyPayment {
   type: 'CHECK' | 'PROMISSORY_NOTE' | 'OTHER';
   status: 'PENDING' | 'PAID' | 'CANCELLED';
   note?: string;
+  accountId?: string;
 }
 
-export type ViewState = 'DASHBOARD' | 'FARMERS' | 'PESTICIDES' | 'PRESCRIPTIONS' | 'VISITS' | 'NEWS' | 'CONTACT' | 'SETTINGS' | 'NOTIFICATIONS' | 'PROFILE' | 'STATISTICS' | 'FIELD_ASSISTANT' | 'REMINDERS' | 'INVENTORY' | 'DEBT_TRACKING' | 'REGIONAL_ALERTS' | 'DISEASE_DIAGNOSIS' | 'MAP_VIEW' | 'PRODUCER_PORTAL' | 'COMPATIBILITY_CHECK' | 'SUPPLIERS' | 'PAYMENTS';
+export interface TurnoverLog {
+  id: string;
+  year: number;
+  date: string;
+  type: 'FINANCIAL' | 'INVENTORY';
+}
+
+export interface Expense {
+  id: string;
+  title: string;
+  amount: number;
+  date: string;
+  category: 'RENT' | 'ELECTRICITY' | 'WATER' | 'FUEL' | 'SALARY' | 'TAX' | 'OTHER';
+  note?: string;
+  accountId?: string;
+}
+
+export type ViewState = 'DASHBOARD' | 'FARMERS' | 'PESTICIDES' | 'PRESCRIPTIONS' | 'VISITS' | 'CONTACT' | 'SETTINGS' | 'NOTIFICATIONS' | 'PROFILE' | 'STATISTICS' | 'FIELD_ASSISTANT' | 'REMINDERS' | 'INVENTORY' | 'DEBT_TRACKING' | 'REGIONAL_ALERTS' | 'DISEASE_DIAGNOSIS' | 'PRODUCER_PORTAL' | 'COMPATIBILITY_CHECK' | 'SUPPLIERS' | 'PAYMENTS' | 'EXPENSES' | 'KASA';
 
 export type UIScale = 'SMALL' | 'MEDIUM' | 'LARGE';
 

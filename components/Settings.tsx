@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { Type, User, ChevronRight, Briefcase, Volume2, Mic, UserRound } from 'lucide-react';
+import { Type, User, ChevronRight, Briefcase, Volume2, Mic, UserRound, Sun } from 'lucide-react';
 import { useAppViewModel } from '../context/AppContext';
 import { UIScale } from '../types';
 
@@ -114,7 +114,7 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
               </div>
           </div>
           
-          <div className="flex p-1 bg-stone-950/40 rounded-2xl border border-stone-800">
+          <div className="flex p-1 bg-stone-950/40 rounded-2xl border border-stone-800 mb-6">
               {(['SMALL', 'MEDIUM', 'LARGE'] as const).map((scaleOption) => {
                   const isActive = uiScale === scaleOption;
                   let label = scaleOption === 'SMALL' ? 'Küçük' : scaleOption === 'MEDIUM' ? 'Orta' : 'Büyük';
@@ -133,6 +133,24 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
                       </button>
                   );
               })}
+          </div>
+
+          <div className="flex items-center justify-between p-4 bg-stone-950/40 rounded-2xl border border-stone-800">
+              <div className="flex items-center gap-3">
+                  <div className="p-2 bg-amber-500/20 text-amber-500 rounded-lg">
+                      <Sun size={18} />
+                  </div>
+                  <div>
+                      <h4 className="text-xs font-bold text-stone-200">Yüksek Kontrast (Saha Modu)</h4>
+                      <p className="text-[9px] text-stone-600 font-bold uppercase">Güneş altında daha iyi görünürlük</p>
+                  </div>
+              </div>
+              <button 
+                onClick={() => updateUserProfile({ ...userProfile, highContrastMode: !userProfile.highContrastMode })}
+                className={`w-12 h-6 rounded-full relative transition-all duration-300 ${userProfile.highContrastMode ? 'bg-emerald-500' : 'bg-stone-800'}`}
+              >
+                  <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all duration-300 ${userProfile.highContrastMode ? 'left-7' : 'left-1'}`}></div>
+              </button>
           </div>
       </div>
 

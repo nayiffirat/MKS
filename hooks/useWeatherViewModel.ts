@@ -1,4 +1,5 @@
 
+import { safeStringify } from '../utils/json';
 import { useState, useEffect, useCallback } from 'react';
 import { WeatherService, WeatherResponse, AGRI_CITIES } from '../services/weather';
 import { AgriCity } from '../types';
@@ -71,7 +72,7 @@ export const useWeatherViewModel = () => {
     setSelectedCity(city);
     // Profile kaydet (Firebase'e otomatik gider)
     updateUserProfile({ ...userProfile, selectedCity: city });
-    localStorage.setItem('mks_selected_city', JSON.stringify(city));
+    localStorage.setItem('mks_selected_city', safeStringify(city));
     setSearchResults([]); 
   };
 
