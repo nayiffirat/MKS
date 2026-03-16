@@ -1,8 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Camera, Mic, Save, X, Plus, Calendar, User, MapPin, ChevronRight, Image as ImageIcon, CheckCircle2, Phone, MessageSquare, ArrowLeft, Loader2, Navigation, Clock, Sparkles, ImagePlus, Edit2, Trash2, Share2, Upload, Check, ChevronDown, Copy, FileText, Bot, RefreshCw, Bug, AlertCircle } from 'lucide-react';
+import { Camera, Save, X, Plus, Calendar, User, MapPin, ChevronRight, Image as ImageIcon, CheckCircle2, Phone, MessageSquare, ArrowLeft, Loader2, Navigation, Clock, ImagePlus, Edit2, Trash2, Share2, Upload, Check, ChevronDown, Copy, FileText, RefreshCw, Bug, AlertCircle } from 'lucide-react';
 import { dbService } from '../services/db';
-import { GeminiService } from '../services/gemini';
 import { Farmer, VisitLog } from '../types';
 import { useAppViewModel } from '../context/AppContext';
 
@@ -13,8 +12,8 @@ interface VisitsProps {
 
 export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) => {
     const { userProfile, updateVisit, deleteVisit, updateUserProfile, showToast, hapticFeedback } = useAppViewModel();
-    // Yeni mod eklendi: 'AI_WIZARD'
-    const [viewMode, setViewMode] = useState<'LIST' | 'FORM' | 'SUCCESS' | 'DETAIL' | 'AI_WIZARD'>('LIST');
+    // Yeni mod eklendi: 'DETAIL'
+    const [viewMode, setViewMode] = useState<'LIST' | 'FORM' | 'SUCCESS' | 'DETAIL'>('LIST');
 
     const [visits, setVisits] = useState<VisitLog[]>([]);
     const [farmers, setFarmers] = useState<Farmer[]>([]);
@@ -47,7 +46,7 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
         window.addEventListener('popstate', handlePop);
         return () => window.removeEventListener('popstate', handlePop);
     }, [visits]);
-    const changeViewMode = (mode: 'LIST' | 'FORM' | 'SUCCESS' | 'DETAIL' | 'AI_WIZARD', detailId?: string) => {
+    const changeViewMode = (mode: 'LIST' | 'FORM' | 'SUCCESS' | 'DETAIL', detailId?: string) => {
         if (mode === viewMode) return;
         
         if (mode === 'LIST') {
@@ -70,8 +69,6 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
     const [pestFound, setPestFound] = useState('');
     const [diseaseFound, setDiseaseFound] = useState('');
     const [severity, setSeverity] = useState<'LOW' | 'MEDIUM' | 'HIGH'>('LOW');
-    const [isRecording, setIsRecording] = useState(false);
-    const [isGeneratingReport, setIsGeneratingReport] = useState(false);
     
     // GPS State
     const [coords, setCoords] = useState<{ lat: number, lng: number } | null>(null);
@@ -82,12 +79,8 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const wizardFileInputRef = useRef<HTMLInputElement>(null);
     
-    // AI Wizard State
     const [photo, setPhoto] = useState<string | null>(null);
     const [isCameraOpen, setIsCameraOpen] = useState(false);
-    const [analysis, setAnalysis] = useState<string | null>(null);
-    const [isAnalyzing, setIsAnalyzing] = useState(false);
-    const [isReportAddedToNotes, setIsReportAddedToNotes] = useState(false);
     const [isSyncing, setIsSyncing] = useState(false);
 
     const [lastVisitedFarmer, setLastVisitedFarmer] = useState<Farmer | null>(null);
@@ -200,59 +193,6 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
         reader.readAsDataURL(file);
     };
 
-    const runAnalysis = async () => {
-        if (!photo) return;
-        
-        // Check for API Key
-        if (window.aistudio && !(await window.aistudio.hasSelectedApiKey())) {
-            await window.aistudio.openSelectKey();
-            // After opening, we don't know if they selected it, but we proceed
-        }
-
-        setIsAnalyzing(true);
-        setIsReportAddedToNotes(false);
-        try {
-            const result = await GeminiService.analyzePlantImage(photo);
-            setAnalysis(result);
-        } catch (error) { 
-            console.error("AI Error:", error); 
-            if (error instanceof Error && error.message.includes("entity was not found")) {
-                window.aistudio?.openSelectKey();
-            }
-            alert("AI Analizi sırasında hata oluştu. İnternet bağlantınızı kontrol edin.");
-        } finally { 
-            setIsAnalyzing(false); 
-        }
-    };
-
-    const addAnalysisToNotes = () => {
-        if (!analysis) return;
-        setNote(prev => {
-            if (prev.includes(analysis)) return prev; // Zaten ekliyse tekrar ekleme
-            const prefix = prev ? prev + '\n\n' : '';
-            return prefix + `[AI Teşhis Raporu]:\n${analysis}`;
-        });
-        setIsReportAddedToNotes(true);
-        // Kullanıcıya görsel geri bildirim verdikten sonra butonu eski haline döndürebiliriz veya "Eklendi" olarak bırakabiliriz.
-    };
-
-    const confirmWizard = () => {
-        // Otomatik ekleme kaldırıldı. Kullanıcı butona bastıysa zaten note state'i güncellenmiştir.
-        // Basmadıysa sadece photo ve analysis state'leri form'a taşınır (DB'ye aiAnalysis alanı olarak kaydedilir).
-        stopCamera();
-        setViewMode('FORM');
-    };
-
-    const cancelWizard = () => {
-        // Eğer analiz veya foto kaydedilmediyse, çıkışta temizle
-        if (!editingId) {
-             setPhoto(null);
-             setAnalysis(null);
-        }
-        stopCamera();
-        setViewMode('FORM');
-    };
-
     const handleSave = async () => {
         if (!selectedFarmerId) return;
         const currentFarmer = farmers.find(f => f.id === selectedFarmerId);
@@ -262,7 +202,6 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
             date: new Date().toISOString(), 
             note, 
             photoUri: photo || undefined, 
-            aiAnalysis: analysis || undefined, 
             latitude: coords?.lat, 
             longitude: coords?.lng,
             pestFound: pestFound || undefined,
@@ -288,13 +227,13 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
     };
 
     const resetForm = () => {
-        setEditingId(null); setSelectedFarmerId(''); setSelectedFieldId(''); setNote(''); setPhoto(null); setAnalysis(null); setCoords(null);
+        setEditingId(null); setSelectedFarmerId(''); setSelectedFieldId(''); setNote(''); setPhoto(null); setCoords(null);
         setPestFound(''); setDiseaseFound(''); setSeverity('LOW');
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
     const handleEdit = (visit: VisitLog) => {
-        setEditingId(visit.id); setSelectedFarmerId(visit.farmerId); setSelectedFieldId(visit.fieldId || ''); setNote(visit.note); setPhoto(visit.photoUri || null); setAnalysis(visit.aiAnalysis || null);
+        setEditingId(visit.id); setSelectedFarmerId(visit.farmerId); setSelectedFieldId(visit.fieldId || ''); setNote(visit.note); setPhoto(visit.photoUri || null);
         setPestFound(visit.pestFound || ''); setDiseaseFound(visit.diseaseFound || ''); setSeverity(visit.severity || 'LOW');
         if (visit.latitude && visit.longitude) setCoords({ lat: visit.latitude, lng: visit.longitude }); else setCoords(null);
         changeViewMode('FORM');
@@ -316,66 +255,6 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
     const handleViewDetail = (visit: VisitLog) => {
         setSelectedVisit(visit);
         changeViewMode('DETAIL', visit.id);
-    };
-
-    const toggleMic = () => {
-        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-        if (!SpeechRecognition) {
-            alert("Cihazınızda sesle yazma desteklenmiyor.");
-            return;
-        }
-
-        if (isRecording) {
-            setIsRecording(false);
-            return;
-        }
-
-        const recognition = new SpeechRecognition();
-        recognition.lang = 'tr-TR';
-        recognition.interimResults = false;
-        recognition.maxAlternatives = 1;
-
-        recognition.onstart = () => {
-            setIsRecording(true);
-            hapticFeedback('light');
-        };
-
-        recognition.onresult = (event: any) => {
-            const transcript = event.results[0][0].transcript;
-            setNote(prev => prev ? prev + ' ' + transcript : transcript);
-            hapticFeedback('medium');
-        };
-
-        recognition.onerror = (event: any) => {
-            console.error('Speech recognition error:', event.error);
-            setIsRecording(false);
-        };
-
-        recognition.onend = () => {
-            setIsRecording(false);
-        };
-
-        recognition.start();
-    };
-
-    const handleGenerateAIReport = async () => {
-        if (!note.trim()) {
-            showToast('Lütfen önce bir not yazın veya sesli giriş yapın.', 'error');
-            return;
-        }
-
-        setIsGeneratingReport(true);
-        try {
-            const structuredReport = await GeminiService.generateVisitReportFromVoice(note);
-            setNote(structuredReport);
-            showToast('Rapor başarıyla yapılandırıldı.', 'success');
-            hapticFeedback('success');
-        } catch (error) {
-            console.error("AI Report Error:", error);
-            showToast('Rapor oluşturulurken bir hata oluştu.', 'error');
-        } finally {
-            setIsGeneratingReport(false);
-        }
     };
 
     const openMap = (lat: number, lng: number) => { window.open(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`, '_blank'); };
@@ -400,222 +279,7 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
 
     // --- RENDERERS ---
 
-    // 1. AI WIZARD SCREEN
-    if (viewMode === 'AI_WIZARD') {
-        return (
-            <div className="fixed inset-0 h-[100dvh] z-[60] bg-stone-950 flex flex-col animate-in fade-in duration-500 overflow-hidden">
-                <style>{`
-                    @keyframes scan-line {
-                        0% { transform: translateY(-100%); }
-                        100% { transform: translateY(1000%); }
-                    }
-                    @keyframes pulse-ring {
-                        0% { transform: scale(0.8); opacity: 0.5; }
-                        100% { transform: scale(1.2); opacity: 0; }
-                    }
-                `}</style>
-                <input 
-                    type="file" 
-                    accept="image/*" 
-                    className="hidden" 
-                    ref={fileInputRef} 
-                    onChange={handleFileUpload}
-                />
-                
-                {/* Background Atmosphere */}
-                <div className="absolute inset-0 z-0 pointer-events-none">
-                    <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_50%_50%,rgba(168,85,247,0.1),transparent_70%)]"></div>
-                </div>
-
-                {/* Header - More Minimal */}
-                <div className="flex items-center justify-between p-6 z-50 shrink-0">
-                    <button onClick={cancelWizard} className="w-10 h-10 flex items-center justify-center bg-stone-900/50 backdrop-blur-xl rounded-full text-stone-400 border border-white/10 active:scale-90 transition-all">
-                        <X size={20} />
-                    </button>
-                    <div className="text-center">
-                        <h2 className="text-stone-100 font-black text-[10px] uppercase tracking-[0.3em]">AI VISION</h2>
-                        <div className="flex items-center justify-center gap-1 mt-0.5">
-                            <div className={`w-1 h-1 rounded-full ${isAnalyzing ? 'bg-purple-500 animate-pulse' : 'bg-emerald-500'}`}></div>
-                            <span className="text-[8px] text-stone-500 font-bold uppercase tracking-widest">{isAnalyzing ? 'Analiz Ediliyor' : 'Sistem Hazır'}</span>
-                        </div>
-                    </div>
-                    <button onClick={() => fileInputRef.current?.click()} className="w-10 h-10 flex items-center justify-center bg-stone-900/50 backdrop-blur-xl rounded-full text-stone-400 border border-white/10 active:scale-90 transition-all">
-                        <ImageIcon size={18} />
-                    </button>
-                </div>
-
-                {/* Main Viewport */}
-                <div className="flex-1 relative px-6 pb-12 flex flex-col">
-                    <div className="flex-1 relative rounded-[2.5rem] overflow-hidden border border-white/10 bg-stone-900 shadow-2xl group">
-                        {!photo ? (
-                            isCameraOpen ? (
-                                <>
-                                    <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover"></video>
-                                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                        <div className="w-64 h-64 border border-white/20 rounded-3xl relative">
-                                            <div className="absolute -top-1 -left-1 w-6 h-6 border-t-2 border-l-2 border-emerald-500 rounded-tl-lg"></div>
-                                            <div className="absolute -top-1 -right-1 w-6 h-6 border-t-2 border-r-2 border-emerald-500 rounded-tr-lg"></div>
-                                            <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-2 border-l-2 border-emerald-500 rounded-bl-lg"></div>
-                                            <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-2 border-r-2 border-emerald-500 rounded-br-lg"></div>
-                                        </div>
-                                    </div>
-                                    <div className="absolute bottom-8 left-0 w-full flex justify-center z-20">
-                                        <button onClick={capturePhoto} className="relative w-20 h-20 flex items-center justify-center group active:scale-90 transition-transform">
-                                            <div className="absolute inset-0 bg-white/20 rounded-full animate-ping opacity-20"></div>
-                                            <div className="w-16 h-16 rounded-full border-4 border-white flex items-center justify-center">
-                                                <div className="w-12 h-12 rounded-full bg-white/90"></div>
-                                            </div>
-                                        </button>
-                                    </div>
-                                </>
-                            ) : (
-                                <div className="w-full h-full flex flex-col items-center justify-center p-8 text-center bg-[radial-gradient(circle_at_50%_0%,rgba(16,185,129,0.1),transparent_50%)]">
-                                    <div className="relative mb-8">
-                                        <div className="absolute inset-0 bg-emerald-500/20 blur-2xl rounded-full animate-pulse"></div>
-                                        <div className="w-24 h-24 bg-stone-800 rounded-3xl flex items-center justify-center border border-white/5 relative z-10">
-                                            <Bot size={40} className="text-emerald-500" />
-                                        </div>
-                                    </div>
-                                    <h3 className="text-stone-100 text-xl font-bold mb-3 tracking-tight">Bitki Teşhis Uzmanı</h3>
-                                    <p className="text-stone-500 text-sm leading-relaxed mb-10 max-w-[240px]">Hastalık, zararlı veya besin eksikliği tespiti için bir fotoğraf çekin.</p>
-                                    <div className="flex flex-col gap-3 w-full">
-                                        <button 
-                                            onClick={startCamera} 
-                                            className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-emerald-900/40 flex items-center justify-center gap-2 active:scale-95 transition-all"
-                                        >
-                                            <Camera size={20} /> Kamerayı Başlat
-                                        </button>
-                                        <button 
-                                            onClick={() => wizardFileInputRef.current?.click()} 
-                                            className="w-full py-4 bg-stone-800 text-stone-300 rounded-2xl font-bold text-sm border border-white/5 flex items-center justify-center gap-2 active:scale-95 transition-all"
-                                        >
-                                            <Upload size={20} /> Fotoğraf Yükle / Çek
-                                        </button>
-                                        <input 
-                                            type="file" 
-                                            ref={wizardFileInputRef} 
-                                            className="hidden" 
-                                            accept="image/*" 
-                                            capture="environment" 
-                                            onChange={handleFileUpload} 
-                                        />
-                                    </div>
-                                </div>
-                            )
-                        ) : (
-                            <div className="w-full h-full relative">
-                                <img src={photo} alt="Captured" className="w-full h-full object-cover" />
-                                
-                                {isAnalyzing && (
-                                    <div className="absolute inset-0 z-20">
-                                        <div className="absolute top-0 left-0 w-full h-1 bg-purple-500/50 shadow-[0_0_15px_rgba(168,85,247,0.8)]" style={{ animation: 'scan-line 2s linear infinite' }}></div>
-                                        <div className="absolute inset-0 bg-purple-950/20 backdrop-blur-[1px]"></div>
-                                        <div className="absolute inset-0 flex flex-col items-center justify-center">
-                                            <div className="relative">
-                                                <div className="absolute inset-0 bg-purple-500/30 blur-3xl rounded-full animate-pulse"></div>
-                                                <Loader2 size={48} className="text-purple-400 animate-spin relative z-10" />
-                                            </div>
-                                            <span className="mt-4 text-purple-200 font-black text-[10px] uppercase tracking-[0.4em] animate-pulse">Analiz Ediliyor</span>
-                                        </div>
-                                    </div>
-                                )}
-
-                                {!analysis && !isAnalyzing && (
-                                    <div className="absolute inset-0 bg-black/40 backdrop-blur-sm flex flex-col items-center justify-center p-8 z-20">
-                                        <div className="w-20 h-20 bg-purple-600 rounded-full flex items-center justify-center mb-6 shadow-2xl shadow-purple-900/50 animate-bounce">
-                                            <Sparkles size={32} className="text-white" />
-                                        </div>
-                                        <h4 className="text-white font-bold text-lg mb-2">Görüntü Hazır</h4>
-                                        <p className="text-stone-300 text-xs mb-8 text-center">Yapay zeka motoru görüntüyü işlemeye hazır.</p>
-                                        <div className="flex gap-3 w-full">
-                                            <button onClick={() => setPhoto(null)} className="flex-1 py-3.5 bg-stone-800/80 backdrop-blur text-stone-300 rounded-xl font-bold text-xs border border-white/10 active:scale-95 transition-all">Yeniden Çek</button>
-                                            <button onClick={runAnalysis} className="flex-[2] py-3.5 bg-purple-600 text-white rounded-xl font-bold text-xs shadow-lg shadow-purple-900/40 active:scale-95 transition-all">Analizi Başlat</button>
-                                        </div>
-                                    </div>
-                                )}
-
-                                {analysis && (
-                                    <div className="absolute inset-0 bg-stone-950/90 backdrop-blur-md z-30 flex flex-col animate-in fade-in duration-500">
-                                        <div className="p-6 flex-1 overflow-y-auto custom-scrollbar">
-                                            <div className="flex items-center gap-3 mb-6">
-                                                <div className={`w-10 h-10 ${analysis.includes('hata') || analysis.includes('meşgul') ? 'bg-red-500/20 border-red-500/30' : 'bg-purple-500/20 border-purple-500/30'} rounded-2xl flex items-center justify-center border`}>
-                                                    {analysis.includes('hata') || analysis.includes('meşgul') ? <X size={20} className="text-red-400" /> : <Bot size={20} className="text-purple-400" />}
-                                                </div>
-                                                <div>
-                                                    <h4 className={`${analysis.includes('hata') || analysis.includes('meşgul') ? 'text-red-100' : 'text-purple-100'} font-bold text-sm`}>
-                                                        {analysis.includes('hata') || analysis.includes('meşgul') ? 'Analiz Başarısız' : 'Teşhis Sonucu'}
-                                                    </h4>
-                                                    <p className="text-stone-500 text-[9px] font-bold uppercase tracking-widest">Gemini AI Raporu</p>
-                                                </div>
-                                            </div>
-                                            <div className="space-y-4">
-                                                <div className={`p-5 bg-stone-900/50 rounded-[2rem] border ${analysis.includes('hata') || analysis.includes('meşgul') ? 'border-red-500/20' : 'border-white/5'} relative overflow-hidden`}>
-                                                    <div className={`absolute top-0 left-0 w-1 h-full ${analysis.includes('hata') || analysis.includes('meşgul') ? 'bg-red-500/50' : 'bg-purple-500/50'}`}></div>
-                                                    <p className="text-stone-300 text-sm leading-relaxed whitespace-pre-wrap">{analysis}</p>
-                                                </div>
-                                                
-                                                {(analysis.includes('hata') || analysis.includes('meşgul')) && (
-                                                    <button 
-                                                        onClick={runAnalysis}
-                                                        className="w-full py-4 bg-purple-600 text-white rounded-2xl font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-purple-900/40 active:scale-95 transition-all"
-                                                    >
-                                                        <Sparkles size={16}/> Tekrar Dene
-                                                    </button>
-                                                )}
-                                            </div>
-                                        </div>
-
-                                        {/* SCI-FI ACTION DOCK */}
-                                        <div className="p-4 bg-stone-950/50 backdrop-blur-xl border-t border-white/5 relative">
-                                            {/* Decorative Sci-fi Elements */}
-                                            <div className="absolute -top-[1px] left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-purple-500/50 to-transparent"></div>
-                                            <div className="flex flex-col gap-2">
-                                                {!(analysis.includes('hata') || analysis.includes('meşgul')) && (
-                                                    <div className="flex gap-2">
-                                                        <button 
-                                                            onClick={addAnalysisToNotes}
-                                                            disabled={isReportAddedToNotes}
-                                                            className={`flex-1 py-4 rounded-xl font-black text-[10px] uppercase tracking-[0.2em] flex items-center justify-center gap-2 transition-all border ${isReportAddedToNotes ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-stone-900 text-purple-400 border-purple-500/20 hover:bg-purple-500/10 active:scale-95'}`}
-                                                        >
-                                                            {isReportAddedToNotes ? <CheckCircle2 size={14}/> : <Copy size={14}/>}
-                                                            {isReportAddedToNotes ? 'Aktarıldı' : 'Notlara Aktar'}
-                                                        </button>
-                                                        
-                                                        <button 
-                                                            onClick={confirmWizard} 
-                                                            className="flex-[1.5] py-4 bg-emerald-600 text-white rounded-xl font-black text-[10px] uppercase tracking-[0.2em] shadow-[0_0_20px_rgba(16,185,129,0.3)] active:scale-95 transition-all flex items-center justify-center gap-2 border border-emerald-400/30"
-                                                        >
-                                                            <Save size={14}/> Tamamla & Kaydet
-                                                        </button>
-                                                    </div>
-                                                )}
-                                                
-                                                <button 
-                                                    onClick={() => { setAnalysis(null); setPhoto(null); }} 
-                                                    className="w-full py-2 text-stone-600 font-bold text-[9px] uppercase tracking-[0.3em] hover:text-stone-400 transition-colors"
-                                                >
-                                                    [ İşlemi İptal Et ]
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                    </div>
-                </div>
-
-                {/* Bottom Status Bar - Very Minimal */}
-                {!analysis && (
-                    <div className="px-10 pb-10 text-center shrink-0">
-                        <p className="text-[9px] text-stone-600 font-bold uppercase tracking-[0.4em]">MKS DIGITAL AGRICULTURE • 2024</p>
-                    </div>
-                )}
-            </div>
-        );
-    }
-
-    // 2. SUCCESS SCREEN
+    // 1. SUCCESS SCREEN
     if (viewMode === 'SUCCESS' && lastVisitedFarmer) {
         return (
             <div className="flex flex-col items-center justify-center min-h-[80vh] p-6 animate-in zoom-in duration-300">
@@ -721,15 +385,6 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
                         </div>
                     )}
 
-                    {/* AI Analysis */}
-                    {selectedVisit.aiAnalysis && (
-                        <div className="bg-purple-900/10 border border-purple-500/20 p-5 rounded-3xl relative overflow-hidden">
-                            <div className="absolute top-0 right-0 p-4 opacity-10"><Sparkles size={80} className="text-purple-500"/></div>
-                            <h3 className="text-purple-300 font-bold text-sm mb-2 flex items-center uppercase tracking-wider"><Sparkles size={14} className="mr-2"/> Yapay Zeka Teşhisi</h3>
-                            <p className="text-purple-100 text-sm leading-relaxed whitespace-pre-wrap">{selectedVisit.aiAnalysis}</p>
-                        </div>
-                    )}
-
                     {/* Notes */}
                     <div className="bg-stone-900/60 p-5 rounded-3xl border border-white/5">
                         <h3 className="text-stone-500 font-bold text-xs mb-3 uppercase tracking-widest">Mühendis Notları</h3>
@@ -815,7 +470,6 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
                                         <div className="flex justify-between items-center pt-2 border-t border-white/5 relative z-10">
                                             <div className="flex gap-2">
                                                 {visit.photoUri && <div className="text-[9px] bg-blue-500/10 text-blue-400 px-2 py-1 rounded-lg border border-blue-500/20 flex items-center font-bold"><ImageIcon size={10} className="mr-1.5"/> Foto</div>}
-                                                {visit.aiAnalysis && <div className="text-[9px] bg-purple-500/10 text-purple-400 px-2 py-1 rounded-lg border border-purple-500/20 flex items-center font-bold"><Sparkles size={10} className="mr-1.5"/> AI</div>}
                                             </div>
                                             <span className="text-[9px] font-mono text-stone-500 flex items-center">
                                                 <Clock size={10} className="mr-1"/> {formatVisitDate(visit.date)}
@@ -870,7 +524,7 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
                     </div>
                 </div>
 
-                {/* AI & PHOTO SUMMARY CARD OR ADD BUTTON */}
+                {/* PHOTO SUMMARY CARD OR ADD BUTTON */}
                 <div>
                     <label className="block text-[9px] font-bold text-stone-500 mb-1.5 uppercase tracking-widest">Görsel / Teşhis</label>
                     
@@ -883,30 +537,25 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
                                 <h4 className="text-stone-200 text-xs font-bold flex items-center">
                                     <ImageIcon size={12} className="mr-1.5 text-blue-400"/> Fotoğraf Eklendi
                                 </h4>
-                                {analysis && (
-                                    <div className="flex items-center text-purple-400 text-[10px] mt-1 font-bold">
-                                        <Sparkles size={10} className="mr-1"/> AI Analizi Tamamlandı
-                                    </div>
-                                )}
                             </div>
                             <button 
-                                onClick={() => setViewMode('AI_WIZARD')} 
+                                onClick={() => { setPhoto(null); startCamera(); }} 
                                 className="p-2 bg-stone-800 text-stone-400 rounded-lg hover:text-white mr-1"
-                                title="Düzenle / Yeniden Çek"
+                                title="Yeniden Çek"
                             >
-                                <Edit2 size={16}/>
+                                <RefreshCw size={16}/>
                             </button>
                         </div>
                     ) : (
                         <button 
-                            onClick={() => setViewMode('AI_WIZARD')}
+                            onClick={startCamera}
                             className="w-full py-6 bg-gradient-to-br from-stone-900 to-stone-950 border border-dashed border-stone-700 rounded-2xl flex flex-col items-center justify-center hover:border-emerald-500/50 hover:bg-stone-900/80 transition-all group"
                         >
                             <div className="w-12 h-12 rounded-full bg-stone-800 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform shadow-lg group-hover:bg-stone-700">
-                                <Sparkles size={20} className="text-emerald-400" />
+                                <Camera size={20} className="text-emerald-400" />
                             </div>
-                            <span className="text-stone-300 font-bold text-xs">AI Teşhis Sihirbazını Aç</span>
-                            <span className="text-[9px] text-stone-500 mt-1">Fotoğraf çekmek ve analiz etmek için dokunun</span>
+                            <span className="text-stone-300 font-bold text-xs">Fotoğraf Ekle</span>
+                            <span className="text-[9px] text-stone-500 mt-1">Saha gözlemi için fotoğraf çekin</span>
                         </button>
                     )}
                 </div>
@@ -957,20 +606,9 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
                 <div>
                     <div className="flex justify-between items-center mb-1.5">
                         <label className="block text-[9px] font-bold text-stone-500 uppercase tracking-widest">Notlar</label>
-                        {note.trim().length > 10 && (
-                            <button 
-                                onClick={handleGenerateAIReport}
-                                disabled={isGeneratingReport}
-                                className="flex items-center gap-1.5 text-[9px] font-bold text-emerald-400 bg-emerald-950/30 px-2 py-1 rounded-lg border border-emerald-500/20 hover:bg-emerald-900/40 transition-all disabled:opacity-50"
-                            >
-                                {isGeneratingReport ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
-                                {isGeneratingReport ? 'Raporlanıyor...' : 'AI İle Yapılandır'}
-                            </button>
-                        )}
                     </div>
                     <div className="relative">
-                        <textarea className="w-full p-3 rounded-2xl bg-stone-900 border border-white/5 h-32 outline-none focus:border-emerald-500 transition-all text-stone-200 text-xs resize-none" placeholder="Gözlemlerinizi buraya yazın veya AI raporunu düzenleyin..." value={note} onChange={e => setNote(e.target.value)}></textarea>
-                        <button onClick={toggleMic} className={`absolute bottom-3 right-3 p-2.5 rounded-xl shadow-lg transition-all ${isRecording ? 'bg-red-600 animate-pulse' : 'bg-stone-800 text-emerald-400'}`}><Mic size={16} /></button>
+                        <textarea className="w-full p-3 rounded-2xl bg-stone-900 border border-white/5 h-32 outline-none focus:border-emerald-500 transition-all text-stone-200 text-xs resize-none" placeholder="Gözlemlerinizi buraya yazın..." value={note} onChange={e => setNote(e.target.value)}></textarea>
                     </div>
                 </div>
 

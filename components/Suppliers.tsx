@@ -4,7 +4,7 @@ import {
     Truck, Plus, Trash2, Edit2, ChevronRight, ChevronLeft, 
     Package, CreditCard, ArrowUpRight, ArrowDownRight, 
     Search, Phone, MapPin, Calendar, DollarSign, 
-    AlertCircle, CheckCircle2, FlaskConical, Info
+    AlertCircle, CheckCircle2, FlaskConical, Info, X
 } from 'lucide-react';
 import { useAppViewModel } from '../context/AppContext';
 import { dbService } from '../services/db';
@@ -13,7 +13,8 @@ import { Supplier, SupplierPurchase, SupplierPayment, PesticideCategory, Invento
 export const Suppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     const { 
         suppliers, addSupplier, updateSupplier, deleteSupplier, 
-        addSupplierPurchase, addSupplierPayment, 
+        addSupplierPurchase, updateSupplierPurchase, deleteSupplierPurchase,
+        addSupplierPayment, deleteSupplierPayment,
         inventory, addInventoryItem, showToast, hapticFeedback,
         prescriptions,
         accounts
@@ -61,9 +62,10 @@ export const Suppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     };
 
     const handleDeleteSupplier = async (id: string) => {
-        if (window.confirm('Bu tedarikçiyi silmek istediğinize emin misiniz?')) {
+        if (window.confirm('Bu tedarikçiyi silmek istediğinize emin misiniz? Bu işlem tedarikçiye ait tüm alım ve ödeme kayıtlarını da silecektir.')) {
             await deleteSupplier(id);
-            showToast('Tedarikçi silindi', 'info');
+            showToast('Tedarikçi ve tüm kayıtları silindi', 'info');
+            setSelectedSupplier(null);
         }
     };
 
@@ -170,9 +172,12 @@ export const Suppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                 isDebtModalOpen={isDebtModalOpen}
                 setIsDebtModalOpen={setIsDebtModalOpen}
                 addSupplierPurchase={addSupplierPurchase}
+                updateSupplierPurchase={updateSupplierPurchase}
+                deleteSupplierPurchase={deleteSupplierPurchase}
+                deleteSupplierPayment={deleteSupplierPayment}
                 showToast={showToast}
                 onEdit={(s: Supplier) => { setEditingSupplier(s); setIsEditModalOpen(true); }}
-                onDelete={(id: string) => { handleDeleteSupplier(id); setSelectedSupplier(null); }}
+                onDelete={(id: string) => handleDeleteSupplier(id)}
                 accounts={accounts}
             />
         );
@@ -238,9 +243,10 @@ export const Suppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                                 </button>
                                 <button 
                                     onClick={(e) => { e.stopPropagation(); handleDeleteSupplier(supplier.id); }}
-                                    className="p-2 bg-stone-800 text-stone-400 rounded-xl hover:text-rose-400 transition-colors active:scale-90"
+                                    className="p-2.5 bg-rose-500/10 text-rose-500 rounded-xl hover:bg-rose-500 hover:text-white transition-all active:scale-90 border border-rose-500/20"
+                                    title="Tedarikçiyi Sil"
                                 >
-                                    <Trash2 size={14} />
+                                    <Trash2 size={16} />
                                 </button>
                             </div>
                         </div>
@@ -434,27 +440,64 @@ const SupplierDetailView = ({
     isPurchaseModalOpen, setIsPurchaseModalOpen, handleAddPurchase, newPurchase, setNewPurchase, inventory,
     isAddingNewPesticide, setIsAddingNewPesticide, newPesticide, setNewPesticide, handleAddNewPesticideToPurchase,
     isPaymentModalOpen, setIsPaymentModalOpen, handleAddPayment, newPayment, setNewPayment,
-    isDebtModalOpen, setIsDebtModalOpen, addSupplierPurchase, showToast,
+    isDebtModalOpen, setIsDebtModalOpen, addSupplierPurchase, updateSupplierPurchase, deleteSupplierPurchase, deleteSupplierPayment, showToast,
     onEdit, onDelete, accounts
 }: any) => {
     const [activeTab, setActiveTab] = useState<'PURCHASES' | 'PAYMENTS'>('PURCHASES');
     const [purchases, setPurchases] = useState<SupplierPurchase[]>([]);
     const [payments, setPayments] = useState<SupplierPayment[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [editingPurchase, setEditingPurchase] = useState<SupplierPurchase | null>(null);
+
+    const loadData = async () => {
+        setIsLoading(true);
+        const [purchList, payList] = await Promise.all([
+            dbService.getSupplierPurchases(supplier.id),
+            dbService.getSupplierPayments(supplier.id)
+        ]);
+        setPurchases(purchList.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+        setPayments(payList.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+        setIsLoading(false);
+    };
 
     React.useEffect(() => {
-        const loadData = async () => {
-            setIsLoading(true);
-            const [purchList, payList] = await Promise.all([
-                dbService.getSupplierPurchases(supplier.id),
-                dbService.getSupplierPayments(supplier.id)
-            ]);
-            setPurchases(purchList.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()));
-            setPayments(payList.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()));
-            setIsLoading(false);
-        };
         loadData();
     }, [supplier.id]);
+
+    const handleDeletePurchase = async (id: string) => {
+        console.log('Tedarikçi alımı siliniyor:', id);
+        if (window.confirm('Bu alım kaydını silmek istediğinize emin misiniz? Stoklar geri alınacaktır.')) {
+            try {
+                await deleteSupplierPurchase(id);
+                showToast('Alım kaydı silindi', 'info');
+                await loadData();
+            } catch (error) {
+                console.error('Alım silme hatası:', error);
+                showToast('Alım silinirken bir hata oluştu', 'error');
+            }
+        }
+    };
+
+    const handleDeletePayment = async (id: string) => {
+        console.log('Tedarikçi ödemesi siliniyor:', id);
+        if (window.confirm('Bu ödeme kaydını silmek istediğinize emin misiniz?')) {
+            try {
+                await deleteSupplierPayment(id);
+                showToast('Ödeme kaydı silindi', 'info');
+                await loadData();
+            } catch (error) {
+                console.error('Ödeme silme hatası:', error);
+                showToast('Ödeme silinirken bir hata oluştu', 'error');
+            }
+        }
+    };
+
+    const handleUpdatePurchase = async (purchase: SupplierPurchase) => {
+        await updateSupplierPurchase(purchase);
+        setEditingPurchase(null);
+        showToast('Alım kaydı güncellendi', 'success');
+        loadData();
+    };
 
     // Unique products purchased from this supplier
     const purchasedProducts = useMemo(() => {
@@ -489,13 +532,14 @@ const SupplierDetailView = ({
                 <div className="flex gap-2">
                     <button 
                         onClick={() => onEdit(supplier)}
-                        className="p-2.5 bg-stone-900 text-stone-400 rounded-xl hover:text-emerald-400 transition-colors border border-white/5"
+                        className="p-2.5 bg-stone-900 text-stone-400 rounded-xl hover:text-emerald-400 transition-colors border border-white/5 active:scale-95"
                     >
                         <Edit2 size={18} />
                     </button>
                     <button 
                         onClick={() => onDelete(supplier.id)}
-                        className="p-2.5 bg-stone-900 text-stone-400 rounded-xl hover:text-rose-400 transition-colors border border-white/5"
+                        className="p-2.5 bg-rose-500/10 text-rose-500 rounded-xl hover:bg-rose-500 hover:text-white transition-all border border-rose-500/20 active:scale-95"
+                        title="Tedarikçiyi Sil"
                     >
                         <Trash2 size={18} />
                     </button>
@@ -617,7 +661,22 @@ const SupplierDetailView = ({
                                                 </div>
                                                 <span className="text-[10px] font-black text-stone-300 uppercase tracking-wider">Ürün Alımı</span>
                                             </div>
-                                            <span className="text-[9px] font-bold text-stone-500 font-mono">{new Date(purchase.date).toLocaleDateString('tr-TR')}</span>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-[9px] font-bold text-stone-500 font-mono">{new Date(purchase.date).toLocaleDateString('tr-TR')}</span>
+                                                <button 
+                                                    onClick={() => setEditingPurchase(purchase)}
+                                                    className="p-1.5 text-stone-500 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-all"
+                                                >
+                                                    <Edit2 size={12} />
+                                                </button>
+                                                <button 
+                                                    onClick={() => handleDeletePurchase(purchase.id)}
+                                                    className="p-2 text-stone-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-xl transition-all active:scale-95"
+                                                    title="Alımı Sil"
+                                                >
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            </div>
                                         </div>
                                         <div className="space-y-1.5 mb-3">
                                             {purchase.items.map((item, idx) => (
@@ -651,9 +710,18 @@ const SupplierDetailView = ({
                                             <div className="text-[9px] text-stone-500 font-mono mt-0.5">{new Date(payment.date).toLocaleDateString('tr-TR')}</div>
                                         </div>
                                     </div>
-                                    <div className="text-right">
-                                        <div className="text-sm font-black text-emerald-400 font-mono">-{payment.amount.toLocaleString('tr-TR')} TL</div>
-                                        {payment.note && <div className="text-[8px] text-stone-600 italic truncate max-w-[100px]">{payment.note}</div>}
+                                    <div className="flex items-center gap-3">
+                                        <div className="text-right">
+                                            <div className="text-sm font-black text-emerald-400 font-mono">-{payment.amount.toLocaleString('tr-TR')} TL</div>
+                                            {payment.note && <div className="text-[8px] text-stone-600 italic truncate max-w-[100px]">{payment.note}</div>}
+                                        </div>
+                                        <button 
+                                            onClick={() => handleDeletePayment(payment.id)}
+                                            className="p-2.5 text-stone-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-xl transition-all active:scale-95 border border-transparent hover:border-rose-500/20"
+                                            title="Ödemeyi Sil"
+                                        >
+                                            <Trash2 size={18} />
+                                        </button>
                                     </div>
                                 </div>
                             ))}
@@ -712,7 +780,26 @@ const SupplierDetailView = ({
                         });
                         setIsDebtModalOpen(false);
                         showToast('Borç eklendi', 'success');
+                        loadData();
                     }}
+                />
+            )}
+
+            {/* Edit Purchase Modal */}
+            {editingPurchase && (
+                <PurchaseModal 
+                    supplier={supplier}
+                    onClose={() => setEditingPurchase(null)}
+                    onSave={handleUpdatePurchase}
+                    newPurchase={editingPurchase}
+                    setNewPurchase={setEditingPurchase}
+                    inventory={inventory}
+                    isAddingNewPesticide={isAddingNewPesticide}
+                    setIsAddingNewPesticide={setIsAddingNewPesticide}
+                    newPesticide={newPesticide}
+                    setNewPesticide={setNewPesticide}
+                    handleAddNewPesticideToPurchase={handleAddNewPesticideToPurchase}
+                    isEdit={true}
                 />
             )}
         </div>
@@ -721,7 +808,8 @@ const SupplierDetailView = ({
 
 const PurchaseModal = ({ 
     supplier, onClose, onSave, newPurchase, setNewPurchase, inventory, 
-    isAddingNewPesticide, setIsAddingNewPesticide, newPesticide, setNewPesticide, handleAddNewPesticideToPurchase 
+    isAddingNewPesticide, setIsAddingNewPesticide, newPesticide, setNewPesticide, handleAddNewPesticideToPurchase,
+    isEdit = false
 }: any) => {
     const [searchTerm, setSearchTerm] = useState('');
     
@@ -769,7 +857,7 @@ const PurchaseModal = ({
                 <div className="flex justify-between items-center mb-6">
                     <h2 className="text-xl font-black text-stone-100 flex items-center gap-3">
                         <Package className="text-emerald-500" />
-                        Ürün Alımı
+                        {isEdit ? 'Alımı Düzenle' : 'Ürün Alımı'}
                     </h2>
                     <button onClick={onClose} className="p-2 bg-stone-800 rounded-full text-stone-500"><X size={16} /></button>
                 </div>
@@ -819,7 +907,13 @@ const PurchaseModal = ({
                             <div key={item.pesticideId} className="bg-stone-950/50 border border-white/5 rounded-2xl p-3 space-y-3">
                                 <div className="flex justify-between items-center">
                                     <span className="text-xs font-black text-stone-200 truncate pr-4">{item.pesticideName}</span>
-                                    <button onClick={() => removeItem(item.pesticideId)} className="text-rose-500 p-1"><Trash2 size={14} /></button>
+                                            <button 
+                                                onClick={() => removeItem(item.pesticideId)} 
+                                                className="p-2 text-rose-500 hover:bg-rose-500/10 rounded-lg transition-all active:scale-90"
+                                                title="Ürünü Çıkar"
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
                                 </div>
                                 <div className="grid grid-cols-2 gap-3">
                                     <div>
@@ -1018,6 +1112,3 @@ const PaymentModal = ({ supplier, onClose, onSave, newPayment, setNewPayment, ac
     );
 };
 
-const X = ({ size, className }: any) => (
-    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-);

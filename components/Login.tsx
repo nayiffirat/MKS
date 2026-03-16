@@ -3,29 +3,16 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
     signInWithEmailAndPassword, 
     createUserWithEmailAndPassword, 
-    signInWithPopup, 
-    GoogleAuthProvider,
-    sendPasswordResetEmail,
     User,
-    updateProfile,
-    RecaptchaVerifier,
-    signInWithPhoneNumber,
-    ConfirmationResult
+    updateProfile
 } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
-import { Mail, Lock, Loader2, CheckCircle2, AlertCircle, ArrowLeft, Eye, EyeOff, User as UserIcon, Sparkles, Phone, MessageSquare, ChevronRight } from 'lucide-react';
-
-declare global {
-  interface Window {
-    recaptchaVerifier: any;
-  }
-}
+import { Mail, Lock, Loader2, CheckCircle2, AlertCircle, ArrowLeft, Eye, EyeOff, User as UserIcon, Sparkles, Phone, ChevronRight, MessageCircle } from 'lucide-react';
 
 export const LoginScreen: React.FC = () => {
     // Modes
-    const [viewMode, setViewMode] = useState<'LOGIN' | 'REGISTER' | 'RESET' | 'PHONE'>('LOGIN');
-    const [phoneStep, setPhoneStep] = useState<'INPUT' | 'OTP'>('INPUT');
+    const [viewMode, setViewMode] = useState<'LOGIN' | 'REGISTER' | 'RESET'>('LOGIN');
 
     // Email/Pass Inputs
     const [email, setEmail] = useState('');
@@ -37,64 +24,16 @@ export const LoginScreen: React.FC = () => {
     const [phoneNumber, setPhoneNumber] = useState('+90 ');
     const [companyName, setCompanyName] = useState('');
     const [title, setTitle] = useState('');
-
-    // Phone Auth Inputs
-    const [loginPhone, setLoginPhone] = useState('+90 ');
-    const [otp, setOtp] = useState('');
-    const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
+    const [adminPassword, setAdminPassword] = useState('');
 
     // States
     const [isLoading, setIsLoading] = useState(false);
     const [isSuccess, setIsSuccess] = useState(false);
-    const [resetSent, setResetSent] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    // --- RECAPTCHA SETUP ---
     useEffect(() => {
         auth.useDeviceLanguage(); // Türkçe dil desteği
-
-        // Cleanup function first to clear previous instances
-        const clearRecaptcha = () => {
-             if (window.recaptchaVerifier) {
-                try {
-                    window.recaptchaVerifier.clear();
-                } catch(e) {}
-                window.recaptchaVerifier = null;
-            }
-        };
-
-        // PHONE moduna geçildiğinde Recaptcha'yı hazırla
-        if (viewMode === 'PHONE') {
-            // Ensure DOM element exists before init
-            const container = document.getElementById('recaptcha-container');
-            if (container) {
-                clearRecaptcha(); // Clear first
-                try {
-                    window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-                        'size': 'invisible',
-                        'callback': () => {
-                            // reCAPTCHA çözüldü
-                        },
-                        'expired-callback': () => {
-                            setError("Güvenlik doğrulaması zaman aşımı. Sayfayı yenileyin.");
-                            setIsLoading(false);
-                        }
-                    });
-                    // Verifier'ı render et ki hazır olsun
-                    window.recaptchaVerifier.render().catch((err: any) => {
-                        console.error("Recaptcha render error:", err);
-                    });
-                } catch (e) {
-                    console.error("Recaptcha init error:", e);
-                }
-            }
-        }
-
-        // Cleanup: Bileşen unmount olduğunda veya mod değiştiğinde
-        return () => {
-            clearRecaptcha();
-        };
-    }, [viewMode]);
+    }, []);
 
     const syncUserToFirestore = async (user: User, additionalData?: any) => {
         try {
@@ -112,124 +51,13 @@ export const LoginScreen: React.FC = () => {
                     createdAt: new Date().toISOString(),
                     lastLogin: new Date().toISOString(),
                     photoURL: user.photoURL || '',
-                    role: 'engineer'
+                    role: 'user'
                 });
             } else {
                 await setDoc(userRef, { lastLogin: new Date().toISOString() }, { merge: true });
             }
         } catch (err) {
             console.error("Firestore sync error:", err);
-        }
-    };
-
-    const handleGoogleLogin = async () => {
-        setIsLoading(true);
-        setError(null);
-        try {
-            const provider = new GoogleAuthProvider();
-            const result = await signInWithPopup(auth, provider);
-            await syncUserToFirestore(result.user);
-            setIsSuccess(true);
-        } catch (err: any) {
-            setError(translateFirebaseError(err.code));
-            setIsLoading(false);
-        }
-    };
-
-    // --- PHONE INPUT HANDLER ---
-    const handlePhoneInput = (setter: React.Dispatch<React.SetStateAction<string>>, value: string) => {
-        if (value.length < 4) {
-            setter('+90 ');
-        } else if (!value.startsWith('+90')) {
-            setter('+90 ' + value.replace(/^\+90\s*/, ''));
-        } else {
-            setter(value);
-        }
-    };
-
-    // --- PHONE AUTH HANDLERS ---
-    const handleSendOtp = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError(null);
-        setIsLoading(true);
-
-        const formattedPhone = loginPhone.replace(/\s/g, '');
-        if (formattedPhone.length < 13) { 
-            setError("Lütfen geçerli bir telefon numarası girin (+90 5...)");
-            setIsLoading(false);
-            return;
-        }
-
-        try {
-            // Verifier yoksa veya silindiyse tekrar oluştur (Fallback)
-            if (!window.recaptchaVerifier) {
-                 window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-                    'size': 'invisible'
-                });
-            }
-
-            const appVerifier = window.recaptchaVerifier;
-            const confirmation = await signInWithPhoneNumber(auth, formattedPhone, appVerifier);
-            setConfirmationResult(confirmation);
-            setPhoneStep('OTP');
-            setIsLoading(false);
-        } catch (err: any) {
-            console.error("SMS Error Details:", err);
-            
-            let errorMsg = "SMS gönderilemedi.";
-            if (err.code === 'auth/invalid-phone-number') errorMsg = "Telefon numarası geçersiz.";
-            else if (err.code === 'auth/too-many-requests') errorMsg = "Çok fazla deneme yapıldı. Lütfen daha sonra tekrar deneyin.";
-            else if (err.code === 'auth/quota-exceeded') errorMsg = "SMS kotası aşıldı.";
-            else if (err.code === 'auth/captcha-check-failed') errorMsg = "Güvenlik doğrulaması başarısız. Lütfen internet bağlantınızı kontrol edip tekrar deneyin.";
-            else if (err.message) errorMsg = err.message; 
-            
-            setError(errorMsg);
-            setIsLoading(false);
-            
-            // Hata durumunda recaptcha'yı temizle ki tekrar denenebilsin
-            if(window.recaptchaVerifier) {
-                try {
-                    window.recaptchaVerifier.clear();
-                    window.recaptchaVerifier = null;
-                } catch(e) {}
-            }
-        }
-    };
-
-    const handleVerifyOtp = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError(null);
-        setIsLoading(true);
-
-        if (!confirmationResult) return;
-
-        try {
-            const result = await confirmationResult.confirm(otp);
-            await syncUserToFirestore(result.user);
-            setIsSuccess(true);
-        } catch (err: any) {
-            console.error(err);
-            setError("Hatalı doğrulama kodu. Lütfen tekrar deneyin.");
-            setIsLoading(false);
-        }
-    };
-
-    const handlePasswordReset = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setIsLoading(true);
-        setError(null);
-        if (!email) {
-            setError("E-posta adresi gerekli.");
-            setIsLoading(false);
-            return;
-        }
-        try {
-            await sendPasswordResetEmail(auth, email);
-            setResetSent(true);
-            setIsLoading(false);
-        } catch (err: any) {
-            setError(translateFirebaseError(err.code));
-            setIsLoading(false);
         }
     };
 
@@ -243,6 +71,11 @@ export const LoginScreen: React.FC = () => {
             if (viewMode === 'REGISTER') {
                 if (!fullName) {
                     setError("Ad Soyad zorunludur.");
+                    setIsLoading(false);
+                    return;
+                }
+                if (adminPassword !== '636311') {
+                    setError("Geçersiz yönetici şifresi. Kayıt oluşturulamadı.");
                     setIsLoading(false);
                     return;
                 }
@@ -293,9 +126,6 @@ export const LoginScreen: React.FC = () => {
             {/* Background Glow */}
             <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-64 h-64 bg-emerald-600/10 rounded-full blur-[100px] pointer-events-none"></div>
 
-            {/* Recaptcha Container - Must be visible in DOM for verify to work */}
-            <div id="recaptcha-container"></div>
-
             <div className="w-full max-w-[340px] relative z-10 animate-in fade-in zoom-in-95 duration-700">
                 <div className="text-center mb-8">
                     <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-800 mb-4 shadow-xl border border-emerald-400/20">
@@ -316,76 +146,25 @@ export const LoginScreen: React.FC = () => {
                                 <ArrowLeft size={12} className="mr-1" /> Geri Dön
                             </button>
                             <h2 className="text-base font-bold text-stone-100 mb-1">Şifre Yenileme</h2>
-                            <p className="text-[11px] text-stone-500 mb-5">E-posta adresinizi girin.</p>
+                            <p className="text-[11px] text-stone-500 mb-6">Şifrenizi yenilemek için bizimle irtibata geçin.</p>
 
-                            {resetSent ? (
-                                <div className="bg-emerald-900/10 border border-emerald-500/20 p-4 rounded-2xl text-center">
-                                    <Mail size={24} className="mx-auto text-emerald-500 mb-2" />
-                                    <p className="text-xs text-stone-300">Sıfırlama bağlantısı gönderildi!</p>
-                                </div>
-                            ) : (
-                                <form onSubmit={handlePasswordReset} className="space-y-3">
-                                    <input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="E-posta" className="w-full px-4 py-3.5 bg-stone-950/50 border border-stone-800 rounded-2xl text-stone-200 text-sm outline-none focus:border-emerald-500/50 transition-all" />
-                                    <button type="submit" disabled={isLoading} className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl font-bold text-sm shadow-lg shadow-emerald-900/20 transition-all active:scale-95 flex items-center justify-center">
-                                        {isLoading ? <Loader2 className="animate-spin" size={18} /> : 'Gönder'}
-                                    </button>
-                                </form>
-                            )}
+                            <div className="space-y-4">
+                                <a 
+                                    href="https://wa.me/905428254087" 
+                                    target="_blank" 
+                                    rel="noopener noreferrer"
+                                    className="w-full py-4 bg-[#25D366] hover:bg-[#22c35e] text-white rounded-2xl font-bold text-sm shadow-lg shadow-emerald-900/20 transition-all active:scale-95 flex items-center justify-center gap-2"
+                                >
+                                    <MessageCircle size={18} />
+                                    WhatsApp ile İletişime Geç
+                                </a>
+                                <p className="text-[10px] text-stone-600 text-center px-4">
+                                    Yetkili mühendis ile iletişime geçerek şifre sıfırlama talebinde bulunabilirsiniz.
+                                </p>
+                            </div>
                         </div>
                     )}
 
-                    {/* --- PHONE LOGIN VIEW --- */}
-                    {viewMode === 'PHONE' && (
-                        <div className="animate-in slide-in-from-right duration-300">
-                            <button onClick={() => { setViewMode('LOGIN'); setPhoneStep('INPUT'); setError(null); }} className="flex items-center text-stone-500 hover:text-stone-200 text-[10px] font-bold mb-6 transition-colors uppercase tracking-widest">
-                                <ArrowLeft size={12} className="mr-1" /> Giriş Seçenekleri
-                            </button>
-                            
-                            <h2 className="text-base font-bold text-stone-100 mb-1">
-                                {phoneStep === 'INPUT' ? 'Telefon ile Giriş' : 'Doğrulama Kodu'}
-                            </h2>
-                            <p className="text-[11px] text-stone-500 mb-5">
-                                {phoneStep === 'INPUT' ? 'SMS onayı için numaranızı girin.' : 'Telefonunuza gelen 6 haneli kodu girin.'}
-                            </p>
-
-                            {phoneStep === 'INPUT' ? (
-                                <form onSubmit={handleSendOtp} className="space-y-3">
-                                    <div className="relative group">
-                                        <Phone className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-600 group-focus-within:text-emerald-500 transition-colors" size={14} />
-                                        <input 
-                                            type="tel" 
-                                            required 
-                                            value={loginPhone} 
-                                            onChange={e => handlePhoneInput(setLoginPhone, e.target.value)} 
-                                            placeholder="+90 5XX XXX XX XX" 
-                                            className="w-full pl-11 pr-4 py-3.5 bg-stone-950/50 border border-stone-800 rounded-2xl text-stone-200 text-sm outline-none focus:border-emerald-500/50 transition-all placeholder-stone-700" 
-                                        />
-                                    </div>
-                                    <button type="submit" disabled={isLoading} className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl font-bold text-sm shadow-lg shadow-emerald-900/20 transition-all active:scale-95 flex items-center justify-center">
-                                        {isLoading ? <Loader2 className="animate-spin" size={18} /> : 'Kod Gönder'}
-                                    </button>
-                                </form>
-                            ) : (
-                                <form onSubmit={handleVerifyOtp} className="space-y-3">
-                                    <div className="relative group">
-                                        <MessageSquare className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-600 group-focus-within:text-emerald-500 transition-colors" size={14} />
-                                        <input 
-                                            type="text" 
-                                            required 
-                                            value={otp} 
-                                            onChange={e => setOtp(e.target.value)} 
-                                            placeholder="123456" 
-                                            maxLength={6}
-                                            className="w-full pl-11 pr-4 py-3.5 bg-stone-950/50 border border-stone-800 rounded-2xl text-stone-200 text-sm outline-none focus:border-emerald-500/50 transition-all placeholder-stone-700 text-center tracking-widest font-mono font-bold" 
-                                        />
-                                    </div>
-                                    <button type="submit" disabled={isLoading} className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl font-bold text-sm shadow-lg shadow-emerald-900/20 transition-all active:scale-95 flex items-center justify-center">
-                                        {isLoading ? <Loader2 className="animate-spin" size={18} /> : 'Doğrula ve Gir'}
-                                    </button>
-                                </form>
-                            )}
-                        </div>
-                    )}
 
                     {/* --- EMAIL LOGIN / REGISTER VIEW --- */}
                     {(viewMode === 'LOGIN' || viewMode === 'REGISTER') && (
@@ -409,7 +188,7 @@ export const LoginScreen: React.FC = () => {
                                             <input 
                                                 type="tel" 
                                                 value={phoneNumber} 
-                                                onChange={e => handlePhoneInput(setPhoneNumber, e.target.value)} 
+                                                onChange={e => setPhoneNumber(e.target.value)} 
                                                 placeholder="+90 5XX..." 
                                                 className="w-full pl-11 pr-4 py-3 bg-stone-950/50 border border-stone-800 rounded-2xl text-stone-200 text-sm outline-none focus:border-emerald-500/50 transition-all" 
                                             />
@@ -417,6 +196,10 @@ export const LoginScreen: React.FC = () => {
                                         <div className="grid grid-cols-2 gap-2">
                                             <input type="text" value={companyName} onChange={e => setCompanyName(e.target.value)} placeholder="Firma" className="w-full px-4 py-3 bg-stone-950/50 border border-stone-800 rounded-2xl text-stone-200 text-[13px] outline-none focus:border-emerald-500/50 transition-all" />
                                             <input type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="Ünvan" className="w-full px-4 py-3 bg-stone-950/50 border border-stone-800 rounded-2xl text-stone-200 text-[13px] outline-none focus:border-emerald-500/50 transition-all" />
+                                        </div>
+                                        <div className="relative group">
+                                            <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-600 group-focus-within:text-emerald-500 transition-colors" size={14} />
+                                            <input type="password" required value={adminPassword} onChange={e => setAdminPassword(e.target.value)} placeholder="Yönetici Şifresi" className="w-full pl-11 pr-4 py-3 bg-stone-950/50 border border-stone-800 rounded-2xl text-stone-200 text-sm outline-none focus:border-emerald-500/50 transition-all placeholder-stone-700" />
                                         </div>
                                     </>
                                 )}
@@ -445,23 +228,6 @@ export const LoginScreen: React.FC = () => {
                                 </button>
                             </form>
 
-                            <div className="relative flex items-center my-6">
-                                <div className="flex-1 h-px bg-white/5"></div>
-                                <span className="px-3 text-[8px] text-stone-700 font-bold uppercase tracking-widest">veya</span>
-                                <div className="flex-1 h-px bg-white/5"></div>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-3">
-                                <button onClick={handleGoogleLogin} className="w-full py-3 rounded-2xl bg-stone-950/50 border border-stone-800 text-stone-400 text-[11px] font-bold hover:bg-stone-800 hover:text-stone-300 transition-all flex items-center justify-center active:scale-[0.98]">
-                                    <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-3.5 h-3.5 mr-2" alt="G" />
-                                    Google
-                                </button>
-                                
-                                <button disabled className="w-full py-3 rounded-2xl bg-stone-950/50 border border-stone-800 text-stone-600 text-[11px] font-bold flex items-center justify-center opacity-60 cursor-not-allowed">
-                                    <Phone size={14} className="mr-2" />
-                                    Telefon (Yakında)
-                                </button>
-                            </div>
 
                             <div className="mt-8 pt-6 border-t border-white/5">
                                 <button 

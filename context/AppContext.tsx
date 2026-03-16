@@ -1,12 +1,13 @@
 
 import { safeStringify } from '../utils/json';
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
-import { dbService } from '../services/db';
+import { dbService, setActionBlocked, setActionBlockedCallback } from '../services/db';
 import { WeatherService, AGRI_CITIES } from '../services/weather';
 import { Farmer, UIScale, AppNotification, UserProfile, Reminder, VisitLog, AgriCity, InventoryItem, Prescription, Payment, ManualDebt, Supplier, SupplierPurchase, SupplierPayment, MyPayment, PesticideCategory, ViewState, Expense, Account, Transaction } from '../types';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Haptics, ImpactStyle, NotificationType } from '@capacitor/haptics';
 import { auth } from '../services/firebase';
+import { sendPasswordResetEmail } from 'firebase/auth';
 
 interface DashboardStats {
   totalFarmers: number;
@@ -45,7 +46,16 @@ interface AppContextType {
   markAllAsRead: () => void;
   userProfile: UserProfile;
   updateUserProfile: (profile: UserProfile) => void;
+  syncUserProfile: (profile: UserProfile) => void;
+  isAdmin: boolean;
+  subscriptionStatus: 'trial' | 'active' | 'expired';
+  subscriptionEndsAt: string;
+  getAllUsers: () => Promise<(UserProfile & { uid: string, email?: string })[]>;
+  updateUserSubscription: (uid: string, updates: Partial<UserProfile>) => Promise<void>;
+  deleteUser: (uid: string) => Promise<void>;
+  sendPasswordReset: (email: string) => Promise<void>;
   addSystemNotification: (type: AppNotification['type'], title: string, message: string) => Promise<void>;
+  addVisit: (visit: Omit<VisitLog, 'id'>) => Promise<string>;
   updateVisit: (visit: VisitLog) => Promise<void>;
   deleteVisit: (id: string) => Promise<void>;
   inventory: InventoryItem[];
@@ -54,6 +64,7 @@ interface AppContextType {
   updateInventoryItem: (item: InventoryItem) => Promise<void>;
   deleteInventoryItem: (id: string) => Promise<void>;
   prescriptions: Prescription[];
+  addPrescription: (prescription: Omit<Prescription, 'id' | 'prescriptionNo'>) => Promise<string>;
   refreshPrescriptions: () => Promise<void>;
   togglePrescriptionStatus: (id: string) => Promise<Prescription | null>;
   payments: Payment[];
@@ -67,7 +78,10 @@ interface AppContextType {
   updateSupplier: (supplier: Supplier) => Promise<void>;
   deleteSupplier: (id: string) => Promise<void>;
   addSupplierPurchase: (purchase: Omit<SupplierPurchase, 'id'>) => Promise<void>;
+  updateSupplierPurchase: (purchase: SupplierPurchase) => Promise<void>;
+  deleteSupplierPurchase: (id: string) => Promise<void>;
   addSupplierPayment: (payment: Omit<SupplierPayment, 'id'>) => Promise<void>;
+  deleteSupplierPayment: (id: string) => Promise<void>;
   myPayments: MyPayment[];
   addMyPayment: (payment: Omit<MyPayment, 'id'>) => Promise<void>;
   updateMyPayment: (payment: MyPayment) => Promise<void>;
@@ -82,6 +96,7 @@ interface AppContextType {
   transactions: Transaction[];
   addTransaction: (transaction: Omit<Transaction, 'id'>) => Promise<void>;
   deleteTransaction: (id: string) => Promise<void>;
+  performManualTurnover: () => Promise<void>;
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
   hapticFeedback: (type?: 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error') => Promise<void>;
 }
@@ -93,7 +108,6 @@ const DEFAULT_PROFILE: UserProfile = {
   phoneNumber: '',
   companyName: '',
   title: '',
-  assistantVoice: 'FEMALE',
   highContrastMode: false
 };
 
@@ -169,6 +183,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const user = auth.currentUser;
       if (user) {
           dbService.saveUserProfile(user.uid, profile);
+      }
+  };
+
+  const syncUserProfile = (profile: UserProfile) => {
+      setUserProfile(profile);
+      localStorage.setItem('mks_user_profile', safeStringify(profile));
+  };
+
+  const isAdmin = userProfile.role === 'admin' || auth.currentUser?.email === 'nayiffirat@gmail.com';
+  const subscriptionStatus = userProfile.subscriptionStatus || 'trial';
+  const subscriptionEndsAt = userProfile.subscriptionEndsAt || new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+
+  useEffect(() => {
+    const isExpired = new Date(subscriptionEndsAt || 0) < new Date() || subscriptionStatus === 'expired';
+    setActionBlocked(isExpired && !isAdmin);
+    
+    setActionBlockedCallback(() => {
+      showToast('Süreniz doldu yönetici ile iletişime geçin', 'error');
+    });
+  }, [subscriptionEndsAt, subscriptionStatus, isAdmin]);
+
+  const getAllUsers = async () => {
+      if (!isAdmin) return [];
+      return await dbService.getAllUsers();
+  };
+
+  const updateUserSubscription = async (uid: string, updates: Partial<UserProfile>) => {
+      if (!isAdmin) return;
+      await dbService.updateUserSubscription(uid, updates);
+  };
+
+  const deleteUser = async (uid: string) => {
+      if (!isAdmin) return;
+      await dbService.deleteUser(uid);
+  };
+
+  const sendPasswordReset = async (email: string) => {
+      if (!isAdmin) return;
+      try {
+          await sendPasswordResetEmail(auth, email);
+      } catch (error) {
+          console.error("Şifre sıfırlama hatası:", error);
+          throw error;
       }
   };
 
@@ -349,6 +406,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Manually update local state for immediate feedback
     setInventory(prev => prev.filter(item => item.id !== id));
     await refreshStats();
+  };
+
+  const addPrescription = async (pData: Omit<Prescription, 'id' | 'prescriptionNo'>) => {
+    const id = `REC-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const prescription: Prescription = { 
+        ...pData, 
+        id, 
+        prescriptionNo: id 
+    };
+    await dbService.addPrescription(prescription);
+    await refreshStats();
+    return id;
   };
 
   const refreshPrescriptions = async () => {
@@ -575,6 +644,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setSuppliers(updatedSupplierList);
     setMyPayments(myPaymentList);
     setExpenses(expenseList);
+    setManualDebts(manualDebtList);
     
     const accountList = await dbService.getAccounts();
     const transactionList = await dbService.getTransactions();
@@ -612,6 +682,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteFarmer = async (id: string) => {
+    // 1. Delete all prescriptions and revert inventory
+    const farmerPrescriptions = prescriptions.filter(p => p.farmerId === id);
+    for (const p of farmerPrescriptions) {
+        if (p.isInventoryProcessed) {
+            await dbService.revertInventory(p);
+        }
+        await dbService.deletePrescription(p.id);
+    }
+
+    // 2. Delete all payments and their transactions
+    const farmerPayments = payments.filter(p => p.farmerId === id);
+    for (const p of farmerPayments) {
+        const relatedTx = transactions.find(tx => tx.relatedId === p.id);
+        if (relatedTx) {
+            await dbService.deleteTransaction(relatedTx.id);
+        }
+        await dbService.deletePayment(p.id);
+    }
+
+    // 3. Delete all manual debts
+    const farmerDebts = manualDebts.filter(d => d.farmerId === id);
+    for (const d of farmerDebts) {
+        await dbService.deleteManualDebt(d.id);
+    }
+
+    // 4. Delete all visits
+    const farmerVisits = await dbService.getVisitsByFarmer(id);
+    for (const v of farmerVisits) {
+        await dbService.deleteVisit(v.id);
+    }
+
+    // 5. Delete the farmer
     await dbService.deleteFarmer(id);
     await refreshStats();
   };
@@ -692,6 +794,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await refreshStats();
   };
 
+  const addVisit = async (visitData: Omit<VisitLog, 'id'>) => {
+    const id = crypto.randomUUID();
+    const visit: VisitLog = { ...visitData, id };
+    await dbService.addVisit(visit);
+    await refreshStats();
+    return id;
+  };
+
   const updateVisit = async (visit: VisitLog) => {
     await dbService.updateVisit(visit);
     await refreshStats();
@@ -724,6 +834,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deletePayment = async (id: string) => {
+    const relatedTx = transactions.find(tx => tx.relatedId === id);
+    if (relatedTx) {
+      await dbService.deleteTransaction(relatedTx.id);
+    }
     await dbService.deletePayment(id);
     await refreshStats();
   };
@@ -756,6 +870,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteSupplier = async (id: string) => {
+    // 1. Delete all associated purchases and revert inventory
+    const purchases = await dbService.getSupplierPurchases(id);
+    for (const p of purchases) {
+        for (const item of p.items) {
+            const existing = inventory.find(i => i.pesticideId === item.pesticideId);
+            if (existing) {
+                await dbService.updateInventoryItem({
+                    ...existing,
+                    quantity: existing.quantity - item.quantity,
+                    lastUpdated: new Date().toISOString()
+                });
+            }
+        }
+        await dbService.deleteSupplierPurchase(p.id);
+    }
+
+    // 2. Delete all associated payments
+    const payments = await dbService.getSupplierPayments(id);
+    for (const p of payments) {
+        // Cleanup transactions
+        const transactions = await dbService.getTransactions();
+        const relatedTx = transactions.find(t => t.relatedId === p.id);
+        if (relatedTx) {
+            await dbService.deleteTransaction(relatedTx.id);
+        }
+
+        // Cleanup MyPayments
+        const myPays = await dbService.getMyPayments();
+        const relatedMyPay = myPays.find(mp => mp.relatedId === p.id || (mp.supplierId === id && mp.amount === p.amount && mp.issueDate === p.date));
+        if (relatedMyPay) {
+            await deleteMyPayment(relatedMyPay.id);
+        }
+        await dbService.deleteSupplierPayment(p.id);
+    }
+
+    // 3. Delete the supplier itself
     await dbService.deleteSupplier(id);
     await refreshStats();
   };
@@ -764,11 +914,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const purchaseId = crypto.randomUUID();
     const purchase: SupplierPurchase = { ...purchaseData, id: purchaseId };
     
-    await dbService.addSupplierPurchase(purchase);
-    
-    // Update Inventory
-    for (const item of purchase.items) {
-        const existing = inventory.find(i => i.pesticideId === item.pesticideId);
+    // Update Inventory and fix new pesticide IDs
+    for (let i = 0; i < purchase.items.length; i++) {
+        const item = purchase.items[i];
+        const existing = inventory.find(inv => inv.pesticideId === item.pesticideId);
+        
+        let finalPesticideId = item.pesticideId;
+        
         if (existing) {
             await dbService.updateInventoryItem({
                 ...existing,
@@ -778,9 +930,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             });
         } else {
             // If it's a new pesticide (tempId from UI), we add it to the library too
-            let finalPesticideId = item.pesticideId;
             if (item.pesticideId.startsWith('new-')) {
                 finalPesticideId = crypto.randomUUID();
+                purchase.items[i].pesticideId = finalPesticideId; // Update the item in the purchase record
+                
                 await dbService.addGlobalPesticide({
                     id: finalPesticideId,
                     name: item.pesticideName,
@@ -805,6 +958,112 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
     }
     
+    // Save the purchase AFTER updating the pesticide IDs
+    await dbService.addSupplierPurchase(purchase);
+    
+    await refreshStats();
+  };
+
+  const updateSupplierPurchase = async (purchase: SupplierPurchase) => {
+    // 1. Get old purchase to revert inventory
+    const allPurchases = await dbService.getSupplierPurchases(purchase.supplierId);
+    const oldPurchase = allPurchases.find(p => p.id === purchase.id);
+    
+    if (oldPurchase) {
+        // Revert old inventory changes
+        for (const item of oldPurchase.items) {
+            const existing = inventory.find(i => i.pesticideId === item.pesticideId);
+            if (existing) {
+                await dbService.updateInventoryItem({
+                    ...existing,
+                    quantity: existing.quantity - item.quantity,
+                    lastUpdated: new Date().toISOString()
+                });
+            }
+        }
+    }
+
+    // 3. Apply new inventory changes and handle new pesticides
+    // We need to re-fetch inventory because it was updated above
+    const latestInventory = await dbService.getInventory();
+    for (let i = 0; i < purchase.items.length; i++) {
+        const item = purchase.items[i];
+        const existing = latestInventory.find(inv => inv.pesticideId === item.pesticideId);
+        
+        let finalPesticideId = item.pesticideId;
+        
+        if (existing) {
+            await dbService.updateInventoryItem({
+                ...existing,
+                quantity: existing.quantity + item.quantity,
+                buyingPrice: item.buyingPrice,
+                lastUpdated: new Date().toISOString()
+            });
+        } else {
+            // If it's a new pesticide (tempId from UI), we add it to the library too
+            if (item.pesticideId.startsWith('new-')) {
+                finalPesticideId = crypto.randomUUID();
+                purchase.items[i].pesticideId = finalPesticideId; // Update the item in the purchase record
+                
+                await dbService.addGlobalPesticide({
+                    id: finalPesticideId,
+                    name: item.pesticideName,
+                    activeIngredient: 'Belirtilmedi',
+                    defaultDosage: '100ml/100L',
+                    category: PesticideCategory.OTHER,
+                    description: 'Tedarikçi alımı ile otomatik eklendi.'
+                });
+            }
+
+            await dbService.addInventoryItem({
+                id: crypto.randomUUID(),
+                pesticideId: finalPesticideId,
+                pesticideName: item.pesticideName,
+                category: PesticideCategory.OTHER,
+                quantity: item.quantity,
+                unit: item.unit,
+                buyingPrice: item.buyingPrice,
+                sellingPrice: item.buyingPrice * 1.2, // Default 20% margin
+                lastUpdated: new Date().toISOString()
+            });
+        }
+    }
+
+    // 2. Update purchase in DB (AFTER updating pesticide IDs)
+    await dbService.updateSupplierPurchase(purchase);
+
+    await refreshStats();
+  };
+
+  const deleteSupplierPurchase = async (id: string) => {
+    // 1. Find the purchase to revert inventory
+    // We can get all purchases and find it, or add a direct get method.
+    // For now, let's use the more reliable way of searching all purchases.
+    const allSuppliers = await dbService.getSuppliers();
+    let targetPurchase: SupplierPurchase | undefined;
+    
+    for (const s of allSuppliers) {
+        const purchases = await dbService.getSupplierPurchases(s.id);
+        targetPurchase = purchases.find(p => p.id === id);
+        if (targetPurchase) break;
+    }
+
+    if (targetPurchase) {
+        // Revert inventory
+        for (const item of targetPurchase.items) {
+            // Use latest inventory from state or fetch it
+            const existing = inventory.find(i => i.pesticideId === item.pesticideId);
+            if (existing) {
+                await dbService.updateInventoryItem({
+                    ...existing,
+                    quantity: Math.max(0, existing.quantity - item.quantity),
+                    lastUpdated: new Date().toISOString()
+                });
+            }
+        }
+        await dbService.deleteSupplierPurchase(id);
+    }
+
     await refreshStats();
   };
 
@@ -843,6 +1102,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await refreshStats();
   };
 
+  const deleteSupplierPayment = async (id: string) => {
+    // Find the payment to see if it has a transaction or check/senet
+    // Again, we might need to find which supplier it belongs to
+    const allSuppliers = await dbService.getSuppliers();
+    let targetPayment: SupplierPayment | undefined;
+    
+    for (const s of allSuppliers) {
+        const payments = await dbService.getSupplierPayments(s.id);
+        targetPayment = payments.find(p => p.id === id);
+        if (targetPayment) break;
+    }
+
+    if (targetPayment) {
+        // If it had a transaction, delete it
+        if (targetPayment.accountId) {
+            const transactions = await dbService.getTransactions();
+            const relatedTx = transactions.find(t => t.relatedId === id);
+            if (relatedTx) {
+                await dbService.deleteTransaction(relatedTx.id);
+            }
+        }
+        
+        // If it was a check/senet, delete from MyPayments
+        if (targetPayment.method === 'CHECK' || targetPayment.method === 'PROMISSORY_NOTE') {
+            const myPays = await dbService.getMyPayments();
+            const relatedMyPay = myPays.find(p => p.supplierId === targetPayment?.supplierId && p.amount === targetPayment?.amount && p.issueDate === targetPayment?.date);
+            if (relatedMyPay) {
+                await deleteMyPayment(relatedMyPay.id);
+            }
+        }
+
+        await dbService.deleteSupplierPayment(id);
+    }
+    
+    await refreshStats();
+  };
+
   const addMyPayment = async (paymentData: Omit<MyPayment, 'id'>) => {
     const payment: MyPayment = { ...paymentData, id: crypto.randomUUID() };
     await dbService.addMyPayment(payment);
@@ -865,12 +1161,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         relatedId: payment.id,
         category: 'Çek/Senet Ödemesi'
       });
+    } else if (payment.status !== 'PAID' && oldPayment?.status === 'PAID') {
+      // If status changed from PAID to something else, delete the transaction
+      const relatedTx = transactions.find(tx => tx.relatedId === payment.id);
+      if (relatedTx) {
+        await dbService.deleteTransaction(relatedTx.id);
+      }
     }
     
     await refreshStats();
   };
 
   const deleteMyPayment = async (id: string) => {
+    const relatedTx = transactions.find(tx => tx.relatedId === id);
+    if (relatedTx) {
+      await dbService.deleteTransaction(relatedTx.id);
+    }
     await dbService.deleteMyPayment(id);
     await refreshStats();
   };
@@ -917,6 +1223,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteAccount = async (id: string) => {
+    const accountTxs = transactions.filter(tx => tx.accountId === id);
+    for (const tx of accountTxs) {
+      await dbService.deleteTransaction(tx.id);
+    }
     await dbService.deleteAccount(id);
     await refreshStats();
   };
@@ -930,6 +1240,55 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const deleteTransaction = async (id: string) => {
     await dbService.deleteTransaction(id);
     await refreshStats();
+  };
+
+  const performManualTurnover = async () => {
+    try {
+      const currentYear = new Date().getFullYear();
+      const logs = await dbService.getTurnoverLogs();
+      
+      const finLog = logs.find(l => l.year === currentYear && l.type === 'FINANCIAL');
+      if (finLog) {
+        showToast(`${currentYear} yılı devri zaten yapılmış.`, 'info');
+        return;
+      }
+
+      // Calculate balances up to the end of previous year
+      const lastYear = currentYear - 1;
+      const farmerBalances: Record<string, number> = {};
+      
+      // We need to calculate balance for ALL transactions BEFORE currentYear
+      prescriptions.forEach(p => {
+        const pYear = new Date(p.date).getFullYear();
+        if (pYear <= lastYear) {
+          farmerBalances[p.farmerId] = (farmerBalances[p.farmerId] || 0) + (p.totalAmount || 0);
+        }
+      });
+      
+      manualDebts.forEach(d => {
+        const dYear = new Date(d.date).getFullYear();
+        if (dYear <= lastYear) {
+          farmerBalances[d.farmerId] = (farmerBalances[d.farmerId] || 0) + d.amount;
+        }
+      });
+      
+      payments.forEach(p => {
+        const pYear = new Date(p.date).getFullYear();
+        if (pYear <= lastYear) {
+          farmerBalances[p.farmerId] = (farmerBalances[p.farmerId] || 0) - p.amount;
+        }
+      });
+      
+      await dbService.performFinancialTurnover(currentYear, farmerBalances);
+      await dbService.performInventoryTurnover(currentYear, inventory);
+      
+      await addSystemNotification('SUCCESS', `${currentYear} Yılı Devri`, `${currentYear} yılı için devir işlemleri başarıyla tamamlandı.`);
+      showToast(`${currentYear} yılı devri tamamlandı.`, 'success');
+      await refreshStats();
+    } catch (e) {
+      console.error("Manual turnover failed:", e);
+      showToast("Devir işlemi sırasında bir hata oluştu.", 'error');
+    }
   };
 
   const setUiScale = (scale: UIScale) => {
@@ -972,59 +1331,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [uiScale]);
 
-  const checkTurnover = async (currentFarmers: Farmer[], currentPrescriptions: Prescription[], currentPayments: Payment[], currentManualDebts: ManualDebt[], currentInventory: InventoryItem[]) => {
-    try {
-      const logs = await dbService.getTurnoverLogs();
-      const currentYear = new Date().getFullYear();
-      
-      // Check if financial turnover for current year exists
-      const finLog = logs.find(l => l.year === currentYear && l.type === 'FINANCIAL');
-      if (!finLog) {
-        // Calculate balances up to the end of previous year
-        const lastYear = currentYear - 1;
-        const farmerBalances: Record<string, number> = {};
-        
-        // We need to calculate balance for ALL transactions BEFORE currentYear
-        currentPrescriptions.forEach(p => {
-          const pYear = new Date(p.date).getFullYear();
-          if (pYear <= lastYear) {
-            farmerBalances[p.farmerId] = (farmerBalances[p.farmerId] || 0) + (p.totalAmount || 0);
-          }
-        });
-        
-        currentManualDebts.forEach(d => {
-          const dYear = new Date(d.date).getFullYear();
-          // Ignore previous turnovers to avoid compounding
-          if (dYear <= lastYear && !d.note?.includes('Devir Bakiyesi')) {
-            farmerBalances[d.farmerId] = (farmerBalances[d.farmerId] || 0) + d.amount;
-          }
-        });
-        
-        currentPayments.forEach(p => {
-          const pYear = new Date(p.date).getFullYear();
-          if (pYear <= lastYear) {
-            farmerBalances[p.farmerId] = (farmerBalances[p.farmerId] || 0) - p.amount;
-          }
-        });
-        
-        await dbService.performFinancialTurnover(currentYear, farmerBalances);
-        addSystemNotification('SUCCESS', `${currentYear} Yılı Devri`, `${currentYear} yılı için finansal devir işlemleri başarıyla tamamlandı.`);
-      }
-      
-      // Check if inventory turnover for current year exists
-      const invLog = logs.find(l => l.year === currentYear && l.type === 'INVENTORY');
-      if (!invLog) {
-        await dbService.performInventoryTurnover(currentYear, currentInventory);
-      }
-      
-      if (!finLog || !invLog) {
-        await refreshStats();
-      }
-    } catch (e) {
-      console.error("Turnover check failed:", e);
-    }
-  };
-
   useEffect(() => {
     const init = async () => {
         if (isInitialized.current) return;
@@ -1038,16 +1344,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const permission = await LocalNotifications.requestPermissions();
             if (permission.display !== 'granted') console.warn("Bildirim izinleri verilmedi.");
         } catch (e) {}
-
-        // Run turnover check
-        const [f, p, pay, d, inv] = await Promise.all([
-          dbService.getFarmers(),
-          dbService.getAllPrescriptions(),
-          dbService.getPayments(),
-          dbService.getManualDebts(),
-          dbService.getInventory()
-        ]);
-        await checkTurnover(f, p, pay, d, inv);
     };
     init();
   }, []);
@@ -1058,17 +1354,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         farmers, reminders, addReminder, editReminder, toggleReminder, deleteReminder,
         uiScale, setUiScale, 
         notifications, unreadCount, clearNotifications, markAllAsRead,
-        userProfile, updateUserProfile, addSystemNotification,
-        updateVisit, deleteVisit,
+        userProfile, updateUserProfile, syncUserProfile, isAdmin, subscriptionStatus, subscriptionEndsAt, getAllUsers, updateUserSubscription, deleteUser, sendPasswordReset, addSystemNotification,
+        addVisit, updateVisit, deleteVisit,
         inventory, refreshInventory, addInventoryItem, updateInventoryItem, deleteInventoryItem,
-        prescriptions, refreshPrescriptions, togglePrescriptionStatus,
+        prescriptions, addPrescription, refreshPrescriptions, togglePrescriptionStatus,
         payments, addPayment, deletePayment,
         manualDebts, addManualDebt, deleteManualDebt,
-        suppliers, addSupplier, updateSupplier, deleteSupplier, addSupplierPurchase, addSupplierPayment,
+        suppliers, addSupplier, updateSupplier, deleteSupplier, addSupplierPurchase, updateSupplierPurchase, deleteSupplierPurchase, addSupplierPayment, deleteSupplierPayment,
         myPayments, addMyPayment, updateMyPayment, deleteMyPayment,
         expenses, addExpense, deleteExpense,
         accounts, addAccount, updateAccount, deleteAccount,
         transactions, addTransaction, deleteTransaction,
+        performManualTurnover,
         showToast, hapticFeedback
     }}>
       {children}

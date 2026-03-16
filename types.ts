@@ -92,7 +92,6 @@ export interface VisitLog {
   date: string; // ISO String
   note: string;
   photoUri?: string; // Base64 or Blob URL
-  aiAnalysis?: string; // Gemini analysis result
   latitude?: number;
   longitude?: number;
   pestFound?: string; // e.g., "Tuta Absoluta"
@@ -149,10 +148,13 @@ export interface UserProfile {
   phoneNumber: string;
   companyName: string;
   title: string;
-  assistantVoice?: 'MALE' | 'FEMALE';
   selectedCity?: AgriCity;
   lastSyncTime?: string;
   highContrastMode?: boolean;
+  assistantVoice?: 'male' | 'female';
+  role?: 'admin' | 'user';
+  subscriptionStatus?: 'trial' | 'active' | 'expired';
+  subscriptionEndsAt?: string;
 }
 
 export interface InventoryItem {
@@ -215,6 +217,7 @@ export interface MyPayment {
   status: 'PENDING' | 'PAID' | 'CANCELLED';
   note?: string;
   accountId?: string;
+  relatedId?: string;
 }
 
 export interface TurnoverLog {
@@ -234,7 +237,7 @@ export interface Expense {
   accountId?: string;
 }
 
-export type ViewState = 'DASHBOARD' | 'FARMERS' | 'PESTICIDES' | 'PRESCRIPTIONS' | 'VISITS' | 'CONTACT' | 'SETTINGS' | 'NOTIFICATIONS' | 'PROFILE' | 'STATISTICS' | 'FIELD_ASSISTANT' | 'REMINDERS' | 'INVENTORY' | 'DEBT_TRACKING' | 'REGIONAL_ALERTS' | 'DISEASE_DIAGNOSIS' | 'PRODUCER_PORTAL' | 'COMPATIBILITY_CHECK' | 'SUPPLIERS' | 'PAYMENTS' | 'EXPENSES' | 'KASA';
+export type ViewState = 'DASHBOARD' | 'FARMERS' | 'PESTICIDES' | 'PRESCRIPTIONS' | 'VISITS' | 'CONTACT' | 'SETTINGS' | 'NOTIFICATIONS' | 'PROFILE' | 'STATISTICS' | 'REMINDERS' | 'INVENTORY' | 'DEBT_TRACKING' | 'REGIONAL_ALERTS' | 'PRODUCER_PORTAL' | 'COMPATIBILITY_CHECK' | 'SUPPLIERS' | 'PAYMENTS' | 'EXPENSES' | 'KASA' | 'AI_ASSISTANT' | 'AI_DIAGNOSIS' | 'MIXTURE_TEST' | 'RECENT_TRANSACTIONS' | 'REPORTS' | 'ADMIN_PANEL';
 
 export type UIScale = 'SMALL' | 'MEDIUM' | 'LARGE';
 

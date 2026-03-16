@@ -1,9 +1,9 @@
 {
   "name": "Mühendis Kayıt Sistemi",
-  "description": "Ziraat Mühendisleri için çevrimdışı öncelikli, yapay zeka destekli tarla ve çiftçi yönetim sistemi.",
+  "description": "Ziraat Mühendisleri için çevrimdışı öncelikli tarla ve çiftçi yönetim sistemi.",
   "requestFramePermissions": [
     "camera",
-    "microphone",
-    "geolocation"
+    "geolocation",
+    "microphone"
   ]
 }

@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { Type, User, ChevronRight, Briefcase, Volume2, Mic, UserRound, Sun } from 'lucide-react';
+import { Type, User, ChevronRight, Briefcase, UserRound, Sun, Settings, RefreshCw } from 'lucide-react';
 import { useAppViewModel } from '../context/AppContext';
 import { UIScale } from '../types';
 
@@ -9,14 +9,10 @@ interface SettingsProps {
 }
 
 export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
-  const { uiScale, setUiScale, userProfile, updateUserProfile } = useAppViewModel();
+  const { uiScale, setUiScale, userProfile, updateUserProfile, performManualTurnover } = useAppViewModel();
 
   const handleScaleChange = (scale: UIScale) => {
     setUiScale(scale);
-  };
-
-  const handleVoiceChange = (voice: 'MALE' | 'FEMALE') => {
-      updateUserProfile({ ...userProfile, assistantVoice: voice });
   };
 
   return (
@@ -55,53 +51,6 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
           </div>
       </div>
 
-      {/* Assistant Voice Settings */}
-      <div className="bg-stone-900/60 backdrop-blur rounded-[2.5rem] p-6 shadow-sm border border-white/5 mb-6">
-          <div className="flex items-center space-x-3 mb-4">
-              <div className="p-2.5 bg-amber-900/30 text-amber-400 rounded-xl">
-                  <Mic size={20} />
-              </div>
-              <div>
-                  <h3 className="font-bold text-stone-100 text-lg tracking-tight">Saha Asistanı</h3>
-                  <p className="text-[10px] text-stone-500 font-bold uppercase tracking-widest">Ses Tercihleri</p>
-              </div>
-          </div>
-          
-          <p className="text-stone-400 text-xs mb-5 font-medium leading-relaxed">
-              Saha modunda asistanın size hangi ses tonuyla hitap etmesini istersiniz?
-          </p>
-
-          <div className="grid grid-cols-2 gap-3">
-              <button
-                onClick={() => handleVoiceChange('MALE')}
-                className={`p-4 rounded-2xl border transition-all duration-300 flex flex-col items-center gap-2 ${
-                    userProfile.assistantVoice === 'MALE' 
-                    ? 'bg-amber-600 border-amber-500 text-white shadow-lg' 
-                    : 'bg-stone-950/40 border-stone-800 text-stone-500 hover:border-amber-500/30'
-                }`}
-              >
-                  <div className={`p-2 rounded-lg ${userProfile.assistantVoice === 'MALE' ? 'bg-white/20' : 'bg-stone-800'}`}>
-                      <UserRound size={20} />
-                  </div>
-                  <span className="text-xs font-black uppercase tracking-wider">Erkek (Tok)</span>
-              </button>
-
-              <button
-                onClick={() => handleVoiceChange('FEMALE')}
-                className={`p-4 rounded-2xl border transition-all duration-300 flex flex-col items-center gap-2 ${
-                    userProfile.assistantVoice === 'FEMALE' 
-                    ? 'bg-amber-600 border-amber-500 text-white shadow-lg' 
-                    : 'bg-stone-950/40 border-stone-800 text-stone-500 hover:border-amber-500/30'
-                }`}
-              >
-                  <div className={`p-2 rounded-lg ${userProfile.assistantVoice === 'FEMALE' ? 'bg-white/20' : 'bg-stone-800'}`}>
-                      <UserRound size={20} />
-                  </div>
-                  <span className="text-xs font-black uppercase tracking-wider">Kadın (Etkili)</span>
-              </button>
-          </div>
-      </div>
-
       {/* Accessibility / UI Size Settings */}
       <div className="bg-stone-900/60 backdrop-blur rounded-[2.5rem] p-6 shadow-sm border border-white/5 mb-6">
           <div className="flex items-center space-x-3 mb-4">
@@ -135,7 +84,7 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
               })}
           </div>
 
-          <div className="flex items-center justify-between p-4 bg-stone-950/40 rounded-2xl border border-stone-800">
+          <div className="flex items-center justify-between p-4 bg-stone-950/40 rounded-2xl border border-stone-800 mb-6">
               <div className="flex items-center gap-3">
                   <div className="p-2 bg-amber-500/20 text-amber-500 rounded-lg">
                       <Sun size={18} />
@@ -152,6 +101,72 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
                   <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all duration-300 ${userProfile.highContrastMode ? 'left-7' : 'left-1'}`}></div>
               </button>
           </div>
+
+          {/* Voice Selection */}
+          <div className="flex items-center space-x-3 mb-4 mt-6">
+              <div className="p-2.5 bg-emerald-900/30 text-emerald-400 rounded-xl">
+                  <UserRound size={20} />
+              </div>
+              <div>
+                  <h3 className="font-bold text-stone-100 text-lg tracking-tight">Asistan Sesi</h3>
+                  <p className="text-[10px] text-stone-500 font-bold uppercase tracking-widest">Saha Asistanı Karakteri</p>
+              </div>
+          </div>
+          <div className="flex p-1 bg-stone-950/40 rounded-2xl border border-stone-800">
+              <button
+                  onClick={() => updateUserProfile({ ...userProfile, assistantVoice: 'male' })}
+                  className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all duration-300 ${
+                      userProfile.assistantVoice === 'male' || !userProfile.assistantVoice
+                      ? 'bg-emerald-600 text-white shadow-lg' 
+                      : 'text-stone-600 hover:text-stone-300'
+                  }`}
+              >
+                  Erkek (Tok)
+              </button>
+              <button
+                  onClick={() => updateUserProfile({ ...userProfile, assistantVoice: 'female' })}
+                  className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all duration-300 ${
+                      userProfile.assistantVoice === 'female'
+                      ? 'bg-emerald-600 text-white shadow-lg' 
+                      : 'text-stone-600 hover:text-stone-300'
+                  }`}
+              >
+                  Kadın (Sakin)
+              </button>
+          </div>
+      </div>
+
+      {/* System Operations */}
+      <div className="bg-stone-900/60 backdrop-blur rounded-[2.5rem] p-6 shadow-sm border border-white/5 mb-6">
+          <div className="flex items-center space-x-3 mb-4">
+              <div className="p-2.5 bg-purple-900/30 text-purple-400 rounded-xl">
+                  <RefreshCw size={20} />
+              </div>
+              <div>
+                  <h3 className="font-bold text-stone-100 text-lg tracking-tight">Sistem İşlemleri</h3>
+                  <p className="text-[10px] text-stone-500 font-bold uppercase tracking-widest">Yıl Sonu İşlemleri</p>
+              </div>
+          </div>
+          
+          <button 
+            onClick={() => {
+              if (window.confirm('Yeni yıla devir işlemi yapmak istediğinize emin misiniz? Bu işlem mevcut bakiyeleri yeni yıla devir bakiyesi olarak aktaracaktır.')) {
+                performManualTurnover();
+              }
+            }}
+            className="w-full flex items-center justify-between p-4 bg-stone-950/40 rounded-2xl border border-stone-800 hover:border-purple-500/50 hover:bg-stone-900 transition-all group"
+          >
+              <div className="flex items-center gap-3">
+                  <div className="p-2 bg-purple-500/20 text-purple-500 rounded-lg group-hover:bg-purple-500 group-hover:text-white transition-colors">
+                      <RefreshCw size={18} />
+                  </div>
+                  <div className="text-left">
+                      <h4 className="text-xs font-bold text-stone-200 group-hover:text-purple-400 transition-colors">Yeni Yıla Devret</h4>
+                      <p className="text-[9px] text-stone-600 font-bold uppercase">Bakiyeleri yeni yıla aktar</p>
+                  </div>
+              </div>
+              <ChevronRight size={18} className="text-stone-700 group-hover:text-purple-400 transition-colors" />
+          </button>
       </div>
 
       {/* App Info Footer */}

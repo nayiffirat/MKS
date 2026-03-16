@@ -90,9 +90,24 @@ export const InventoryScreen: React.FC = () => {
     const handleAddItem = async () => {
         if (!selectedPesticide) return;
         
+        let finalPesticideId = selectedPesticide.id;
+
+        if (selectedPesticide.id.startsWith('new-')) {
+            finalPesticideId = crypto.randomUUID();
+            const newPest: Pesticide = {
+                id: finalPesticideId,
+                name: selectedPesticide.name,
+                activeIngredient: 'Belirtilmedi',
+                defaultDosage: '100ml/100L',
+                category: selectedPesticide.category,
+                description: 'Depo eklemesi ile otomatik eklendi.'
+            };
+            await dbService.addGlobalPesticide(newPest);
+        }
+
         const newItem: InventoryItem = {
             id: crypto.randomUUID(),
-            pesticideId: selectedPesticide.id,
+            pesticideId: finalPesticideId,
             pesticideName: selectedPesticide.name,
             category: selectedPesticide.category,
             quantity: Number(formData.quantity) || 0,
@@ -939,6 +954,24 @@ export const InventoryScreen: React.FC = () => {
                                                     {filteredPesticides.length === 0 && (
                                                         <div className="p-3 text-center text-xs text-stone-500">Sonuç bulunamadı</div>
                                                     )}
+                                                    <button 
+                                                        onClick={() => {
+                                                            const newPest: Pesticide = {
+                                                                id: `new-${crypto.randomUUID()}`,
+                                                                name: searchPesticideTerm,
+                                                                activeIngredient: 'Belirtilmedi',
+                                                                defaultDosage: '100ml/100L',
+                                                                category: PesticideCategory.OTHER,
+                                                                description: 'Depo eklemesi ile otomatik eklendi.'
+                                                            };
+                                                            setSelectedPesticide(newPest);
+                                                            setSearchPesticideTerm('');
+                                                        }}
+                                                        className="w-full text-left p-3 hover:bg-stone-800 border-t border-white/10 text-emerald-400 font-bold text-sm flex items-center"
+                                                    >
+                                                        <Plus size={14} className="mr-2" />
+                                                        "{searchPesticideTerm}" olarak yeni ekle
+                                                    </button>
                                                 </div>
                                             )}
                                         </div>

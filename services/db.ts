@@ -97,24 +97,23 @@ const FS_ROOT = "MKS";
 const FS_ORG = "g892bEaJyGfEq1Fa67yb";
 const FS_USERS = "users";
 
-const sanitizeForFirestore = (obj: any): any => {
+const sanitizeForFirestore = (obj: any, cache = new WeakSet()): any => {
   if (obj === undefined) return null;
   if (obj === null) return null;
   if (obj instanceof Date) return obj;
   
-  if (Array.isArray(obj)) {
-    return obj.map(sanitizeForFirestore);
-  }
-  
   if (typeof obj === 'object') {
+    if (cache.has(obj)) return null; // Circular reference found
+    cache.add(obj);
+
+    if (Array.isArray(obj)) {
+      return obj.map(item => sanitizeForFirestore(item, cache));
+    }
+    
     const newObj: any = {};
     Object.keys(obj).forEach(key => {
       const val = obj[key];
-      if (val === undefined) {
-        newObj[key] = null;
-      } else {
-        newObj[key] = sanitizeForFirestore(val);
-      }
+      newObj[key] = sanitizeForFirestore(val, cache);
     });
     return newObj;
   }
@@ -219,18 +218,88 @@ const backgroundDelete = async (collectionName: string, id: string) => {
     .catch(err => console.warn(`Background delete failed for ${collectionName}:`, err));
 };
 
-export const dbService = {
+let isActionBlocked = false;
+let onActionBlocked: (() => void) | null = null;
+
+export const setActionBlocked = (blocked: boolean) => {
+  isActionBlocked = blocked;
+};
+
+export const setActionBlockedCallback = (cb: () => void) => {
+  onActionBlocked = cb;
+};
+
+const requireAdmin = async () => {
+  const user = auth.currentUser;
+  if (!user) throw new Error('Not authenticated');
+  if (user.email === 'nayiffirat@gmail.com') return true;
+  
+  const snap = await getDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, user.uid));
+  if (snap.exists()) {
+    const profile = snap.data() as UserProfile;
+    if (profile.role === 'admin') return true;
+  }
+  throw new Error('Unauthorized: Admin access required');
+};
+
+const dbServiceObj = {
   async getUserProfile(uid: string): Promise<UserProfile | null> {
     const local = localStorage.getItem('mks_user_profile');
-    if (local) return JSON.parse(local);
+    if (local) {
+      const parsed = JSON.parse(local);
+      if (parsed.subscriptionStatus) return parsed;
+    }
 
     if (navigator.onLine) {
         try {
             const snap = await getDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid));
             if (snap.exists()) {
                 const profile = snap.data() as UserProfile;
+                
+                // Initialize subscription if missing
+                if (!profile.subscriptionStatus) {
+                  const email = auth.currentUser?.email;
+                  const isAdmin = email === 'nayiffirat@gmail.com';
+                  
+                  profile.role = isAdmin ? 'admin' : 'user';
+                  profile.subscriptionStatus = isAdmin ? 'active' : 'trial';
+                  
+                  const endDate = new Date();
+                  if (isAdmin) {
+                    endDate.setFullYear(2099);
+                  } else {
+                    endDate.setDate(endDate.getDate() + 14); // 14 days trial
+                  }
+                  profile.subscriptionEndsAt = endDate.toISOString();
+                  
+                  await this.saveUserProfile(uid, profile);
+                }
+                
                 localStorage.setItem('mks_user_profile', safeStringify(profile));
                 return profile;
+            } else {
+                // New user profile creation
+                const email = auth.currentUser?.email;
+                const isAdmin = email === 'nayiffirat@gmail.com';
+                
+                const endDate = new Date();
+                if (isAdmin) {
+                  endDate.setFullYear(2099);
+                } else {
+                  endDate.setDate(endDate.getDate() + 14); // 14 days trial
+                }
+
+                const newProfile: UserProfile = {
+                  fullName: auth.currentUser?.displayName || '',
+                  phoneNumber: '',
+                  companyName: '',
+                  title: 'Ziraat Mühendisi',
+                  role: isAdmin ? 'admin' : 'user',
+                  subscriptionStatus: isAdmin ? 'active' : 'trial',
+                  subscriptionEndsAt: endDate.toISOString()
+                };
+                await this.saveUserProfile(uid, newProfile);
+                return newProfile;
             }
         } catch (e) {}
     }
@@ -240,9 +309,63 @@ export const dbService = {
   async saveUserProfile(uid: string, profile: UserProfile) {
     localStorage.setItem('mks_user_profile', safeStringify(profile));
     if (navigator.onLine) {
-        const cleanProfile = sanitizeForFirestore({ ...profile, lastUpdate: new Date().toISOString() });
-        setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid), cleanProfile, { merge: true })
-            .catch(() => {});
+        try {
+            const profileToSave = { ...profile };
+            // Prevent privilege escalation
+            const user = auth.currentUser;
+            const isRootAdmin = user?.email === 'nayiffirat@gmail.com';
+            
+            if (!isRootAdmin) {
+                const snap = await getDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid));
+                if (snap.exists()) {
+                    const existingProfile = snap.data() as UserProfile;
+                    // Preserve sensitive fields
+                    profileToSave.role = existingProfile.role;
+                    profileToSave.subscriptionStatus = existingProfile.subscriptionStatus;
+                    profileToSave.subscriptionEndsAt = existingProfile.subscriptionEndsAt;
+                }
+            }
+
+            const cleanProfile = sanitizeForFirestore({ ...profileToSave, lastUpdate: new Date().toISOString() });
+            await setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid), cleanProfile, { merge: true });
+        } catch (error) {
+            console.error("Error saving user profile:", error);
+        }
+    }
+  },
+
+  // --- ADMIN FUNCTIONS ---
+  async getAllUsers(): Promise<(UserProfile & { uid: string, email?: string })[]> {
+    if (!navigator.onLine) return [];
+    try {
+      await requireAdmin();
+      const snap = await getDocs(collection(firestore, FS_ROOT, FS_ORG, FS_USERS));
+      return snap.docs.map(d => ({ ...d.data() as UserProfile, uid: d.id }));
+    } catch (error) {
+      console.error("Error fetching all users:", error);
+      return [];
+    }
+  },
+
+  async updateUserSubscription(uid: string, updates: Partial<UserProfile>) {
+    if (!navigator.onLine) return;
+    try {
+      await requireAdmin();
+      await setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid), sanitizeForFirestore(updates), { merge: true });
+    } catch (error) {
+      console.error("Error updating user subscription:", error);
+      throw error;
+    }
+  },
+
+  async deleteUser(uid: string) {
+    if (!navigator.onLine) return;
+    try {
+      await requireAdmin();
+      await deleteDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid));
+    } catch (error) {
+      console.error("Error deleting user profile:", error);
+      throw error;
     }
   },
 
@@ -778,6 +901,19 @@ export const dbService = {
     return purchase.id;
   },
 
+  async updateSupplierPurchase(purchase: SupplierPurchase) {
+    const db = await initDB();
+    await db.put('supplierPurchases', purchase);
+    backgroundSync('supplierPurchases', purchase);
+    return purchase.id;
+  },
+
+  async deleteSupplierPurchase(id: string) {
+    const db = await initDB();
+    await db.delete('supplierPurchases', id);
+    backgroundDelete('supplierPurchases', id);
+  },
+
   async getSupplierPayments(supplierId: string) {
     const db = await initDB();
     return db.getAllFromIndex('supplierPayments', 'by-supplier', supplierId);
@@ -788,6 +924,12 @@ export const dbService = {
     await db.put('supplierPayments', payment);
     backgroundSync('supplierPayments', payment);
     return payment.id;
+  },
+
+  async deleteSupplierPayment(id: string) {
+    const db = await initDB();
+    await db.delete('supplierPayments', id);
+    backgroundDelete('supplierPayments', id);
   },
 
   async getMyPayments() {
@@ -853,12 +995,7 @@ export const dbService = {
       };
       
       await debtStore.put(turnoverEntry);
-      
-      // Sync to Firestore (optional, but good for consistency)
-      const user = auth.currentUser;
-      if (user) {
-        await setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, user.uid, 'manualDebts', turnoverEntry.id), sanitizeForFirestore(turnoverEntry));
-      }
+      backgroundSync('manualDebts', turnoverEntry);
     }
     
     const log: TurnoverLog = {
@@ -869,9 +1006,7 @@ export const dbService = {
     };
     
     await logStore.put(log);
-    if (auth.currentUser) {
-      await setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, auth.currentUser.uid, 'turnoverLogs', log.id), sanitizeForFirestore(log));
-    }
+    backgroundSync('turnoverLogs', log);
     
     await tx.done;
   },
@@ -891,9 +1026,7 @@ export const dbService = {
     };
     
     await logStore.put(log);
-    if (auth.currentUser) {
-      await setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, auth.currentUser.uid, 'turnoverLogs', log.id), sanitizeForFirestore(log));
-    }
+    backgroundSync('turnoverLogs', log);
     
     await tx.done;
   },
@@ -990,11 +1123,23 @@ export const dbService = {
    * Gerçek zamanlı senkronizasyon için Firestore dinleyicilerini kurar.
    * Diğer cihazlardan gelen değişiklikleri yerel veritabanına yansıtır.
    */
-  setupRealtimeSync(uid: string, onSync: () => void) {
+  setupRealtimeSync(uid: string, onSync: () => void, onProfileSync?: (profile: UserProfile) => void) {
     const userPath = [FS_ROOT, FS_ORG, FS_USERS, uid].join("/");
     const collections = ["farmers", "notifications", "visits", "prescriptions", "reminders", "inventory", "payments", "manualDebts", "suppliers", "supplierPurchases", "supplierPayments", "myPayments", "expenses", "accounts", "transactions"] as const;
     
     const unsubscribes: (() => void)[] = [];
+
+    // Profile listener
+    if (onProfileSync) {
+      const profileRef = doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid);
+      const profileUnsub = onSnapshot(profileRef, (snapshot) => {
+        if (snapshot.exists() && !snapshot.metadata.hasPendingWrites) {
+          const profileData = snapshot.data() as UserProfile;
+          onProfileSync(profileData);
+        }
+      });
+      unsubscribes.push(profileUnsub);
+    }
 
     collections.forEach(col => {
       const q = collection(firestore, userPath, col);
@@ -1028,3 +1173,32 @@ export const dbService = {
     return () => unsubscribes.forEach(unsub => unsub());
   }
 };
+
+export const dbService = new Proxy(dbServiceObj, {
+  get(target, prop) {
+    const value = target[prop as keyof typeof target];
+    if (typeof value === 'function') {
+      const propStr = prop.toString();
+      const isMutating = (propStr.startsWith('add') || 
+                         propStr.startsWith('update') || 
+                         propStr.startsWith('delete') || 
+                         propStr.startsWith('save') ||
+                         propStr.startsWith('process') ||
+                         propStr.startsWith('revert') ||
+                         propStr.startsWith('perform')) && 
+                         propStr !== 'clearLocalUserData' &&
+                         propStr !== 'cleanupOldNotifications';
+                         
+      if (isMutating) {
+        return async (...args: any[]) => {
+          if (isActionBlocked) {
+            if (onActionBlocked) onActionBlocked();
+            throw new Error('SUBSCRIPTION_EXPIRED');
+          }
+          return value.apply(target, args);
+        };
+      }
+    }
+    return value;
+  }
+});

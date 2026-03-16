@@ -4,8 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { dbService } from '../services/db';
 import { Farmer, Pesticide, Prescription, PesticideCategory, VisitLog, AppNotification } from '../types';
 import { useAppViewModel } from '../context/AppContext';
-import { GeminiService } from '../services/gemini';
-import { Check, Plus, Trash2, FileOutput, Share2, FileText, Calendar, MapPin, X, User, Loader2, Search, FlaskConical, MessageCircle, Edit2, AlertCircle, ArrowLeft, Printer, Package, Download, MessageSquare, RefreshCw, Mic, MicOff, Sparkles, Waves } from 'lucide-react';
+import { Check, Plus, Trash2, FileOutput, Share2, FileText, Calendar, MapPin, X, User, Loader2, Search, FlaskConical, MessageCircle, Edit2, AlertCircle, ArrowLeft, Printer, Package, Download, MessageSquare, RefreshCw } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 
@@ -96,195 +95,9 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     const [filterMode, setFilterMode] = useState<'ALL' | 'PROCESSED' | 'UNPROCESSED'>('ALL');
     const [isProcessingPdf, setIsProcessingPdf] = useState(false);
     const [isSyncing, setIsSyncing] = useState(false);
-    const [isListening, setIsListening] = useState(false);
-    const [isParsingVoice, setIsParsingVoice] = useState(false);
-    const [voiceTranscript, setVoiceTranscript] = useState('');
-    const [prescriptionListeningTime, setPrescriptionListeningTime] = useState(0);
     const receiptRef = useRef<HTMLDivElement>(null);
-    const prescriptionTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-    const startFullVoicePrescription = () => {
-        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-        if (!SpeechRecognition) {
-            showToast('Tarayıcınız sesli girişi desteklemiyor.', 'error');
-            return;
-        }
 
-        const recognition = new SpeechRecognition();
-        recognition.lang = 'tr-TR';
-        recognition.interimResults = true;
-        recognition.continuous = true;
-        recognition.maxAlternatives = 1;
-
-        const transcriptRef = { current: '' };
-        let silenceTimer: NodeJS.Timeout | null = null;
-
-        const stopRecognition = () => {
-            if (silenceTimer) clearTimeout(silenceTimer);
-            if (prescriptionTimerRef.current) clearInterval(prescriptionTimerRef.current);
-            try {
-                recognition.stop();
-            } catch (e) {}
-            setIsListening(false);
-            setPrescriptionListeningTime(0);
-        };
-
-        recognition.onstart = () => {
-            setIsListening(true);
-            setVoiceTranscript('');
-            transcriptRef.current = '';
-            hapticFeedback('light');
-            showToast('Reçete bilgilerini söyleyin...', 'info');
-            
-            setPrescriptionListeningTime(10);
-            prescriptionTimerRef.current = setInterval(() => {
-                setPrescriptionListeningTime(prev => {
-                    if (prev <= 1) {
-                        if (prescriptionTimerRef.current) clearInterval(prescriptionTimerRef.current);
-                        return 0;
-                    }
-                    return prev - 1;
-                });
-            }, 1000);
-
-            // Auto-stop after 12 seconds total (giving a bit of buffer)
-            silenceTimer = setTimeout(() => {
-                stopRecognition();
-            }, 12000);
-        };
-
-        recognition.onresult = (event: any) => {
-            let interimTranscript = '';
-            let currentFinal = '';
-            for (let i = event.resultIndex; i < event.results.length; ++i) {
-                if (event.results[i].isFinal) {
-                    currentFinal += event.results[i][0].transcript;
-                } else {
-                    interimTranscript += event.results[i][0].transcript;
-                }
-            }
-            
-            transcriptRef.current += currentFinal;
-            setVoiceTranscript(transcriptRef.current + interimTranscript);
-        };
-
-        recognition.onend = async () => {
-            setIsListening(false);
-            setPrescriptionListeningTime(0);
-            if (silenceTimer) clearTimeout(silenceTimer);
-            if (prescriptionTimerRef.current) clearInterval(prescriptionTimerRef.current);
-            
-            // Use transcriptRef directly to avoid closure issues with state
-            // Also include any remaining interim transcript if possible, though onend usually means it's final
-            const transcriptToParse = (transcriptRef.current || voiceTranscript).trim();
-            
-            if (!transcriptToParse) {
-                setIsParsingVoice(false);
-                return;
-            }
-
-            setIsParsingVoice(true);
-            hapticFeedback('medium');
-            
-            try {
-                const parsedData = await GeminiService.parsePrescriptionFromVoice(transcriptToParse);
-                
-                if (parsedData) {
-                    // Try to match farmer
-                    if (parsedData.farmerName) {
-                        const matchedFarmer = farmers.find(f => 
-                            f.fullName.toLowerCase().includes(parsedData.farmerName.toLowerCase())
-                        );
-                        if (matchedFarmer) setSelectedFarmer(matchedFarmer);
-                    }
-
-                    // Map items
-                    const newItems: any[] = [];
-                    if (parsedData.items && Array.isArray(parsedData.items)) {
-                        for (const item of parsedData.items) {
-                            const matchedPesticide = pesticides.find(p => 
-                                p.name.toLowerCase().includes(item.pesticideName.toLowerCase())
-                            );
-                            
-                            if (matchedPesticide) {
-                                const inventoryItem = contextInventory.find(inv => inv.pesticideId === matchedPesticide.id);
-                                const sellingPrice = inventoryItem ? inventoryItem.sellingPrice : 0;
-                                const qty = 1;
-
-                                newItems.push({
-                                    pesticide: matchedPesticide,
-                                    dosage: item.dosage || matchedPesticide.defaultDosage,
-                                    quantity: qty.toString(),
-                                    unitPrice: sellingPrice ? sellingPrice.toString() : '',
-                                    totalPrice: qty * sellingPrice
-                                });
-                            }
-                        }
-                    }
-
-                    if (newItems.length > 0) {
-                        setSelectedItems(newItems);
-                        setStep(2);
-                        showToast('Reçete başarıyla analiz edildi.', 'success');
-                    } else {
-                        showToast('İlaçlar kütüphanede bulunamadı.', 'info');
-                    }
-                }
-            } catch (error) {
-                console.error("Voice parse error:", error);
-                showToast('Ses analizi başarısız oldu.', 'error');
-            } finally {
-                setIsParsingVoice(false);
-            }
-        };
-
-        recognition.onerror = (event: any) => {
-            console.error('Speech recognition error:', event.error);
-            setIsListening(false);
-        };
-
-        recognition.start();
-    };
-
-    const startVoiceInput = () => {
-        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-        if (!SpeechRecognition) {
-            showToast('Tarayıcınız sesli girişi desteklemiyor.', 'error');
-            return;
-        }
-
-        const recognition = new SpeechRecognition();
-        recognition.lang = 'tr-TR';
-        recognition.interimResults = true;
-        recognition.continuous = false;
-        recognition.maxAlternatives = 1;
-
-        recognition.onstart = () => {
-            setIsListening(true);
-            hapticFeedback('light');
-        };
-
-        recognition.onresult = (event: any) => {
-            const transcript = event.results[0][0].transcript;
-            setPesticideSearchTerm(transcript);
-            if (event.results[0].isFinal) {
-                hapticFeedback('medium');
-                setIsListening(false);
-                recognition.stop();
-            }
-        };
-
-        recognition.onerror = (event: any) => {
-            console.error('Speech recognition error:', event.error);
-            setIsListening(false);
-        };
-
-        recognition.onend = () => {
-            setIsListening(false);
-        };
-
-        recognition.start();
-    };
 
     useEffect(() => {
         loadData();
@@ -520,7 +333,8 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                 fieldId: selectedFieldId || undefined,
                 engineerName: userProfile.fullName || original.engineerName,
                 items: items,
-                totalAmount: totalAmount > 0 ? totalAmount : undefined
+                totalAmount: totalAmount > 0 ? totalAmount : undefined,
+                isInventoryProcessed: false // Reset this so it can be re-processed
             };
 
             await dbService.updatePrescription(updatedPrescription);
@@ -587,13 +401,30 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         text += `Sayın *${targetFarmer.fullName}*,\n\n`;
         text += `Tarih: ${new Date(targetPrescription.date).toLocaleDateString('tr-TR')}\n`;
         text += `Reçete No: ${targetPrescription.prescriptionNo}\n\n`;
-        text += `*Kullanılacak İlaçlar:*\n`;
         
-        targetPrescription.items.forEach(item => {
-            text += `- ${item.pesticideName}: *${item.dosage}*`;
-            if (item.quantity) text += ` (${item.quantity} Adet)`;
-            text += `\n`;
-        });
+        const hasPrices = targetPrescription.items.some(item => item.unitPrice && item.unitPrice > 0);
+
+        if (hasPrices) {
+            text += `*Ürün Listesi:*\n`;
+            targetPrescription.items.forEach(item => {
+                const qty = item.quantity || '1';
+                const price = item.unitPrice || 0;
+                const total = item.totalPrice || (parseFloat(qty) * price) || 0;
+                
+                text += `- ${item.pesticideName}: ${qty} Adet x ${price.toLocaleString('tr-TR')} TL = *${total.toLocaleString('tr-TR')} TL*\n`;
+            });
+            
+            if (targetPrescription.totalAmount) {
+                text += `\n*GENEL TOPLAM: ${targetPrescription.totalAmount.toLocaleString('tr-TR')} TL*\n`;
+            }
+        } else {
+            text += `*Kullanılacak İlaçlar:*\n`;
+            targetPrescription.items.forEach(item => {
+                text += `- ${item.pesticideName}: *${item.dosage}*`;
+                if (item.quantity) text += ` (${item.quantity} Adet)`;
+                text += `\n`;
+            });
+        }
         
         text += `\nGeçmiş olsun.\n${targetPrescription.engineerName}`;
         
@@ -672,9 +503,8 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         f.village.toLowerCase().includes(farmerSearchTerm.toLowerCase())
     );
 
-    const filteredPesticides = pesticides.filter(p => 
-        p.name.toLowerCase().includes(pesticideSearchTerm.toLowerCase()) ||
-        p.activeIngredient.toLowerCase().includes(pesticideSearchTerm.toLowerCase())
+    const filteredInventoryItems = contextInventory.filter(inv => 
+        inv.pesticideName.toLowerCase().includes(pesticideSearchTerm.toLowerCase())
     );
 
     const filteredPrescriptions = contextPrescriptions.filter(p => {
@@ -782,7 +612,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                         </button>
                     </div>
 
-                    <div className="space-y-5">
+                    <div className="space-y-3">
                         {filteredPrescriptions.length === 0 ? (
                             <div className="text-center py-24 text-stone-600 border-2 border-dashed border-stone-800/50 rounded-[2.5rem] mx-1">
                                 <div className="w-16 h-16 bg-stone-900/50 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-white/5">
@@ -800,52 +630,52 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                     <div 
                                         key={p.id} 
                                         onClick={() => handleViewDetail(p)}
-                                        className="bg-stone-900/80 backdrop-blur-xl p-5 rounded-[2rem] shadow-xl border border-white/10 hover:border-emerald-500/30 transition-all relative overflow-hidden group cursor-pointer active:scale-[0.98]"
+                                        className="bg-stone-900/80 backdrop-blur-xl p-3 rounded-2xl shadow-xl border border-white/10 hover:border-emerald-500/30 transition-all relative overflow-hidden group cursor-pointer active:scale-[0.98]"
                                     >
-                                        <div className="flex justify-between items-start mb-4">
-                                            <div className="flex items-center space-x-4">
-                                                <div className="w-12 h-12 rounded-2xl bg-blue-900/20 text-blue-400 flex items-center justify-center font-bold border border-blue-500/20 shadow-inner">
-                                                    <FileText size={24} />
+                                        <div className="flex justify-between items-start mb-2">
+                                            <div className="flex items-center space-x-3">
+                                                <div className="w-8 h-8 rounded-lg bg-blue-900/20 text-blue-400 flex items-center justify-center font-bold border border-blue-500/20 shadow-inner shrink-0">
+                                                    <FileText size={16} />
                                                 </div>
                                                 <div className="min-w-0">
-                                                    <h3 className="font-black text-stone-100 text-lg leading-tight truncate tracking-tight">{farmer?.fullName || 'Bilinmeyen Çiftçi'}</h3>
-                                                    <p className="text-[10px] text-stone-500 font-black uppercase tracking-widest mt-1">{p.prescriptionNo}</p>
+                                                    <h3 className="font-black text-stone-100 text-sm leading-tight truncate tracking-tight">{farmer?.fullName || 'Bilinmeyen Çiftçi'}</h3>
+                                                    <p className="text-[8px] text-stone-500 font-black uppercase tracking-widest mt-0.5">{p.prescriptionNo}</p>
                                                 </div>
                                             </div>
-                                            <div className="flex flex-col items-end gap-2.5">
-                                                <div className="flex items-center gap-2">
+                                            <div className="flex flex-col items-end gap-1.5 shrink-0 ml-2">
+                                                <div className="flex items-center gap-1.5">
                                                     {p.totalAmount && p.totalAmount > 0 && (
-                                                        <span className="text-[11px] font-black text-emerald-400 font-mono bg-emerald-950/50 px-2.5 py-1 rounded-lg border border-emerald-500/20 shadow-sm">
+                                                        <span className="text-[9px] font-black text-emerald-400 font-mono bg-emerald-950/50 px-1.5 py-0.5 rounded border border-emerald-500/20 shadow-sm">
                                                             {p.totalAmount.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ₺
                                                         </span>
                                                     )}
-                                                    <span className="text-[10px] font-black text-stone-400 flex items-center bg-stone-950/50 px-2.5 py-1 rounded-lg border border-white/5 shadow-sm uppercase tracking-widest">
-                                                        <Calendar size={11} className="mr-1.5" />
+                                                    <span className="text-[8px] font-black text-stone-400 flex items-center bg-stone-950/50 px-1.5 py-0.5 rounded border border-white/5 shadow-sm uppercase tracking-widest">
+                                                        <Calendar size={8} className="mr-1" />
                                                         {dateObj.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })}
                                                     </span>
                                                 </div>
                                                 <button 
                                                     type="button"
                                                     onClick={(e) => toggleProcessed(e, p)}
-                                                    className={`w-11 h-11 rounded-2xl flex items-center justify-center transition-all border-2 active:scale-90 relative z-30 shadow-lg ${
+                                                    className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all border-2 active:scale-90 relative z-30 shadow-lg ${
                                                         p.isProcessed 
                                                         ? 'bg-blue-600/10 border-blue-500/30 text-blue-400' 
                                                         : 'bg-rose-600/10 border-rose-500/30 text-rose-400'
                                                     }`}
                                                 >
-                                                    {p.isProcessed ? <Check size={22} strokeWidth={3} /> : <X size={22} strokeWidth={3} />}
+                                                    {p.isProcessed ? <Check size={14} strokeWidth={3} /> : <X size={14} strokeWidth={3} />}
                                                 </button>
                                             </div>
                                         </div>
-                                        <div className="pl-16 mt-1">
-                                            <div className="flex flex-wrap gap-2">
+                                        <div className="pl-11 mt-1">
+                                            <div className="flex flex-wrap gap-1">
                                                 {p.items.slice(0, 3).map((item, idx) => (
-                                                    <span key={idx} className="text-[9px] font-black uppercase tracking-widest bg-stone-950/50 text-stone-500 px-3 py-1.5 rounded-xl border border-white/5">
+                                                    <span key={idx} className="text-[7px] font-black uppercase tracking-widest bg-stone-950/50 text-stone-500 px-1.5 py-0.5 rounded border border-white/5">
                                                         {item.pesticideName} {item.quantity && `(x${item.quantity})`}
                                                     </span>
                                                 ))}
                                                 {p.items.length > 3 && (
-                                                    <span className="text-[9px] font-black uppercase tracking-widest bg-stone-950/50 text-stone-600 px-3 py-1.5 rounded-xl border border-white/5">
+                                                    <span className="text-[7px] font-black uppercase tracking-widest bg-stone-950/50 text-stone-600 px-1.5 py-0.5 rounded border border-white/5">
                                                         +{p.items.length - 3}
                                                     </span>
                                                 )}
@@ -993,8 +823,8 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
 
                     <div className="mt-12 pt-6 border-t-2 border-dashed border-stone-100 flex justify-between items-end">
                         <div className="text-[10px] text-stone-400 leading-relaxed">
-                            Bu belge dijital asistan tarafından<br/>
-                            mühendis onayıyla oluşturulmuştur.<br/>
+                            Bu belge Mühendis Kayıt Sistemi<br/>
+                            tarafından oluşturulmuştur.<br/>
                             <strong>Mühendis Kayıt Sistemi v3.1.2</strong>
                         </div>
                         <div className="text-center">
@@ -1133,8 +963,8 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
 
                     <div className="mt-12 pt-6 border-t-2 border-dashed border-stone-100 flex justify-between items-end">
                         <div className="text-[10px] text-stone-400 leading-relaxed">
-                            Bu belge dijital asistan tarafından<br/>
-                            mühendis onayıyla oluşturulmuştur.<br/>
+                            Bu belge Mühendis Kayıt Sistemi<br/>
+                            tarafından oluşturulmuştur.<br/>
                             <strong>Mühendis Kayıt Sistemi v3.1.2</strong>
                         </div>
                         <div className="text-center">
@@ -1198,33 +1028,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                         <h2 className="text-2xl font-bold text-stone-100">
                             {editingId ? 'Reçete Düzenle: Çiftçi' : 'Çiftçi Seçimi'}
                         </h2>
-                        <button 
-                            onClick={startFullVoicePrescription}
-                            disabled={isParsingVoice}
-                            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                                isListening 
-                                ? 'bg-rose-600 text-white animate-pulse' 
-                                : 'bg-amber-600/20 text-amber-500 border border-amber-500/30 hover:bg-amber-600 hover:text-white'
-                            }`}
-                        >
-                            {isParsingVoice ? (
-                                <Loader2 size={14} className="animate-spin" />
-                            ) : (
-                                <Sparkles size={14} />
-                            )}
-                            {isListening ? (prescriptionListeningTime > 0 ? `Dinleniyor (${prescriptionListeningTime}s)` : 'Dinleniyor...') : (isParsingVoice ? 'Analiz Ediliyor...' : 'Sesle Reçete Oluştur')}
-                        </button>
                     </div>
-
-                    {isListening && voiceTranscript && (
-                        <div className="mb-4 p-4 bg-emerald-900/20 border border-emerald-500/30 rounded-2xl animate-in fade-in slide-in-from-top-2 duration-300">
-                            <div className="flex items-center gap-2 mb-2">
-                                <Waves size={14} className="text-emerald-500 animate-pulse" />
-                                <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">Canlı Döküm</span>
-                            </div>
-                            <p className="text-stone-300 text-sm italic">"{voiceTranscript}"</p>
-                        </div>
-                    )}
                     
                     <div className="bg-stone-900 rounded-2xl shadow-sm border border-white/5 flex items-center p-1 mb-4">
                         <Search className="text-stone-500 ml-3" size={18} />
@@ -1336,12 +1140,6 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                             value={pesticideSearchTerm}
                             onChange={e => setPesticideSearchTerm(e.target.value)}
                         />
-                        <button 
-                            onClick={startVoiceInput}
-                            className={`p-2 rounded-xl transition-all mr-1 ${isListening ? 'bg-rose-500 text-white animate-pulse' : 'text-stone-500 hover:text-emerald-400 hover:bg-stone-800'}`}
-                        >
-                            {isListening ? <MicOff size={18} /> : <Mic size={18} />}
-                        </button>
                         {pesticideSearchTerm && (
                             <button onClick={() => setPesticideSearchTerm('')} className="p-2 text-stone-500 hover:text-stone-300">
                                 <X size={16} />
@@ -1350,14 +1148,23 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                     </div>
 
                     <div className="mb-8">
-                        <label className="text-xs font-bold text-stone-500 mb-3 block uppercase tracking-widest">Kütüphaneden Seç</label>
+                        <label className="text-xs font-bold text-stone-500 mb-3 block uppercase tracking-widest">Depodan Seç</label>
                         <div className="grid grid-cols-1 gap-2 max-h-[300px] overflow-y-auto pr-2 no-scrollbar">
-                            {filteredPesticides.length > 0 ? (
-                                filteredPesticides.map(p => {
+                            {filteredInventoryItems.length > 0 ? (
+                                filteredInventoryItems.map(inv => {
+                                    const p = pesticides.find(pest => pest.id === inv.pesticideId) || {
+                                        id: inv.pesticideId,
+                                        name: inv.pesticideName,
+                                        activeIngredient: 'Bilinmiyor',
+                                        defaultDosage: '100ml/100L',
+                                        category: inv.category,
+                                        description: 'Depo ürünü'
+                                    } as Pesticide;
+                                    
                                     const isSelected = selectedItems.some(i => i.pesticide.id === p.id);
                                     return (
                                         <button 
-                                            key={p.id}
+                                            key={inv.id}
                                             onClick={() => !isSelected && addItem(p)}
                                             disabled={isSelected}
                                             className={`w-full text-left p-3 rounded-xl border transition-all flex justify-between items-center ${
@@ -1368,11 +1175,11 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                         >
                                             <div className="flex items-center space-x-3">
                                                 <div className="p-2 bg-stone-800 rounded-lg text-stone-400 group-hover:text-emerald-400">
-                                                    <FlaskConical size={16} />
+                                                    <Package size={16} />
                                                 </div>
                                                 <div>
-                                                    <span className="font-bold text-stone-200 block text-sm">{p.name}</span>
-                                                    <span className="text-[10px] text-stone-500 font-mono">{p.activeIngredient}</span>
+                                                    <span className="font-bold text-stone-200 block text-sm">{inv.pesticideName}</span>
+                                                    <span className="text-[10px] text-stone-500 font-mono">Stok: {inv.quantity} {inv.unit} | Fiyat: {inv.sellingPrice} ₺</span>
                                                 </div>
                                             </div>
                                             {isSelected ? (
@@ -1385,7 +1192,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                 })
                             ) : (
                                 <div className="text-center py-6 text-stone-600 border border-dashed border-stone-800 rounded-xl">
-                                    <p className="text-xs">Uygun ilaç bulunamadı.</p>
+                                    <p className="text-xs">Depoda uygun ilaç bulunamadı.</p>
                                 </div>
                             )}
                         </div>

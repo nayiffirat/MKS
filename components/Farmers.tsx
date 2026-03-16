@@ -6,15 +6,18 @@ import { useAuth } from '../context/AuthContext';
 import { ContactService, ContactInfo } from '../services/contact';
 import { Farmer, VisitLog, Prescription, ManualDebt } from '../types';
 import { COMMON_CROPS } from '../constants';
-import { Search, Phone, MessageCircle, MapPin, Wheat, ChevronLeft, ChevronRight, Contact, Loader2, User, Ruler, FileText, Calendar, Navigation, Plus, X, ArrowLeft, Edit2, Trash2, CheckSquare, Square, Check, FlaskConical, Clock, ImageIcon, Sparkles, Upload, AlertCircle, MessageSquare, Share2, Save, Download, FileJson, RefreshCw, Wallet, History, CreditCard, TrendingDown, TrendingUp as TrendingUpIcon, Send, Copy } from 'lucide-react';
+import { Search, Phone, MessageCircle, MapPin, Wheat, ChevronLeft, ChevronRight, Contact, Loader2, User, Ruler, FileText, Calendar, Navigation, Plus, X, ArrowLeft, Edit2, Trash2, CheckSquare, Square, Check, FlaskConical, Clock, ImageIcon, Upload, AlertCircle, MessageSquare, Share2, Save, Download, FileJson, RefreshCw, Wallet, History, CreditCard, TrendingDown, TrendingUp as TrendingUpIcon, Send, Copy } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
+import 'jspdf-autotable';
 
 interface FarmersProps {
   onBack: () => void;
   onNavigateToPrescription: (farmerId: string) => void;
   onEditPrescription: (prescriptionId: string) => void;
   onEditVisit: (visitId: string) => void;
+  selectedFarmerId?: string | null;
+  onSelectFarmer?: (id: string | null) => void;
 }
 
 interface TempContact {
@@ -177,11 +180,25 @@ const FarmerModal: React.FC<FarmerModalProps> = ({ isOpen, onClose, mode, isSavi
     );
 };
 
-export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescription, onEditPrescription, onEditVisit }) => {
+export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescription, onEditPrescription, onEditVisit, selectedFarmerId, onSelectFarmer }) => {
   const { currentUser } = useAuth();
+  const { accounts, addPayment, deletePayment: removePayment, addManualDebt, deleteManualDebt, payments, prescriptions, manualDebts, bulkAddFarmers, addFarmer, updateFarmer, deleteFarmer, userProfile, updateUserProfile, updateVisit, deleteVisit, showToast, hapticFeedback } = useAppViewModel();
   const [farmers, setFarmers] = useState<Farmer[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedFarmer, setSelectedFarmer] = useState<Farmer | null>(null);
+
+  // Sync with prop
+  useEffect(() => {
+    if (selectedFarmerId) {
+      const target = farmers.find(f => f.id === selectedFarmerId);
+      if (target) {
+        setSelectedFarmer(target);
+        setActiveTab('DEBT');
+      }
+    } else {
+      setSelectedFarmer(null);
+    }
+  }, [selectedFarmerId, farmers]);
 
   // Sub-navigation sync
   useEffect(() => {
@@ -190,28 +207,45 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       if (state?.view === 'FARMERS') {
         if (state.farmerId) {
           const target = farmers.find(f => f.id === state.farmerId);
-          if (target) setSelectedFarmer(target);
+          if (target) {
+            if (onSelectFarmer) onSelectFarmer(target.id);
+            else setSelectedFarmer(target);
+          }
         } else {
-          setSelectedFarmer(null);
+          if (onSelectFarmer) onSelectFarmer(null);
+          else setSelectedFarmer(null);
         }
       }
     };
     window.addEventListener('popstate', handlePop);
     return () => window.removeEventListener('popstate', handlePop);
-  }, [farmers]);
+  }, [farmers, onSelectFarmer]);
 
   const changeFarmerSelection = (farmer: Farmer | null) => {
     if (farmer === selectedFarmer) return;
 
+    setSelectedPrescription(null);
     if (!farmer) {
-      if (window.history.state?.farmerId) {
-        window.history.back();
+      if (onSelectFarmer) {
+        onSelectFarmer(null);
       } else {
         setSelectedFarmer(null);
       }
+      
+      if (window.history.state?.farmerId) {
+        window.history.back();
+      }
     } else {
-      window.history.pushState({ ...window.history.state, farmerId: farmer.id }, '');
-      setSelectedFarmer(farmer);
+      setActiveTab('DEBT');
+      if (!window.history.state?.farmerId) {
+        window.history.pushState({ ...window.history.state, farmerId: farmer.id }, '');
+      }
+      
+      if (onSelectFarmer) {
+        onSelectFarmer(farmer.id);
+      } else {
+        setSelectedFarmer(farmer);
+      }
     }
   };
   const [isImporting, setIsImporting] = useState(false);
@@ -219,9 +253,17 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   
   // Specific Data for Selected Farmer
   const [farmerVisits, setFarmerVisits] = useState<VisitLog[]>([]);
-  const [farmerPrescriptions, setFarmerPrescriptions] = useState<Prescription[]>([]);
-  const [farmerManualDebts, setFarmerManualDebts] = useState<ManualDebt[]>([]);
   const [isDataLoading, setIsDataLoading] = useState(false);
+
+  const farmerPrescriptions = useMemo(() => 
+    prescriptions.filter(p => p.farmerId === selectedFarmer?.id)
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+  [prescriptions, selectedFarmer]);
+
+  const farmerManualDebts = useMemo(() => 
+    manualDebts.filter(d => d.farmerId === selectedFarmer?.id)
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+  [manualDebts, selectedFarmer]);
 
   // Prescription Detail & Sharing
   const [selectedPrescription, setSelectedPrescription] = useState<Prescription | null>(null);
@@ -261,6 +303,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const [isManualDebtModalOpen, setIsManualDebtModalOpen] = useState(false);
   const [debtAmount, setDebtAmount] = useState('');
   const [debtNote, setDebtNote] = useState('');
+  const [debtDate, setDebtDate] = useState(new Date().toISOString().split('T')[0]);
   const [isSavingDebt, setIsSavingDebt] = useState(false);
 
   // Report Modal State
@@ -271,12 +314,6 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const reportRef = useRef<HTMLDivElement>(null);
-
-  // Bulk Message Modal State
-  const [isBulkMessageModalOpen, setIsBulkMessageModalOpen] = useState(false);
-  const [bulkMessage, setBulkMessage] = useState('');
-  const [bulkTargetVillage, setBulkTargetVillage] = useState('ALL');
-  const [selectedBulkFarmerIds, setSelectedBulkFarmerIds] = useState<Set<string>>(new Set());
 
   const loadFarmers = async () => {
       const list = await dbService.getFarmers();
@@ -294,20 +331,90 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
     }
   }, [selectedFarmer]);
 
+  // Set default selected year to the latest available year
+  const farmerPayments = useMemo(() => payments.filter(p => p.farmerId === selectedFarmer?.id), [payments, selectedFarmer]);
+  
+  // Calculate available years for filtering
+  const availableYears = useMemo(() => {
+      const years = new Set<number>();
+      years.add(new Date().getFullYear());
+      
+      farmerPrescriptions.forEach(p => years.add(new Date(p.date).getFullYear()));
+      farmerPayments.forEach(p => years.add(new Date(p.date).getFullYear()));
+      farmerManualDebts.forEach(d => years.add(new Date(d.date).getFullYear()));
+      
+      return Array.from(years).sort((a, b) => b - a);
+  }, [farmerPrescriptions, farmerPayments, farmerManualDebts]);
+
+  // Filter transactions by selected year
+  const filteredPrescriptions = useMemo(() => 
+      farmerPrescriptions.filter(p => new Date(p.date).getFullYear() === selectedYear),
+  [farmerPrescriptions, selectedYear]);
+
+  const filteredPayments = useMemo(() => 
+      farmerPayments.filter(p => new Date(p.date).getFullYear() === selectedYear),
+  [farmerPayments, selectedYear]);
+
+  const filteredManualDebts = useMemo(() => 
+      farmerManualDebts.filter(d => new Date(d.date).getFullYear() === selectedYear),
+  [farmerManualDebts, selectedYear]);
+
+  const openingBalance = useMemo(() => {
+      let balance = 0;
+      
+      // Sum all transactions BEFORE the selected year
+      farmerPrescriptions.forEach(p => {
+          if (new Date(p.date).getFullYear() < selectedYear) {
+              balance -= (p.totalAmount || 0);
+          }
+      });
+      
+      farmerManualDebts.forEach(d => {
+          if (new Date(d.date).getFullYear() < selectedYear && !d.id.startsWith('turnover-')) {
+              balance -= d.amount;
+          }
+      });
+      
+      farmerPayments.forEach(p => {
+          if (new Date(p.date).getFullYear() < selectedYear) {
+              balance += p.amount;
+          }
+      });
+      
+      return balance;
+  }, [farmerPrescriptions, farmerManualDebts, farmerPayments, selectedYear]);
+
+  const yearTotalPaid = useMemo(() => filteredPayments.reduce((acc, p) => acc + p.amount, 0), [filteredPayments]);
+  const yearTotalDebt = useMemo(() => 
+    filteredPrescriptions.reduce((acc, p) => acc + (p.totalAmount || 0), 0) + 
+    filteredManualDebts.filter(d => !d.id.startsWith('turnover-')).reduce((acc, d) => acc + d.amount, 0),
+  [filteredPrescriptions, filteredManualDebts]);
+
+  const yearBalance = openingBalance + yearTotalPaid - yearTotalDebt;
+
+  // Overall totals for report or general info if needed
+  const totalPaid = farmerPayments.reduce((acc, p) => acc + p.amount, 0);
+  const totalDebt = farmerPrescriptions.reduce((acc, p) => acc + (p.totalAmount || 0), 0) + farmerManualDebts.filter(d => !d.id.startsWith('turnover-')).reduce((acc, d) => acc + d.amount, 0);
+  const overallBalance = totalPaid - totalDebt;
+
+  useEffect(() => {
+    if (availableYears.length > 0) {
+        setSelectedYear(availableYears[0]);
+    }
+  }, [availableYears]);
+
   const loadFarmerDetails = async () => {
       if (!selectedFarmer) return;
       setIsDataLoading(true);
-      const [visits, prescriptions, debts] = await Promise.all([
-          dbService.getVisitsByFarmer(selectedFarmer.id),
-          dbService.getPrescriptionsByFarmer(selectedFarmer.id),
-          dbService.getManualDebtsByFarmer(selectedFarmer.id)
-      ]);
-      
-      // Sort by date descending (newest first)
-      setFarmerVisits(visits.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
-      setFarmerPrescriptions(prescriptions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
-      setFarmerManualDebts(debts.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
-      setIsDataLoading(false);
+      try {
+          const visits = await dbService.getVisitsByFarmer(selectedFarmer.id);
+          // Sort by date descending (newest first)
+          setFarmerVisits(visits.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+      } catch (error) {
+          console.error("Error loading farmer details:", error);
+      } finally {
+          setIsDataLoading(false);
+      }
   };
 
   // --- VISIT ACTIONS ---
@@ -525,8 +632,6 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       setModalMode('EDIT'); setIsModalOpen(true);
   };
 
-  const { accounts, addPayment, deletePayment: removePayment, addManualDebt, deleteManualDebt, payments, bulkAddFarmers, addFarmer, updateFarmer, deleteFarmer, userProfile, updateUserProfile, updateVisit, deleteVisit, showToast, hapticFeedback } = useAppViewModel();
-
   const handleSavePayment = async () => {
       if (!selectedFarmer || !paymentAmount) return;
       setIsSavingPayment(true);
@@ -560,7 +665,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           await addManualDebt({
               farmerId: selectedFarmer.id,
               amount: Number(debtAmount),
-              date: new Date().toISOString(),
+              date: new Date(debtDate).toISOString(),
               note: debtNote
           });
           showToast('Borç kaydedildi', 'success');
@@ -568,6 +673,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           setIsManualDebtModalOpen(false);
           setDebtAmount('');
           setDebtNote('');
+          setDebtDate(new Date().toISOString().split('T')[0]);
           await loadFarmerDetails();
       } catch (e) {
           showToast('Borç kaydedilemedi', 'error');
@@ -614,7 +720,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       text += `\n*TOPLAM DURUM:*\n`;
       text += `Toplam Alış: *${totalDebt.toLocaleString('tr-TR')} ₺*\n`;
       text += `Toplam Ödeme: *${totalPaid.toLocaleString('tr-TR')} ₺*\n`;
-      text += `*KALAN BAKİYE: ${Math.abs(balance).toLocaleString('tr-TR')} ₺ ${balance >= 0 ? 'ALACAK' : 'BORÇ'}*\n`;
+      text += `*KALAN BAKİYE: ${Math.abs(overallBalance).toLocaleString('tr-TR')} ₺ ${overallBalance >= 0 ? 'ALACAK' : 'BORÇ'}*\n`;
       
       const url = `https://wa.me/${selectedFarmer.phoneNumber.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`;
       window.open(url, '_blank');
@@ -705,63 +811,6 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       }
   };
 
-  const farmerPayments = useMemo(() => payments.filter(p => p.farmerId === selectedFarmer?.id), [payments, selectedFarmer]);
-  
-  // Calculate available years for filtering
-  const availableYears = useMemo(() => {
-      const years = new Set<number>();
-      years.add(new Date().getFullYear());
-      
-      farmerPrescriptions.forEach(p => years.add(new Date(p.date).getFullYear()));
-      farmerPayments.forEach(p => years.add(new Date(p.date).getFullYear()));
-      farmerManualDebts.forEach(d => years.add(new Date(d.date).getFullYear()));
-      
-      return Array.from(years).sort((a, b) => b - a);
-  }, [farmerPrescriptions, farmerPayments, farmerManualDebts]);
-
-  // Filter transactions by selected year
-  const filteredPrescriptions = useMemo(() => 
-      farmerPrescriptions.filter(p => new Date(p.date).getFullYear() === selectedYear),
-  [farmerPrescriptions, selectedYear]);
-
-  const filteredPayments = useMemo(() => 
-      farmerPayments.filter(p => new Date(p.date).getFullYear() === selectedYear),
-  [farmerPayments, selectedYear]);
-
-  const filteredManualDebts = useMemo(() => 
-      farmerManualDebts.filter(d => new Date(d.date).getFullYear() === selectedYear),
-  [farmerManualDebts, selectedYear]);
-
-  // Calculate opening balance for the selected year
-  const openingBalance = useMemo(() => {
-      let balance = 0;
-      
-      // Sum all transactions BEFORE the selected year
-      farmerPrescriptions.forEach(p => {
-          if (new Date(p.date).getFullYear() < selectedYear) {
-              balance -= (p.totalAmount || 0);
-          }
-      });
-      
-      farmerManualDebts.forEach(d => {
-          if (new Date(d.date).getFullYear() < selectedYear && !d.id.startsWith('turnover-')) {
-              balance -= d.amount;
-          }
-      });
-      
-      farmerPayments.forEach(p => {
-          if (new Date(p.date).getFullYear() < selectedYear) {
-              balance += p.amount;
-          }
-      });
-      
-      return balance;
-  }, [farmerPrescriptions, farmerManualDebts, farmerPayments, selectedYear]);
-
-  const totalPaid = farmerPayments.reduce((acc, p) => acc + p.amount, 0);
-  const totalDebt = farmerPrescriptions.reduce((acc, p) => acc + (p.totalAmount || 0), 0) + farmerManualDebts.filter(d => !d.id.startsWith('turnover-')).reduce((acc, d) => acc + d.amount, 0);
-  const balance = totalPaid - totalDebt;
-
   const handleDeleteFarmer = async () => {
       if (!selectedFarmer) return;
       if (window.confirm("Bu çiftçiyi ve tüm kayıtlarını silmek istediğinize emin misiniz?")) {
@@ -773,7 +822,51 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       }
   };
 
-  const filteredFarmers = farmers.filter(f => f.fullName.toLowerCase().includes(searchTerm.toLowerCase()) || f.village.toLowerCase().includes(searchTerm.toLowerCase()));
+  const farmersWithDebt = useMemo(() => {
+    return farmers.map(farmer => {
+      const fPayments = payments.filter(p => p.farmerId === farmer.id);
+      const fPrescriptions = prescriptions.filter(p => p.farmerId === farmer.id);
+      const fManualDebts = manualDebts.filter(d => d.farmerId === farmer.id);
+      
+      const totalPaid = fPayments.reduce((acc, p) => acc + p.amount, 0);
+      const totalDebt = fPrescriptions.reduce((acc, p) => acc + (p.totalAmount || 0), 0) + 
+                        fManualDebts.filter(d => !d.id.startsWith('turnover-')).reduce((acc, d) => acc + d.amount, 0);
+      
+      const overallBalance = totalPaid - totalDebt;
+      return { ...farmer, overallBalance };
+    }).sort((a, b) => a.fullName.localeCompare(b.fullName, 'tr-TR'));
+  }, [farmers, payments, prescriptions, manualDebts]);
+
+  const filteredFarmers = farmersWithDebt.filter(f => f.fullName.toLowerCase().includes(searchTerm.toLowerCase()) || f.village.toLowerCase().includes(searchTerm.toLowerCase()));
+
+  const downloadFarmersPdf = () => {
+      const doc = new jsPDF();
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(16);
+      doc.text("Ciftci Cari Listesi", 14, 20);
+      
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
+      doc.text(`Tarih: ${new Date().toLocaleDateString('tr-TR')}`, 14, 28);
+
+      const tableData = farmersWithDebt.map(f => [
+          f.fullName,
+          f.phoneNumber,
+          f.village,
+          `${Math.abs(f.overallBalance || 0).toLocaleString('tr-TR')} TL ${f.overallBalance && f.overallBalance >= 0 ? 'ALACAK' : 'BORC'}`
+      ]);
+
+      (doc as any).autoTable({
+          startY: 35,
+          head: [['Ad Soyad', 'Telefon', 'Koy', 'Bakiye']],
+          body: tableData,
+          theme: 'grid',
+          styles: { fontSize: 8, cellPadding: 3 },
+          headStyles: { fillColor: [16, 185, 129] } // Emerald 500
+      });
+
+      doc.save('Ciftci_Cari_Listesi.pdf');
+  };
 
   const handleSync = async () => {
       setIsSyncing(true);
@@ -788,21 +881,6 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       }
   };
 
-  const villages = useMemo(() => {
-    const v = new Set(farmers.map(f => f.village));
-    return Array.from(v).sort();
-  }, [farmers]);
-
-  const bulkTargetFarmers = useMemo(() => {
-    return farmers.filter(f => bulkTargetVillage === 'ALL' || f.village === bulkTargetVillage);
-  }, [farmers, bulkTargetVillage]);
-
-  const handleSendBulkWhatsApp = (farmer: Farmer) => {
-    const text = bulkMessage;
-    const url = `https://wa.me/${farmer.phoneNumber.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`;
-    window.open(url, '_blank');
-  };
-
   // --- DETAIL VIEW ---
   if (selectedFarmer) {
      if (selectedPrescription) {
@@ -810,7 +888,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
             <div className="pb-24 animate-in slide-in-from-right duration-300">
                 <div className="flex items-center justify-between mb-4 sticky top-0 bg-stone-950/90 backdrop-blur z-20 py-3 border-b border-white/5">
                     <button onClick={() => setSelectedPrescription(null)} className="flex items-center text-stone-400 hover:text-stone-200 font-medium px-2 py-1 -ml-2 rounded-lg hover:bg-white/5 transition-colors text-xs">
-                        <ChevronLeft className="mr-1" size={18}/> Reçeteye Dön
+                        <ChevronLeft className="mr-1" size={18}/> Cariye Dön
                     </button>
                     <button 
                         onClick={() => onEditPrescription(selectedPrescription.id)}
@@ -823,11 +901,98 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                 <div ref={receiptRef} className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-sm mx-auto relative overflow-hidden text-stone-900 mb-6 border border-stone-300 mt-2">
                     <div className="absolute top-0 left-0 w-full h-2 bg-emerald-600"></div>
                     <div className="flex justify-between items-start mb-6 pt-2">
-                        <div><h3 className="font-black text-lg text-stone-900 tracking-tight">ZİRAİ REÇETE</h3><p className="text-[9px] text-stone-500 font-bold uppercase tracking-widest mt-1">No: {selectedPrescription.prescriptionNo}</p></div>
-                        <div className="text-right"><p className="font-bold text-emerald-700 text-sm">{selectedFarmer.fullName}</p><p className="text-[9px] text-stone-500">{new Date(selectedPrescription.date).toLocaleDateString('tr-TR')}</p></div>
+                        <div>
+                            <h3 className="font-black text-lg text-stone-900 tracking-tight">ZİRAİ REÇETE</h3>
+                            <p className="text-[9px] text-stone-500 font-bold uppercase tracking-widest mt-1">No: {selectedPrescription.prescriptionNo}</p>
+                            {selectedPrescription.fieldId && (
+                                <p className="text-[10px] text-emerald-600 font-bold mt-1">
+                                    Tarla: {selectedFarmer?.fields?.find(f => f.id === selectedPrescription.fieldId)?.name || 'Bilinmiyor'}
+                                </p>
+                            )}
+                        </div>
+                        <div className="text-right">
+                            <p className="font-bold text-emerald-700 text-sm">{selectedFarmer.fullName}</p>
+                            <p className="text-[9px] text-stone-500">{new Date(selectedPrescription.date).toLocaleDateString('tr-TR')}</p>
+                        </div>
                     </div>
-                    <div className="border-t border-b border-stone-100 py-4 my-4"><table className="w-full text-xs"><thead className="text-stone-400 uppercase font-black text-[8px] tracking-wider text-left"><tr><th className="pb-2">Ürün</th><th className="pb-2 text-right">Dozaj</th></tr></thead><tbody className="divide-y divide-stone-100">{selectedPrescription.items.map((item, idx) => (<tr key={idx}><td className="py-2 font-bold text-stone-800">{item.pesticideName} {item.quantity && <span className="text-stone-500 text-[10px]">({item.quantity} Ad.)</span>}</td><td className="py-2 text-right font-mono font-bold text-emerald-600">{item.dosage}</td></tr>))}</tbody></table></div>
-                    <div className="flex justify-between items-end mt-6"><div className="text-[8px] text-stone-400 leading-tight">MKS Dijital Onaylı<br/>Güvenli Belge</div><div className="text-center"><div className="font-serif italic text-xs text-blue-900 font-bold">{selectedPrescription.engineerName}</div><div className="w-20 h-px bg-stone-300 mt-1"></div><div className="text-[8px] text-stone-400 uppercase tracking-widest mt-0.5">İmza / Kaşe</div></div></div>
+                    
+                    <div className="min-h-[200px]">
+                        {selectedPrescription.totalAmount && selectedPrescription.totalAmount > 0 ? (
+                            <table className="w-full text-xs">
+                                <thead className="bg-stone-50 text-stone-500 uppercase text-[8px] font-black tracking-widest border-b border-stone-100">
+                                    <tr>
+                                        <th className="p-2 text-left w-[40%]">Ürün Adı</th>
+                                        <th className="p-2 text-center w-[15%]">Adet</th>
+                                        <th className="p-2 text-right w-[20%]">Birim Fiyat</th>
+                                        <th className="p-2 text-right w-[25%]">Toplam</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-stone-100">
+                                    {selectedPrescription.items.map((item, idx) => (
+                                        <tr key={idx}>
+                                            <td className="p-2">
+                                                <div className="font-bold text-stone-800">{item.pesticideName}</div>
+                                                <div className="text-[9px] text-stone-500 font-mono mt-0.5">Doz: {item.dosage}</div>
+                                            </td>
+                                            <td className="p-2 text-center font-bold text-stone-700">
+                                                {item.quantity || '-'}
+                                            </td>
+                                            <td className="p-2 text-right font-mono text-stone-600">
+                                                {item.unitPrice ? item.unitPrice.toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' ₺' : '-'}
+                                            </td>
+                                            <td className="p-2 text-right font-mono font-bold text-stone-800">
+                                                {item.totalPrice ? item.totalPrice.toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' ₺' : '-'}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                                <tfoot>
+                                    <tr className="bg-stone-50/50 border-t border-stone-200">
+                                        <td colSpan={3} className="p-2 text-right font-bold text-stone-500 uppercase text-[9px] tracking-widest pt-3">Reçete Toplamı</td>
+                                        <td className="p-2 text-right font-black text-emerald-600 font-mono text-sm pt-3">
+                                            {selectedPrescription.totalAmount.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                                        </td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        ) : (
+                            <table className="w-full text-xs">
+                                <thead className="bg-stone-50 text-stone-500 uppercase text-[8px] font-black tracking-widest">
+                                    <tr>
+                                        <th className="p-2 text-left rounded-l-lg">Ürün / İlaç Adı</th>
+                                        <th className="p-2 text-right rounded-r-lg">Uygulama Dozajı</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-stone-100">
+                                    {selectedPrescription.items.map((item, idx) => (
+                                        <tr key={idx} className="group">
+                                            <td className="p-2 font-bold text-stone-800">
+                                                {item.pesticideName}
+                                                {item.quantity && (
+                                                    <span className="ml-1 text-stone-500 font-bold text-[9px] bg-stone-100 px-1.5 py-0.5 rounded-full">
+                                                        {item.quantity} Adet
+                                                    </span>
+                                                )}
+                                            </td>
+                                            <td className="p-2 text-right font-mono font-bold text-emerald-600">{item.dosage}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
+                    </div>
+
+                    <div className="mt-8 pt-4 border-t-2 border-dashed border-stone-100 flex justify-between items-end">
+                        <div className="text-[7px] text-stone-400 leading-relaxed">
+                            Bu belge Mühendis Kayıt Sistemi<br/>
+                            tarafından oluşturulmuştur.<br/>
+                            <strong>MKS v3.1.2</strong>
+                        </div>
+                        <div className="text-center">
+                            <div className="font-serif italic text-sm text-blue-900 mb-1">{selectedPrescription.engineerName}</div>
+                            <div className="text-[7px] text-stone-400 uppercase tracking-widest border-t border-stone-200 pt-1 font-bold">Dijital Onay / Kaşe</div>
+                        </div>
+                    </div>
                 </div>
                 
                 {/* ACTION BUTTONS */}
@@ -945,7 +1110,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                 </div>
                                 <div className="flex justify-between items-center py-4 bg-stone-900 text-white px-6 rounded-2xl shadow-xl">
                                     <span className="text-sm font-black uppercase tracking-widest">Kalan Bakiye</span>
-                                    <span className="text-2xl font-black">{Math.round(Math.abs(balance)).toLocaleString('tr-TR')} ₺ {balance >= 0 ? 'ALACAK' : 'BORÇ'}</span>
+                                    <span className="text-2xl font-black">{Math.round(Math.abs(overallBalance)).toLocaleString('tr-TR')} ₺ {overallBalance >= 0 ? 'ALACAK' : 'BORÇ'}</span>
                                 </div>
                             </div>
                         </div>
@@ -1045,13 +1210,28 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
             </div>
 
             {/* Tabs */}
-            <div className="flex p-1 bg-stone-900/60 backdrop-blur rounded-xl mb-4 border border-white/5 shadow-inner">
+            <div className="flex p-1 bg-stone-900/60 backdrop-blur rounded-xl mb-2 border border-white/5 shadow-inner">
                 {(['GENERAL', 'VISITS', 'PRESCRIPTIONS', 'DEBT'] as const).map(tab => (
                     <button key={tab} onClick={() => setActiveTab(tab)} className={`flex-1 py-2 text-[9px] font-black uppercase tracking-wider rounded-lg transition-all duration-200 ${activeTab === tab ? 'bg-stone-700 text-white shadow-md' : 'text-stone-500 hover:text-stone-300'}`}>
                         {tab === 'GENERAL' ? 'Genel' : (tab === 'VISITS' ? 'Ziyaret' : (tab === 'PRESCRIPTIONS' ? 'Reçete' : 'Cari'))}
                     </button>
                 ))}
             </div>
+
+            {/* Year Selector - Visible for relevant tabs */}
+            {(activeTab === 'PRESCRIPTIONS' || activeTab === 'DEBT') && availableYears.length > 1 && (
+                <div className="flex gap-1 overflow-x-auto no-scrollbar mb-4 py-1">
+                    {availableYears.map(year => (
+                        <button 
+                            key={year}
+                            onClick={() => setSelectedYear(year)}
+                            className={`px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border shrink-0 ${selectedYear === year ? 'bg-emerald-600 text-white border-emerald-500 shadow-lg shadow-emerald-900/20' : 'bg-stone-900/50 text-stone-500 border-white/5 hover:text-stone-300'}`}
+                        >
+                            {year}
+                        </button>
+                    ))}
+                </div>
+            )}
 
             {/* Content */}
             <div className="animate-in fade-in duration-300">
@@ -1125,24 +1305,24 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                             
                             <div className="grid grid-cols-2 gap-3 mb-4">
                                 <div className="bg-stone-950/50 p-3 rounded-xl border border-white/5">
-                                    <p className="text-[8px] text-stone-500 uppercase font-black mb-1">Toplam Borç</p>
-                                    <p className="text-lg font-black text-rose-500">{totalDebt.toLocaleString('tr-TR')} ₺</p>
+                                    <p className="text-[8px] text-stone-500 uppercase font-black mb-1">{selectedYear} Toplam Borç</p>
+                                    <p className="text-lg font-black text-rose-500">{(yearTotalDebt + (openingBalance < 0 ? Math.abs(openingBalance) : 0)).toLocaleString('tr-TR')} ₺</p>
                                 </div>
                                 <div className="bg-stone-950/50 p-3 rounded-xl border border-white/5">
-                                    <p className="text-[8px] text-stone-500 uppercase font-black mb-1">Toplam Ödeme</p>
-                                    <p className="text-lg font-black text-emerald-500">{totalPaid.toLocaleString('tr-TR')} ₺</p>
+                                    <p className="text-[8px] text-stone-500 uppercase font-black mb-1">{selectedYear} Toplam Ödeme</p>
+                                    <p className="text-lg font-black text-emerald-500">{(yearTotalPaid + (openingBalance > 0 ? openingBalance : 0)).toLocaleString('tr-TR')} ₺</p>
                                 </div>
                             </div>
 
-                            <div className={`p-4 rounded-xl border flex items-center justify-between ${balance >= 0 ? 'bg-emerald-900/20 border-emerald-500/20' : 'bg-rose-900/20 border-rose-500/20'}`}>
+                            <div className={`p-4 rounded-xl border flex items-center justify-between ${yearBalance >= 0 ? 'bg-emerald-900/20 border-emerald-500/20' : 'bg-rose-900/20 border-rose-500/20'}`}>
                                 <div>
-                                    <p className="text-[9px] text-stone-400 uppercase font-black mb-0.5">Güncel Bakiye</p>
-                                    <p className={`text-xl font-black ${balance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                        {Math.round(Math.abs(balance)).toLocaleString('tr-TR')} ₺
-                                        <span className="text-xs font-bold ml-1">{balance >= 0 ? 'Alacaklı' : 'Borçlu'}</span>
+                                    <p className="text-[9px] text-stone-400 uppercase font-black mb-0.5">{selectedYear} Sonu Bakiye</p>
+                                    <p className={`text-xl font-black ${yearBalance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                        {Math.round(Math.abs(yearBalance)).toLocaleString('tr-TR')} ₺
+                                        <span className="text-xs font-bold ml-1">{yearBalance >= 0 ? 'Alacaklı' : 'Borçlu'}</span>
                                     </p>
                                 </div>
-                                {balance < 0 ? <TrendingDown size={24} className="text-rose-500 opacity-50" /> : <TrendingUpIcon size={24} className="text-emerald-500 opacity-50" />}
+                                {yearBalance < 0 ? <TrendingDown size={24} className="text-rose-500 opacity-50" /> : <TrendingUpIcon size={24} className="text-emerald-500 opacity-50" />}
                             </div>
                         </div>
 
@@ -1150,17 +1330,6 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                         <div className="bg-stone-900/80 backdrop-blur p-4 rounded-2xl border border-white/5 shadow-sm">
                             <div className="flex justify-between items-center mb-4">
                                 <h3 className="font-bold text-stone-200 text-xs flex items-center uppercase tracking-wider opacity-70"><History size={14} className="mr-1.5 text-blue-500"/> İşlem Geçmişi</h3>
-                                <div className="flex gap-1 overflow-x-auto no-scrollbar max-w-[150px]">
-                                    {availableYears.map(year => (
-                                        <button 
-                                            key={year}
-                                            onClick={() => setSelectedYear(year)}
-                                            className={`px-2 py-1 rounded-lg text-[9px] font-bold transition-all border ${selectedYear === year ? 'bg-emerald-600 text-white border-emerald-500' : 'bg-stone-800 text-stone-500 border-white/5'}`}
-                                        >
-                                            {year}
-                                        </button>
-                                    ))}
-                                </div>
                             </div>
 
                             <div className="space-y-2 max-h-[400px] overflow-y-auto custom-scrollbar pr-1">
@@ -1187,7 +1356,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                 {[
                                     ...filteredPrescriptions.map(p => ({ ...p, type: 'DEBT', label: 'Reçete Satışı' })), 
                                     ...filteredPayments.map(p => ({ ...p, type: 'PAYMENT', label: 'Tahsilat' })),
-                                    ...filteredManualDebts.map(d => ({ ...d, type: 'DEBT', label: 'Manuel Borç' }))
+                                    ...filteredManualDebts.filter(d => !d.id.startsWith('turnover-')).map(d => ({ ...d, type: 'DEBT', label: 'Manuel Borç' }))
                                 ]
                                     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
                                     .map((item, idx) => {
@@ -1195,7 +1364,16 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                         const isOverdue = dueDate && new Date() > new Date(dueDate.replace('Haz', 'Jun').replace('Kas', 'Nov'));
                                         
                                         return (
-                                            <div key={idx} className="p-3 bg-stone-950/50 rounded-xl border border-white/5 flex items-center justify-between group relative">
+                                            <div 
+                                                key={idx} 
+                                                className={`p-3 bg-stone-950/50 rounded-xl border border-white/5 flex items-center justify-between group relative ${item.label === 'Reçete Satışı' ? 'cursor-pointer hover:bg-stone-900/80 active:scale-[0.98] transition-all' : ''}`}
+                                                onClick={() => {
+                                                    if (item.label === 'Reçete Satışı') {
+                                                        const prescription = farmerPrescriptions.find(p => p.id === item.id);
+                                                        if (prescription) setSelectedPrescription(prescription);
+                                                    }
+                                                }}
+                                            >
                                                 <div className="flex items-center gap-3">
                                                     <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${item.type === 'DEBT' ? 'bg-rose-900/20 text-rose-500' : 'bg-emerald-900/20 text-emerald-500'}`}>
                                                         {item.type === 'DEBT' ? <FileText size={14} /> : <CreditCard size={14} />}
@@ -1247,7 +1425,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                 </div>
                                 <p className="text-[11px] text-stone-300 italic mb-1.5 leading-relaxed line-clamp-3">"{visit.note}"</p>
                                 <div className="flex justify-between items-center pt-1.5 border-t border-white/5">
-                                    <div className="flex gap-1.5">{visit.photoUri && <ImageIcon size={12} className="text-blue-400"/>}{visit.aiAnalysis && <Sparkles size={12} className="text-purple-400"/>}</div>
+                                    <div className="flex gap-1.5">{visit.photoUri && <ImageIcon size={12} className="text-blue-400"/>}</div>
                                     <div className="flex gap-1.5"><button onClick={() => onEditVisit(visit.id)} className="text-stone-500 hover:text-emerald-400"><Edit2 size={12}/></button><button onClick={() => handleDeleteVisit(visit.id)} className="text-stone-500 hover:text-red-400"><Trash2 size={12}/></button></div>
                                 </div>
                             </div>
@@ -1257,7 +1435,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                 
                 {activeTab === 'PRESCRIPTIONS' && (
                     <div className="space-y-2">
-                         {isDataLoading ? <Loader2 size={20} className="animate-spin text-amber-500 mx-auto"/> : farmerPrescriptions.length > 0 ? farmerPrescriptions.map(p => (
+                         {isDataLoading ? <Loader2 size={20} className="animate-spin text-amber-500 mx-auto"/> : filteredPrescriptions.length > 0 ? filteredPrescriptions.map(p => (
                             <div key={p.id} onClick={() => setSelectedPrescription(p)} className="bg-stone-900/80 p-3 rounded-xl border border-white/5 hover:bg-stone-800 transition-colors cursor-pointer active:scale-98">
                                 <div className="flex justify-between items-start mb-1.5">
                                     <div><span className="text-[8px] font-mono text-stone-500 block uppercase">No: {p.prescriptionNo}</span></div>
@@ -1351,6 +1529,10 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                         </div>
                         <div className="p-4 space-y-4">
                             <div>
+                                <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Tarih</label>
+                                <input type="date" value={debtDate} onChange={(e) => setDebtDate(e.target.value)} className="w-full bg-stone-950 border border-white/10 rounded-xl px-4 py-3 text-stone-100 text-sm focus:border-rose-500 outline-none transition-all" />
+                            </div>
+                            <div>
                                 <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Tutar (₺)</label>
                                 <input type="number" value={debtAmount} onChange={(e) => setDebtAmount(e.target.value)} className="w-full bg-stone-950 border border-white/10 rounded-xl px-4 py-3 text-stone-100 text-sm focus:border-rose-500 outline-none transition-all" placeholder="0.00" />
                             </div>
@@ -1437,15 +1619,12 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
          <div className="bg-stone-900 rounded-xl shadow-sm border border-white/5 flex items-center p-0.5">
              <Search className="text-stone-500 ml-2" size={14} />
              <input type="text" placeholder="Çiftçi adı veya köy ara..." className="w-full p-2 bg-transparent outline-none font-medium text-stone-200 placeholder-stone-600 text-[11px]" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+             <button onClick={downloadFarmersPdf} className="p-1.5 bg-stone-800 hover:bg-stone-700 text-rose-400 rounded-lg transition-all m-0.5 flex items-center justify-center" title="PDF İndir">
+                 <FileText size={14}/>
+             </button>
              <button onClick={handleSync} disabled={isSyncing} className={`px-2 py-1.5 rounded-lg transition-all m-0.5 flex items-center justify-center gap-1 text-[9px] font-bold uppercase tracking-wider ${isSyncing ? 'bg-emerald-900/30 text-emerald-500' : 'bg-stone-800 hover:bg-stone-700 text-stone-400 hover:text-emerald-400'}`}>
                  {isSyncing ? <Loader2 size={10} className="animate-spin"/> : <RefreshCw size={10}/>}
                  {isSyncing ? '...' : 'Senk'}
-             </button>
-             <button 
-                onClick={() => setIsBulkMessageModalOpen(true)}
-                className="p-1.5 bg-stone-800 hover:bg-stone-700 text-blue-400 rounded-lg transition-all m-0.5 flex items-center justify-center"
-             >
-                 <MessageSquare size={14}/>
              </button>
              <button onClick={handleContactImport} disabled={isImporting} className={`p-1.5 rounded-lg transition-all m-0.5 flex items-center justify-center ${isImporting ? 'bg-emerald-900/30 text-emerald-500' : 'bg-stone-800 hover:bg-stone-700 text-emerald-500'}`}>{isImporting ? <Loader2 size={14} className="animate-spin"/> : <Contact size={14}/>}</button>
          </div>
@@ -1468,89 +1647,32 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                         </div>
                     </div>
                 </div>
-                <div className="bg-stone-800/50 p-1 rounded-lg text-stone-600 group-hover:text-emerald-400 transition-colors"><ChevronRight size={12} /></div>
+                <div className="flex items-center space-x-3">
+                    <div className="text-right">
+                        <div className={`text-xs font-bold ${farmer.overallBalance && farmer.overallBalance < 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                            {Math.abs(farmer.overallBalance || 0).toLocaleString('tr-TR')} ₺
+                        </div>
+                        <div className="text-[8px] text-stone-500 uppercase tracking-wider">
+                            {farmer.overallBalance && farmer.overallBalance < 0 ? 'Borç' : 'Alacak'}
+                        </div>
+                    </div>
+                    <button 
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            window.open(`tel:${farmer.phoneNumber}`);
+                        }}
+                        className="p-1.5 bg-stone-800/50 hover:bg-emerald-900/30 text-stone-400 hover:text-emerald-400 rounded-lg transition-colors border border-white/5"
+                    >
+                        <Phone size={12} />
+                    </button>
+                    <div className="bg-stone-800/50 p-1 rounded-lg text-stone-600 group-hover:text-emerald-400 transition-colors"><ChevronRight size={12} /></div>
+                </div>
             </div>
         ))}
         {filteredFarmers.length === 0 && <div className="text-center py-10"><User size={28} className="mx-auto mb-2 text-stone-700"/><p className="text-stone-500 text-[10px]">Kayıt yok.</p></div>}
       </div>
 
       <button onClick={() => { setModalMode('ADD'); setIsModalOpen(true); }} className="fixed bottom-32 right-5 bg-emerald-600 text-white p-3 rounded-full shadow-lg shadow-emerald-900/50 hover:bg-emerald-500 transition-all transform hover:scale-105 z-50 flex items-center justify-center"><Plus size={22} /></button>
-
-      {/* Bulk Message Modal */}
-      {isBulkMessageModalOpen && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
-              <div className="bg-stone-900 rounded-3xl w-full max-w-md flex flex-col max-h-[90vh] shadow-2xl border border-white/10">
-                  <div className="p-4 border-b border-white/5 shrink-0 flex justify-between items-center">
-                      <h2 className="text-base font-bold text-stone-100 flex items-center gap-2">
-                          <MessageSquare className="text-blue-500" size={18}/> 
-                          Toplu Mesaj Gönder
-                      </h2>
-                      <button onClick={() => setIsBulkMessageModalOpen(false)} className="text-stone-500 hover:text-stone-300">
-                          <X size={18}/>
-                      </button>
-                  </div>
-                  
-                  <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-                      <div>
-                          <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Hedef Grup (Köy)</label>
-                          <select 
-                            value={bulkTargetVillage}
-                            onChange={(e) => setBulkTargetVillage(e.target.value)}
-                            className="w-full bg-stone-950 border border-white/10 rounded-xl px-3 py-2.5 text-stone-200 text-xs outline-none focus:border-blue-500"
-                          >
-                              <option value="ALL">Tüm Çiftçiler ({farmers.length})</option>
-                              {villages.map((v: string) => (
-                                  <option key={v} value={v}>{v} ({farmers.filter((f: Farmer) => f.village === v).length})</option>
-                              ))}
-                          </select>
-                      </div>
-
-                      <div>
-                          <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Mesaj İçeriği</label>
-                          <textarea 
-                            value={bulkMessage}
-                            onChange={(e) => setBulkMessage(e.target.value)}
-                            placeholder="Örn: Değerli üreticilerimiz, yarın beklenen don olayına karşı önlem alınız..."
-                            className="w-full bg-stone-950 border border-white/10 rounded-xl px-4 py-3 text-stone-100 text-sm focus:border-blue-500 outline-none transition-all h-32 resize-none"
-                          />
-                      </div>
-
-                      <div className="space-y-2">
-                          <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Alıcı Listesi ({bulkTargetFarmers.length})</label>
-                          <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
-                              {bulkTargetFarmers.map((f: Farmer) => (
-                                  <div key={f.id} className="flex items-center justify-between p-2 bg-stone-950/50 rounded-lg border border-white/5">
-                                      <div className="flex flex-col">
-                                          <span className="text-[11px] font-bold text-stone-200">{f.fullName}</span>
-                                          <span className="text-[9px] text-stone-500">{f.phoneNumber}</span>
-                                      </div>
-                                      <button 
-                                        onClick={() => handleSendBulkWhatsApp(f)}
-                                        disabled={!bulkMessage.trim()}
-                                        className="p-1.5 bg-emerald-600/20 text-emerald-400 rounded-lg hover:bg-emerald-600 hover:text-white transition-all disabled:opacity-30"
-                                      >
-                                          <Send size={12} />
-                                      </button>
-                                  </div>
-                              ))}
-                          </div>
-                      </div>
-                  </div>
-
-                  <div className="p-4 border-t border-white/5 bg-stone-900/80">
-                      <p className="text-[9px] text-stone-500 mb-3 leading-tight">
-                          * WhatsApp kısıtlamaları nedeniyle mesajlar tek tek gönderilmelidir. Her alıcı için butona basmanız gerekmektedir.
-                      </p>
-                      <button 
-                        onClick={() => setIsBulkMessageModalOpen(false)}
-                        className="w-full bg-stone-800 text-stone-300 py-3 rounded-xl font-bold text-xs hover:bg-stone-700 transition-all"
-                      >
-                          Kapat
-                      </button>
-                  </div>
-              </div>
-          </div>
-      )}
 
       {/* Modals (Import & Add/Edit) */}
       {isImportModalOpen && (

@@ -6,9 +6,8 @@ import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, 
   Tooltip, CartesianGrid 
 } from 'recharts';
-import { Users, FileText, Sprout, Plus, X, Calendar, ChevronRight, Droplet, ArrowRight, Zap, MapPin, Sparkles, Send, Loader2, Bot, BrainCircuit, CalendarCheck, Clock, Mic, Bell, CalendarClock, TrendingUp, AlertCircle, Bug, Package, Route, FlaskConical, Star, Truck, Search, DollarSign, Trash2, Wallet } from 'lucide-react';
+import { Users, FileText, Sprout, Plus, X, Calendar, ChevronRight, Droplet, ArrowRight, Zap, MapPin, Send, Loader2, CalendarCheck, Clock, Mic, Bell, CalendarClock, TrendingUp, AlertCircle, Bug, Package, Route, FlaskConical, Star, Truck, Search, DollarSign, Trash2, Wallet, Sparkles, ScanSearch } from 'lucide-react';
 import { ViewState, Pesticide, PesticideCategory, SupplierPurchase } from '../types';
-import { GeminiService } from '../services/gemini';
 import { dbService } from '../services/db';
 
 interface DashboardProps {
@@ -40,11 +39,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   const totalSupplierDebt = useMemo(() => {
     return suppliers.reduce((acc, s) => acc + (s.balance < 0 ? Math.abs(s.balance) : 0), 0);
   }, [suppliers]);
-
-  // AI Widget State
-  const [aiQuery, setAiQuery] = useState('');
-  const [aiResponse, setAiResponse] = useState<string | null>(null);
-  const [isAiLoading, setIsAiLoading] = useState(false);
 
   // Get first pending reminder
   const nextReminder = reminders.find(r => !r.isCompleted);
@@ -114,23 +108,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     }));
   }, [prescriptions]);
 
-  const handleAiAsk = async (e?: React.FormEvent) => {
-      e?.preventDefault();
-      if (!aiQuery.trim()) return;
-
-      setIsAiLoading(true);
-      setAiResponse(null); 
-      
-      try {
-          const result = await GeminiService.askAgriBot(aiQuery);
-          setAiResponse(result);
-      } catch (error) {
-          setAiResponse("Üzgünüm, şu an bağlantı kuramıyorum. Lütfen internetinizi kontrol edin.");
-      } finally {
-          setIsAiLoading(false);
-      }
-  };
-
   const getFirstName = (fullName: string) => {
       if (!fullName) return 'Mühendis';
       return fullName.split(' ')[0];
@@ -142,7 +119,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
       {/* --- SUPER COMPACT HEADER --- */}
       <header className="flex items-stretch gap-2 mb-3 mt-1 h-24">
         {/* Left Side: Greeting Card */}
-        <div className="flex-[2] relative bg-stone-900/80 backdrop-blur-xl border border-white/10 rounded-2xl p-3 overflow-hidden flex flex-col justify-center shadow-md group">
+        <div className="flex-1 relative bg-stone-900/80 backdrop-blur-xl border border-white/10 rounded-2xl p-3 overflow-hidden flex flex-col justify-center shadow-md group">
             <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-2xl -translate-y-1/2 translate-x-1/3 pointer-events-none"></div>
             
             <div className="relative z-10">
@@ -153,25 +130,23 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                     </span>
                 </div>
                 
-                <div className="space-y-0.5">
-                    <h2 className="text-[10px] font-medium text-stone-500 tracking-tight">Merhaba,</h2>
-                    <h1 className="text-lg font-black text-stone-100 truncate tracking-tight">
-                        {getFirstName(userProfile.fullName)}
-                    </h1>
+                <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                        <h2 className="text-[10px] font-medium text-stone-500 tracking-tight">Merhaba,</h2>
+                        <h1 className="text-lg font-black text-stone-100 truncate tracking-tight">
+                            {getFirstName(userProfile.fullName)}
+                        </h1>
+                    </div>
+                    <button 
+                        onClick={() => onNavigate('AI_ASSISTANT')}
+                        className="flex items-center gap-2 px-3 py-2 bg-emerald-600 text-white rounded-full shadow-lg shadow-emerald-900/20 active:scale-95 transition-all border border-emerald-500/20"
+                    >
+                        <Sparkles size={16} className="animate-pulse" />
+                        <span className="text-[10px] font-black uppercase tracking-widest">Saha Asistanı</span>
+                    </button>
                 </div>
             </div>
         </div>
-
-        {/* Right Side: AI Assistant Button */}
-        <button 
-            onClick={() => onNavigate('FIELD_ASSISTANT')}
-            className="flex-1 relative flex flex-col items-center justify-center p-1.5 rounded-2xl bg-gradient-to-b from-stone-800 to-stone-950 border border-emerald-500/20 shadow-md active:scale-95 transition-all group overflow-hidden"
-        >
-            <div className="w-9 h-9 bg-gradient-to-br from-emerald-500 to-emerald-700 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-900/40 mb-1 relative z-10 border border-emerald-400/20">
-                <Mic className="text-white" size={18} />
-            </div>
-            <span className="text-[8px] font-black text-emerald-400 uppercase tracking-widest">Asistan</span>
-        </button>
       </header>
 
       {/* --- TASKS SECTION (NEXT JOB & TOMORROW) --- */}
@@ -277,65 +252,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
           </div>
       )}
 
-      {/* COMPACT AI WIDGET */}
-      <div className="relative group z-20">
-          <form 
-            onSubmit={handleAiAsk}
-            className={`flex items-center bg-stone-900 border transition-all duration-300 overflow-hidden ${
-                aiResponse 
-                ? 'rounded-t-xl rounded-b-none border-emerald-500/40 bg-stone-800' 
-                : 'rounded-xl border-white/5 hover:border-emerald-500/20'
-            }`}
-          >
-              <div className="pl-2 pr-1.5 text-emerald-500">
-                  {isAiLoading ? <Loader2 size={12} className="animate-spin" /> : <Bot size={12} className={aiQuery ? "text-emerald-400" : "text-stone-700"} />}
-              </div>
-              <input 
-                  type="text" 
-                  value={aiQuery}
-                  onChange={(e) => setAiQuery(e.target.value)}
-                  placeholder="MKS'ye teknik bir soru sor..." 
-                  className="flex-1 bg-transparent py-2 text-[10px] text-stone-200 placeholder-stone-700 outline-none font-medium"
-              />
-              <button 
-                type="submit" 
-                disabled={isAiLoading || !aiQuery.trim()}
-                className="p-2 text-stone-600 hover:text-emerald-400 disabled:opacity-30 transition-colors"
-              >
-                  <Send size={12} />
-              </button>
-          </form>
-
-          {aiResponse && (
-              <div className="bg-stone-800/95 backdrop-blur-md border-x border-b border-emerald-500/40 rounded-b-xl p-2 shadow-xl animate-in slide-in-from-top-1 relative">
-                  <button 
-                    onClick={() => { setAiResponse(null); setAiQuery(''); }} 
-                    className="absolute top-1.5 right-1.5 p-1 bg-stone-900/50 rounded-full text-stone-500 hover:text-white"
-                  >
-                      <X size={8} />
-                  </button>
-                  <div className="text-[10px] text-stone-300 leading-tight whitespace-pre-wrap pr-3">
-                      {aiResponse}
-                  </div>
-              </div>
-          )}
-      </div>
-
       <div>
         <h3 className="font-black text-stone-600 text-[8px] mb-2 flex items-center uppercase tracking-widest pl-1">
              Hızlı İşlemler
         </h3>
         <div className="grid grid-cols-2 gap-2 mb-2">
             <button 
-                onClick={() => setIsPurchaseModalOpen(true)}
+                onClick={() => onNavigate('FARMERS')}
                 className="group flex items-center gap-2.5 p-3 bg-emerald-900/10 backdrop-blur-sm rounded-2xl border border-emerald-500/20 active:scale-95 transition-all shadow-md"
             >
                 <div className="bg-emerald-600 text-white p-2 rounded-xl shadow-lg shadow-emerald-900/30">
-                    <Truck size={16}/>
+                    <Users size={16}/>
                 </div>
                 <div className="text-left">
-                    <span className="block font-black text-[9px] text-emerald-100 uppercase tracking-wider">ALIM YAP</span>
-                    <span className="text-[7px] text-emerald-500/70 font-bold uppercase">Stok Girişi</span>
+                    <span className="block font-black text-[9px] text-emerald-100 uppercase tracking-wider">CARİLER</span>
+                    <span className="text-[7px] text-emerald-500/70 font-bold uppercase">Çiftçi Hesapları</span>
                 </div>
             </button>
 
@@ -382,10 +313,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         </div>
 
         <div className="grid grid-cols-4 gap-2 mt-3">
-            <ActionButton onClick={() => onNavigate('DISEASE_DIAGNOSIS')} icon={Sparkles} label="AI TEŞHİS" color="emerald" />
             <ActionButton onClick={() => onNavigate('VISIT_NEW')} icon={Calendar} label="ZİYARET" color="blue" />
-            <ActionButton onClick={() => onNavigate('REMINDERS_NEW')} icon={Bell} label="PLAN" color="amber" />
-            <ActionButton onClick={() => onNavigate('COMPATIBILITY_CHECK')} icon={FlaskConical} label="KARIŞIM" color="purple" />
+            <ActionButton onClick={() => onNavigate('AI_DIAGNOSIS')} icon={ScanSearch} label="AI TEŞHİS" color="emerald" />
+            <ActionButton onClick={() => onNavigate('MIXTURE_TEST')} icon={FlaskConical} label="KARIŞIM" color="purple" />
+            <ActionButton onClick={() => setIsPurchaseModalOpen(true)} icon={Truck} label="ALIM YAP" color="amber" />
         </div>
       </div>
 

@@ -1,10 +1,12 @@
 
-import React, { useState } from 'react';
-import { Home, Users, BookOpen, FileText, ClipboardList, Menu, X, LogOut, Settings, ChevronRight, User, Bell, Phone, UserCircle, Plus, PieChart, Sprout, CalendarCheck, ChevronLeft, Package, Truck, CreditCard, Receipt, Wallet } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Home, Users, BookOpen, FileText, ClipboardList, Menu, X, LogOut, Settings, ChevronRight, User, Bell, Phone, UserCircle, Plus, PieChart, Sprout, CalendarCheck, ChevronLeft, Package, Truck, CreditCard, Receipt, Wallet, Bot, History as HistoryIcon, Printer, Shield, Clock } from 'lucide-react';
 import { ViewState } from '../types';
 import { useAppViewModel } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { dbService } from '../services/db';
+
+import { QuickActions } from './QuickActions';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -14,15 +16,22 @@ interface LayoutProps {
 
 export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigate }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const { unreadCount, userProfile, stats } = useAppViewModel();
+  const { unreadCount, userProfile, stats, isAdmin, subscriptionEndsAt } = useAppViewModel();
   const { logout } = useAuth();
   const isHighContrast = userProfile.highContrastMode;
   
   const navGroups = [
-    { title: "Genel", items: [{ id: 'DASHBOARD', icon: Home, label: 'Ana Sayfa' }, { id: 'REMINDERS', icon: CalendarCheck, label: 'Hatırlatıcılar', badge: stats.activeReminders }, { id: 'KASA', icon: Wallet, label: 'Kasa & Banka' }, { id: 'EXPENSES', icon: Receipt, label: 'Giderler' }, { id: 'STATISTICS', icon: PieChart, label: 'İstatistikler' }] },
+    { title: "Genel", items: [{ id: 'DASHBOARD', icon: Home, label: 'Ana Sayfa' }, { id: 'RECENT_TRANSACTIONS', icon: HistoryIcon, label: 'Son İşlemler' }, { id: 'REPORTS', icon: Printer, label: 'Raporlar' }, { id: 'AI_ASSISTANT', icon: Bot, label: 'Saha Asistanı' }, { id: 'REMINDERS', icon: CalendarCheck, label: 'Hatırlatıcılar', badge: stats.activeReminders }, { id: 'KASA', icon: Wallet, label: 'Kasa & Banka' }, { id: 'EXPENSES', icon: Receipt, label: 'Giderler' }, { id: 'STATISTICS', icon: PieChart, label: 'İstatistikler' }] },
     { title: "Saha & Kayıt", items: [{ id: 'FARMERS', icon: Users, label: 'Çiftçiler' }, { id: 'PESTICIDES', icon: BookOpen, label: 'İlaçlar' }, { id: 'INVENTORY', icon: Package, label: 'Depom' }, { id: 'SUPPLIERS', icon: Truck, label: 'Tedarikçiler' }, { id: 'PAYMENTS', icon: CreditCard, label: 'Ödemelerim' }, { id: 'PRESCRIPTIONS', icon: FileText, label: 'Reçete Defteri' }, { id: 'VISITS', icon: ClipboardList, label: 'Ziyaretler' }] },
     { title: "Destek", items: [{ id: 'CONTACT', icon: Phone, label: 'Bize Ulaşın' }, { id: 'SETTINGS', icon: Settings, label: 'Ayarlar' }] }
   ];
+
+  if (isAdmin) {
+    navGroups.push({
+      title: "Yönetim",
+      items: [{ id: 'ADMIN_PANEL', icon: Shield, label: 'Yönetim Paneli' }]
+    });
+  }
 
   const handleNavClick = (view: ViewState) => { onNavigate(view); setIsMobileMenuOpen(false); };
   const handleLogout = async () => { try { await dbService.clearLocalUserData(); await logout(); } catch (error) { console.error("Logout failed", error); } };
@@ -62,6 +71,13 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
                 </div>
             ))}
         </div>
+        
+        {!isAdmin && (
+            <div className="px-3 py-2 shrink-0">
+                <SubscriptionTimer endsAt={subscriptionEndsAt} />
+            </div>
+        )}
+
         <div className="p-3 bg-stone-900/50 border-t border-white/5 shrink-0"><button onClick={handleLogout} className="w-full py-2 rounded-xl border border-red-900/20 text-red-400 bg-red-900/5 text-xs font-bold flex items-center justify-center"><LogOut size={14} className="mr-2"/> Çıkış</button></div>
       </div>
 
@@ -74,6 +90,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
            <div className="flex justify-around items-center max-w-lg mx-auto h-12">
                <NavButton active={currentView === 'DASHBOARD'} onClick={() => onNavigate('DASHBOARD')} icon={Home} label="Ana Sayfa" />
                <NavButton active={currentView === 'FARMERS'} onClick={() => onNavigate('FARMERS')} icon={Users} label="Çiftçiler" />
+               <QuickActions />
                <NavButton active={currentView === 'NOTIFICATIONS'} onClick={() => onNavigate('NOTIFICATIONS')} icon={Bell} label="Bildirim" badge={unreadCount} />
                <NavButton active={isMobileMenuOpen} onClick={() => setIsMobileMenuOpen(true)} icon={Menu} label="Menü" />
            </div>
@@ -97,3 +114,64 @@ const NavButton = ({ active, onClick, icon: Icon, label, badge }: { active: bool
         </span>
     </button>
 );
+
+const SubscriptionTimer = ({ endsAt }: { endsAt: string }) => {
+    const [timeLeft, setTimeLeft] = useState<{ days: number, hours: number, minutes: number }>({ days: 0, hours: 0, minutes: 0 });
+    const [status, setStatus] = useState<'normal' | 'warning' | 'critical'>('normal');
+
+    useEffect(() => {
+        const calculateTimeLeft = () => {
+            const end = new Date(endsAt).getTime();
+            const now = new Date().getTime();
+            const difference = end - now;
+
+            if (difference > 0) {
+                const days = Math.floor(difference / (1000 * 60 * 60 * 24));
+                const hours = Math.floor((difference / (1000 * 60 * 60)) % 24);
+                const minutes = Math.floor((difference / 1000 / 60) % 60);
+                
+                setTimeLeft({ days, hours, minutes });
+
+                if (days <= 7) {
+                    setStatus('critical');
+                } else if (days <= 30) {
+                    setStatus('warning');
+                } else {
+                    setStatus('normal');
+                }
+            } else {
+                setTimeLeft({ days: 0, hours: 0, minutes: 0 });
+                setStatus('critical');
+            }
+        };
+
+        calculateTimeLeft();
+        const timer = setInterval(calculateTimeLeft, 60000); // Update every minute
+
+        return () => clearInterval(timer);
+    }, [endsAt]);
+
+    const getColors = () => {
+        switch (status) {
+            case 'critical': return 'bg-red-500/10 border-red-500/20 text-red-400';
+            case 'warning': return 'bg-yellow-500/10 border-yellow-500/20 text-yellow-400';
+            default: return 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400';
+        }
+    };
+
+    return (
+        <div className={`p-3 rounded-xl border flex flex-col items-center justify-center space-y-1.5 ${getColors()} transition-colors duration-500`}>
+            <div className="flex items-center space-x-1.5 opacity-80">
+                <Clock size={12} />
+                <span className="text-[10px] uppercase tracking-wider font-bold">Kalan Abonelik Süresi</span>
+            </div>
+            <div className="flex items-center space-x-2 font-mono text-sm font-bold">
+                <div className="flex flex-col items-center"><span className="leading-none">{timeLeft.days}</span><span className="text-[8px] opacity-70">GÜN</span></div>
+                <span className="opacity-50 pb-2">:</span>
+                <div className="flex flex-col items-center"><span className="leading-none">{timeLeft.hours}</span><span className="text-[8px] opacity-70">SAAT</span></div>
+                <span className="opacity-50 pb-2">:</span>
+                <div className="flex flex-col items-center"><span className="leading-none">{timeLeft.minutes}</span><span className="text-[8px] opacity-70">DAKİKA</span></div>
+            </div>
+        </div>
+    );
+};
