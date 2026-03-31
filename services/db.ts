@@ -1,7 +1,7 @@
 
 import { safeStringify } from '../utils/json';
 import { openDB, DBSchema } from 'idb';
-import { Farmer, Pesticide, VisitLog, Prescription, AppNotification, UserProfile, Reminder, InventoryItem, PesticideCategory, Payment, ManualDebt, Supplier, SupplierPurchase, SupplierPayment, MyPayment, TurnoverLog, Expense, Account, Transaction } from '../types';
+import { Farmer, Pesticide, VisitLog, Prescription, AppNotification, UserProfile, Reminder, InventoryItem, PesticideCategory, Payment, ManualDebt, Supplier, SupplierPurchase, SupplierPayment, MyPayment, TurnoverLog, Expense, Account, Transaction, TeamMember, Message } from '../types';
 import { MOCK_PESTICIDES } from '../constants';
 import { db as firestore, auth } from './firebase';
 import { doc, setDoc, deleteDoc, collection, getDocs, writeBatch, query, where, getDoc, onSnapshot } from 'firebase/firestore';
@@ -88,10 +88,19 @@ interface AgriDB extends DBSchema {
     value: Transaction;
     indexes: { 'by-account': string, 'by-date': string };
   };
+  teamMembers: {
+    key: string;
+    value: TeamMember;
+  };
+  messages: {
+    key: string;
+    value: Message;
+    indexes: { 'by-date': string };
+  };
 }
 
 const DB_NAME = 'agri-engineer-db';
-const DB_VERSION = 18;
+const DB_VERSION = 20;
 
 const FS_ROOT = "MKS";
 const FS_ORG = "g892bEaJyGfEq1Fa67yb";
@@ -189,6 +198,13 @@ export const initDB = async () => {
         transactionStore.createIndex('by-account', 'accountId');
         transactionStore.createIndex('by-date', 'date');
       }
+      if (!db.objectStoreNames.contains('teamMembers')) {
+        db.createObjectStore('teamMembers', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('messages')) {
+        const messageStore = db.createObjectStore('messages', { keyPath: 'id' });
+        messageStore.createIndex('by-date', 'timestamp');
+      }
     },
   });
 };
@@ -268,7 +284,7 @@ const dbServiceObj = {
                   if (isAdmin) {
                     endDate.setFullYear(2099);
                   } else {
-                    endDate.setDate(endDate.getDate() + 14); // 14 days trial
+                    endDate.setDate(endDate.getDate() + 7); // 7 days trial
                   }
                   profile.subscriptionEndsAt = endDate.toISOString();
                   
@@ -286,10 +302,13 @@ const dbServiceObj = {
                 if (isAdmin) {
                   endDate.setFullYear(2099);
                 } else {
-                  endDate.setDate(endDate.getDate() + 14); // 14 days trial
+                  endDate.setDate(endDate.getDate() + 7); // 7 days trial
                 }
 
                 const newProfile: UserProfile = {
+                  email: email || '',
+                  createdAt: new Date().toISOString(),
+                  lastLoginAt: new Date().toISOString(),
                   fullName: auth.currentUser?.displayName || '',
                   phoneNumber: '',
                   companyName: '',
@@ -323,10 +342,22 @@ const dbServiceObj = {
                     profileToSave.role = existingProfile.role;
                     profileToSave.subscriptionStatus = existingProfile.subscriptionStatus;
                     profileToSave.subscriptionEndsAt = existingProfile.subscriptionEndsAt;
+                } else {
+                    // Prevent setting admin/active status on creation
+                    profileToSave.role = 'user';
+                    profileToSave.subscriptionStatus = 'trial';
+                    const endDate = new Date();
+                    endDate.setDate(endDate.getDate() + 7);
+                    profileToSave.subscriptionEndsAt = endDate.toISOString();
                 }
             }
 
-            const cleanProfile = sanitizeForFirestore({ ...profileToSave, lastUpdate: new Date().toISOString() });
+            const cleanProfile = sanitizeForFirestore({ 
+                ...profileToSave, 
+                lastUpdate: new Date().toISOString(),
+                lastLoginAt: new Date().toISOString(),
+                email: auth.currentUser?.email || profileToSave.email
+            });
             await setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid), cleanProfile, { merge: true });
         } catch (error) {
             console.error("Error saving user profile:", error);
@@ -376,7 +407,7 @@ const dbServiceObj = {
     if (!navigator.onLine) return;
     const db = await initDB();
     const userPath = [FS_ROOT, FS_ORG, FS_USERS, uid].join("/");
-    const collections = ["farmers", "notifications", "visits", "prescriptions", "reminders", "inventory", "payments", "manualDebts", "suppliers", "supplierPurchases", "supplierPayments", "myPayments", "expenses", "accounts", "transactions"] as const;
+    const collections = ["farmers", "notifications", "visits", "prescriptions", "reminders", "inventory", "payments", "manualDebts", "suppliers", "supplierPurchases", "supplierPayments", "myPayments", "expenses", "accounts", "transactions", "teamMembers", "messages"] as const;
 
     for (const col of collections) {
       try {
@@ -417,7 +448,7 @@ const dbServiceObj = {
 
   async clearLocalUserData() {
     const db = await initDB();
-    const stores = ['farmers', 'visits', 'prescriptions', 'notifications', 'reminders', 'inventory', 'payments', 'manualDebts', 'suppliers', 'supplierPurchases', 'supplierPayments', 'myPayments', 'expenses', 'accounts', 'transactions'] as const;
+    const stores = ['farmers', 'visits', 'prescriptions', 'notifications', 'reminders', 'inventory', 'payments', 'manualDebts', 'suppliers', 'supplierPurchases', 'supplierPayments', 'myPayments', 'expenses', 'accounts', 'transactions', 'teamMembers', 'messages'] as const;
     for (const store of stores) await db.clear(store);
     localStorage.removeItem('mks_user_profile');
   },
@@ -454,11 +485,21 @@ const dbServiceObj = {
         const vSnap = await getDocs(vQuery);
         const visits = vSnap.docs.map(d => d.data() as VisitLog);
 
-        // 4. Mühendis profilini çek
+        // 4. Ödemeleri çek
+        const payQuery = query(collection(firestore, userPath, "payments"), where("farmerId", "==", farmerId));
+        const paySnap = await getDocs(payQuery);
+        const payments = paySnap.docs.map(d => d.data() as any);
+
+        // 5. Manuel borçları çek
+        const debtQuery = query(collection(firestore, userPath, "manualDebts"), where("farmerId", "==", farmerId));
+        const debtSnap = await getDocs(debtQuery);
+        const manualDebts = debtSnap.docs.map(d => d.data() as any);
+
+        // 6. Mühendis profilini çek
         const profileDoc = await getDoc(doc(firestore, userPath));
         const profile = profileDoc.exists() ? profileDoc.data() as UserProfile : undefined;
 
-        return { farmer, prescriptions, visits, profile };
+        return { farmer, prescriptions, visits, payments, manualDebts, profile };
     } catch (error) {
         console.error("Error fetching portal data:", error);
         return null;
@@ -701,17 +742,19 @@ const dbServiceObj = {
         if (!item.quantity) continue;
         
         const qty = parseInt(item.quantity);
-        if (isNaN(qty) || qty <= 0) continue;
+        if (isNaN(qty) || qty === 0) continue;
 
-        const existingItem = allInventory.find(i => i.pesticideId === item.pesticideId);
+        const existingIndex = allInventory.findIndex(i => i.pesticideId === item.pesticideId);
         
-        if (existingItem) {
+        if (existingIndex !== -1) {
+            const existingItem = allInventory[existingIndex];
             const updatedItem = {
                 ...existingItem,
                 quantity: existingItem.quantity - qty,
                 lastUpdated: new Date().toISOString()
             };
             await inventoryStore.put(updatedItem);
+            allInventory[existingIndex] = updatedItem; // Update in memory
             inventoryUpdates.push(updatedItem);
         } else {
             const newItem: InventoryItem = {
@@ -726,6 +769,7 @@ const dbServiceObj = {
                 lastUpdated: new Date().toISOString()
             };
             await inventoryStore.put(newItem);
+            allInventory.push(newItem); // Add to memory
             inventoryUpdates.push(newItem);
         }
     }
@@ -755,17 +799,19 @@ const dbServiceObj = {
         if (!item.quantity) continue;
         
         const qty = parseInt(item.quantity);
-        if (isNaN(qty) || qty <= 0) continue;
+        if (isNaN(qty) || qty === 0) continue;
 
-        const existingItem = allInventory.find(i => i.pesticideId === item.pesticideId);
+        const existingIndex = allInventory.findIndex(i => i.pesticideId === item.pesticideId);
         
-        if (existingItem) {
+        if (existingIndex !== -1) {
+            const existingItem = allInventory[existingIndex];
             const updatedItem = {
                 ...existingItem,
                 quantity: existingItem.quantity + qty,
                 lastUpdated: new Date().toISOString()
             };
             await inventoryStore.put(updatedItem);
+            allInventory[existingIndex] = updatedItem; // Update in memory
             inventoryUpdates.push(updatedItem);
         }
     }
@@ -802,7 +848,7 @@ const dbServiceObj = {
     if (!user) throw new Error("Oturum açılmamış. Lütfen tekrar giriş yapın.");
 
     const db = await initDB();
-    const stores = ['farmers', 'visits', 'prescriptions', 'notifications', 'reminders', 'inventory', 'payments', 'manualDebts', 'suppliers', 'supplierPurchases', 'supplierPayments', 'myPayments', 'expenses', 'accounts', 'transactions'] as const;
+    const stores = ['farmers', 'visits', 'prescriptions', 'notifications', 'reminders', 'inventory', 'payments', 'manualDebts', 'suppliers', 'supplierPurchases', 'supplierPayments', 'myPayments', 'expenses', 'accounts', 'transactions', 'teamMembers', 'messages'] as const;
     
     let total = 0;
     for (const storeName of stores) {
@@ -835,6 +881,12 @@ const dbServiceObj = {
     return payment.id;
   },
 
+  async updatePayment(payment: Payment) {
+    const db = await initDB();
+    await db.put('payments', payment);
+    backgroundSync('payments', payment);
+  },
+
   async deletePayment(id: string) {
     const db = await initDB();
     await db.delete('payments', id);
@@ -852,6 +904,13 @@ const dbServiceObj = {
   },
 
   async addManualDebt(debt: ManualDebt) {
+    const db = await initDB();
+    await db.put('manualDebts', debt);
+    backgroundSync('manualDebts', debt);
+    return debt.id;
+  },
+
+  async updateManualDebt(debt: ManualDebt) {
     const db = await initDB();
     await db.put('manualDebts', debt);
     backgroundSync('manualDebts', debt);
@@ -924,6 +983,12 @@ const dbServiceObj = {
     await db.put('supplierPayments', payment);
     backgroundSync('supplierPayments', payment);
     return payment.id;
+  },
+
+  async updateSupplierPayment(payment: SupplierPayment) {
+    const db = await initDB();
+    await db.put('supplierPayments', payment);
+    backgroundSync('supplierPayments', payment);
   },
 
   async deleteSupplierPayment(id: string) {
@@ -1044,6 +1109,12 @@ const dbServiceObj = {
     return expense.id;
   },
 
+  async updateExpense(expense: Expense) {
+    const db = await initDB();
+    await db.put('expenses', expense);
+    backgroundSync('expenses', expense);
+  },
+
   // --- ACCOUNTS & TRANSACTIONS ---
   async getAccounts() {
     const db = await initDB();
@@ -1094,6 +1165,40 @@ const dbServiceObj = {
     return transaction.id;
   },
 
+  async updateTransaction(transaction: Transaction) {
+    const db = await initDB();
+    const oldTransaction = await db.get('transactions', transaction.id);
+    
+    if (oldTransaction) {
+      // Revert old transaction effect
+      const oldAccount = await db.get('accounts', oldTransaction.accountId);
+      if (oldAccount) {
+        if (oldTransaction.type === 'INCOME') {
+          oldAccount.balance -= oldTransaction.amount;
+        } else {
+          oldAccount.balance += oldTransaction.amount;
+        }
+        await db.put('accounts', oldAccount);
+        backgroundSync('accounts', oldAccount);
+      }
+    }
+
+    await db.put('transactions', transaction);
+    backgroundSync('transactions', transaction);
+    
+    // Apply new transaction effect
+    const newAccount = await db.get('accounts', transaction.accountId);
+    if (newAccount) {
+      if (transaction.type === 'INCOME') {
+        newAccount.balance += transaction.amount;
+      } else {
+        newAccount.balance -= transaction.amount;
+      }
+      await db.put('accounts', newAccount);
+      backgroundSync('accounts', newAccount);
+    }
+  },
+
   async deleteTransaction(id: string) {
     const db = await initDB();
     const transaction = await db.get('transactions', id);
@@ -1119,13 +1224,52 @@ const dbServiceObj = {
     backgroundDelete('expenses', id);
   },
 
+  // --- TEAM MEMBERS ---
+  async getTeamMembers() {
+    const db = await initDB();
+    return db.getAll('teamMembers');
+  },
+
+  async addTeamMember(member: TeamMember) {
+    const db = await initDB();
+    await db.put('teamMembers', member);
+    backgroundSync('teamMembers', member);
+    return member.id;
+  },
+
+  async updateTeamMember(member: TeamMember) {
+    const db = await initDB();
+    await db.put('teamMembers', member);
+    backgroundSync('teamMembers', member);
+    return member.id;
+  },
+
+  async deleteTeamMember(id: string) {
+    const db = await initDB();
+    await db.delete('teamMembers', id);
+    backgroundDelete('teamMembers', id);
+  },
+
+  // --- MESSAGES ---
+  async getMessages() {
+    const db = await initDB();
+    return (await db.getAll('messages')).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  },
+
+  async sendMessage(message: Message) {
+    const db = await initDB();
+    await db.put('messages', message);
+    backgroundSync('messages', message);
+    return message.id;
+  },
+
   /**
    * Gerçek zamanlı senkronizasyon için Firestore dinleyicilerini kurar.
    * Diğer cihazlardan gelen değişiklikleri yerel veritabanına yansıtır.
    */
   setupRealtimeSync(uid: string, onSync: () => void, onProfileSync?: (profile: UserProfile) => void) {
     const userPath = [FS_ROOT, FS_ORG, FS_USERS, uid].join("/");
-    const collections = ["farmers", "notifications", "visits", "prescriptions", "reminders", "inventory", "payments", "manualDebts", "suppliers", "supplierPurchases", "supplierPayments", "myPayments", "expenses", "accounts", "transactions"] as const;
+    const collections = ["farmers", "notifications", "visits", "prescriptions", "reminders", "inventory", "payments", "manualDebts", "suppliers", "supplierPurchases", "supplierPayments", "myPayments", "expenses", "accounts", "transactions", "teamMembers", "messages"] as const;
     
     const unsubscribes: (() => void)[] = [];
 
@@ -1195,10 +1339,10 @@ export const dbService = new Proxy(dbServiceObj, {
             if (onActionBlocked) onActionBlocked();
             throw new Error('SUBSCRIPTION_EXPIRED');
           }
-          return value.apply(target, args);
+          return (value as Function).apply(target, args);
         };
       }
     }
     return value;
   }
-});
+}) as typeof dbServiceObj;

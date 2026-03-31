@@ -1,16 +1,84 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppViewModel } from '../context/AppContext';
 import { Farmer, Expense, Payment } from '../types';
 import { Plus, MessageSquare, Wallet, Receipt, CreditCard, X, AlertCircle, Send, Loader2, Save, MessageCircle, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { formatCurrency, getCurrencySymbol } from '../utils/currency';
 
 export const QuickActions: React.FC = () => {
-    const { farmers, payments, prescriptions, manualDebts, addExpense, addPayment, accounts, showToast, hapticFeedback } = useAppViewModel();
+    const { 
+        farmers, 
+        payments, 
+        prescriptions, 
+        manualDebts, 
+        addExpense, 
+        addPayment, 
+        accounts, 
+        showToast, 
+        hapticFeedback, 
+        userProfile,
+        farmerLabel,
+        farmerPluralLabel,
+        prescriptionLabel,
+        activeTeamMember,
+        t,
+        language
+    } = useAppViewModel();
     const [isOpen, setIsOpen] = useState(false);
     
     // Modals state
     const [activeModal, setActiveModal] = useState<'BULK_MESSAGE' | 'DEBT_REMINDER' | 'ADD_EXPENSE' | 'RECEIVE_PAYMENT' | null>(null);
+
+    // Handle history back for modals and menu
+    useEffect(() => {
+        const handlePop = (e: PopStateEvent) => {
+            if (e.state?.modal) {
+                setActiveModal(e.state.modal);
+            } else {
+                setActiveModal(null);
+            }
+            
+            if (e.state?.quickActionsOpen !== undefined) {
+                setIsOpen(e.state.quickActionsOpen);
+            } else {
+                setIsOpen(false);
+            }
+        };
+        window.addEventListener('popstate', handlePop);
+        return () => window.removeEventListener('popstate', handlePop);
+    }, []);
+
+    const toggleOpen = (open: boolean) => {
+        if (open === isOpen) return;
+        if (open) {
+            window.history.pushState({ ...window.history.state, quickActionsOpen: true }, '');
+        } else if (window.history.state?.quickActionsOpen) {
+            window.history.back();
+            return;
+        }
+        setIsOpen(open);
+    };
+
+    const changeActiveModal = (modal: typeof activeModal) => {
+        if (modal === activeModal) return;
+        if (modal) {
+            window.history.pushState({ ...window.history.state, modal }, '');
+        } else if (window.history.state?.modal) {
+            window.history.back();
+            return;
+        }
+        setActiveModal(modal);
+    };
+
+    const openModalFromMenu = (modal: typeof activeModal) => {
+        const state = { ...window.history.state };
+        delete state.quickActionsOpen;
+        state.modal = modal;
+        window.history.replaceState(state, '');
+        setIsOpen(false);
+        setActiveModal(modal);
+    };
 
     // Compute farmers with balances
     const farmersWithBalances = useMemo(() => {
@@ -47,7 +115,11 @@ export const QuickActions: React.FC = () => {
     };
 
     // --- DEBT REMINDER STATE ---
-    const [debtReminderTemplate, setDebtReminderTemplate] = useState('Sayın [İSİM],\n\n[TARİH] tarihi itibarıyla [BAKİYE] ödenmemiş bakiyeniz bulunmaktadır.\n\nBilginize sunar, iyi çalışmalar dileriz.');
+    const [debtReminderTemplate, setDebtReminderTemplate] = useState('');
+
+    useEffect(() => {
+        setDebtReminderTemplate(t('quick.debtReminder.template'));
+    }, [language]);
     
     const debtors = useMemo(() => {
         return farmersWithBalances
@@ -56,11 +128,14 @@ export const QuickActions: React.FC = () => {
     }, [farmersWithBalances]);
 
     const handleSendDebtReminder = (farmer: Farmer & { overallBalance: number }) => {
-        const balance = Math.abs(farmer.overallBalance).toLocaleString('tr-TR') + ' ₺';
-        const date = new Date().toLocaleDateString('tr-TR');
+        const balance = formatCurrency(Math.abs(farmer.overallBalance), userProfile?.currency || 'TRY');
+        const date = new Date().toLocaleDateString(language === 'tr' ? 'tr-TR' : language === 'en' ? 'en-US' : 'ar-SA');
         
         let text = debtReminderTemplate
-            .replace(/\[İSİM\]/g, farmer.fullName)
+            .replace(/\[NAME\]/g, farmer.fullName)
+            .replace(/\[BALANCE\]/g, balance)
+            .replace(/\[DATE\]/g, date)
+            .replace(/\[İSİM\]/g, farmer.fullName) // Backward compatibility
             .replace(/\[BAKİYE\]/g, balance)
             .replace(/\[TARİH\]/g, date);
             
@@ -82,15 +157,16 @@ export const QuickActions: React.FC = () => {
                 title: expenseTitle,
                 category: expenseCategory,
                 date: new Date().toISOString(),
-                accountId: expenseAccountId || undefined
+                accountId: expenseAccountId || undefined,
+                createdById: activeTeamMember?.id
             });
-            showToast('Gider başarıyla eklendi', 'success');
+            showToast(t('quick.addExpense.success'), 'success');
             hapticFeedback();
-            setActiveModal(null);
+            changeActiveModal(null);
             setExpenseAmount('');
             setExpenseTitle('');
         } catch (error) {
-            showToast('Gider eklenirken hata oluştu', 'error');
+            showToast(t('quick.addExpense.error'), 'error');
         }
     };
 
@@ -110,16 +186,17 @@ export const QuickActions: React.FC = () => {
                 date: new Date().toISOString(),
                 method: paymentMethod,
                 note: paymentNote,
-                accountId: paymentAccountId || undefined
+                accountId: paymentAccountId || undefined,
+                createdById: activeTeamMember?.id
             });
-            showToast('Tahsilat başarıyla eklendi', 'success');
+            showToast(t('quick.receivePayment.success'), 'success');
             hapticFeedback();
-            setActiveModal(null);
+            changeActiveModal(null);
             setPaymentAmount('');
             setPaymentNote('');
             setPaymentFarmerId('');
         } catch (error) {
-            showToast('Tahsilat eklenirken hata oluştu', 'error');
+            showToast(t('quick.receivePayment.error'), 'error');
         }
     };
 
@@ -136,7 +213,7 @@ export const QuickActions: React.FC = () => {
                                     animate={{ opacity: 1 }}
                                     exit={{ opacity: 0 }}
                                     className="fixed inset-0 z-[9997] bg-black/40 backdrop-blur-sm"
-                                    onClick={() => setIsOpen(false)}
+                                    onClick={() => toggleOpen(false)}
                                 />
                                 
                                 {/* Bubble Menu */}
@@ -148,57 +225,57 @@ export const QuickActions: React.FC = () => {
                                 >
                                     <div className="p-3 space-y-1.5">
                                         <button 
-                                            onClick={() => { setActiveModal('DEBT_REMINDER'); setIsOpen(false); }}
+                                            onClick={() => openModalFromMenu('DEBT_REMINDER')}
                                             className="w-full flex items-center p-4 rounded-2xl hover:bg-white/5 transition-all text-left group active:scale-[0.98]"
                                         >
                                             <div className="w-12 h-12 rounded-2xl bg-rose-500/10 text-rose-500 flex items-center justify-center mr-4 group-hover:scale-110 transition-transform shadow-inner">
                                                 <Wallet size={24} />
                                             </div>
                                             <div className="flex-1">
-                                                <div className="text-sm font-bold text-stone-100">Toplu Borç Hatırlatma</div>
-                                                <div className="text-[10px] text-stone-500 font-medium mt-0.5">Borçlulara WhatsApp mesajı</div>
+                                                <div className="text-sm font-bold text-stone-100">{t('quick.debtReminder') || 'Toplu Borç Hatırlatma'}</div>
+                                                <div className="text-[10px] text-stone-500 font-medium mt-0.5">{t('quick.debtReminder.desc') || 'Borçlulara WhatsApp mesajı'}</div>
                                             </div>
                                             <ChevronRight size={16} className="text-stone-700 group-hover:text-stone-400 transition-colors" />
                                         </button>
                                         
                                         <button 
-                                            onClick={() => { setActiveModal('BULK_MESSAGE'); setIsOpen(false); }}
+                                            onClick={() => openModalFromMenu('BULK_MESSAGE')}
                                             className="w-full flex items-center p-4 rounded-2xl hover:bg-white/5 transition-all text-left group active:scale-[0.98]"
                                         >
                                             <div className="w-12 h-12 rounded-2xl bg-blue-500/10 text-blue-500 flex items-center justify-center mr-4 group-hover:scale-110 transition-transform shadow-inner">
                                                 <MessageSquare size={24} />
                                             </div>
                                             <div className="flex-1">
-                                                <div className="text-sm font-bold text-stone-100">Toplu Mesaj Gönder</div>
-                                                <div className="text-[10px] text-stone-500 font-medium mt-0.5">Tüm çiftçilere duyuru</div>
+                                                <div className="text-sm font-bold text-stone-100">{t('quick.bulkMessage') || 'Toplu Mesaj Gönder'}</div>
+                                                <div className="text-[10px] text-stone-500 font-medium mt-0.5">{t('quick.bulkMessage.desc') || 'Tüm çiftçilere duyuru'}</div>
                                             </div>
                                             <ChevronRight size={16} className="text-stone-700 group-hover:text-stone-400 transition-colors" />
                                         </button>
                                         
                                         <button 
-                                            onClick={() => { setActiveModal('ADD_EXPENSE'); setIsOpen(false); }}
+                                            onClick={() => openModalFromMenu('ADD_EXPENSE')}
                                             className="w-full flex items-center p-4 rounded-2xl hover:bg-white/5 transition-all text-left group active:scale-[0.98]"
                                         >
                                             <div className="w-12 h-12 rounded-2xl bg-orange-500/10 text-orange-500 flex items-center justify-center mr-4 group-hover:scale-110 transition-transform shadow-inner">
                                                 <Receipt size={24} />
                                             </div>
                                             <div className="flex-1">
-                                                <div className="text-sm font-bold text-stone-100">Gider Ekle</div>
-                                                <div className="text-[10px] text-stone-500 font-medium mt-0.5">İşletme gideri kaydet</div>
+                                                <div className="text-sm font-bold text-stone-100">{t('quick.addExpense') || 'Gider Ekle'}</div>
+                                                <div className="text-[10px] text-stone-500 font-medium mt-0.5">{t('quick.addExpense.desc') || 'İşletme gideri kaydet'}</div>
                                             </div>
                                             <ChevronRight size={16} className="text-stone-700 group-hover:text-stone-400 transition-colors" />
                                         </button>
                                         
                                         <button 
-                                            onClick={() => { setActiveModal('RECEIVE_PAYMENT'); setIsOpen(false); }}
+                                            onClick={() => openModalFromMenu('RECEIVE_PAYMENT')}
                                             className="w-full flex items-center p-4 rounded-2xl hover:bg-white/5 transition-all text-left group active:scale-[0.98]"
                                         >
                                             <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center mr-4 group-hover:scale-110 transition-transform shadow-inner">
                                                 <CreditCard size={24} />
                                             </div>
                                             <div className="flex-1">
-                                                <div className="text-sm font-bold text-stone-100">Tahsilat (Ödeme Al)</div>
-                                                <div className="text-[10px] text-stone-500 font-medium mt-0.5">Çiftçiden ödeme kaydet</div>
+                                                <div className="text-sm font-bold text-stone-100">{t('quick.receivePayment') || 'Tahsilat (Ödeme Al)'}</div>
+                                                <div className="text-[10px] text-stone-500 font-medium mt-0.5">{farmerLabel} {t('quick.receivePayment.desc') || 'den ödeme kaydet'}</div>
                                             </div>
                                             <ChevronRight size={16} className="text-stone-700 group-hover:text-stone-400 transition-colors" />
                                         </button>
@@ -214,7 +291,7 @@ export const QuickActions: React.FC = () => {
                 <div className="flex flex-col items-center justify-end w-full h-full relative pb-1">
                     <button 
                         onClick={() => {
-                            setIsOpen(!isOpen);
+                            toggleOpen(!isOpen);
                             hapticFeedback();
                         }} 
                         className={`absolute -top-5 left-1/2 -translate-x-1/2 flex items-center justify-center w-12 h-12 rounded-full transition-all active:scale-95 shadow-xl z-50 ${isOpen ? 'bg-stone-800 text-emerald-400 border border-emerald-500/30 shadow-emerald-500/20' : 'bg-emerald-500 text-white shadow-emerald-500/30'}`}
@@ -222,7 +299,7 @@ export const QuickActions: React.FC = () => {
                         <Plus size={24} strokeWidth={2.5} className={`transition-transform duration-300 ${isOpen ? 'rotate-45' : ''}`} />
                     </button>
                     <span className={`text-[8px] font-bold transition-all ${isOpen ? 'text-emerald-400 opacity-100' : 'text-stone-500 opacity-60'}`}>
-                        Hızlı İşlem
+                        {t('quick.action') || 'Hızlı İşlem'}
                     </span>
                 </div>
             </div>
@@ -246,7 +323,7 @@ export const QuickActions: React.FC = () => {
                                     Toplu Mesaj Gönder
                                 </h2>
                                 <button 
-                                    onClick={() => setActiveModal(null)} 
+                                    onClick={() => changeActiveModal(null)} 
                                     className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-stone-400 hover:text-stone-100 transition-colors"
                                 >
                                     <X size={24}/>
@@ -254,27 +331,27 @@ export const QuickActions: React.FC = () => {
                             </div>
                             <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar pb-32">
                                 <div className="space-y-2">
-                                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">Hedef Grup (Köy)</label>
+                                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">{t('quick.bulkMessage.village')}</label>
                                     <select 
                                         value={bulkTargetVillage} 
                                         onChange={(e) => setBulkTargetVillage(e.target.value)} 
                                         className="w-full bg-stone-900 border border-white/10 rounded-2xl px-4 py-4 text-stone-100 text-sm outline-none focus:border-blue-500 transition-all appearance-none"
                                     >
-                                        <option value="ALL">Tüm Çiftçiler ({farmers.length})</option>
+                                        <option value="ALL">{t('quick.bulkMessage.all')} {farmerPluralLabel} ({farmers.length})</option>
                                         {villages.map((v: string) => <option key={v} value={v}>{v} ({farmers.filter((f: Farmer) => f.village === v).length})</option>)}
                                     </select>
                                 </div>
                                 <div className="space-y-2">
-                                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">Mesaj İçeriği</label>
+                                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">{t('quick.bulkMessage.content')}</label>
                                     <textarea 
                                         value={bulkMessage} 
                                         onChange={(e) => setBulkMessage(e.target.value)} 
-                                        placeholder="Örn: Değerli üreticilerimiz..." 
+                                        placeholder={t('quick.bulkMessage.placeholder')} 
                                         className="w-full bg-stone-900 border border-white/10 rounded-2xl px-4 py-4 text-stone-100 text-base focus:border-blue-500 outline-none transition-all h-48 resize-none" 
                                     />
                                 </div>
                                 <div className="space-y-3">
-                                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">Alıcı Listesi ({bulkTargetFarmers.length} Kişi)</label>
+                                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">{t('quick.bulkMessage.list')} ({bulkTargetFarmers.length} {t('quick.person')})</label>
                                     <div className="space-y-2">
                                         {bulkTargetFarmers.map((f: Farmer) => (
                                             <div key={f.id} className="flex items-center justify-between p-4 bg-stone-900/50 rounded-2xl border border-white/5">
@@ -310,10 +387,10 @@ export const QuickActions: React.FC = () => {
                                     <div className="p-2 rounded-xl bg-rose-500/10 text-rose-500">
                                         <Wallet size={20}/> 
                                     </div>
-                                    Borç Hatırlatma
+                                    {t('quick.debtReminder') || 'Borç Hatırlatma'}
                                 </h2>
                                 <button 
-                                    onClick={() => setActiveModal(null)} 
+                                    onClick={() => changeActiveModal(null)} 
                                     className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-stone-400 hover:text-stone-100 transition-colors"
                                 >
                                     <X size={24}/>
@@ -325,13 +402,13 @@ export const QuickActions: React.FC = () => {
                                         <AlertCircle className="text-rose-500" size={20}/>
                                     </div>
                                     <div className="text-sm text-rose-200/90 leading-relaxed">
-                                        Şu anda toplam <strong className="text-rose-400">{debtors.length}</strong> çiftçinin ödenmemiş borcu bulunmaktadır. Aşağıdaki listeden tek tıkla hatırlatma gönderebilirsiniz.
+                                        {t('quick.debtReminder.info1') || 'Şu anda toplam'} <strong className="text-rose-400">{debtors.length}</strong> {t('quick.debtReminder.info2') || 'çiftçinin ödenmemiş borcu bulunmaktadır. Aşağıdaki listeden tek tıkla hatırlatma gönderebilirsiniz.'}
                                     </div>
                                 </div>
                                 <div className="space-y-2">
                                     <div className="flex justify-between items-end mb-1">
-                                        <label className="text-xs font-bold text-stone-400 uppercase tracking-wider">Mesaj Şablonu</label>
-                                        <span className="text-[10px] text-stone-600 font-medium">[İSİM], [BAKİYE], [TARİH]</span>
+                                        <label className="text-xs font-bold text-stone-400 uppercase tracking-wider">{t('quick.messageTemplate') || 'Mesaj Şablonu'}</label>
+                                        <span className="text-[10px] text-stone-600 font-medium">[NAME], [BALANCE], [DATE]</span>
                                     </div>
                                     <textarea 
                                         value={debtReminderTemplate} 
@@ -340,20 +417,20 @@ export const QuickActions: React.FC = () => {
                                     />
                                 </div>
                                 <div className="space-y-3">
-                                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">Borçlu Listesi ({debtors.length} Kişi)</label>
+                                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">{t('quick.debtorList') || 'Borçlu Listesi'} ({debtors.length} {t('quick.person') || 'Kişi'})</label>
                                     <div className="space-y-2">
                                         {debtors.map((f) => (
                                             <div key={f.id} className="flex items-center justify-between p-4 bg-stone-900/50 rounded-2xl border border-white/5 hover:bg-stone-900 transition-colors">
                                                 <div className="flex flex-col">
                                                     <span className="text-sm font-bold text-stone-100">{f.fullName}</span>
-                                                    <span className="text-xs text-rose-400 font-mono font-bold mt-1">{Math.abs(f.overallBalance || 0).toLocaleString('tr-TR')} ₺</span>
+                                                    <span className="text-xs text-rose-400 font-mono font-bold mt-1">{formatCurrency(Math.abs(f.overallBalance || 0), userProfile?.currency || 'TRY')}</span>
                                                 </div>
                                                 <button 
                                                     onClick={() => handleSendDebtReminder(f)} 
                                                     disabled={!debtReminderTemplate.trim()} 
                                                     className="px-4 py-2.5 bg-[#25D366]/10 text-[#25D366] rounded-xl hover:bg-[#25D366] hover:text-white transition-all disabled:opacity-30 flex items-center gap-2 text-xs font-bold uppercase tracking-wider"
                                                 >
-                                                    <MessageCircle size={16} /> Gönder
+                                                    <MessageCircle size={16} /> {t('quick.send') || 'Gönder'}
                                                 </button>
                                             </div>
                                         ))}
@@ -376,10 +453,10 @@ export const QuickActions: React.FC = () => {
                                     <div className="p-2 rounded-xl bg-orange-500/10 text-orange-500">
                                         <Receipt size={20}/> 
                                     </div>
-                                    Gider Ekle
+                                    {t('quick.addExpense.title')}
                                 </h2>
                                 <button 
-                                    onClick={() => setActiveModal(null)} 
+                                    onClick={() => changeActiveModal(null)} 
                                     className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-stone-400 hover:text-stone-100 transition-colors"
                                 >
                                     <X size={24}/>
@@ -387,7 +464,7 @@ export const QuickActions: React.FC = () => {
                             </div>
                             <div className="flex-1 overflow-y-auto p-6 space-y-6 pb-32">
                                 <div className="space-y-2">
-                                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">Tutar (₺)</label>
+                                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">{t('quick.addExpense.amount')} ({getCurrencySymbol(userProfile?.currency || 'TRY')})</label>
                                     <input 
                                         type="number" 
                                         value={expenseAmount} 
@@ -397,17 +474,17 @@ export const QuickActions: React.FC = () => {
                                     />
                                 </div>
                                 <div className="space-y-2">
-                                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">Açıklama</label>
+                                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">{t('quick.addExpense.name')}</label>
                                     <input 
                                         type="text" 
                                         value={expenseTitle} 
                                         onChange={(e) => setExpenseTitle(e.target.value)} 
                                         className="w-full bg-stone-900 border border-white/10 rounded-2xl px-4 py-4 text-stone-100 text-base focus:border-orange-500 outline-none transition-all" 
-                                        placeholder="Örn: Traktör Yakıtı, Ofis Kirası vb." 
+                                        placeholder={t('quick.bulkMessage.placeholder')} 
                                     />
                                 </div>
                                 <div className="space-y-2">
-                                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">Kategori</label>
+                                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">{t('quick.addExpense.category')}</label>
                                     <div className="grid grid-cols-2 gap-2">
                                         {['FUEL', 'RENT', 'ELECTRICITY', 'WATER', 'SALARY', 'TAX', 'OTHER'].map((cat) => (
                                             <button
@@ -415,21 +492,27 @@ export const QuickActions: React.FC = () => {
                                                 onClick={() => setExpenseCategory(cat as any)}
                                                 className={`py-3 px-4 rounded-xl border text-xs font-bold transition-all ${expenseCategory === cat ? 'bg-orange-500 border-orange-500 text-white' : 'bg-stone-900 border-white/5 text-stone-400 hover:border-white/20'}`}
                                             >
-                                                {cat === 'FUEL' ? 'Yakıt' : cat === 'RENT' ? 'Kira' : cat === 'ELECTRICITY' ? 'Elektrik' : cat === 'WATER' ? 'Su' : cat === 'SALARY' ? 'Maaş' : cat === 'TAX' ? 'Vergi' : 'Diğer'}
+                                                {cat === 'FUEL' ? (language === 'tr' ? 'Yakıt' : language === 'en' ? 'Fuel' : 'وقود') : 
+                                                 cat === 'RENT' ? (language === 'tr' ? 'Kira' : language === 'en' ? 'Rent' : 'إيجار') : 
+                                                 cat === 'ELECTRICITY' ? (language === 'tr' ? 'Elektrik' : language === 'en' ? 'Electricity' : 'كهرباء') : 
+                                                 cat === 'WATER' ? (language === 'tr' ? 'Su' : language === 'en' ? 'Water' : 'ماء') : 
+                                                 cat === 'SALARY' ? (language === 'tr' ? 'Maaş' : language === 'en' ? 'Salary' : 'راتب') : 
+                                                 cat === 'TAX' ? (language === 'tr' ? 'Vergi' : language === 'en' ? 'Tax' : 'ضريبة') : 
+                                                 (language === 'tr' ? 'Diğer' : language === 'en' ? 'Other' : 'أخرى')}
                                             </button>
                                         ))}
                                     </div>
                                 </div>
                                 {accounts.length > 0 && (
                                     <div className="space-y-2">
-                                        <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">Ödeme Hesabı</label>
+                                        <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">{t('quick.addExpense.account')}</label>
                                         <select 
                                             value={expenseAccountId} 
                                             onChange={(e) => setExpenseAccountId(e.target.value)} 
                                             className="w-full bg-stone-900 border border-white/10 rounded-2xl px-4 py-4 text-stone-100 text-sm focus:border-orange-500 outline-none transition-all appearance-none"
                                         >
-                                            <option value="">Hesap Seçiniz (Opsiyonel)</option>
-                                            {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name} ({acc.balance.toLocaleString('tr-TR')} ₺)</option>)}
+                                            <option value="">{t('quick.receivePayment.farmer')}...</option>
+                                            {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name} ({formatCurrency(acc.balance, userProfile?.currency || 'TRY')})</option>)}
                                         </select>
                                     </div>
                                 )}
@@ -439,7 +522,7 @@ export const QuickActions: React.FC = () => {
                                         onClick={handleSaveExpense} 
                                         className="w-full bg-orange-600 hover:bg-orange-500 text-white py-5 rounded-2xl font-black text-sm shadow-xl shadow-orange-600/20 disabled:opacity-50 flex items-center justify-center transition-all active:scale-[0.98]"
                                     >
-                                        <Save className="mr-2" size={20}/> GİDERİ KAYDET
+                                        <Save className="mr-2" size={20}/> {t('quick.addExpense.save')}
                                     </button>
                                 </div>
                             </div>
@@ -459,10 +542,10 @@ export const QuickActions: React.FC = () => {
                                     <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-500">
                                         <CreditCard size={20}/> 
                                     </div>
-                                    Tahsilat Yap
+                                    {t('quick.receivePayment.title')}
                                 </h2>
                                 <button 
-                                    onClick={() => setActiveModal(null)} 
+                                    onClick={() => changeActiveModal(null)} 
                                     className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-stone-400 hover:text-stone-100 transition-colors"
                                 >
                                     <X size={24}/>
@@ -470,22 +553,22 @@ export const QuickActions: React.FC = () => {
                             </div>
                             <div className="flex-1 overflow-y-auto p-6 space-y-6 pb-32">
                                 <div className="space-y-2">
-                                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">Çiftçi Seçin</label>
+                                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">{farmerLabel} {t('quick.receivePayment.farmer')}</label>
                                     <select 
                                         value={paymentFarmerId} 
                                         onChange={(e) => setPaymentFarmerId(e.target.value)} 
                                         className="w-full bg-stone-900 border border-white/10 rounded-2xl px-4 py-4 text-stone-100 text-base focus:border-emerald-500 outline-none transition-all appearance-none"
                                     >
-                                        <option value="">Çiftçi Seçiniz...</option>
+                                        <option value="">{farmerLabel} {t('quick.receivePayment.farmer')}...</option>
                                         {farmersWithBalances.map(f => (
                                             <option key={f.id} value={f.id}>
-                                                {f.fullName} (Borç: {Math.abs(f.overallBalance || 0).toLocaleString('tr-TR')} ₺)
+                                                {f.fullName} (Borç: {formatCurrency(Math.abs(f.overallBalance || 0), userProfile?.currency || 'TRY')})
                                             </option>
                                         ))}
                                     </select>
                                 </div>
                                 <div className="space-y-2">
-                                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">Tahsilat Tutarı (₺)</label>
+                                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">{t('quick.receivePayment.amount')} ({getCurrencySymbol(userProfile?.currency || 'TRY')})</label>
                                     <input 
                                         type="number" 
                                         value={paymentAmount} 
@@ -496,19 +579,19 @@ export const QuickActions: React.FC = () => {
                                 </div>
                                 {accounts.length > 0 && (
                                     <div className="space-y-2">
-                                        <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">Tahsilat Hesabı</label>
+                                        <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">{t('quick.receivePayment.account')}</label>
                                         <select 
                                             value={paymentAccountId} 
                                             onChange={(e) => setPaymentAccountId(e.target.value)} 
                                             className="w-full bg-stone-900 border border-white/10 rounded-2xl px-4 py-4 text-stone-100 text-sm focus:border-emerald-500 outline-none transition-all appearance-none"
                                         >
-                                            <option value="">Hesap Seçiniz (Opsiyonel)</option>
-                                            {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name} ({acc.balance.toLocaleString('tr-TR')} ₺)</option>)}
+                                            <option value="">{t('quick.receivePayment.farmer')}...</option>
+                                            {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name} ({formatCurrency(acc.balance, userProfile?.currency || 'TRY')})</option>)}
                                         </select>
                                     </div>
                                 )}
                                 <div className="space-y-2">
-                                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">Ödeme Yöntemi & Not</label>
+                                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">{t('quick.receivePayment.method')}</label>
                                     <div className="grid grid-cols-4 gap-2 mb-3">
                                         {(['CASH', 'CARD', 'CHECK', 'OTHER'] as const).map((method) => (
                                             <button
@@ -516,7 +599,7 @@ export const QuickActions: React.FC = () => {
                                                 onClick={() => setPaymentMethod(method)}
                                                 className={`py-3 rounded-xl border text-[10px] font-bold transition-all ${paymentMethod === method ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-stone-900 border-white/5 text-stone-400'}`}
                                             >
-                                                {method === 'CASH' ? 'Nakit' : method === 'CARD' ? 'Kart' : method === 'CHECK' ? 'Çek' : 'Diğer'}
+                                                {method === 'CASH' ? t('quick.receivePayment.cash') : method === 'CARD' ? t('quick.receivePayment.card') : method === 'CHECK' ? t('quick.receivePayment.check') : t('quick.receivePayment.other')}
                                             </button>
                                         ))}
                                     </div>
@@ -525,7 +608,7 @@ export const QuickActions: React.FC = () => {
                                         value={paymentNote} 
                                         onChange={(e) => setPaymentNote(e.target.value)} 
                                         className="w-full bg-stone-900 border border-white/10 rounded-2xl px-4 py-4 text-stone-100 text-sm focus:border-emerald-500 outline-none transition-all" 
-                                        placeholder="Ödeme ile ilgili not (Opsiyonel)" 
+                                        placeholder={t('quick.receivePayment.note')} 
                                     />
                                 </div>
                                 <div className="pt-4">
@@ -534,7 +617,7 @@ export const QuickActions: React.FC = () => {
                                         onClick={handleSavePayment} 
                                         className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-5 rounded-2xl font-black text-sm shadow-xl shadow-emerald-600/20 disabled:opacity-50 flex items-center justify-center transition-all active:scale-[0.98]"
                                     >
-                                        <Save className="mr-2" size={20}/> TAHSİLATI KAYDET
+                                        <Save className="mr-2" size={20}/> {t('quick.receivePayment.save')}
                                     </button>
                                 </div>
                             </div>

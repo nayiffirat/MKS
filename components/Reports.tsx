@@ -5,9 +5,22 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { format } from 'date-fns';
 import { tr } from 'date-fns/locale';
+import { formatCurrency } from '../utils/currency';
 
 export const Reports: React.FC = () => {
-  const { farmers, inventory, expenses, prescriptions, payments, manualDebts, accounts } = useAppViewModel();
+  const { 
+    farmers, 
+    inventory, 
+    expenses, 
+    prescriptions, 
+    payments, 
+    manualDebts, 
+    accounts, 
+    userProfile,
+    farmerLabel,
+    farmerPluralLabel,
+    prescriptionLabel
+  } = useAppViewModel();
   const [generating, setGenerating] = useState<string | null>(null);
 
   // Helper to replace Turkish chars for standard PDF fonts if needed
@@ -50,7 +63,7 @@ export const Reports: React.FC = () => {
           trToEn(farmer.fullName),
           trToEn(farmer.village || '-'),
           trToEn(farmer.phoneNumber || '-'),
-          `${Math.abs(balance).toLocaleString('tr-TR')} TL`,
+          formatCurrency(Math.abs(balance), userProfile?.currency || 'TRY'),
           status
         ];
       });
@@ -92,8 +105,8 @@ export const Reports: React.FC = () => {
           trToEn(item.pesticideName),
           trToEn(item.category),
           `${item.quantity} ${item.unit}`,
-          `${item.buyingPrice.toLocaleString('tr-TR')} TL`,
-          `${item.sellingPrice.toLocaleString('tr-TR')} TL`
+          formatCurrency(item.buyingPrice, userProfile?.currency || 'TRY'),
+          formatCurrency(item.sellingPrice, userProfile?.currency || 'TRY')
         ];
       });
 
@@ -136,7 +149,7 @@ export const Reports: React.FC = () => {
           format(new Date(exp.date), 'dd.MM.yyyy'),
           trToEn(exp.title),
           trToEn(exp.category),
-          `${exp.amount.toLocaleString('tr-TR')} TL`
+          formatCurrency(exp.amount, userProfile?.currency || 'TRY')
         ];
       });
 
@@ -150,7 +163,7 @@ export const Reports: React.FC = () => {
         styles: { font: 'helvetica', fontSize: 9 },
         headStyles: { fillColor: [225, 29, 72] }, // Rose 600
         alternateRowStyles: { fillColor: [245, 245, 245] },
-        foot: [['', '', 'TOPLAM GIDER:', `${totalExpense.toLocaleString('tr-TR')} TL`]],
+        foot: [['', '', 'TOPLAM GIDER:', formatCurrency(totalExpense, userProfile?.currency || 'TRY')]],
         footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' }
       });
 
@@ -184,7 +197,7 @@ export const Reports: React.FC = () => {
       const accountData = accounts.map(acc => [
         trToEn(acc.name),
         trToEn(acc.type === 'CASH' ? 'Nakit Kasa' : 'Banka Hesabi'),
-        `${acc.balance.toLocaleString('tr-TR')} TL`
+        formatCurrency(acc.balance, userProfile?.currency || 'TRY')
       ]);
 
       const totalBalance = accounts.reduce((acc, curr) => acc + curr.balance, 0);
@@ -196,7 +209,7 @@ export const Reports: React.FC = () => {
         theme: 'grid',
         styles: { font: 'helvetica', fontSize: 9 },
         headStyles: { fillColor: [16, 185, 129] },
-        foot: [['', 'TOPLAM VARLIK:', `${totalBalance.toLocaleString('tr-TR')} TL`]],
+        foot: [['', 'TOPLAM VARLIK:', formatCurrency(totalBalance, userProfile?.currency || 'TRY')]],
         footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' }
       });
 
@@ -214,9 +227,9 @@ export const Reports: React.FC = () => {
         startY: currentY + 5,
         head: [['Kalem', 'Tutar']],
         body: [
-          ['Toplam Tahsilat (Gelir)', `${totalIncome.toLocaleString('tr-TR')} TL`],
-          ['Toplam Gider', `${totalExpense.toLocaleString('tr-TR')} TL`],
-          ['Net Durum', `${netProfit.toLocaleString('tr-TR')} TL`]
+          ['Toplam Tahsilat (Gelir)', formatCurrency(totalIncome, userProfile?.currency || 'TRY')],
+          ['Toplam Gider', formatCurrency(totalExpense, userProfile?.currency || 'TRY')],
+          ['Net Durum', formatCurrency(netProfit, userProfile?.currency || 'TRY')]
         ],
         theme: 'grid',
         styles: { font: 'helvetica', fontSize: 10 },
@@ -235,8 +248,8 @@ export const Reports: React.FC = () => {
   const reportCards = [
     {
       id: 'FARMER_BALANCES',
-      title: 'Çiftçi Bakiye Raporu',
-      description: 'Tüm çiftçilerin güncel borç ve alacak durumlarını listeler.',
+      title: `${farmerLabel} Bakiye Raporu`,
+      description: `Tüm ${farmerPluralLabel.toLowerCase()}in güncel borç ve alacak durumlarını listeler.`,
       icon: Users,
       color: 'text-blue-400',
       bgColor: 'bg-blue-500/10',

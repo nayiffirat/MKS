@@ -1,4 +1,26 @@
 
+export type AccountType = 'DEALER' | 'COMPANY';
+export type TeamRole = 'MANAGER' | 'SALES' | 'WAREHOUSE' | 'ACCOUNTING';
+export type Language = 'tr' | 'en' | 'ar';
+
+export interface TeamMember {
+  id: string;
+  username: string;
+  password?: string;
+  role: TeamRole;
+  fullName: string;
+  createdAt: string;
+  notes?: string;
+}
+
+export interface Message {
+  id: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+  timestamp: string;
+}
+
 export interface AgriCity {
   name: string;
   lat: number;
@@ -21,6 +43,7 @@ export interface ManualDebt {
   amount: number;
   date: string;
   note?: string;
+  createdById?: string;
 }
 
 export interface Payment {
@@ -28,9 +51,12 @@ export interface Payment {
   farmerId: string;
   amount: number;
   date: string;
-  method: 'CASH' | 'CARD' | 'CHECK' | 'OTHER';
+  method: 'CASH' | 'CARD' | 'CHECK' | 'TEDYE' | 'OTHER';
+  dueDate?: string;
   note?: string;
   accountId?: string; // Linked account (Cash or Bank)
+  createdById?: string;
+  deletedAt?: string;
 }
 
 export interface Account {
@@ -65,6 +91,8 @@ export interface Farmer {
   balance?: number; // Current balance (negative means debt)
   latitude?: number;
   longitude?: number;
+  createdById?: string;
+  deletedAt?: string;
 }
 
 export enum PesticideCategory {
@@ -83,6 +111,8 @@ export interface Pesticide {
   defaultDosage: string;
   category: PesticideCategory;
   description?: string;
+  barcode?: string;
+  deletedAt?: string;
 }
 
 export interface VisitLog {
@@ -98,6 +128,8 @@ export interface VisitLog {
   diseaseFound?: string; // e.g., "Pas Hastalığı"
   severity?: 'LOW' | 'MEDIUM' | 'HIGH';
   village?: string;
+  createdById?: string;
+  deletedAt?: string;
 }
 
 export interface PrescriptionItem {
@@ -121,6 +153,11 @@ export interface Prescription {
   isProcessed?: boolean;
   isInventoryProcessed?: boolean;
   totalAmount?: number;
+  priceType?: 'CASH' | 'TERM';
+  status?: 'PENDING' | 'APPROVED' | 'DELIVERED' | 'INVOICED';
+  createdById?: string;
+  deliveredById?: string;
+  deletedAt?: string;
 }
 
 export interface Reminder {
@@ -132,6 +169,7 @@ export interface Reminder {
   priority: 'LOW' | 'MEDIUM' | 'HIGH';
   farmerIds?: string[]; // Array of linked farmers
   recurrence: 'NONE' | 'DAILY' | 'WEEKLY' | 'MONTHLY';
+  createdById?: string;
 }
 
 export interface AppNotification {
@@ -144,6 +182,10 @@ export interface AppNotification {
 }
 
 export interface UserProfile {
+  id?: string;
+  email?: string;
+  createdAt?: string;
+  lastLoginAt?: string;
   fullName: string;
   phoneNumber: string;
   companyName: string;
@@ -152,9 +194,14 @@ export interface UserProfile {
   lastSyncTime?: string;
   highContrastMode?: boolean;
   assistantVoice?: 'male' | 'female';
+  currency?: 'TRY' | 'USD' | 'EUR';
   role?: 'admin' | 'user';
   subscriptionStatus?: 'trial' | 'active' | 'expired';
   subscriptionEndsAt?: string;
+  accountType?: AccountType;
+  adminUsername?: string;
+  adminPassword?: string;
+  language?: Language;
 }
 
 export interface InventoryItem {
@@ -166,6 +213,9 @@ export interface InventoryItem {
   unit: string; // e.g., 'Adet', 'Litre', 'Kg'
   buyingPrice: number;
   sellingPrice: number;
+  cashPrice?: number;
+  cashBuyingPrice?: number;
+  barcode?: string;
   lastUpdated: string;
   lowStockThreshold?: number; // Threshold for alerts
 }
@@ -177,12 +227,14 @@ export interface Supplier {
   address?: string;
   totalDebt: number; // Total amount purchased
   balance: number; // Current balance (negative means we owe money)
+  deletedAt?: string;
 }
 
 export interface SupplierPurchase {
   id: string;
   supplierId: string;
   date: string;
+  receiptNo?: string;
   items: {
     pesticideId: string;
     pesticideName: string;
@@ -192,6 +244,7 @@ export interface SupplierPurchase {
   }[];
   totalAmount: number;
   note?: string;
+  createdById?: string;
 }
 
 export interface SupplierPayment {
@@ -204,20 +257,26 @@ export interface SupplierPayment {
   isPaid?: boolean;
   note?: string;
   accountId?: string;
+  createdById?: string;
+  installments?: number;
+  producerCardMonths?: number;
 }
 
 export interface MyPayment {
   id: string;
-  supplierId: string;
-  supplierName: string;
+  supplierId?: string;
+  supplierName?: string;
+  farmerId?: string;
+  farmerName?: string;
   amount: number;
   issueDate: string;
   dueDate: string;
-  type: 'CHECK' | 'PROMISSORY_NOTE' | 'OTHER';
+  type: 'CHECK' | 'PROMISSORY_NOTE' | 'TEDYE' | 'OTHER';
   status: 'PENDING' | 'PAID' | 'CANCELLED';
   note?: string;
   accountId?: string;
   relatedId?: string;
+  createdById?: string;
 }
 
 export interface TurnoverLog {
@@ -232,12 +291,13 @@ export interface Expense {
   title: string;
   amount: number;
   date: string;
-  category: 'RENT' | 'ELECTRICITY' | 'WATER' | 'FUEL' | 'SALARY' | 'TAX' | 'OTHER';
+  category: 'RENT' | 'ELECTRICITY' | 'WATER' | 'FUEL' | 'SALARY' | 'TAX' | 'HOME' | 'OTHER';
   note?: string;
   accountId?: string;
+  createdById?: string;
 }
 
-export type ViewState = 'DASHBOARD' | 'FARMERS' | 'PESTICIDES' | 'PRESCRIPTIONS' | 'VISITS' | 'CONTACT' | 'SETTINGS' | 'NOTIFICATIONS' | 'PROFILE' | 'STATISTICS' | 'REMINDERS' | 'INVENTORY' | 'DEBT_TRACKING' | 'REGIONAL_ALERTS' | 'PRODUCER_PORTAL' | 'COMPATIBILITY_CHECK' | 'SUPPLIERS' | 'PAYMENTS' | 'EXPENSES' | 'KASA' | 'AI_ASSISTANT' | 'AI_DIAGNOSIS' | 'MIXTURE_TEST' | 'RECENT_TRANSACTIONS' | 'REPORTS' | 'ADMIN_PANEL';
+export type ViewState = 'DASHBOARD' | 'FARMERS' | 'PESTICIDES' | 'PRESCRIPTIONS' | 'VISITS' | 'CONTACT' | 'SETTINGS' | 'NOTIFICATIONS' | 'PROFILE' | 'STATISTICS' | 'REMINDERS' | 'INVENTORY' | 'DEBT_TRACKING' | 'REGIONAL_ALERTS' | 'PRODUCER_PORTAL' | 'COMPATIBILITY_CHECK' | 'SUPPLIERS' | 'PAYMENTS' | 'EXPENSES' | 'KASA' | 'CALCULATOR' | 'MIXTURE_TEST' | 'RECENT_TRANSACTIONS' | 'REPORTS' | 'ADMIN_PANEL' | 'TEAM' | 'MESSAGES' | 'PERFORMANCE' | 'TRASH';
 
 export type UIScale = 'SMALL' | 'MEDIUM' | 'LARGE';
 

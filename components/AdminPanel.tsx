@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, Users, Shield, Calendar, Search, Save, Loader2, Edit3, X, Trash2, KeyRound } from 'lucide-react';
+import { ChevronLeft, Users, Shield, Calendar, Search, Save, Loader2, Edit3, X, Trash2, KeyRound, ChevronRight, Mail, Clock, LogIn } from 'lucide-react';
 import { useAppViewModel } from '../context/AppContext';
 import { UserProfile } from '../types';
 
@@ -38,10 +38,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
         try {
             await updateUserSubscription(editingUser.uid, {
                 fullName: editingUser.fullName,
+                email: editingUser.email,
                 phoneNumber: editingUser.phoneNumber,
                 companyName: editingUser.companyName,
                 title: editingUser.title,
                 role: editingUser.role,
+                accountType: editingUser.accountType || 'DEALER',
                 subscriptionStatus: editingUser.subscriptionStatus,
                 subscriptionEndsAt: editingUser.subscriptionEndsAt
             });
@@ -139,41 +141,41 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                     {filteredUsers.map(user => {
                         const isExpired = new Date(user.subscriptionEndsAt || 0) < new Date();
                         return (
-                            <div key={user.uid} className="bg-stone-900 border border-white/5 rounded-2xl p-4 flex flex-col gap-3">
-                                <div className="flex justify-between items-start">
-                                    <div>
-                                        <h3 className="font-bold text-white text-lg">{user.fullName || 'İsimsiz Kullanıcı'}</h3>
-                                        <p className="text-xs text-stone-500">{user.uid}</p>
-                                    </div>
-                                    <div className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-widest ${
-                                        user.role === 'admin' ? 'bg-purple-500/20 text-purple-400' : 'bg-stone-800 text-stone-400'
-                                    }`}>
-                                        {user.role === 'admin' ? 'ADMİN' : 'KULLANICI'}
-                                    </div>
+                            <div key={user.uid} 
+                                onClick={() => setEditingUser(user)}
+                                className="bg-stone-900/50 hover:bg-stone-800/80 border border-white/5 hover:border-white/10 rounded-2xl p-4 flex items-center gap-4 cursor-pointer transition-all group"
+                            >
+                                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-stone-800 to-stone-900 border border-white/10 flex items-center justify-center flex-shrink-0">
+                                    <span className="text-lg font-black text-stone-300">
+                                        {user.fullName ? user.fullName.charAt(0).toUpperCase() : '?'}
+                                    </span>
                                 </div>
                                 
-                                <div className="flex items-center gap-4 text-sm">
-                                    <div className="flex items-center gap-1.5">
-                                        <div className={`w-2 h-2 rounded-full ${
-                                            isExpired ? 'bg-red-500' : user.subscriptionStatus === 'trial' ? 'bg-yellow-500' : 'bg-emerald-500'
-                                        }`} />
-                                        <span className={isExpired ? 'text-red-400' : 'text-stone-300'}>
-                                            {isExpired ? 'Süresi Doldu' : user.subscriptionStatus === 'trial' ? 'Deneme Sürümü' : 'Aktif'}
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <h3 className="font-bold text-white text-base truncate">{user.fullName || 'İsimsiz Kullanıcı'}</h3>
+                                        {user.role === 'admin' && (
+                                            <Shield size={12} className="text-purple-400 flex-shrink-0" />
+                                        )}
+                                        <span className={`text-[8px] font-black px-1.5 py-0.5 rounded border ${
+                                            user.accountType === 'DEALER' 
+                                                ? 'bg-orange-500/10 border-orange-500/30 text-orange-400'
+                                                : 'bg-blue-500/10 border-blue-500/30 text-blue-400' 
+                                        }`}>
+                                            {user.accountType === 'DEALER' ? 'BAYİ' : 'FİRMA'}
                                         </span>
                                     </div>
-                                    <div className="flex items-center gap-1.5 text-stone-400">
-                                        <Calendar size={14} />
-                                        <span>{new Date(user.subscriptionEndsAt || 0).toLocaleDateString('tr-TR')}</span>
-                                    </div>
+                                    <p className="text-xs text-stone-400 truncate">{user.email || user.uid}</p>
                                 </div>
 
-                                <button 
-                                    onClick={() => setEditingUser(user)}
-                                    className="w-full py-2.5 mt-2 bg-stone-800 text-stone-300 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-stone-700 transition-colors"
-                                >
-                                    <Edit3 size={16} />
-                                    Düzenle
-                                </button>
+                                <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                                    <div className={`px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-widest ${
+                                        isExpired ? 'bg-red-500/10 text-red-400' : user.subscriptionStatus === 'trial' ? 'bg-yellow-500/10 text-yellow-500' : 'bg-emerald-500/10 text-emerald-400'
+                                    }`}>
+                                        {isExpired ? 'SÜRESİ DOLDU' : user.subscriptionStatus === 'trial' ? 'DENEME' : 'AKTİF'}
+                                    </div>
+                                    <ChevronRight size={16} className="text-stone-600 group-hover:text-stone-300 transition-colors" />
+                                </div>
                             </div>
                         );
                     })}
@@ -196,9 +198,41 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                             </button>
                         </div>
 
-                        <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+                        <div className="space-y-4 max-h-[65vh] overflow-y-auto pr-2 custom-scrollbar">
+                            {/* Read-only Info Cards */}
+                            <div className="grid grid-cols-2 gap-3 mb-4">
+                                <div className="bg-stone-950/50 border border-white/5 rounded-2xl p-3 flex flex-col gap-1">
+                                    <div className="flex items-center gap-1.5 text-stone-500 mb-1">
+                                        <Clock size={12} />
+                                        <span className="text-[9px] font-black uppercase tracking-widest">Kayıt Tarihi</span>
+                                    </div>
+                                    <span className="text-xs font-medium text-stone-300">
+                                        {editingUser.createdAt ? new Date(editingUser.createdAt).toLocaleDateString('tr-TR') : 'Bilinmiyor'}
+                                    </span>
+                                </div>
+                                <div className="bg-stone-950/50 border border-white/5 rounded-2xl p-3 flex flex-col gap-1">
+                                    <div className="flex items-center gap-1.5 text-stone-500 mb-1">
+                                        <LogIn size={12} />
+                                        <span className="text-[9px] font-black uppercase tracking-widest">Son Giriş</span>
+                                    </div>
+                                    <span className="text-xs font-medium text-stone-300">
+                                        {editingUser.lastLoginAt ? new Date(editingUser.lastLoginAt).toLocaleDateString('tr-TR') : 'Bilinmiyor'}
+                                    </span>
+                                </div>
+                            </div>
+
                             <div className="space-y-3">
-                                <label className="block text-xs font-bold text-stone-500 uppercase tracking-widest">Kullanıcı Bilgileri</label>
+                                <label className="block text-xs font-bold text-stone-500 uppercase tracking-widest">Giriş & İletişim Bilgileri</label>
+                                <div className="relative">
+                                    <Mail size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-500" />
+                                    <input 
+                                        type="email" 
+                                        value={editingUser.email || ''}
+                                        onChange={(e) => setEditingUser({...editingUser, email: e.target.value})}
+                                        placeholder="E-posta Adresi"
+                                        className="w-full bg-stone-950 border border-white/10 rounded-xl pl-11 pr-4 py-3 text-white focus:outline-none focus:border-emerald-500"
+                                    />
+                                </div>
                                 <input 
                                     type="text" 
                                     value={editingUser.fullName || ''}
@@ -213,6 +247,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                                     placeholder="Telefon"
                                     className="w-full bg-stone-950 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-emerald-500"
                                 />
+                            </div>
+
+                            <div className="space-y-3 pt-2">
+                                <label className="block text-xs font-bold text-stone-500 uppercase tracking-widest">Kurumsal Bilgiler</label>
                                 <input 
                                     type="text" 
                                     value={editingUser.companyName || ''}
@@ -227,6 +265,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                                     placeholder="Ünvan"
                                     className="w-full bg-stone-950 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-emerald-500"
                                 />
+                            </div>
+
+                            <div className="pt-2 border-t border-white/10">
+                                <label className="block text-xs font-bold text-stone-500 mb-2 uppercase tracking-widest">Hesap Türü</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button 
+                                        onClick={() => setEditingUser({...editingUser, accountType: 'DEALER'})}
+                                        className={`py-3 rounded-xl font-bold text-sm border ${editingUser.accountType === 'DEALER' || !editingUser.accountType ? 'bg-orange-900/30 border-orange-500 text-orange-400' : 'bg-stone-900 border-white/10 text-stone-500'}`}
+                                    >
+                                        Bayi
+                                    </button>
+                                    <button 
+                                        onClick={() => setEditingUser({...editingUser, accountType: 'COMPANY'})}
+                                        className={`py-3 rounded-xl font-bold text-sm border ${editingUser.accountType === 'COMPANY' ? 'bg-blue-900/30 border-blue-500 text-blue-400' : 'bg-stone-900 border-white/10 text-stone-500'}`}
+                                    >
+                                        Firma
+                                    </button>
+                                </div>
                             </div>
 
                             <div className="pt-2 border-t border-white/10">

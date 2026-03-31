@@ -48,7 +48,8 @@ export const MixtureTest: React.FC<MixtureTestProps> = ({ onBack }) => {
         hapticFeedback('medium');
 
         try {
-            const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+            const apiKey = process.env.GEMINI_API_KEY;
+            const ai = new GoogleGenAI({ apiKey });
             
             const pesticideNames = selectedPesticides.map(p => p.name).join(', ');
             const prompt = `Şu tarım ilaçlarının (veya etken maddelerinin) karışım durumunu test et: ${pesticideNames}. 

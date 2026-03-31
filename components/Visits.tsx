@@ -11,9 +11,12 @@ interface VisitsProps {
 }
 
 export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) => {
-    const { userProfile, updateVisit, deleteVisit, updateUserProfile, showToast, hapticFeedback } = useAppViewModel();
+    const { userProfile, updateVisit, softDeleteVisit, updateUserProfile, showToast, hapticFeedback } = useAppViewModel();
+    const isCompany = userProfile.accountType === 'COMPANY';
+    const farmerLabel = isCompany ? 'Bayi' : 'Çiftçi';
+    const farmerPluralLabel = isCompany ? 'Bayiler' : 'Çiftçiler';
     // Yeni mod eklendi: 'DETAIL'
-    const [viewMode, setViewMode] = useState<'LIST' | 'FORM' | 'SUCCESS' | 'DETAIL'>('LIST');
+    const [viewMode, setViewMode] = useState<'LIST' | 'FORM' | 'SUCCESS' | 'DETAIL' | 'QUICK_VISIT'>('LIST');
 
     const [visits, setVisits] = useState<VisitLog[]>([]);
     const [farmers, setFarmers] = useState<Farmer[]>([]);
@@ -41,12 +44,31 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
                     setSelectedVisit(null);
                     setEditingId(null);
                 }
+
+                if (state.modal === 'CAMERA') {
+                    startCamera();
+                } else {
+                    stopCamera();
+                }
             }
         };
         window.addEventListener('popstate', handlePop);
         return () => window.removeEventListener('popstate', handlePop);
     }, [visits]);
-    const changeViewMode = (mode: 'LIST' | 'FORM' | 'SUCCESS' | 'DETAIL', detailId?: string) => {
+
+    const toggleCamera = (open: boolean) => {
+        if (open === isCameraOpen) return;
+        if (open) {
+            window.history.pushState({ ...window.history.state, modal: 'CAMERA' }, '');
+            startCamera();
+        } else if (window.history.state?.modal === 'CAMERA') {
+            window.history.back();
+            return;
+        } else {
+            stopCamera();
+        }
+    };
+    const changeViewMode = (mode: 'LIST' | 'FORM' | 'SUCCESS' | 'DETAIL' | 'QUICK_VISIT', detailId?: string) => {
         if (mode === viewMode) return;
         
         if (mode === 'LIST') {
@@ -241,7 +263,7 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
 
     const handleDelete = async (id: string) => {
         if (confirm("Bu ziyaret kaydını silmek istediğinize emin misiniz?")) { 
-            await deleteVisit(id); 
+            await softDeleteVisit(id); 
             showToast('Ziyaret kaydı silindi', 'success');
             hapticFeedback('medium');
             await loadData();
@@ -326,7 +348,7 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
                                     {farmer?.fullName?.charAt(0).toUpperCase() || '?'}
                                 </div>
                                 <div>
-                                    <h2 className="text-xl font-bold text-stone-100">{farmer?.fullName || 'Bilinmeyen Çiftçi'}</h2>
+                                    <h2 className="text-xl font-bold text-stone-100">{farmer?.fullName || `Bilinmeyen ${farmerLabel}`}</h2>
                                     <div className="flex items-center text-stone-500 text-xs mt-1">
                                         <MapPin size={12} className="mr-1 text-emerald-600" />
                                         {farmer?.village || 'Konum Yok'}
@@ -430,6 +452,12 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
                             <RefreshCw size={14} className={isSyncing ? "animate-spin text-emerald-500" : ""} />
                             {isSyncing ? 'Yedekleniyor...' : 'Senkronize'}
                         </button>
+                        <button 
+                            onClick={() => changeViewMode('QUICK_VISIT')}
+                            className="px-3 py-1.5 bg-emerald-600 text-white rounded-xl border border-emerald-500/20 hover:bg-emerald-500 transition-all active:scale-95 flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider"
+                        >
+                            <Plus size={14} /> Hızlı Ziyaret
+                        </button>
                     </header>
 
                     <div className="space-y-3">
@@ -489,7 +517,52 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
         );
     }
 
-    // 5. MAIN ADD/EDIT FORM
+    // 5. QUICK VISIT VIEW
+    if (viewMode === 'QUICK_VISIT') {
+        return (
+            <div className="p-4 max-w-md mx-auto">
+                <header className="mb-6 flex items-center justify-between">
+                    <button onClick={() => changeViewMode('LIST')} className="p-2 text-stone-400"><ArrowLeft /></button>
+                    <h2 className="text-lg font-bold text-stone-100">Hızlı Ziyaret</h2>
+                    <div className="w-10"></div>
+                </header>
+                
+                <div className="space-y-4">
+                    <label className="block text-xs font-bold text-stone-500 uppercase tracking-widest mb-1">{farmerLabel} Seçin</label>
+                    <select 
+                        value={selectedFarmerId}
+                        onChange={(e) => setSelectedFarmerId(e.target.value)}
+                        className="w-full bg-stone-900 border border-white/10 text-white p-4 rounded-2xl"
+                    >
+                        <option value="">Seçiniz...</option>
+                        {farmers.map(f => <option key={f.id} value={f.id}>{f.fullName}</option>)}
+                    </select>
+                    
+                    {selectedFarmerId && (
+                        <button 
+                            onClick={async () => {
+                                await dbService.addVisit({
+                                    id: crypto.randomUUID(),
+                                    farmerId: selectedFarmerId,
+                                    date: new Date().toISOString(),
+                                    note: 'Hızlı ziyaret',
+                                    severity: 'LOW',
+                                    createdById: userProfile.id
+                                });
+                                showToast('Ziyaret kaydedildi', 'success');
+                                changeViewMode('LIST');
+                            }}
+                            className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-bold flex items-center justify-center hover:bg-emerald-500 transition-all active:scale-95"
+                        >
+                            <CheckCircle2 size={20} className="mr-2" /> Ziyaret Edildi
+                        </button>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
+    // 6. MAIN ADD/EDIT FORM
     return (
         <div className="p-4 max-w-2xl mx-auto pb-24 animate-in slide-in-from-right duration-200">
             <div className="flex items-center justify-between mb-4">
@@ -501,9 +574,9 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
             <div className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                        <label className="block text-[9px] font-bold text-stone-500 mb-1.5 uppercase tracking-widest">Çiftçi Seçimi</label>
+                        <label className="block text-[9px] font-bold text-stone-500 mb-1.5 uppercase tracking-widest">{farmerLabel} Seçimi</label>
                         <select className="w-full p-3 rounded-xl bg-stone-900 border border-white/5 outline-none focus:border-emerald-500 text-stone-200 text-xs" value={selectedFarmerId} onChange={e => { setSelectedFarmerId(e.target.value); setSelectedFieldId(''); }}>
-                            <option value="">Çiftçi Seçiniz...</option>
+                            <option value="">{farmerLabel} Seçiniz...</option>
                             {farmers.map(f => (<option key={f.id} value={f.id}>{f.fullName}</option>))}
                         </select>
                     </div>
@@ -526,7 +599,7 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
 
                 {/* PHOTO SUMMARY CARD OR ADD BUTTON */}
                 <div>
-                    <label className="block text-[9px] font-bold text-stone-500 mb-1.5 uppercase tracking-widest">Görsel / Teşhis</label>
+                    <label className="block text-[9px] font-bold text-stone-500 mb-1.5 uppercase tracking-widest">Görsel</label>
                     
                     {photo ? (
                         <div className="bg-stone-900/60 rounded-2xl border border-white/10 p-3 flex items-center space-x-3 relative overflow-hidden group">

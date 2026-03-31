@@ -3,11 +3,14 @@ import { safeStringify } from '../utils/json';
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { dbService, setActionBlocked, setActionBlockedCallback } from '../services/db';
 import { WeatherService, AGRI_CITIES } from '../services/weather';
-import { Farmer, UIScale, AppNotification, UserProfile, Reminder, VisitLog, AgriCity, InventoryItem, Prescription, Payment, ManualDebt, Supplier, SupplierPurchase, SupplierPayment, MyPayment, PesticideCategory, ViewState, Expense, Account, Transaction } from '../types';
+import { Farmer, UIScale, AppNotification, UserProfile, Reminder, VisitLog, AgriCity, InventoryItem, Prescription, Payment, ManualDebt, Supplier, SupplierPurchase, SupplierPayment, MyPayment, PesticideCategory, ViewState, Expense, Account, Transaction, TeamMember, Message, Language } from '../types';
+import { getTranslation } from '../utils/translations';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Haptics, ImpactStyle, NotificationType } from '@capacitor/haptics';
 import { auth } from '../services/firebase';
 import { sendPasswordResetEmail } from 'firebase/auth';
+
+let isCreatingDefaultAccount = false;
 
 interface DashboardStats {
   totalFarmers: number;
@@ -20,6 +23,8 @@ interface DashboardStats {
   cropDistribution: { crop: string, area: number }[];
   inventoryValue: number;
   potentialRevenue: number;
+  cashInventoryValue: number;
+  cashPotentialRevenue: number;
   totalDebt: number;
   totalExpenses: number;
   regionalAlerts: { type: string, village: string, severity: string, count: number }[];
@@ -31,8 +36,12 @@ interface AppContextType {
   addFarmer: (farmer: Omit<Farmer, 'id'>) => Promise<void>;
   updateFarmer: (farmer: Farmer) => Promise<void>;
   deleteFarmer: (id: string) => Promise<void>;
+  softDeleteFarmer: (id: string) => Promise<void>;
+  restoreFarmer: (id: string) => Promise<void>;
+  permanentlyDeleteFarmer: (id: string) => Promise<void>;
   bulkAddFarmers: (farmers: Omit<Farmer, 'id'>[]) => Promise<void>;
   farmers: Farmer[];
+  trashedFarmers: Farmer[];
   reminders: Reminder[];
   addReminder: (reminder: Omit<Reminder, 'id'>) => Promise<void>;
   editReminder: (id: string, updates: Partial<Reminder>) => Promise<void>;
@@ -46,6 +55,14 @@ interface AppContextType {
   markAllAsRead: () => void;
   userProfile: UserProfile;
   updateUserProfile: (profile: UserProfile) => void;
+  teamMembers: TeamMember[];
+  addTeamMember: (member: Omit<TeamMember, 'id' | 'createdAt'>) => Promise<void>;
+  updateTeamMember: (member: TeamMember) => Promise<void>;
+  deleteTeamMember: (id: string) => Promise<void>;
+  activeTeamMember: TeamMember | null;
+  setActiveTeamMember: (member: TeamMember | null, persist?: boolean) => void;
+  messages: Message[];
+  sendMessage: (text: string) => Promise<void>;
   syncUserProfile: (profile: UserProfile) => void;
   isAdmin: boolean;
   subscriptionStatus: 'trial' | 'active' | 'expired';
@@ -55,32 +72,55 @@ interface AppContextType {
   deleteUser: (uid: string) => Promise<void>;
   sendPasswordReset: (email: string) => Promise<void>;
   addSystemNotification: (type: AppNotification['type'], title: string, message: string) => Promise<void>;
+  prescriptionLabel: string;
+  farmerLabel: string;
+  farmerPluralLabel: string;
+  visits: VisitLog[];
+  trashedVisits: VisitLog[];
   addVisit: (visit: Omit<VisitLog, 'id'>) => Promise<string>;
   updateVisit: (visit: VisitLog) => Promise<void>;
   deleteVisit: (id: string) => Promise<void>;
+  softDeleteVisit: (id: string) => Promise<void>;
+  restoreVisit: (id: string) => Promise<void>;
+  permanentlyDeleteVisit: (id: string) => Promise<void>;
   inventory: InventoryItem[];
   refreshInventory: () => Promise<void>;
   addInventoryItem: (item: InventoryItem) => Promise<void>;
   updateInventoryItem: (item: InventoryItem) => Promise<void>;
   deleteInventoryItem: (id: string) => Promise<void>;
   prescriptions: Prescription[];
+  trashedPrescriptions: Prescription[];
   addPrescription: (prescription: Omit<Prescription, 'id' | 'prescriptionNo'>) => Promise<string>;
   refreshPrescriptions: () => Promise<void>;
   togglePrescriptionStatus: (id: string) => Promise<Prescription | null>;
+  softDeletePrescription: (id: string) => Promise<void>;
+  restorePrescription: (id: string) => Promise<void>;
+  permanentlyDeletePrescription: (id: string) => Promise<void>;
   payments: Payment[];
+  trashedPayments: Payment[];
   addPayment: (payment: Omit<Payment, 'id'>) => Promise<void>;
+  updatePayment: (payment: Payment) => Promise<void>;
   deletePayment: (id: string) => Promise<void>;
+  softDeletePayment: (id: string) => Promise<void>;
+  restorePayment: (id: string) => Promise<void>;
+  permanentlyDeletePayment: (id: string) => Promise<void>;
   manualDebts: ManualDebt[];
   addManualDebt: (debt: Omit<ManualDebt, 'id'>) => Promise<void>;
+  updateManualDebt: (debt: ManualDebt) => Promise<void>;
   deleteManualDebt: (id: string) => Promise<void>;
   suppliers: Supplier[];
+  trashedSuppliers: Supplier[];
   addSupplier: (supplier: Omit<Supplier, 'id' | 'totalDebt' | 'balance'>) => Promise<void>;
   updateSupplier: (supplier: Supplier) => Promise<void>;
   deleteSupplier: (id: string) => Promise<void>;
+  softDeleteSupplier: (id: string) => Promise<void>;
+  restoreSupplier: (id: string) => Promise<void>;
+  permanentlyDeleteSupplier: (id: string) => Promise<void>;
   addSupplierPurchase: (purchase: Omit<SupplierPurchase, 'id'>) => Promise<void>;
   updateSupplierPurchase: (purchase: SupplierPurchase) => Promise<void>;
   deleteSupplierPurchase: (id: string) => Promise<void>;
   addSupplierPayment: (payment: Omit<SupplierPayment, 'id'>) => Promise<void>;
+  updateSupplierPayment: (payment: SupplierPayment) => Promise<void>;
   deleteSupplierPayment: (id: string) => Promise<void>;
   myPayments: MyPayment[];
   addMyPayment: (payment: Omit<MyPayment, 'id'>) => Promise<void>;
@@ -88,6 +128,7 @@ interface AppContextType {
   deleteMyPayment: (id: string) => Promise<void>;
   expenses: Expense[];
   addExpense: (expense: Omit<Expense, 'id'>) => Promise<void>;
+  updateExpense: (expense: Expense) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
   accounts: Account[];
   addAccount: (account: Omit<Account, 'id' | 'balance'>) => Promise<void>;
@@ -99,6 +140,9 @@ interface AppContextType {
   performManualTurnover: () => Promise<void>;
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
   hapticFeedback: (type?: 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error') => Promise<void>;
+  language: Language;
+  setLanguage: (lang: Language) => void;
+  t: (key: string, placeholders?: Record<string, string>) => string;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -108,7 +152,9 @@ const DEFAULT_PROFILE: UserProfile = {
   phoneNumber: '',
   companyName: '',
   title: '',
-  highContrastMode: false
+  highContrastMode: false,
+  accountType: 'DEALER',
+  language: 'tr'
 };
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -123,6 +169,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     cropDistribution: [],
     inventoryValue: 0,
     potentialRevenue: 0,
+    cashInventoryValue: 0,
+    cashPotentialRevenue: 0,
     totalDebt: 0,
     totalExpenses: 0,
     regionalAlerts: []
@@ -131,8 +179,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [farmers, setFarmers] = useState<Farmer[]>([]);
+  const [visits, setVisits] = useState<VisitLog[]>([]);
+  const [language, setLanguageState] = useState<Language>('tr');
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
+  const [trashedPrescriptions, setTrashedPrescriptions] = useState<Prescription[]>([]);
+  const [trashedFarmers, setTrashedFarmers] = useState<Farmer[]>([]);
+  const [trashedVisits, setTrashedVisits] = useState<VisitLog[]>([]);
+  const [trashedPayments, setTrashedPayments] = useState<Payment[]>([]);
+  const [trashedSuppliers, setTrashedSuppliers] = useState<Supplier[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [manualDebts, setManualDebts] = useState<ManualDebt[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -140,6 +195,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [activeTeamMember, setActiveTeamMemberState] = useState<TeamMember | null>(() => {
+    if (typeof window !== 'undefined') {
+      const savedLocal = localStorage.getItem('mks_active_team_member');
+      if (savedLocal) return JSON.parse(savedLocal);
+      const savedSession = sessionStorage.getItem('mks_active_team_member');
+      if (savedSession) return JSON.parse(savedSession);
+    }
+    return null;
+  });
+
+  const setActiveTeamMember = (member: TeamMember | null, persist: boolean = false) => {
+    setActiveTeamMemberState(member);
+    if (member) {
+      if (persist) {
+        localStorage.setItem('mks_active_team_member', safeStringify(member));
+        sessionStorage.removeItem('mks_active_team_member');
+      } else {
+        sessionStorage.setItem('mks_active_team_member', safeStringify(member));
+        localStorage.removeItem('mks_active_team_member');
+      }
+    } else {
+      localStorage.removeItem('mks_active_team_member');
+      sessionStorage.removeItem('mks_active_team_member');
+    }
+  };
   const [toasts, setToasts] = useState<{id: string, message: string, type: 'success' | 'error' | 'info'}[]>([]);
   const isInitialized = useRef(false);
 
@@ -175,6 +257,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await refreshNotifications();
   };
 
+  const setLanguage = (lang: Language) => {
+    setLanguageState(lang);
+    updateUserProfile({ ...userProfile, language: lang });
+  };
+
+  const t = (key: string, placeholders?: Record<string, string>): string => {
+    let translation = getTranslation(language, key);
+    if (placeholders) {
+      Object.keys(placeholders).forEach(placeholderKey => {
+        translation = translation.replace(`{{${placeholderKey}}}`, placeholders[placeholderKey]);
+      });
+    }
+    return translation;
+  };
+
   const updateUserProfile = (profile: UserProfile) => {
       setUserProfile(profile);
       localStorage.setItem('mks_user_profile', safeStringify(profile));
@@ -189,11 +286,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const syncUserProfile = (profile: UserProfile) => {
       setUserProfile(profile);
       localStorage.setItem('mks_user_profile', safeStringify(profile));
+      if (profile.accountType === 'DEALER') {
+          setActiveTeamMember(null);
+          localStorage.removeItem('mks_active_team_member');
+      }
   };
 
   const isAdmin = userProfile.role === 'admin' || auth.currentUser?.email === 'nayiffirat@gmail.com';
   const subscriptionStatus = userProfile.subscriptionStatus || 'trial';
-  const subscriptionEndsAt = userProfile.subscriptionEndsAt || new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+  const subscriptionEndsAt = userProfile.subscriptionEndsAt || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
   useEffect(() => {
     const isExpired = new Date(subscriptionEndsAt || 0) < new Date() || subscriptionStatus === 'expired';
@@ -212,6 +313,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateUserSubscription = async (uid: string, updates: Partial<UserProfile>) => {
       if (!isAdmin) return;
       await dbService.updateUserSubscription(uid, updates);
+      if (auth.currentUser?.uid === uid) {
+          setUserProfile(prev => {
+              const updated = { ...prev, ...updates };
+              localStorage.setItem('mks_user_profile', safeStringify(updated));
+              if (updated.accountType === 'DEALER') {
+                  setActiveTeamMember(null);
+                  localStorage.removeItem('mks_active_team_member');
+              }
+              return updated;
+          });
+      }
   };
 
   const deleteUser = async (uid: string) => {
@@ -413,9 +525,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const prescription: Prescription = { 
         ...pData, 
         id, 
-        prescriptionNo: id 
+        prescriptionNo: id,
+        createdById: activeTeamMember?.id
     };
     await dbService.addPrescription(prescription);
+    await refreshPrescriptions();
     await refreshStats();
     return id;
   };
@@ -426,7 +540,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const togglePrescriptionStatus = async (id: string): Promise<Prescription | null> => {
-    const p = prescriptions.find(item => item.id === id);
+    let p = prescriptions.find(item => item.id === id);
+    if (!p) {
+        const all = await dbService.getAllPrescriptions();
+        p = all.find(item => item.id === id);
+    }
     if (!p) return null;
 
     const updated: Prescription = { ...p, isProcessed: !p.isProcessed };
@@ -451,9 +569,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const refreshStats = async (syncedReminders?: Reminder[]) => {
-    const [farmerList, prescriptions, visits, reminderListFromDB, inventoryData, paymentList, manualDebtList, supplierList, myPaymentList, expenseList] = await Promise.all([
+    const allPrescriptions = await dbService.getAllPrescriptions();
+    
+    // Auto-delete prescriptions in trash for more than 30 days
+    const now = new Date();
+    const thirtyDaysInMs = 30 * 24 * 60 * 60 * 1000;
+    const validPrescriptions: Prescription[] = [];
+    const trashed: Prescription[] = [];
+
+    for (const p of allPrescriptions) {
+        if (p.deletedAt) {
+            const deletedTime = new Date(p.deletedAt).getTime();
+            if (now.getTime() - deletedTime > thirtyDaysInMs) {
+                await dbService.deletePrescription(p.id);
+            } else {
+                trashed.push(p);
+            }
+        } else {
+            validPrescriptions.push(p);
+        }
+    }
+
+    const prescriptions = validPrescriptions;
+
+    const [rawFarmerList, rawVisitList, reminderListFromDB, inventoryData, rawPaymentList, manualDebtList, rawSupplierList, myPaymentList, expenseList, teamMemberList, messageList] = await Promise.all([
         dbService.getFarmers(),
-        dbService.getAllPrescriptions(),
         dbService.getAllVisits(),
         dbService.getReminders(),
         dbService.getInventory(),
@@ -461,8 +601,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         dbService.getManualDebts(),
         dbService.getSuppliers(),
         dbService.getMyPayments(),
-        dbService.getExpenses()
+        dbService.getExpenses(),
+        dbService.getTeamMembers(),
+        dbService.getMessages()
     ]);
+
+    // Separate active and trashed items
+    const farmerList = rawFarmerList.filter(f => !f.deletedAt);
+    const trashedF = rawFarmerList.filter(f => f.deletedAt);
+    
+    const visitList = rawVisitList.filter(v => !v.deletedAt);
+    const trashedV = rawVisitList.filter(v => v.deletedAt);
+    
+    const paymentList = rawPaymentList.filter(p => !p.deletedAt);
+    const trashedP = rawPaymentList.filter(p => p.deletedAt);
+    
+    const supplierList = rawSupplierList.filter(s => !s.deletedAt);
+    const trashedS = rawSupplierList.filter(s => s.deletedAt);
+
+    // Auto-delete trashed items older than 30 days
+    for (const f of trashedF) {
+        if (now.getTime() - new Date(f.deletedAt!).getTime() > thirtyDaysInMs) {
+            await dbService.deleteFarmer(f.id);
+        }
+    }
+    for (const v of trashedV) {
+        if (now.getTime() - new Date(v.deletedAt!).getTime() > thirtyDaysInMs) {
+            await dbService.deleteVisit(v.id);
+        }
+    }
+    for (const p of trashedP) {
+        if (now.getTime() - new Date(p.deletedAt!).getTime() > thirtyDaysInMs) {
+            await dbService.deletePayment(p.id);
+        }
+    }
+    for (const s of trashedS) {
+        if (now.getTime() - new Date(s.deletedAt!).getTime() > thirtyDaysInMs) {
+            await dbService.deleteSupplier(s.id);
+        }
+    }
+
+    setTrashedFarmers(trashedF.filter(f => now.getTime() - new Date(f.deletedAt!).getTime() <= thirtyDaysInMs));
+    setTrashedVisits(trashedV.filter(v => now.getTime() - new Date(v.deletedAt!).getTime() <= thirtyDaysInMs));
+    setTrashedPayments(trashedP.filter(p => now.getTime() - new Date(p.deletedAt!).getTime() <= thirtyDaysInMs));
+    setTrashedSuppliers(trashedS.filter(s => now.getTime() - new Date(s.deletedAt!).getTime() <= thirtyDaysInMs));
+
+    setVisits(visitList);
 
     const finalReminders = [...(syncedReminders || reminderListFromDB)];
     
@@ -543,7 +727,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // --- REGIONAL ALERTS LOGIC ---
     const alerts: Record<string, { type: string, village: string, severity: string, count: number }> = {};
-    visits.forEach(v => {
+    visitList.forEach(v => {
         if ((v.pestFound || v.diseaseFound) && v.severity === 'HIGH') {
             const key = `${v.pestFound || v.diseaseFound}-${v.village || 'Bilinmeyen'}`;
             if (!alerts[key]) {
@@ -564,7 +748,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     
     // Add prescriptions to debt
     prescriptions.forEach(p => {
-        farmerDebts[p.farmerId] = (farmerDebts[p.farmerId] || 0) + (p.totalAmount || 0);
+        if (p.priceType !== 'CASH') {
+            farmerDebts[p.farmerId] = (farmerDebts[p.farmerId] || 0) + (p.totalAmount || 0);
+        }
     });
 
     // Add manual debts (excluding turnover entries to avoid double counting in grand total)
@@ -631,6 +817,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Calculate Inventory Value and Potential Revenue
     const inventoryValue = inventoryData.reduce((acc, item) => acc + (item.buyingPrice * item.quantity), 0);
     const potentialRevenue = inventoryData.reduce((acc, item) => acc + (item.sellingPrice * item.quantity), 0);
+    const cashInventoryValue = inventoryData.reduce((acc, item) => acc + ((item.cashBuyingPrice || 0) * item.quantity), 0);
+    const cashPotentialRevenue = inventoryData.reduce((acc, item) => acc + ((item.cashPrice || 0) * item.quantity), 0);
 
     const cropDistribution = Object.entries(distribution)
         .map(([crop, area]) => ({ crop, area }))
@@ -640,13 +828,53 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setFarmers(updatedFarmerList);
     setInventory(inventoryData);
     setPrescriptions(prescriptions);
+    setTrashedPrescriptions(trashed);
     setPayments(paymentList);
     setSuppliers(updatedSupplierList);
     setMyPayments(myPaymentList);
     setExpenses(expenseList);
     setManualDebts(manualDebtList);
+    setTeamMembers(teamMemberList);
+    setMessages(messageList);
     
-    const accountList = await dbService.getAccounts();
+    let accountList = await dbService.getAccounts();
+    
+    // Deduplicate "Nakit Kasam" if multiple were created due to race conditions
+    const nakitKasamAccounts = accountList.filter(a => a.name === 'Nakit Kasam');
+    if (nakitKasamAccounts.length > 1) {
+        // Keep the first one, delete the rest if they have 0 balance
+        for (let i = 1; i < nakitKasamAccounts.length; i++) {
+            if (nakitKasamAccounts[i].balance === 0) {
+                await dbService.deleteAccount(nakitKasamAccounts[i].id);
+                accountList = accountList.filter(a => a.id !== nakitKasamAccounts[i].id);
+            }
+        }
+    }
+
+    // Create default "Nakit Kasam" if no accounts exist
+    if (accountList.length === 0 && !isCreatingDefaultAccount) {
+        isCreatingDefaultAccount = true;
+        try {
+            // Check again inside the lock
+            const currentAccounts = await dbService.getAccounts();
+            if (currentAccounts.length === 0) {
+                const defaultAccount: Account = {
+                    id: crypto.randomUUID(),
+                    name: 'Nakit Kasam',
+                    type: 'CASH',
+                    balance: 0,
+                    bankLogo: '💸' // Motivating money emoji
+                };
+                await dbService.addAccount(defaultAccount);
+                accountList = [defaultAccount];
+            } else {
+                accountList = currentAccounts;
+            }
+        } finally {
+            isCreatingDefaultAccount = false;
+        }
+    }
+
     const transactionList = await dbService.getTransactions();
     setAccounts(accountList);
     setTransactions(transactionList);
@@ -662,6 +890,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       cropDistribution,
       inventoryValue,
       potentialRevenue,
+      cashInventoryValue,
+      cashPotentialRevenue,
       totalDebt,
       totalExpenses,
       regionalAlerts
@@ -671,7 +901,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addFarmer = async (farmerData: Omit<Farmer, 'id'>) => {
-    const newFarmer: Farmer = { ...farmerData, id: crypto.randomUUID() };
+    const newFarmer: Farmer = { ...farmerData, id: crypto.randomUUID(), createdById: activeTeamMember?.id };
     await dbService.addFarmer(newFarmer);
     await refreshStats();
   };
@@ -683,7 +913,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteFarmer = async (id: string) => {
     // 1. Delete all prescriptions and revert inventory
-    const farmerPrescriptions = prescriptions.filter(p => p.farmerId === id);
+    const farmerPrescriptions = await dbService.getPrescriptionsByFarmer(id);
     for (const p of farmerPrescriptions) {
         if (p.isInventoryProcessed) {
             await dbService.revertInventory(p);
@@ -692,9 +922,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     // 2. Delete all payments and their transactions
-    const farmerPayments = payments.filter(p => p.farmerId === id);
+    const farmerPayments = await dbService.getPaymentsByFarmer(id);
+    const allTransactions = await dbService.getTransactions();
     for (const p of farmerPayments) {
-        const relatedTx = transactions.find(tx => tx.relatedId === p.id);
+        const relatedTx = allTransactions.find(tx => tx.relatedId === p.id);
         if (relatedTx) {
             await dbService.deleteTransaction(relatedTx.id);
         }
@@ -702,7 +933,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     // 3. Delete all manual debts
-    const farmerDebts = manualDebts.filter(d => d.farmerId === id);
+    const farmerDebts = await dbService.getManualDebtsByFarmer(id);
     for (const d of farmerDebts) {
         await dbService.deleteManualDebt(d.id);
     }
@@ -716,6 +947,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // 5. Delete the farmer
     await dbService.deleteFarmer(id);
     await refreshStats();
+  };
+
+  const softDeleteFarmer = async (id: string) => {
+    const farmer = farmers.find(f => f.id === id);
+    if (farmer) {
+        await dbService.updateFarmer({ ...farmer, deletedAt: new Date().toISOString() });
+        await refreshStats();
+    }
+  };
+
+  const restoreFarmer = async (id: string) => {
+    const farmer = trashedFarmers.find(f => f.id === id);
+    if (farmer) {
+        const { deletedAt, ...rest } = farmer;
+        await dbService.updateFarmer(rest);
+        await refreshStats();
+    }
+  };
+
+  const permanentlyDeleteFarmer = async (id: string) => {
+    await deleteFarmer(id);
   };
 
   const bulkAddFarmers = async (farmersData: Omit<Farmer, 'id'>[]) => {
@@ -796,7 +1048,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const addVisit = async (visitData: Omit<VisitLog, 'id'>) => {
     const id = crypto.randomUUID();
-    const visit: VisitLog = { ...visitData, id };
+    const visit: VisitLog = { ...visitData, id, createdById: activeTeamMember?.id };
     await dbService.addVisit(visit);
     await refreshStats();
     return id;
@@ -812,20 +1064,88 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await refreshStats();
   };
 
+  const softDeleteVisit = async (id: string) => {
+    const visit = visits.find(v => v.id === id);
+    if (visit) {
+        await dbService.updateVisit({ ...visit, deletedAt: new Date().toISOString() });
+        await refreshStats();
+    }
+  };
+
+  const restoreVisit = async (id: string) => {
+    const visit = trashedVisits.find(v => v.id === id);
+    if (visit) {
+        const { deletedAt, ...rest } = visit;
+        await dbService.updateVisit(rest);
+        await refreshStats();
+    }
+  };
+
+  const permanentlyDeleteVisit = async (id: string) => {
+    await deleteVisit(id);
+  };
+
+  const softDeletePrescription = async (id: string) => {
+    const allPrescriptions = await dbService.getAllPrescriptions();
+    const target = allPrescriptions.find(p => p.id === id);
+    if (target) {
+      if (target.isInventoryProcessed) {
+        await dbService.revertInventory(target);
+      }
+      await dbService.updatePrescription({
+        ...target,
+        isInventoryProcessed: false,
+        deletedAt: new Date().toISOString()
+      });
+      await refreshStats();
+    }
+  };
+
+  const restorePrescription = async (id: string) => {
+    const allPrescriptions = await dbService.getAllPrescriptions();
+    const target = allPrescriptions.find(p => p.id === id);
+    if (target) {
+      const { deletedAt, ...rest } = target;
+      await dbService.updatePrescription(rest as Prescription);
+      await refreshStats();
+    }
+  };
+
+  const permanentlyDeletePrescription = async (id: string) => {
+    await dbService.deletePrescription(id);
+    await refreshStats();
+  };
+
   const addPayment = async (paymentData: Omit<Payment, 'id'>) => {
-    const newPayment: Payment = { ...paymentData, id: crypto.randomUUID() };
+    const paymentId = crypto.randomUUID();
+    const newPayment: Payment = { ...paymentData, id: paymentId, createdById: activeTeamMember?.id };
     await dbService.addPayment(newPayment);
     
-    if (newPayment.accountId) {
-      const farmer = farmers.find(f => f.id === newPayment.farmerId);
+    const farmer = farmers.find(f => f.id === newPayment.farmerId);
+    const farmerName = farmer?.fullName || 'Bilinmeyen Çiftçi';
+
+    if (newPayment.method === 'CHECK' || newPayment.method === 'TEDYE') {
+        await addMyPayment({
+            farmerId: newPayment.farmerId,
+            farmerName,
+            amount: newPayment.amount,
+            issueDate: newPayment.date,
+            dueDate: newPayment.dueDate || newPayment.date,
+            type: newPayment.method === 'CHECK' ? 'CHECK' : 'TEDYE',
+            status: 'PENDING',
+            note: newPayment.note,
+            accountId: newPayment.accountId,
+            relatedId: paymentId
+        });
+    } else if (newPayment.accountId) {
       await dbService.addTransaction({
         id: crypto.randomUUID(),
         accountId: newPayment.accountId,
         type: 'INCOME',
         amount: newPayment.amount,
         date: newPayment.date,
-        description: `${farmer?.fullName || 'Çiftçi'} ödemesi`,
-        relatedId: newPayment.id,
+        description: `${farmerName} ödemesi`,
+        relatedId: paymentId,
         category: 'Çiftçi Ödemesi'
       });
     }
@@ -833,18 +1153,103 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await refreshStats();
   };
 
+  const updatePayment = async (payment: Payment) => {
+    await dbService.updatePayment(payment);
+    
+    if (payment.method === 'CHECK' || payment.method === 'TEDYE') {
+        const myPaymentsList = await dbService.getMyPayments();
+        const relatedMyPay = myPaymentsList.find(p => p.relatedId === payment.id);
+        if (relatedMyPay) {
+            const farmer = farmers.find(f => f.id === payment.farmerId);
+            await dbService.updateMyPayment({
+                ...relatedMyPay,
+                amount: payment.amount,
+                dueDate: payment.dueDate || payment.date,
+                note: payment.note,
+                accountId: payment.accountId,
+                farmerName: farmer?.fullName || relatedMyPay.farmerName
+            });
+        }
+    } else {
+        const allTransactions = await dbService.getTransactions();
+        const relatedTx = allTransactions.find(tx => tx.relatedId === payment.id);
+        if (relatedTx) {
+            if (payment.accountId) {
+                const farmer = farmers.find(f => f.id === payment.farmerId);
+                await dbService.updateTransaction({
+                    ...relatedTx,
+                    accountId: payment.accountId,
+                    amount: payment.amount,
+                    date: payment.date,
+                    description: `${farmer?.fullName || 'Çiftçi'} ödemesi`
+                });
+            } else {
+                await dbService.deleteTransaction(relatedTx.id);
+            }
+        } else if (payment.accountId) {
+            const farmer = farmers.find(f => f.id === payment.farmerId);
+            await dbService.addTransaction({
+                id: crypto.randomUUID(),
+                accountId: payment.accountId,
+                type: 'INCOME',
+                amount: payment.amount,
+                date: payment.date,
+                description: `${farmer?.fullName || 'Çiftçi'} ödemesi`,
+                relatedId: payment.id,
+                category: 'Çiftçi Ödemesi'
+            });
+        }
+    }
+    
+    await refreshStats();
+  };
+
   const deletePayment = async (id: string) => {
-    const relatedTx = transactions.find(tx => tx.relatedId === id);
+    const allTransactions = await dbService.getTransactions();
+    const relatedTx = allTransactions.find(tx => tx.relatedId === id);
     if (relatedTx) {
       await dbService.deleteTransaction(relatedTx.id);
     }
+    
+    const myPays = await dbService.getMyPayments();
+    const relatedMyPays = myPays.filter(p => p.relatedId === id);
+    for (const p of relatedMyPays) {
+        await deleteMyPayment(p.id);
+    }
+
     await dbService.deletePayment(id);
     await refreshStats();
   };
 
+  const softDeletePayment = async (id: string) => {
+    const payment = payments.find(p => p.id === id);
+    if (payment) {
+        await dbService.updatePayment({ ...payment, deletedAt: new Date().toISOString() });
+        await refreshStats();
+    }
+  };
+
+  const restorePayment = async (id: string) => {
+    const payment = trashedPayments.find(p => p.id === id);
+    if (payment) {
+        const { deletedAt, ...rest } = payment;
+        await dbService.updatePayment(rest);
+        await refreshStats();
+    }
+  };
+
+  const permanentlyDeletePayment = async (id: string) => {
+    await deletePayment(id);
+  };
+
   const addManualDebt = async (debt: Omit<ManualDebt, 'id'>) => {
     const id = crypto.randomUUID();
-    await dbService.addManualDebt({ ...debt, id });
+    await dbService.addManualDebt({ ...debt, id, createdById: activeTeamMember?.id });
+    await refreshStats();
+  };
+
+  const updateManualDebt = async (debt: ManualDebt) => {
+    await dbService.updateManualDebt(debt);
     await refreshStats();
   };
 
@@ -872,15 +1277,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const deleteSupplier = async (id: string) => {
     // 1. Delete all associated purchases and revert inventory
     const purchases = await dbService.getSupplierPurchases(id);
+    const currentInventory = await dbService.getInventory();
     for (const p of purchases) {
         for (const item of p.items) {
-            const existing = inventory.find(i => i.pesticideId === item.pesticideId);
+            const existing = currentInventory.find(i => i.pesticideId === item.pesticideId);
             if (existing) {
-                await dbService.updateInventoryItem({
+                const updatedItem = {
                     ...existing,
-                    quantity: existing.quantity - item.quantity,
+                    quantity: Math.max(0, existing.quantity - item.quantity),
                     lastUpdated: new Date().toISOString()
-                });
+                };
+                await dbService.updateInventoryItem(updatedItem);
+                const idx = currentInventory.findIndex(i => i.id === existing.id);
+                if (idx !== -1) currentInventory[idx] = updatedItem;
             }
         }
         await dbService.deleteSupplierPurchase(p.id);
@@ -910,24 +1319,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await refreshStats();
   };
 
+  const softDeleteSupplier = async (id: string) => {
+    const supplier = suppliers.find(s => s.id === id);
+    if (supplier) {
+        await dbService.updateSupplier({ ...supplier, deletedAt: new Date().toISOString() });
+        await refreshStats();
+    }
+  };
+
+  const restoreSupplier = async (id: string) => {
+    const supplier = trashedSuppliers.find(s => s.id === id);
+    if (supplier) {
+        const { deletedAt, ...rest } = supplier;
+        await dbService.updateSupplier(rest);
+        await refreshStats();
+    }
+  };
+
+  const permanentlyDeleteSupplier = async (id: string) => {
+    await deleteSupplier(id);
+  };
+
   const addSupplierPurchase = async (purchaseData: Omit<SupplierPurchase, 'id'>) => {
     const purchaseId = crypto.randomUUID();
-    const purchase: SupplierPurchase = { ...purchaseData, id: purchaseId };
+    const purchase: SupplierPurchase = { ...purchaseData, id: purchaseId, createdById: activeTeamMember?.id };
+    const currentInventory = await dbService.getInventory();
     
     // Update Inventory and fix new pesticide IDs
     for (let i = 0; i < purchase.items.length; i++) {
         const item = purchase.items[i];
-        const existing = inventory.find(inv => inv.pesticideId === item.pesticideId);
+        const existing = currentInventory.find(inv => inv.pesticideId === item.pesticideId);
         
         let finalPesticideId = item.pesticideId;
         
         if (existing) {
-            await dbService.updateInventoryItem({
+            const updatedItem = {
                 ...existing,
-                quantity: existing.quantity + item.quantity,
+                quantity: Math.max(0, existing.quantity + item.quantity),
                 buyingPrice: item.buyingPrice, // Update buying price to latest
                 lastUpdated: new Date().toISOString()
-            });
+            };
+            await dbService.updateInventoryItem(updatedItem);
+            const idx = currentInventory.findIndex(i => i.id === existing.id);
+            if (idx !== -1) currentInventory[idx] = updatedItem;
         } else {
             // If it's a new pesticide (tempId from UI), we add it to the library too
             if (item.pesticideId.startsWith('new-')) {
@@ -944,7 +1378,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 });
             }
 
-            await dbService.addInventoryItem({
+            const newInventoryItem = {
                 id: crypto.randomUUID(),
                 pesticideId: finalPesticideId,
                 pesticideName: item.pesticideName,
@@ -954,7 +1388,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 buyingPrice: item.buyingPrice,
                 sellingPrice: item.buyingPrice * 1.2, // Default 20% margin
                 lastUpdated: new Date().toISOString()
-            });
+            };
+            await dbService.addInventoryItem(newInventoryItem);
+            currentInventory.push(newInventoryItem);
         }
     }
     
@@ -965,40 +1401,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateSupplierPurchase = async (purchase: SupplierPurchase) => {
+    // Recalculate totalAmount
+    purchase.totalAmount = purchase.items.reduce((acc, item) => acc + (item.buyingPrice * item.quantity), 0);
+
     // 1. Get old purchase to revert inventory
     const allPurchases = await dbService.getSupplierPurchases(purchase.supplierId);
     const oldPurchase = allPurchases.find(p => p.id === purchase.id);
+    const currentInventory = await dbService.getInventory();
     
     if (oldPurchase) {
         // Revert old inventory changes
         for (const item of oldPurchase.items) {
-            const existing = inventory.find(i => i.pesticideId === item.pesticideId);
+            const existing = currentInventory.find(i => i.pesticideId === item.pesticideId);
             if (existing) {
-                await dbService.updateInventoryItem({
+                const updatedItem = {
                     ...existing,
-                    quantity: existing.quantity - item.quantity,
+                    quantity: Math.max(0, existing.quantity - item.quantity),
                     lastUpdated: new Date().toISOString()
-                });
+                };
+                await dbService.updateInventoryItem(updatedItem);
+                const idx = currentInventory.findIndex(i => i.id === existing.id);
+                if (idx !== -1) currentInventory[idx] = updatedItem;
             }
         }
     }
 
     // 3. Apply new inventory changes and handle new pesticides
-    // We need to re-fetch inventory because it was updated above
-    const latestInventory = await dbService.getInventory();
     for (let i = 0; i < purchase.items.length; i++) {
         const item = purchase.items[i];
-        const existing = latestInventory.find(inv => inv.pesticideId === item.pesticideId);
+        const existing = currentInventory.find(inv => inv.pesticideId === item.pesticideId);
         
         let finalPesticideId = item.pesticideId;
         
         if (existing) {
-            await dbService.updateInventoryItem({
+            const updatedItem = {
                 ...existing,
                 quantity: existing.quantity + item.quantity,
                 buyingPrice: item.buyingPrice,
                 lastUpdated: new Date().toISOString()
-            });
+            };
+            await dbService.updateInventoryItem(updatedItem);
+            const idx = currentInventory.findIndex(i => i.id === existing.id);
+            if (idx !== -1) currentInventory[idx] = updatedItem;
         } else {
             // If it's a new pesticide (tempId from UI), we add it to the library too
             if (item.pesticideId.startsWith('new-')) {
@@ -1015,7 +1459,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 });
             }
 
-            await dbService.addInventoryItem({
+            const newInventoryItem = {
                 id: crypto.randomUUID(),
                 pesticideId: finalPesticideId,
                 pesticideName: item.pesticideName,
@@ -1025,7 +1469,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 buyingPrice: item.buyingPrice,
                 sellingPrice: item.buyingPrice * 1.2, // Default 20% margin
                 lastUpdated: new Date().toISOString()
-            });
+            };
+            await dbService.addInventoryItem(newInventoryItem);
+            currentInventory.push(newInventoryItem);
         }
     }
 
@@ -1036,9 +1482,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteSupplierPurchase = async (id: string) => {
-    // 1. Find the purchase to revert inventory
-    // We can get all purchases and find it, or add a direct get method.
-    // For now, let's use the more reliable way of searching all purchases.
     const allSuppliers = await dbService.getSuppliers();
     let targetPurchase: SupplierPurchase | undefined;
     
@@ -1049,16 +1492,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     if (targetPurchase) {
-        // Revert inventory
+        const currentInventory = await dbService.getInventory();
         for (const item of targetPurchase.items) {
-            // Use latest inventory from state or fetch it
-            const existing = inventory.find(i => i.pesticideId === item.pesticideId);
+            const existing = currentInventory.find(i => i.pesticideId === item.pesticideId);
             if (existing) {
-                await dbService.updateInventoryItem({
+                const updatedItem = {
                     ...existing,
                     quantity: Math.max(0, existing.quantity - item.quantity),
                     lastUpdated: new Date().toISOString()
-                });
+                };
+                await dbService.updateInventoryItem(updatedItem);
+                
+                // Update in-memory array so subsequent items in the loop see the updated quantity
+                const idx = currentInventory.findIndex(i => i.id === existing.id);
+                if (idx !== -1) currentInventory[idx] = updatedItem;
             }
         }
         await dbService.deleteSupplierPurchase(id);
@@ -1068,33 +1515,86 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addSupplierPayment = async (paymentData: Omit<SupplierPayment, 'id'>) => {
-    const payment: SupplierPayment = { ...paymentData, id: crypto.randomUUID() };
+    const paymentId = crypto.randomUUID();
+    const payment: SupplierPayment = { ...paymentData, id: paymentId, createdById: activeTeamMember?.id };
     await dbService.addSupplierPayment(payment);
     
+    const supplier = suppliers.find(s => s.id === payment.supplierId);
+    const supplierName = supplier?.name || 'Bilinmeyen Tedarikçi';
+
     // If it's a check or promissory note, add to MyPayments
     if (payment.method === 'CHECK' || payment.method === 'PROMISSORY_NOTE') {
-        const supplier = suppliers.find(s => s.id === payment.supplierId);
         await addMyPayment({
             supplierId: payment.supplierId,
-            supplierName: supplier?.name || 'Bilinmeyen Tedarikçi',
+            supplierName,
             amount: payment.amount,
             issueDate: payment.date,
             dueDate: payment.dueDate || payment.date,
             type: payment.method === 'CHECK' ? 'CHECK' : 'PROMISSORY_NOTE',
             status: 'PENDING',
             note: payment.note,
-            accountId: payment.accountId
+            accountId: payment.accountId,
+            relatedId: paymentId
         });
+    } else if (payment.method === 'CARD') {
+        if (payment.installments && payment.installments > 1) {
+            // Split into installments
+            const installmentAmount = payment.amount / payment.installments;
+            for (let i = 0; i < payment.installments; i++) {
+                const dueDate = new Date(payment.date);
+                dueDate.setMonth(dueDate.getMonth() + i + 1);
+                
+                await addMyPayment({
+                    supplierId: payment.supplierId,
+                    supplierName,
+                    amount: installmentAmount,
+                    issueDate: payment.date,
+                    dueDate: dueDate.toISOString(),
+                    type: 'OTHER',
+                    status: 'PENDING',
+                    note: `${payment.note || ''} (Taksit ${i + 1}/${payment.installments})`,
+                    accountId: payment.accountId,
+                    relatedId: paymentId
+                });
+            }
+        } else if (payment.producerCardMonths && payment.producerCardMonths > 0) {
+            // Producer card payment after X months
+            const dueDate = new Date(payment.date);
+            dueDate.setMonth(dueDate.getMonth() + payment.producerCardMonths);
+            
+            await addMyPayment({
+                supplierId: payment.supplierId,
+                supplierName,
+                amount: payment.amount,
+                issueDate: payment.date,
+                dueDate: dueDate.toISOString(),
+                type: 'OTHER',
+                status: 'PENDING',
+                note: `${payment.note || ''} (Üretici Kart - ${payment.producerCardMonths} Ay)`,
+                accountId: payment.accountId,
+                relatedId: paymentId
+            });
+        } else if (payment.accountId) {
+            await dbService.addTransaction({
+                id: crypto.randomUUID(),
+                accountId: payment.accountId,
+                type: 'EXPENSE',
+                amount: payment.amount,
+                date: payment.date,
+                description: `${supplierName} ödemesi (Kart)`,
+                relatedId: paymentId,
+                category: 'Tedarikçi Ödemesi'
+            });
+        }
     } else if (payment.accountId) {
-        const supplier = suppliers.find(s => s.id === payment.supplierId);
         await dbService.addTransaction({
             id: crypto.randomUUID(),
             accountId: payment.accountId,
             type: 'EXPENSE',
             amount: payment.amount,
             date: payment.date,
-            description: `${supplier?.name || 'Tedarikçi'} ödemesi`,
-            relatedId: payment.id,
+            description: `${supplierName} ödemesi`,
+            relatedId: paymentId,
             category: 'Tedarikçi Ödemesi'
         });
     }
@@ -1102,9 +1602,55 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await refreshStats();
   };
 
+  const updateSupplierPayment = async (payment: SupplierPayment) => {
+    await dbService.updateSupplierPayment(payment);
+    
+    if (payment.method === 'CHECK' || payment.method === 'PROMISSORY_NOTE') {
+        const myPaymentsList = await dbService.getMyPayments();
+        const relatedMyPay = myPaymentsList.find(p => p.relatedId === payment.id);
+        if (relatedMyPay) {
+            await dbService.updateMyPayment({
+                ...relatedMyPay,
+                amount: payment.amount,
+                dueDate: payment.date,
+                note: payment.note,
+                accountId: payment.accountId
+            });
+        }
+    } else {
+        const allTransactions = await dbService.getTransactions();
+        const relatedTx = allTransactions.find(tx => tx.relatedId === payment.id);
+        if (relatedTx) {
+            if (payment.accountId) {
+                const supplier = suppliers.find(s => s.id === payment.supplierId);
+                await dbService.updateTransaction({
+                    ...relatedTx,
+                    accountId: payment.accountId,
+                    amount: payment.amount,
+                    date: payment.date,
+                    description: `${supplier?.name || 'Tedarikçi'} ödemesi`
+                });
+            } else {
+                await dbService.deleteTransaction(relatedTx.id);
+            }
+        } else if (payment.accountId) {
+            const supplier = suppliers.find(s => s.id === payment.supplierId);
+            await dbService.addTransaction({
+                id: crypto.randomUUID(),
+                accountId: payment.accountId,
+                type: 'EXPENSE',
+                amount: payment.amount,
+                date: payment.date,
+                description: `${supplier?.name || 'Tedarikçi'} ödemesi`,
+                relatedId: payment.id,
+                category: 'Tedarikçi Ödemesi'
+            });
+        }
+    }
+    await refreshStats();
+  };
+
   const deleteSupplierPayment = async (id: string) => {
-    // Find the payment to see if it has a transaction or check/senet
-    // Again, we might need to find which supplier it belongs to
     const allSuppliers = await dbService.getSuppliers();
     let targetPayment: SupplierPayment | undefined;
     
@@ -1115,22 +1661,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     if (targetPayment) {
-        // If it had a transaction, delete it
-        if (targetPayment.accountId) {
-            const transactions = await dbService.getTransactions();
-            const relatedTx = transactions.find(t => t.relatedId === id);
-            if (relatedTx) {
-                await dbService.deleteTransaction(relatedTx.id);
-            }
+        // Delete related transactions
+        const transactions = await dbService.getTransactions();
+        const relatedTx = transactions.find(t => t.relatedId === id);
+        if (relatedTx) {
+            await dbService.deleteTransaction(relatedTx.id);
         }
         
-        // If it was a check/senet, delete from MyPayments
-        if (targetPayment.method === 'CHECK' || targetPayment.method === 'PROMISSORY_NOTE') {
-            const myPays = await dbService.getMyPayments();
-            const relatedMyPay = myPays.find(p => p.supplierId === targetPayment?.supplierId && p.amount === targetPayment?.amount && p.issueDate === targetPayment?.date);
-            if (relatedMyPay) {
-                await deleteMyPayment(relatedMyPay.id);
-            }
+        // Delete related MyPayments
+        const myPays = await dbService.getMyPayments();
+        const relatedMyPays = myPays.filter(p => p.relatedId === id);
+        for (const p of relatedMyPays) {
+            await deleteMyPayment(p.id);
         }
 
         await dbService.deleteSupplierPayment(id);
@@ -1140,30 +1682,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addMyPayment = async (paymentData: Omit<MyPayment, 'id'>) => {
-    const payment: MyPayment = { ...paymentData, id: crypto.randomUUID() };
+    const payment: MyPayment = { ...paymentData, id: crypto.randomUUID(), createdById: activeTeamMember?.id };
     await dbService.addMyPayment(payment);
     await refreshStats();
   };
 
   const updateMyPayment = async (payment: MyPayment) => {
-    const oldPayment = myPayments.find(p => p.id === payment.id);
+    const allMyPayments = await dbService.getMyPayments();
+    const oldPayment = allMyPayments.find(p => p.id === payment.id);
     await dbService.updateMyPayment(payment);
     
     // If status changed to PAID and accountId is present, create transaction
     if (payment.status === 'PAID' && oldPayment?.status !== 'PAID' && payment.accountId) {
+      const isIncome = !!payment.farmerId;
+      const typeLabel = payment.type === 'CHECK' ? 'Çek' : payment.type === 'TEDYE' ? 'Tedye' : 'Senet';
+      const name = payment.farmerName || payment.supplierName || 'Bilinmeyen';
+      
       await dbService.addTransaction({
         id: crypto.randomUUID(),
         accountId: payment.accountId,
-        type: 'EXPENSE',
+        type: isIncome ? 'INCOME' : 'EXPENSE',
         amount: payment.amount,
         date: new Date().toISOString(),
-        description: `${payment.supplierName} - ${payment.type === 'CHECK' ? 'Çek' : 'Senet'} Ödemesi`,
+        description: `${name} - ${typeLabel} ${isIncome ? 'Tahsilatı' : 'Ödemesi'}`,
         relatedId: payment.id,
-        category: 'Çek/Senet Ödemesi'
+        category: isIncome ? 'Çek/Senet Tahsilatı' : 'Çek/Senet Ödemesi'
       });
     } else if (payment.status !== 'PAID' && oldPayment?.status === 'PAID') {
       // If status changed from PAID to something else, delete the transaction
-      const relatedTx = transactions.find(tx => tx.relatedId === payment.id);
+      const allTransactions = await dbService.getTransactions();
+      const relatedTx = allTransactions.find(tx => tx.relatedId === payment.id);
       if (relatedTx) {
         await dbService.deleteTransaction(relatedTx.id);
       }
@@ -1173,7 +1721,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteMyPayment = async (id: string) => {
-    const relatedTx = transactions.find(tx => tx.relatedId === id);
+    const allTransactions = await dbService.getTransactions();
+    const relatedTx = allTransactions.find(tx => tx.relatedId === id);
     if (relatedTx) {
       await dbService.deleteTransaction(relatedTx.id);
     }
@@ -1182,7 +1731,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addExpense = async (expenseData: Omit<Expense, 'id'>) => {
-    const newExpense: Expense = { ...expenseData, id: crypto.randomUUID() };
+    const newExpense: Expense = { ...expenseData, id: crypto.randomUUID(), createdById: activeTeamMember?.id };
     await dbService.addExpense(newExpense);
     
     if (newExpense.accountId) {
@@ -1201,9 +1750,47 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await refreshStats();
   };
 
+  const updateExpense = async (expense: Expense) => {
+    await dbService.updateExpense(expense);
+    
+    // Handle transaction update
+    const allTransactions = await dbService.getTransactions();
+    const relatedTx = allTransactions.find(tx => tx.relatedId === expense.id);
+    if (relatedTx) {
+      if (expense.accountId) {
+        // Update existing transaction
+        await dbService.updateTransaction({
+          ...relatedTx,
+          accountId: expense.accountId,
+          amount: expense.amount,
+          date: expense.date,
+          description: expense.title
+        });
+      } else {
+        // Remove transaction if account was removed
+        await dbService.deleteTransaction(relatedTx.id);
+      }
+    } else if (expense.accountId) {
+      // Create new transaction if account was added
+      await dbService.addTransaction({
+        id: crypto.randomUUID(),
+        accountId: expense.accountId,
+        type: 'EXPENSE',
+        amount: expense.amount,
+        date: expense.date,
+        description: expense.title,
+        relatedId: expense.id,
+        category: 'Gider'
+      });
+    }
+    
+    await refreshStats();
+  };
+
   const deleteExpense = async (id: string) => {
     // Find if there is a related transaction
-    const relatedTx = transactions.find(tx => tx.relatedId === id);
+    const allTransactions = await dbService.getTransactions();
+    const relatedTx = allTransactions.find(tx => tx.relatedId === id);
     if (relatedTx) {
       await dbService.deleteTransaction(relatedTx.id);
     }
@@ -1223,7 +1810,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteAccount = async (id: string) => {
-    const accountTxs = transactions.filter(tx => tx.accountId === id);
+    const allTransactions = await dbService.getTransactions();
+    const accountTxs = allTransactions.filter(tx => tx.accountId === id);
     for (const tx of accountTxs) {
       await dbService.deleteTransaction(tx.id);
     }
@@ -1239,6 +1827,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteTransaction = async (id: string) => {
     await dbService.deleteTransaction(id);
+    await refreshStats();
+  };
+
+  const addTeamMember = async (member: Omit<TeamMember, 'id' | 'createdAt'>) => {
+    const newMember: TeamMember = {
+      ...member,
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString()
+    };
+    await dbService.addTeamMember(newMember);
+    await refreshStats();
+  };
+
+  const updateTeamMember = async (member: TeamMember) => {
+    await dbService.updateTeamMember(member);
+    await refreshStats();
+  };
+
+  const deleteTeamMember = async (id: string) => {
+    await dbService.deleteTeamMember(id);
+    await refreshStats();
+  };
+
+  const sendMessage = async (text: string) => {
+    if (!activeTeamMember && userProfile.role !== 'admin') return;
+    
+    await dbService.sendMessage({
+      id: crypto.randomUUID(),
+      senderId: activeTeamMember?.id || 'admin-bypass',
+      senderName: activeTeamMember?.fullName || userProfile.fullName || 'Yönetici',
+      text,
+      timestamp: new Date().toISOString()
+    });
     await refreshStats();
   };
 
@@ -1260,7 +1881,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // We need to calculate balance for ALL transactions BEFORE currentYear
       prescriptions.forEach(p => {
         const pYear = new Date(p.date).getFullYear();
-        if (pYear <= lastYear) {
+        if (pYear <= lastYear && p.priceType !== 'CASH') {
           farmerBalances[p.farmerId] = (farmerBalances[p.farmerId] || 0) + (p.totalAmount || 0);
         }
       });
@@ -1336,6 +1957,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (isInitialized.current) return;
         isInitialized.current = true;
         
+        // Sync language from profile
+        if (userProfile.language) {
+            setLanguageState(userProfile.language);
+        }
+        
         await cleanupOldData();
         await refreshStats();
         await checkWeatherAlerts();
@@ -1348,25 +1974,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     init();
   }, []);
 
-  return (
+    const prescriptionLabel = userProfile.accountType === 'COMPANY' ? t('label.order') : t('label.prescription');
+    const farmerLabel = userProfile.accountType === 'COMPANY' ? t('label.customer') : t('label.farmer');
+    const farmerPluralLabel = userProfile.accountType === 'COMPANY' ? t('label.customers') : t('label.farmers');
+
+    return (
     <AppContext.Provider value={{ 
-        stats, refreshStats, addFarmer, updateFarmer, deleteFarmer, bulkAddFarmers, 
-        farmers, reminders, addReminder, editReminder, toggleReminder, deleteReminder,
+        stats, refreshStats, addFarmer, updateFarmer, deleteFarmer, bulkAddFarmers, softDeleteFarmer, restoreFarmer, permanentlyDeleteFarmer,
+        farmers, trashedFarmers, visits, trashedVisits, reminders, addReminder, editReminder, toggleReminder, deleteReminder,
         uiScale, setUiScale, 
         notifications, unreadCount, clearNotifications, markAllAsRead,
         userProfile, updateUserProfile, syncUserProfile, isAdmin, subscriptionStatus, subscriptionEndsAt, getAllUsers, updateUserSubscription, deleteUser, sendPasswordReset, addSystemNotification,
-        addVisit, updateVisit, deleteVisit,
+        teamMembers, addTeamMember, updateTeamMember, deleteTeamMember, activeTeamMember, setActiveTeamMember,
+        messages, sendMessage,
+        prescriptionLabel, farmerLabel, farmerPluralLabel,
+        addVisit, updateVisit, deleteVisit, softDeleteVisit, restoreVisit, permanentlyDeleteVisit,
         inventory, refreshInventory, addInventoryItem, updateInventoryItem, deleteInventoryItem,
-        prescriptions, addPrescription, refreshPrescriptions, togglePrescriptionStatus,
-        payments, addPayment, deletePayment,
-        manualDebts, addManualDebt, deleteManualDebt,
-        suppliers, addSupplier, updateSupplier, deleteSupplier, addSupplierPurchase, updateSupplierPurchase, deleteSupplierPurchase, addSupplierPayment, deleteSupplierPayment,
+        prescriptions, trashedPrescriptions, addPrescription, refreshPrescriptions, togglePrescriptionStatus, softDeletePrescription, restorePrescription, permanentlyDeletePrescription,
+        payments, trashedPayments, addPayment, updatePayment, deletePayment, softDeletePayment, restorePayment, permanentlyDeletePayment,
+        manualDebts, addManualDebt, updateManualDebt, deleteManualDebt,
+        suppliers, trashedSuppliers, addSupplier, updateSupplier, deleteSupplier, softDeleteSupplier, restoreSupplier, permanentlyDeleteSupplier, addSupplierPurchase, updateSupplierPurchase, deleteSupplierPurchase, addSupplierPayment, updateSupplierPayment, deleteSupplierPayment,
         myPayments, addMyPayment, updateMyPayment, deleteMyPayment,
-        expenses, addExpense, deleteExpense,
+        expenses, addExpense, updateExpense, deleteExpense,
         accounts, addAccount, updateAccount, deleteAccount,
         transactions, addTransaction, deleteTransaction,
         performManualTurnover,
-        showToast, hapticFeedback
+        showToast, hapticFeedback,
+        language, setLanguage, t
     }}>
       {children}
       {/* Toast Container */}

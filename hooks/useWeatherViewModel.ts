@@ -6,7 +6,7 @@ import { AgriCity } from '../types';
 import { useAppViewModel } from '../context/AppContext';
 
 export const useWeatherViewModel = () => {
-  const { userProfile, updateUserProfile } = useAppViewModel();
+  const { userProfile, updateUserProfile, t } = useAppViewModel();
 
   const [selectedCity, setSelectedCity] = useState<AgriCity>(() => {
     // 1. Profilde kayıtlı mı?
@@ -39,7 +39,7 @@ export const useWeatherViewModel = () => {
       const data = await WeatherService.getForecast(selectedCity.lat, selectedCity.lon);
       setWeather(data);
     } catch (err) {
-      setError('Hava durumu verisi güncellenemedi.');
+      setError(t('weather.error.fetch'));
       console.error(err);
     } finally {
       setIsLoading(false);
@@ -78,7 +78,7 @@ export const useWeatherViewModel = () => {
 
   const detectCurrentLocation = async () => {
       if (!("geolocation" in navigator)) {
-          alert("Tarayıcınız konum özelliğini desteklemiyor.");
+          alert(t('weather.error.geolocation'));
           return;
       }
 
@@ -92,7 +92,7 @@ export const useWeatherViewModel = () => {
       }, (err) => {
           console.error(err);
           setIsSearching(false);
-          alert("Konum izni reddedildi veya konum alınamadı.");
+          alert(t('weather.error.denied'));
       });
   };
 
@@ -103,12 +103,12 @@ export const useWeatherViewModel = () => {
 
     if (windSpeed > 20) {
       return { 
-        status: 'KRİTİK', 
-        message: 'Şiddetli rüzgar! İlaçlama kesinlikle yapılamaz.', 
-        color: 'text-red-400', 
-        bg: 'bg-red-500/10',
-        border: 'border-red-500/20',
-        iconColor: 'text-red-500'
+          status: t('weather.advice.critical'), 
+          message: t('weather.advice.critical.desc'), 
+          color: 'text-red-400', 
+          bg: 'bg-red-500/10',
+          border: 'border-red-500/20',
+          iconColor: 'text-red-500'
       };
     }
 
@@ -116,54 +116,54 @@ export const useWeatherViewModel = () => {
 
     if (isSummer && (hour < 6 || hour >= 11)) {
       return { 
-        status: 'SAAT UYGUN DEĞİL', 
-        message: 'Yaz sıcağı riski! İlaçlama sadece sabah 06-11 arası önerilir.', 
-        color: 'text-orange-400', 
-        bg: 'bg-orange-500/10',
-        border: 'border-orange-500/20',
-        iconColor: 'text-orange-500'
+          status: t('weather.advice.not_suitable_hour'), 
+          message: t('weather.advice.not_suitable_hour.desc'), 
+          color: 'text-orange-400', 
+          bg: 'bg-orange-500/10',
+          border: 'border-orange-500/20',
+          iconColor: 'text-orange-500'
       };
     }
 
     if (windSpeed > 10) {
       return { 
-        status: 'RÜZGARLI', 
-        message: 'Rüzgar hızı sınırda. İlaçlama kalitesi düşebilir.', 
-        color: 'text-yellow-400', 
-        bg: 'bg-yellow-500/10',
-        border: 'border-yellow-500/20',
-        iconColor: 'text-yellow-500'
+          status: t('weather.advice.windy'), 
+          message: t('weather.advice.windy.desc'), 
+          color: 'text-yellow-400', 
+          bg: 'bg-yellow-500/10',
+          border: 'border-yellow-500/20',
+          iconColor: 'text-yellow-500'
       };
     }
 
     if (temperature < 11 || temperature > 39) {
       return { 
-        status: 'SICAKLIK UYGUN DEĞİL', 
-        message: 'Ekstrem sıcaklık! İlaç etkisini kaybedebilir veya bitkiyi yakabilir.', 
-        color: 'text-rose-400', 
-        bg: 'bg-rose-500/10',
-        border: 'border-rose-500/20',
-        iconColor: 'text-rose-500'
+          status: t('weather.advice.not_suitable_temp'), 
+          message: t('weather.advice.not_suitable_temp.desc'), 
+          color: 'text-rose-400', 
+          bg: 'bg-rose-500/10',
+          border: 'border-rose-500/20',
+          iconColor: 'text-rose-500'
       };
     }
 
     return { 
-      status: 'İDEAL ŞARTLAR', 
-      message: 'Hava ve rüzgar ilaçlama için mükemmel durumda.', 
-      color: 'text-emerald-400', 
-      bg: 'bg-emerald-500/10',
-      border: 'border-emerald-500/20',
-      iconColor: 'text-emerald-500'
+        status: t('weather.advice.ideal'), 
+        message: t('weather.advice.ideal.desc'), 
+        color: 'text-emerald-400', 
+        bg: 'bg-emerald-500/10',
+        border: 'border-emerald-500/20',
+        iconColor: 'text-emerald-500'
     };
   };
 
   const getWeatherUITheme = (code: number) => {
-    if (code === 0) return { label: 'Açık Gökyüzü', gradient: 'from-orange-400/20 to-amber-600/5', icon: 'sun' };
-    if (code >= 1 && code <= 3) return { label: 'Parçalı Bulutlu', gradient: 'from-blue-400/10 to-stone-800/20', icon: 'cloud-sun' };
-    if (code >= 45 && code <= 48) return { label: 'Sisli', gradient: 'from-gray-500/20 to-stone-900/40', icon: 'fog' };
-    if (code >= 51 && code <= 67) return { label: 'Yağmurlu', gradient: 'from-indigo-500/20 to-blue-900/40', icon: 'rain' };
-    if (code >= 71) return { label: 'Karlı', gradient: 'from-sky-100/10 to-stone-900/40', icon: 'snow' };
-    return { label: 'Bulutlu', gradient: 'from-stone-600/20 to-stone-900/40', icon: 'cloud' };
+    if (code === 0) return { label: t('weather.theme.clear'), gradient: 'from-orange-400/20 to-amber-600/5', icon: 'sun' };
+    if (code >= 1 && code <= 3) return { label: t('weather.theme.partly_cloudy'), gradient: 'from-blue-400/10 to-stone-800/20', icon: 'cloud-sun' };
+    if (code >= 45 && code <= 48) return { label: t('weather.theme.foggy'), gradient: 'from-gray-500/20 to-stone-900/40', icon: 'fog' };
+    if (code >= 51 && code <= 67) return { label: t('weather.theme.rainy'), gradient: 'from-indigo-500/20 to-blue-900/40', icon: 'rain' };
+    if (code >= 71) return { label: t('weather.theme.snowy'), gradient: 'from-sky-100/10 to-stone-900/40', icon: 'snow' };
+    return { label: t('weather.theme.cloudy'), gradient: 'from-stone-600/20 to-stone-900/40', icon: 'cloud' };
   };
 
   return {

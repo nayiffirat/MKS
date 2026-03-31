@@ -1,11 +1,13 @@
 
 import React, { useState } from 'react';
 import { useWeatherViewModel } from '../hooks/useWeatherViewModel';
+import { useAppViewModel } from '../context/AppContext';
 import { AGRI_CITIES } from '../services/weather';
 import { Sun, Wind, Droplets, X, CloudRain, MapPin, RefreshCw, ArrowLeft, ChevronRight, Sunrise, Sunset, Zap, Cloud, CloudSun, CloudLightning, CloudSnow, Thermometer, Waves, Sparkles, Search, Loader2, LocateFixed } from 'lucide-react';
 
 export const WeatherWidget: React.FC = () => {
   const { weather, isLoading, refreshWeather, getSprayingAdvice, getWeatherUITheme, selectedCity, changeCity, searchLocations, searchResults, isSearching, detectCurrentLocation } = useWeatherViewModel();
+  const { t } = useAppViewModel();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCitySelectorOpen, setIsCitySelectorOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -49,11 +51,11 @@ export const WeatherWidget: React.FC = () => {
         <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-md flex items-end animate-in fade-in duration-300">
             <div className="w-full bg-stone-900 rounded-t-[2.5rem] p-5 pb-10 border-t border-white/10 h-[80vh] flex flex-col">
                 <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-lg font-bold text-white">Konum Seç</h3>
+                    <h3 className="text-lg font-bold text-white">{t('weather.select_location')}</h3>
                     <button onClick={() => setIsCitySelectorOpen(false)} className="bg-stone-800 p-2 rounded-full text-stone-400"><X size={20}/></button>
                 </div>
-                <button onClick={() => { detectCurrentLocation(); setIsCitySelectorOpen(false); }} className="w-full mb-4 flex items-center justify-center space-x-2 py-3 bg-emerald-600/10 border border-emerald-500/30 rounded-xl text-emerald-400 font-bold text-sm"><LocateFixed size={16} /><span>Mevcut Konum</span></button>
-                <div className="relative mb-4"><Search size={16} className="absolute left-3 top-3.5 text-stone-500" /><input type="text" value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); searchLocations(e.target.value); }} placeholder="İlçe ara..." className="w-full bg-stone-800 rounded-xl py-3 pl-10 pr-3 text-stone-200 text-sm outline-none" /></div>
+                <button onClick={() => { detectCurrentLocation(); setIsCitySelectorOpen(false); }} className="w-full mb-4 flex items-center justify-center space-x-2 py-3 bg-emerald-600/10 border border-emerald-500/30 rounded-xl text-emerald-400 font-bold text-sm"><LocateFixed size={16} /><span>{t('weather.current_location')}</span></button>
+                <div className="relative mb-4"><Search size={16} className="absolute left-3 top-3.5 text-stone-500" /><input type="text" value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); searchLocations(e.target.value); }} placeholder={t('weather.search_placeholder')} className="w-full bg-stone-800 rounded-xl py-3 pl-10 pr-3 text-stone-200 text-sm outline-none" /></div>
                 <div className="flex-1 overflow-y-auto space-y-1">{searchResults.map((res, i) => (<button key={i} onClick={() => { changeCity(res); setIsCitySelectorOpen(false); }} className="w-full text-left p-3 rounded-xl bg-stone-800/40 hover:bg-stone-800 text-stone-200 text-sm font-bold">{res.name}</button>))}</div>
             </div>
         </div>
@@ -64,8 +66,8 @@ export const WeatherWidget: React.FC = () => {
               <button onClick={() => setIsDialogOpen(false)} className="self-start mb-6 p-2 bg-stone-900 rounded-full"><ArrowLeft size={24} className="text-stone-400"/></button>
               <div className="text-center"><h2 className="text-6xl font-black text-white">{Math.round(current.temperature_2m)}°</h2><p className="text-stone-400 text-lg mt-2">{theme.label}</p></div>
               <div className="mt-10 grid grid-cols-2 gap-4">
-                  <div className="bg-stone-900 p-4 rounded-2xl border border-white/5"><p className="text-xs text-stone-500 uppercase">Rüzgar</p><p className="text-xl font-bold text-white">{current.wind_speed_10m} km/s</p></div>
-                  <div className="bg-stone-900 p-4 rounded-2xl border border-white/5"><p className="text-xs text-stone-500 uppercase">Nem</p><p className="text-xl font-bold text-white">%{current.relative_humidity_2m}</p></div>
+                  <div className="bg-stone-900 p-4 rounded-2xl border border-white/5"><p className="text-xs text-stone-500 uppercase">{t('weather.wind')}</p><p className="text-xl font-bold text-white">{current.wind_speed_10m} km/s</p></div>
+                  <div className="bg-stone-900 p-4 rounded-2xl border border-white/5"><p className="text-xs text-stone-500 uppercase">{t('weather.humidity')}</p><p className="text-xl font-bold text-white">%{current.relative_humidity_2m}</p></div>
               </div>
           </div>
       )}

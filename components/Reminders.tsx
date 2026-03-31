@@ -15,7 +15,10 @@ interface RemindersScreenProps {
 }
 
 export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initialAddMode, initialFilter }) => {
-    const { reminders, addReminder, toggleReminder, deleteReminder, editReminder, farmers } = useAppViewModel();
+    const { reminders, addReminder, toggleReminder, deleteReminder, editReminder, farmers, userProfile, t, language } = useAppViewModel();
+    const isCompany = userProfile.accountType === 'COMPANY';
+    const farmerLabel = isCompany ? t('label.customer') : t('label.farmer');
+    const farmerPluralLabel = isCompany ? t('label.customers') : t('label.farmers');
     const [isAddModalOpen, setIsAddModalOpen] = useState(initialAddMode || false);
     const [filter, setFilter] = useState<'ALL' | 'PENDING' | 'COMPLETED' | 'TOMORROW'>(initialFilter || 'PENDING');
 
@@ -35,8 +38,14 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
     const [farmerSearch, setFarmerSearch] = useState('');
 
     const TASK_PRESETS = [
-        "Arazi Kontrolü", "İlaçlama", "Gübreleme", "Sulama", 
-        "Çiftçi Ziyareti", "Telefon Araması", "Hasat Takibi", "Numune Alımı"
+        t('reminders.presets.control'), 
+        t('reminders.presets.spraying'), 
+        t('reminders.presets.fertilizing'), 
+        t('reminders.presets.irrigation'), 
+        t('reminders.presets.visit').replace('[LABEL]', farmerLabel), 
+        t('reminders.presets.call'), 
+        t('reminders.presets.harvest'), 
+        t('reminders.presets.sampling')
     ];
 
     const resetForm = () => {
@@ -81,7 +90,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
             resetForm();
         } catch (error) {
             console.error("Reminder save error:", error);
-            alert("Kayıt sırasında bir hata oluştu.");
+            alert(t('reminders.error.save'));
         }
     };
 
@@ -135,10 +144,10 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
 
     const getRecurrenceLabel = (r: Reminder['recurrence']) => {
         switch(r) {
-            case 'DAILY': return 'Günlük';
-            case 'WEEKLY': return 'Haftalık';
-            case 'MONTHLY': return 'Aylık';
-            default: return 'Tek Sefer';
+            case 'DAILY': return t('reminders.recurrence.daily');
+            case 'WEEKLY': return t('reminders.recurrence.weekly');
+            case 'MONTHLY': return t('reminders.recurrence.monthly');
+            default: return t('reminders.recurrence.none');
         }
     };
 
@@ -155,7 +164,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                     <div className="p-1.5 bg-stone-900 rounded-lg mr-2.5 border border-white/5 group-active:scale-90 transition-transform">
                         <ArrowLeft size={18} />
                     </div>
-                    <h2 className="text-lg font-bold text-stone-100 tracking-tight">Zirai Takvim</h2>
+                    <h2 className="text-lg font-bold text-stone-100 tracking-tight">{t('reminders.title')}</h2>
                  </button>
                  <button 
                     onClick={() => { resetForm(); setIsAddModalOpen(true); }}
@@ -179,7 +188,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                             }`}
                         >
                             {f === 'TOMORROW' && <CalendarClock size={12} className="mr-1.5" />}
-                            {f === 'PENDING' ? 'YAPILACAK' : f === 'COMPLETED' ? 'BİTEN' : f === 'TOMORROW' ? 'YARIN' : 'HEPSİ'}
+                            {f === 'PENDING' ? t('reminders.filter.pending') : f === 'COMPLETED' ? t('reminders.filter.completed') : f === 'TOMORROW' ? t('reminders.filter.tomorrow') : t('reminders.filter.all')}
                         </button>
                     ))}
                 </div>
@@ -193,7 +202,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                             <Bell size={32} className="text-stone-700" />
                         </div>
                         <p className="text-stone-500 text-sm font-bold tracking-tight">
-                            {filter === 'TOMORROW' ? 'Yarın için planlanmış bir görev yok.' : 'Henüz bir görev bulunmuyor.'}
+                            {filter === 'TOMORROW' ? t('reminders.no_plan.tomorrow') : t('reminders.no_plan.general')}
                         </p>
                     </div>
                 ) : (
@@ -223,7 +232,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                                          </h4>
                                          {!item.isCompleted && (
                                              <span className={`text-[8px] px-1.5 py-0.5 rounded-lg border font-black uppercase tracking-widest ${getPriorityColor(item.priority)}`}>
-                                                {item.priority === 'HIGH' ? 'ACİL' : item.priority === 'MEDIUM' ? 'ORTA' : 'DÜŞÜK'}
+                                                {item.priority === 'HIGH' ? t('reminders.priority.high') : item.priority === 'MEDIUM' ? t('reminders.priority.medium') : t('reminders.priority.low')}
                                              </span>
                                          )}
                                     </div>
@@ -231,7 +240,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                                     <div className="flex flex-wrap items-center gap-3">
                                         <div className={`flex items-center text-[10px] font-black uppercase tracking-widest ${!item.isCompleted && isOverdue(item.date) ? 'text-rose-400' : 'text-stone-500'}`}>
                                             <Calendar size={11} className="mr-1.5" />
-                                            {new Date(item.date).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })}
+                                            {new Date(item.date).toLocaleDateString(language === 'tr' ? 'tr-TR' : language === 'en' ? 'en-US' : 'ar-SA', { day: 'numeric', month: 'short' })}
                                         </div>
                                         
                                         {item.recurrence !== 'NONE' && (
@@ -251,11 +260,11 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                                             className="flex items-center px-4 py-2 bg-emerald-600/10 hover:bg-emerald-600 text-emerald-500 hover:text-white rounded-xl border border-emerald-500/30 transition-all active:scale-95 shadow-sm group/btn"
                                         >
                                             <CheckCircle2 size={14} className="mr-2" />
-                                            <span className="text-[10px] font-black uppercase tracking-widest">BİTİR</span>
+                                            <span className="text-[10px] font-black uppercase tracking-widest">{t('reminders.action.finish')}</span>
                                         </button>
                                     ) : (
                                         <div className="flex items-center px-3 py-1.5 bg-stone-900 rounded-xl border border-white/5">
-                                            <span className="text-[9px] font-black text-stone-500 uppercase tracking-widest">BİTTİ</span>
+                                            <span className="text-[9px] font-black text-stone-500 uppercase tracking-widest">{t('reminders.action.finished')}</span>
                                         </div>
                                     )}
 
@@ -269,7 +278,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                                             </button>
                                         )}
                                         <button 
-                                            onClick={(e) => { e.stopPropagation(); if(confirm('Bu görevi silmek istediğinize emin misiniz?')) deleteReminder(item.id); }}
+                                            onClick={(e) => { e.stopPropagation(); if(confirm(t('reminders.action.delete_confirm'))) deleteReminder(item.id); }}
                                             className="p-2.5 text-stone-500 hover:text-rose-400 transition-all active:scale-90 bg-stone-800/50 rounded-xl hover:bg-rose-950/20 hover:border-rose-500/30 border border-white/5"
                                         >
                                             <Trash2 size={14} />
@@ -293,7 +302,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                                 <div>
                                     <h3 className="text-lg font-bold text-white leading-tight mb-1">{selectedReminder.title}</h3>
                                     <span className={`text-[9px] px-1.5 py-0.5 rounded border font-black uppercase tracking-widest ${selectedReminder.isCompleted ? 'text-stone-400 border-stone-700 bg-stone-800' : getPriorityColor(selectedReminder.priority)}`}>
-                                        {selectedReminder.isCompleted ? 'Tamamlandı' : (selectedReminder.priority === 'HIGH' ? 'Acil Öncelik' : selectedReminder.priority === 'MEDIUM' ? 'Orta Öncelik' : 'Düşük Öncelik')}
+                                        {selectedReminder.isCompleted ? t('reminders.action.finished') : (selectedReminder.priority === 'HIGH' ? t('reminders.priority.high') : selectedReminder.priority === 'MEDIUM' ? t('reminders.priority.medium') : t('reminders.priority.low'))}
                                     </span>
                                 </div>
                                 <button onClick={() => setSelectedReminder(null)} className="p-2 bg-stone-800 rounded-full text-stone-400 hover:text-white"><X size={18}/></button>
@@ -302,17 +311,17 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                             <div className="space-y-4 mb-6">
                                 <div className="bg-stone-950/50 p-3 rounded-xl border border-white/5">
                                     <div className="flex items-center text-stone-400 text-xs font-bold mb-1">
-                                        <Calendar size={14} className="mr-2 text-emerald-500"/> Tarih
+                                        <Calendar size={14} className="mr-2 text-emerald-500"/> {t('reminders.label.date')}
                                     </div>
                                     <p className="text-stone-200 text-sm font-medium pl-6">
-                                        {new Date(selectedReminder.date).toLocaleDateString('tr-TR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                                        {new Date(selectedReminder.date).toLocaleDateString(language === 'tr' ? 'tr-TR' : language === 'en' ? 'en-US' : 'ar-SA', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
                                     </p>
                                 </div>
 
                                 {selectedReminder.description && (
                                     <div className="bg-stone-950/50 p-3 rounded-xl border border-white/5">
                                         <div className="flex items-center text-stone-400 text-xs font-bold mb-1">
-                                            <AlignLeft size={14} className="mr-2 text-blue-400"/> Açıklama
+                                            <AlignLeft size={14} className="mr-2 text-blue-400"/> {t('reminders.label.notes')}
                                         </div>
                                         <p className="text-stone-300 text-xs leading-relaxed pl-6 whitespace-pre-wrap">
                                             {selectedReminder.description}
@@ -323,7 +332,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                                 {selectedReminder.farmerIds && selectedReminder.farmerIds.length > 0 && (
                                     <div className="bg-stone-950/50 p-3 rounded-xl border border-white/5">
                                         <div className="flex items-center text-stone-400 text-xs font-bold mb-2">
-                                            <Users size={14} className="mr-2 text-amber-500"/> İlgili Çiftçiler
+                                            <Users size={14} className="mr-2 text-amber-500"/> İlgili {farmerPluralLabel}
                                         </div>
                                         <div className="pl-6 space-y-1.5">
                                             {getLinkedFarmers(selectedReminder.farmerIds).map(f => (
@@ -345,20 +354,20 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                                     className={`col-span-2 py-3 rounded-xl font-bold text-xs flex items-center justify-center shadow-lg active:scale-95 transition-all ${selectedReminder.isCompleted ? 'bg-stone-800 text-stone-300 border border-white/5' : 'bg-emerald-600 text-white'}`}
                                 >
                                     {selectedReminder.isCompleted ? <Circle size={16} className="mr-2"/> : <CheckCircle2 size={16} className="mr-2"/>}
-                                    {selectedReminder.isCompleted ? 'Tamamlanmadı Olarak İşaretle' : 'Görevi Tamamla'}
+                                    {selectedReminder.isCompleted ? t('reminders.filter.pending') : t('reminders.action.finish')}
                                 </button>
                                 
                                 <button 
                                     onClick={() => handleEditClick(selectedReminder)}
                                     className="py-3 rounded-xl bg-stone-800 text-stone-300 font-bold text-xs flex items-center justify-center border border-white/5 hover:bg-stone-700 active:scale-95 transition-all"
                                 >
-                                    <Edit2 size={14} className="mr-2"/> Düzenle
+                                    <Edit2 size={14} className="mr-2"/> {t('reminders.action.update')}
                                 </button>
                                 <button 
-                                    onClick={() => { if(confirm('Silmek istediğinize emin misiniz?')) { deleteReminder(selectedReminder.id); setSelectedReminder(null); } }}
+                                    onClick={() => { if(confirm(t('reminders.action.delete_confirm'))) { deleteReminder(selectedReminder.id); setSelectedReminder(null); } }}
                                     className="py-3 rounded-xl bg-rose-900/20 text-rose-400 font-bold text-xs flex items-center justify-center border border-rose-500/20 hover:bg-rose-900/40 active:scale-95 transition-all"
                                 >
-                                    <Trash2 size={14} className="mr-2"/> Sil
+                                    <Trash2 size={14} className="mr-2"/> {t('quick.debtorList')}
                                 </button>
                             </div>
                         </div>
@@ -375,9 +384,9 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                         <div className="flex justify-between items-center px-4 py-3 border-b border-white/5 shrink-0 bg-stone-900/80 backdrop-blur-xl">
                             <div>
                                 <h3 className="text-base font-bold text-stone-100 tracking-tight">
-                                    {editingId ? 'Görevi Düzenle' : 'Yeni Saha Planı'}
+                                    {editingId ? t('reminders.modal.edit') : t('reminders.modal.new')}
                                 </h3>
-                                <p className="text-[8px] text-stone-500 font-black uppercase tracking-[0.2em] mt-0.5">MKS Akıllı Ajanda</p>
+                                <p className="text-[8px] text-stone-500 font-black uppercase tracking-[0.2em] mt-0.5">{t('reminders.modal.subtitle')}</p>
                             </div>
                             <button 
                                 onClick={() => setIsAddModalOpen(false)} 
@@ -393,7 +402,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                             {/* Title & Presets */}
                             <div className="space-y-2">
                                 <label className="flex items-center text-[9px] font-black text-stone-500 uppercase tracking-widest ml-1">
-                                    <Sparkles size={10} className="mr-1.5 text-emerald-500" /> Görev Başlığı
+                                    <Sparkles size={10} className="mr-1.5 text-emerald-500" /> {t('reminders.label.title')}
                                 </label>
                                 <input 
                                     required
@@ -401,7 +410,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                                     value={newTitle}
                                     onChange={e => setNewTitle(e.target.value)}
                                     className="w-full bg-stone-900 border border-white/5 rounded-xl p-3 text-stone-100 outline-none focus:border-emerald-500/40 transition-all placeholder-stone-800 text-sm font-bold"
-                                    placeholder="Örn: Mısır Tarlası İlaçlama"
+                                    placeholder={t('reminders.label.title.placeholder')}
                                 />
                                 {/* Quick Task Chips */}
                                 <div className="flex flex-wrap gap-2 pt-1">
@@ -425,7 +434,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                             {/* Date & Recurrence Row */}
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="group space-y-2">
-                                    <label className="text-[9px] font-black text-stone-500 uppercase tracking-widest ml-1 block">Tarih Seçimi</label>
+                                    <label className="text-[9px] font-black text-stone-500 uppercase tracking-widest ml-1 block">{t('reminders.label.date')}</label>
                                     <div className="relative">
                                         <div className="absolute left-4 top-1/2 -translate-y-1/2 text-emerald-500 pointer-events-none">
                                             <Calendar size={18} />
@@ -440,7 +449,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                                     </div>
                                 </div>
                                 <div className="group space-y-2">
-                                    <label className="text-[9px] font-black text-stone-500 uppercase tracking-widest ml-1 block">Tekrar Düzeni</label>
+                                    <label className="text-[9px] font-black text-stone-500 uppercase tracking-widest ml-1 block">{t('reminders.label.recurrence')}</label>
                                     <div className="relative">
                                         <div className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none">
                                             <Repeat size={18} />
@@ -450,10 +459,10 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                                             onChange={e => setNewRecurrence(e.target.value as any)}
                                             className="w-full bg-stone-950/50 border border-stone-800 rounded-2xl h-14 pl-12 pr-10 text-sm font-bold text-stone-200 outline-none focus:border-emerald-500/50 focus:bg-stone-900 transition-all appearance-none shadow-sm"
                                         >
-                                            <option value="NONE">Tek Sefer</option>
-                                            <option value="DAILY">Her Gün</option>
-                                            <option value="WEEKLY">Haftalık</option>
-                                            <option value="MONTHLY">Aylık</option>
+                                            <option value="NONE">{t('reminders.recurrence.none')}</option>
+                                            <option value="DAILY">{t('reminders.recurrence.daily')}</option>
+                                            <option value="WEEKLY">{t('reminders.recurrence.weekly')}</option>
+                                            <option value="MONTHLY">{t('reminders.recurrence.monthly')}</option>
                                         </select>
                                         <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-stone-600 pointer-events-none" />
                                     </div>
@@ -462,7 +471,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
 
                             {/* Priority Selection */}
                             <div className="space-y-2">
-                                <label className="text-[9px] font-black text-stone-500 uppercase tracking-widest ml-1 block">Önem Derecesi</label>
+                                <label className="text-[9px] font-black text-stone-500 uppercase tracking-widest ml-1 block">{t('reminders.label.priority')}</label>
                                 <div className="grid grid-cols-3 gap-2">
                                     {(['LOW', 'MEDIUM', 'HIGH'] as const).map(p => (
                                         <button
@@ -476,7 +485,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                                             }`}
                                         >
                                             {p === 'HIGH' && <AlertCircle size={12} />}
-                                            <span>{p === 'HIGH' ? 'ACİL' : p === 'MEDIUM' ? 'ORTA' : 'DÜŞÜK'}</span>
+                                            <span>{p === 'HIGH' ? t('reminders.priority.high') : p === 'MEDIUM' ? t('reminders.priority.medium') : t('reminders.priority.low')}</span>
                                         </button>
                                     ))}
                                 </div>
@@ -487,10 +496,10 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                                 <div className="flex justify-between items-center mb-3 px-1">
                                     <label className="text-[9px] font-black text-stone-400 uppercase tracking-widest flex items-center">
                                         <Users size={12} className="mr-1.5 text-emerald-500" /> 
-                                        Çiftçiler ({selectedFarmerIds.length})
+                                        {farmerPluralLabel} ({selectedFarmerIds.length})
                                     </label>
                                     {selectedFarmerIds.length > 0 && (
-                                        <button type="button" onClick={() => setSelectedFarmerIds([])} className="text-[8px] font-black text-rose-500 uppercase">Temizle</button>
+                                        <button type="button" onClick={() => setSelectedFarmerIds([])} className="text-[8px] font-black text-rose-500 uppercase">{t('quick.bulkMessage.all')}</button>
                                     )}
                                 </div>
                                 
@@ -500,7 +509,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                                         type="text" 
                                         value={farmerSearch}
                                         onChange={e => setFarmerSearch(e.target.value)}
-                                        placeholder="Ara..."
+                                        placeholder={t('dashboard.list')}
                                         className="w-full bg-stone-950 border border-stone-800 rounded-lg py-2 pl-8 pr-2 text-[10px] text-stone-200 outline-none focus:border-emerald-500/40 placeholder-stone-700"
                                     />
                                 </div>
@@ -530,12 +539,12 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
 
                             {/* Additional Description */}
                             <div className="space-y-1.5">
-                                <label className="text-[9px] font-black text-stone-500 uppercase tracking-widest ml-1 block">Notlar</label>
+                                <label className="text-[9px] font-black text-stone-500 uppercase tracking-widest ml-1 block">{t('reminders.label.notes')}</label>
                                 <textarea 
                                     value={newDesc}
                                     onChange={e => setNewDesc(e.target.value)}
                                     className="w-full bg-stone-900 border border-white/5 rounded-xl p-3 text-stone-200 outline-none focus:border-emerald-500/40 transition-all h-20 resize-none placeholder-stone-800 text-[12px] font-medium"
-                                    placeholder="Görevin detaylarını buraya not edin..."
+                                    placeholder={t('reminders.label.notes.placeholder')}
                                 />
                             </div>
                         </form>
@@ -547,7 +556,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                                 disabled={!newTitle.trim()}
                                 className="w-full bg-emerald-600 text-white py-3.5 rounded-xl font-black shadow-[0_15px_30px_rgba(16,185,129,0.3)] hover:bg-emerald-500 active:scale-95 transition-all flex items-center justify-center border border-emerald-400/20 text-xs uppercase tracking-widest disabled:opacity-50 disabled:grayscale"
                             >
-                                <Check size={18} className="mr-2" /> {editingId ? 'Güncelle' : 'Görevi Kaydet'}
+                                <Check size={18} className="mr-2" /> {editingId ? t('reminders.action.update') : t('reminders.action.save')}
                             </button>
                             <div className="h-[calc(env(safe-area-inset-bottom)+50px)]"></div>
                         </div>

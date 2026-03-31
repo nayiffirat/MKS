@@ -4,12 +4,13 @@ import { useAppViewModel } from '../context/AppContext';
 import { FileText, CreditCard, Plus, Receipt, History as HistoryIcon, Calendar, User, ArrowUpRight, ArrowDownLeft, Tag, ShoppingBag, Search, Filter } from 'lucide-react';
 import { format } from 'date-fns';
 import { tr } from 'date-fns/locale';
+import { formatCurrency } from '../utils/currency';
 
-type FilterType = 'ALL' | 'PRESCRIPTION' | 'PAYMENT' | 'DEBT' | 'EXPENSE' | 'MY_PAYMENT';
+type FilterType = 'ALL' | 'PRESCRIPTION' | 'PAYMENT' | 'DEBT' | 'EXPENSE' | 'MY_PAYMENT' | 'SUPPLIER_PURCHASE';
 
 interface ActivityItem {
   id: string;
-  type: 'PRESCRIPTION' | 'PAYMENT' | 'DEBT' | 'EXPENSE' | 'MY_PAYMENT';
+  type: 'PRESCRIPTION' | 'PAYMENT' | 'DEBT' | 'EXPENSE' | 'MY_PAYMENT' | 'SUPPLIER_PURCHASE';
   date: string;
   title: string;
   subtitle: string;
@@ -17,6 +18,7 @@ interface ActivityItem {
   isIncome: boolean;
   details?: string;
   farmerId?: string;
+  receiptNo?: string;
 }
 
 interface RecentTransactionsProps {
@@ -24,7 +26,18 @@ interface RecentTransactionsProps {
 }
 
 export const RecentTransactions: React.FC<RecentTransactionsProps> = ({ onSelectFarmer }) => {
-  const { prescriptions, payments, manualDebts, expenses, myPayments, farmers, suppliers } = useAppViewModel();
+  const { 
+    prescriptions, 
+    payments, 
+    manualDebts, 
+    expenses, 
+    myPayments, 
+    farmers, 
+    suppliers, 
+    userProfile,
+    farmerLabel,
+    prescriptionLabel
+  } = useAppViewModel();
   const [filterType, setFilterType] = useState<FilterType>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -38,8 +51,8 @@ export const RecentTransactions: React.FC<RecentTransactionsProps> = ({ onSelect
         id: p.id,
         type: 'PRESCRIPTION',
         date: p.date,
-        title: farmer?.fullName || 'Bilinmeyen Çiftçi',
-        subtitle: 'Reçete Yazıldı',
+        title: farmer?.fullName || `Bilinmeyen ${farmerLabel}`,
+        subtitle: `${prescriptionLabel} Yazıldı`,
         amount: p.totalAmount || 0,
         isIncome: true, // Sales are potential income
         details: `${p.items.length} kalem ürün`,
@@ -54,7 +67,7 @@ export const RecentTransactions: React.FC<RecentTransactionsProps> = ({ onSelect
         id: p.id,
         type: 'PAYMENT',
         date: p.date,
-        title: farmer?.fullName || 'Bilinmeyen Çiftçi',
+        title: farmer?.fullName || `Bilinmeyen ${farmerLabel}`,
         subtitle: 'Tahsilat Alındı',
         amount: p.amount,
         isIncome: true,
@@ -71,7 +84,7 @@ export const RecentTransactions: React.FC<RecentTransactionsProps> = ({ onSelect
         id: d.id,
         type: 'DEBT',
         date: d.date,
-        title: farmer?.fullName || 'Bilinmeyen Çiftçi',
+        title: farmer?.fullName || `Bilinmeyen ${farmerLabel}`,
         subtitle: 'Borç Eklendi',
         amount: d.amount,
         isIncome: true, // Debt added to farmer is income for engineer
@@ -100,7 +113,7 @@ export const RecentTransactions: React.FC<RecentTransactionsProps> = ({ onSelect
         id: p.id,
         type: 'MY_PAYMENT',
         date: p.issueDate,
-        title: p.supplierName,
+        title: p.supplierName || 'Bilinmeyen',
         subtitle: `Ödeme (${p.type})`,
         amount: p.amount,
         isIncome: false,
@@ -109,7 +122,7 @@ export const RecentTransactions: React.FC<RecentTransactionsProps> = ({ onSelect
     });
 
     return activities.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [prescriptions, payments, manualDebts, expenses, myPayments, farmers]);
+  }, [prescriptions, payments, manualDebts, expenses, myPayments, farmers, suppliers]);
 
   const filteredActivities = useMemo(() => {
     return allActivities.filter(activity => {
@@ -172,7 +185,7 @@ export const RecentTransactions: React.FC<RecentTransactionsProps> = ({ onSelect
             <ArrowDownLeft size={10} className="mr-1" /> Toplam Giriş
           </span>
           <span className="text-sm font-black text-emerald-400">
-            {summary.totalIncome.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
+            {formatCurrency(summary.totalIncome, userProfile?.currency || 'TRY')}
           </span>
         </div>
         <div className="bg-rose-900/20 border border-rose-500/20 rounded-2xl p-3 flex flex-col justify-center">
@@ -180,7 +193,7 @@ export const RecentTransactions: React.FC<RecentTransactionsProps> = ({ onSelect
             <ArrowUpRight size={10} className="mr-1" /> Toplam Çıkış
           </span>
           <span className="text-sm font-black text-rose-400">
-            {summary.totalExpense.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
+            {formatCurrency(summary.totalExpense, userProfile?.currency || 'TRY')}
           </span>
         </div>
       </div>
@@ -191,7 +204,7 @@ export const RecentTransactions: React.FC<RecentTransactionsProps> = ({ onSelect
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-500" size={16} />
           <input 
             type="text" 
-            placeholder="Çiftçi, tedarikçi veya detay ara..." 
+            placeholder={`${farmerLabel}, tedarikçi veya detay ara...`} 
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full bg-stone-900/80 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-xs text-stone-200 placeholder-stone-500 outline-none focus:border-emerald-500/50 transition-all"
@@ -201,11 +214,12 @@ export const RecentTransactions: React.FC<RecentTransactionsProps> = ({ onSelect
         <div className="flex overflow-x-auto hide-scrollbar space-x-2 pb-1">
           {[
             { id: 'ALL', label: 'Tümü' },
-            { id: 'PRESCRIPTION', label: 'Reçeteler' },
+            { id: 'PRESCRIPTION', label: `${prescriptionLabel}ler` },
             { id: 'PAYMENT', label: 'Tahsilatlar' },
             { id: 'DEBT', label: 'Borçlandırmalar' },
             { id: 'EXPENSE', label: 'Giderler' },
-            { id: 'MY_PAYMENT', label: 'Tedarikçi Ödemeleri' }
+            { id: 'MY_PAYMENT', label: 'Tedarikçi Ödemeleri' },
+            { id: 'SUPPLIER_PURCHASE', label: 'Ürün Alımları' }
           ].map(filter => (
             <button
               key={filter.id}
@@ -261,6 +275,11 @@ export const RecentTransactions: React.FC<RecentTransactionsProps> = ({ onSelect
                         </div>
                         <div className="flex items-center space-x-2 mt-0.5">
                           <span className="text-[10px] text-stone-500 font-medium">{item.subtitle}</span>
+                          {item.receiptNo && (
+                            <span className="text-[8px] font-black text-emerald-500 uppercase tracking-widest bg-emerald-500/10 px-1 rounded">
+                              Fiş No: {item.receiptNo}
+                            </span>
+                          )}
                           {item.details && (
                             <>
                               <span className="w-1 h-1 rounded-full bg-stone-700"></span>
@@ -274,7 +293,7 @@ export const RecentTransactions: React.FC<RecentTransactionsProps> = ({ onSelect
                     <div className="text-right">
                       <div className={`text-xs font-black flex items-center justify-end ${item.isIncome ? 'text-emerald-400' : 'text-rose-400'}`}>
                         {item.isIncome ? <ArrowDownLeft size={10} className="mr-1" /> : <ArrowUpRight size={10} className="mr-1" />}
-                        {item.amount.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
+                        {formatCurrency(item.amount, userProfile?.currency || 'TRY')}
                       </div>
                       <div className="text-[8px] font-bold text-stone-600 uppercase tracking-widest mt-0.5">
                         {item.isIncome ? 'Giriş' : 'Çıkış'}

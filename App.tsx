@@ -6,12 +6,17 @@ import { Dashboard } from './components/Dashboard';
 import { Farmers } from './components/Farmers';
 import { Pesticides } from './components/Pesticides';
 import { PrescriptionForm } from './components/Prescription';
+import { DeletedPrescriptions } from './components/DeletedPrescriptions';
 import { VisitLogForm } from './components/Visits';
 import { SettingsScreen } from './components/Settings';
 import { ContactScreen } from './components/Contact';
 import { NotificationsScreen } from './components/Notifications';
 import { ProfileScreen } from './components/Profile';
 import { LoginScreen } from './components/Login';
+import { TeamLoginScreen } from './components/TeamLogin';
+import { TeamScreen } from './components/TeamScreen';
+import { MessagesScreen } from './components/MessagesScreen';
+import { PerformanceScreen } from './components/PerformanceScreen';
 import { StatisticsScreen } from './components/Statistics';
 import { RemindersScreen } from './components/Reminders';
 import { InventoryScreen } from './components/Inventory';
@@ -21,7 +26,7 @@ import { Suppliers } from './components/Suppliers';
 import { Payments } from './components/Payments';
 import { ProducerPortal } from './components/ProducerPortal';
 import { AiAssistant } from './components/AiAssistant';
-import { AiDiagnosis } from './components/AiDiagnosis';
+import { Calculator } from './components/Calculator';
 import { MixtureTest } from './components/MixtureTest';
 import { RecentTransactions } from './components/RecentTransactions';
 import { Reports } from './components/Reports';
@@ -30,7 +35,7 @@ import { SubscriptionLock } from './components/SubscriptionLock';
 import { AppProvider, useAppViewModel } from './context/AppContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { dbService } from './services/db';
-import { Loader2 } from 'lucide-react';
+import { Loader2, MessageCircle, X } from 'lucide-react';
 import { App as CapacitorApp } from '@capacitor/app';
 import { StatusBar, Style } from '@capacitor/status-bar';
 import { Capacitor } from '@capacitor/core';
@@ -38,7 +43,7 @@ import { AdMob } from '@capacitor-community/admob';
 
 function MainApp() {
   const { currentUser, loading } = useAuth();
-  const { userProfile, updateUserProfile, syncUserProfile, refreshStats, isAdmin, subscriptionEndsAt } = useAppViewModel();
+  const { userProfile, updateUserProfile, syncUserProfile, refreshStats, isAdmin, subscriptionEndsAt, activeTeamMember } = useAppViewModel();
   
   const [currentView, setCurrentView] = useState<ViewState>('DASHBOARD');
   const [selectedFarmerId, setSelectedFarmerId] = useState<string | null>(null);
@@ -53,12 +58,18 @@ function MainApp() {
   const [portalFarmerId, setPortalFarmerId] = useState<string | null>(null);
   const [portalEngineerId, setPortalEngineerId] = useState<string | null>(null);
   const [hasSetAdminInitialView, setHasSetAdminInitialView] = useState(false);
+  const [showWelcomeModal, setShowWelcomeModal] = useState(false);
   
   useEffect(() => {
     if (!currentUser) {
       setInitialDataLoaded(false);
       setHasSetAdminInitialView(false);
       setCurrentView('DASHBOARD');
+    } else {
+      if (localStorage.getItem('mks_show_welcome') === 'true') {
+        setShowWelcomeModal(true);
+        localStorage.removeItem('mks_show_welcome');
+      }
     }
   }, [currentUser]);
 
@@ -162,11 +173,13 @@ function MainApp() {
                 const historyState = window.history.state;
                 
                 const hasSubView = historyState?.subView;
+                const hasModal = historyState?.modal;
+                const hasQuickActionsOpen = historyState?.quickActionsOpen;
                 const isDashboard = currentViewRef.current === 'DASHBOARD';
                 const isAdminPanel = currentViewRef.current === 'ADMIN_PANEL';
                 const hasMode = isModeActiveRef.current;
 
-                if (hasSubView || hasMode || (!isDashboard && !isAdminPanel)) {
+                if (hasSubView || hasModal || hasQuickActionsOpen || hasMode || (!isDashboard && !isAdminPanel)) {
                     window.history.back();
                 } else {
                     CapacitorApp.exitApp();
@@ -291,6 +304,10 @@ function MainApp() {
 
   if (!currentUser) return <LoginScreen />;
 
+  if (userProfile?.accountType === 'COMPANY' && !activeTeamMember) {
+      return <TeamLoginScreen />;
+  }
+
   const renderContent = () => {
     if (isPrescriptionMode) return <PrescriptionForm onBack={() => window.history.back()} initialFarmerId={prescriptionFarmerId} initialPrescriptionId={editPrescriptionId} />;
     if (currentView === 'VISITS' && isVisitMode) return <VisitLogForm onBack={() => window.history.back()} initialVisitId={editVisitId} />;
@@ -312,6 +329,7 @@ function MainApp() {
         />;
         case 'PESTICIDES': return <Pesticides />;
         case 'PRESCRIPTIONS': return <PrescriptionForm onBack={() => window.history.back()} />;
+        case 'TRASH': return <DeletedPrescriptions onBack={() => window.history.back()} />;
         case 'VISITS': return <VisitLogForm onBack={() => window.history.back()} />;
         case 'CONTACT': return <ContactScreen />;
         case 'SETTINGS': return <SettingsScreen onNavigate={handleNavigate} />;
@@ -324,18 +342,49 @@ function MainApp() {
         case 'EXPENSES': return <ExpensesScreen onBack={() => window.history.back()} />;
         case 'SUPPLIERS': return <Suppliers onBack={() => window.history.back()} />;
         case 'PAYMENTS': return <Payments onBack={() => window.history.back()} />;
-        case 'AI_ASSISTANT': return <AiAssistant onBack={() => window.history.back()} />;
-        case 'AI_DIAGNOSIS': return <AiDiagnosis onBack={() => window.history.back()} />;
+        case 'CALCULATOR': return <Calculator onBack={() => window.history.back()} />;
         case 'MIXTURE_TEST': return <MixtureTest onBack={() => window.history.back()} />;
         case 'REPORTS': return <Reports />;
+        case 'TEAM': return <TeamScreen onBack={() => window.history.back()} />;
+        case 'MESSAGES': return <MessagesScreen onBack={() => window.history.back()} />;
+        case 'PERFORMANCE': return <PerformanceScreen onBack={() => window.history.back()} />;
         case 'ADMIN_PANEL': return isAdmin ? <AdminPanel onBack={() => window.history.back()} /> : <Dashboard onNavigate={handleNavigate} />;
         default: return <Dashboard onNavigate={handleNavigate} />;
     }
   };
 
+  const renderWelcomeModal = () => {
+    if (!showWelcomeModal) return null;
+    return (
+      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+        <div className="bg-stone-900 border border-white/10 rounded-3xl p-6 max-w-sm w-full shadow-2xl animate-in zoom-in-95 duration-300">
+          <div className="flex justify-between items-start mb-4">
+            <h3 className="text-xl font-bold text-white">Hoşgeldiniz!</h3>
+            <button onClick={() => setShowWelcomeModal(false)} className="text-stone-400 hover:text-white transition-colors">
+              <X size={24} />
+            </button>
+          </div>
+          <p className="text-stone-300 mb-6 leading-relaxed">
+            Hoşgeldiniz, 1 haftalık deneme süresi başlamıştır. Satın alım için yöneticiyle iletişime geçiniz.
+          </p>
+          <a 
+            href="https://wa.me/905428254087" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="w-full py-3 bg-[#25D366] hover:bg-[#20bd5a] text-white rounded-xl font-bold flex items-center justify-center transition-colors"
+          >
+            <MessageCircle className="mr-2" size={20} />
+            WhatsApp ile İletişime Geç
+          </a>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <Layout currentView={currentView} onNavigate={handleNavigate}>
       {renderContent()}
+      {renderWelcomeModal()}
     </Layout>
   );
 }

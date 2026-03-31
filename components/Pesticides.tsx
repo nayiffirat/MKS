@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { dbService } from '../services/db';
 import { Pesticide, PesticideCategory } from '../types';
-import { Search, FlaskConical, Droplet, Info, Plus, X, Loader2, Save } from 'lucide-react';
+import { Search, FlaskConical, Droplet, Info, Plus, X, Loader2, Save, Camera, Barcode } from 'lucide-react';
+import BarcodeScanner from './BarcodeScanner';
 
 export const Pesticides: React.FC = () => {
   const [pesticides, setPesticides] = useState<Pesticide[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [isScanning, setIsScanning] = useState(false);
   
   // Add Modal State
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -15,7 +17,8 @@ export const Pesticides: React.FC = () => {
       activeIngredient: '',
       defaultDosage: '',
       category: PesticideCategory.INSECTICIDE,
-      description: ''
+      description: '',
+      barcode: ''
   });
 
   const loadPesticides = async () => {
@@ -39,7 +42,8 @@ export const Pesticides: React.FC = () => {
               activeIngredient: newPesticide.activeIngredient,
               defaultDosage: newPesticide.defaultDosage || '-',
               category: newPesticide.category as PesticideCategory,
-              description: newPesticide.description
+              description: newPesticide.description,
+              barcode: newPesticide.barcode
           };
 
           await dbService.addGlobalPesticide(pesticideToAdd);
@@ -50,7 +54,8 @@ export const Pesticides: React.FC = () => {
             activeIngredient: '',
             defaultDosage: '',
             category: PesticideCategory.INSECTICIDE,
-            description: ''
+            description: '',
+            barcode: ''
           });
           
           await loadPesticides(); // Refresh list
@@ -64,7 +69,8 @@ export const Pesticides: React.FC = () => {
 
   const filteredPesticides = pesticides.filter(p => 
     p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.activeIngredient.toLowerCase().includes(searchTerm.toLowerCase())
+    p.activeIngredient.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (p.barcode && p.barcode.includes(searchTerm))
   );
 
   return (
@@ -96,6 +102,13 @@ export const Pesticides: React.FC = () => {
                     </div>
                     <h3 className="text-lg font-bold text-stone-100">{p.name}</h3>
                     <p className="text-sm text-stone-500 mb-2 font-mono">{p.activeIngredient}</p>
+                    
+                    {p.barcode && (
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold text-stone-500 mb-2 bg-stone-950/50 px-2 py-1 rounded-md border border-white/5 w-fit">
+                            <Barcode size={12} />
+                            {p.barcode}
+                        </div>
+                    )}
                     
                     {p.description && (
                         <p className="text-sm text-stone-400 mb-4 leading-relaxed flex-1">
@@ -186,6 +199,29 @@ export const Pesticides: React.FC = () => {
                         </div>
 
                         <div className="space-y-1">
+                            <label className="text-xs font-bold text-stone-500 ml-1 uppercase">Barkod (Opsiyonel)</label>
+                            <div className="flex gap-2">
+                                <div className="relative flex-1">
+                                    <Barcode className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-600" size={18} />
+                                    <input 
+                                        type="text" 
+                                        value={newPesticide.barcode} 
+                                        onChange={e => setNewPesticide({...newPesticide, barcode: e.target.value})} 
+                                        className="w-full p-3.5 pl-10 bg-stone-950 border border-stone-800 focus:border-emerald-500/50 rounded-xl outline-none font-medium transition-all text-white placeholder-stone-700" 
+                                        placeholder="Barkod numarası" 
+                                    />
+                                </div>
+                                <button 
+                                    type="button"
+                                    onClick={() => setIsScanning(true)}
+                                    className="p-3.5 bg-stone-800 text-stone-300 rounded-xl hover:bg-stone-700 transition-colors flex items-center justify-center aspect-square"
+                                >
+                                    <Camera size={20} />
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="space-y-1">
                             <label className="text-xs font-bold text-stone-500 ml-1 uppercase">Açıklama</label>
                             <textarea 
                                 value={newPesticide.description} 
@@ -212,6 +248,16 @@ export const Pesticides: React.FC = () => {
                     </form>
                 </div>
             </div>
+        )}
+
+        {isScanning && (
+            <BarcodeScanner 
+                onScan={(code) => {
+                    setNewPesticide(prev => ({ ...prev, barcode: code }));
+                    setIsScanning(false);
+                }}
+                onClose={() => setIsScanning(false)}
+            />
         )}
     </div>
   );

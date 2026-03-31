@@ -11,7 +11,7 @@ interface ProfileProps {
 }
 
 export const ProfileScreen: React.FC<ProfileProps> = ({ onBack }) => {
-  const { userProfile, updateUserProfile } = useAppViewModel();
+  const { userProfile, updateUserProfile, t } = useAppViewModel();
   const { currentUser } = useAuth();
   
   const [formData, setFormData] = useState<UserProfile>(userProfile);
@@ -57,7 +57,7 @@ export const ProfileScreen: React.FC<ProfileProps> = ({ onBack }) => {
       e.preventDefault();
       
       if (formData.phoneNumber && !validatePhone(formData.phoneNumber)) {
-          setError("Lütfen geçerli bir telefon numarası giriniz (Örn: +90 5xxxxxxxxx)");
+          setError(t('profile.error.phone'));
           return;
       }
 
@@ -80,7 +80,7 @@ export const ProfileScreen: React.FC<ProfileProps> = ({ onBack }) => {
           setTimeout(() => setShowSuccess(false), 3000);
       } catch (err) {
           console.error("Failed to save profile:", err);
-          setError("Profil kaydedilirken bir hata oluştu. Lütfen internet bağlantınızı kontrol edin.");
+          setError(t('profile.error.save'));
           setIsSaving(false);
       }
   };
@@ -93,7 +93,7 @@ export const ProfileScreen: React.FC<ProfileProps> = ({ onBack }) => {
             <button onClick={onBack} className="mr-3 text-stone-400 hover:text-stone-200">
                 <ArrowLeft size={24} />
             </button>
-            <h2 className="text-2xl font-bold text-stone-100">Profilim</h2>
+            <h2 className="text-2xl font-bold text-stone-100">{t('profile.title')}</h2>
         </div>
 
         {/* Profile Card Preview */}
@@ -107,10 +107,17 @@ export const ProfileScreen: React.FC<ProfileProps> = ({ onBack }) => {
              </div>
              
              <div className="z-10">
-                 <h3 className="text-xl font-bold text-white leading-tight">
-                    {formData.fullName || 'İsimsiz Kullanıcı'}
+                 <h3 className="text-xl font-bold text-white leading-tight flex items-center gap-2">
+                    {formData.fullName || t('profile.unnamed')}
+                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${
+                        formData.accountType === 'COMPANY' 
+                            ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' 
+                            : 'bg-orange-500/10 border-orange-500/30 text-orange-400'
+                    }`}>
+                        {formData.accountType === 'COMPANY' ? t('login.company').toUpperCase() : t('login.dealer').toUpperCase()}
+                    </span>
                  </h3>
-                 <p className="text-emerald-400 text-sm font-medium">{formData.title || 'Ünvan Yok'}</p>
+                 <p className="text-emerald-400 text-sm font-medium">{formData.title || t('profile.noTitle')}</p>
                  <p className="text-stone-500 text-xs mt-1">{formData.companyName}</p>
              </div>
         </div>
@@ -120,22 +127,22 @@ export const ProfileScreen: React.FC<ProfileProps> = ({ onBack }) => {
             {/* Personal Info Section */}
             <div className="bg-stone-900/60 backdrop-blur rounded-2xl p-6 border border-white/5 shadow-sm">
                 <h3 className="text-stone-400 text-xs font-bold uppercase tracking-wider mb-4 flex items-center">
-                    <User size={14} className="mr-2" /> Kişisel Bilgiler
+                    <User size={14} className="mr-2" /> {t('profile.personalInfo')}
                 </h3>
                 
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-stone-300 mb-1.5">Ad Soyad</label>
+                        <label className="block text-sm font-medium text-stone-300 mb-1.5">{t('profile.fullName')}</label>
                         <input 
                             type="text" 
                             value={formData.fullName}
                             onChange={(e) => handleChange('fullName', e.target.value)}
-                            placeholder="Adınızı giriniz"
+                            placeholder={t('profile.fullName.placeholder')}
                             className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 text-stone-200 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all placeholder-stone-600"
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-stone-300 mb-1.5">Telefon Numarası</label>
+                        <label className="block text-sm font-medium text-stone-300 mb-1.5">{t('profile.phone')}</label>
                         <input 
                             type="tel" 
                             value={formData.phoneNumber}
@@ -143,7 +150,7 @@ export const ProfileScreen: React.FC<ProfileProps> = ({ onBack }) => {
                             placeholder="+90 5xxxxxxxxx"
                             className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 text-stone-200 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all placeholder-stone-600"
                         />
-                        <p className="text-[10px] text-stone-500 mt-1">Raporlarda iletişim bilgisi olarak kullanılır.</p>
+                        <p className="text-[10px] text-stone-500 mt-1">{t('profile.phone.desc')}</p>
                     </div>
                 </div>
             </div>
@@ -151,27 +158,27 @@ export const ProfileScreen: React.FC<ProfileProps> = ({ onBack }) => {
             {/* Company Info Section */}
             <div className="bg-stone-900/60 backdrop-blur rounded-2xl p-6 border border-white/5 shadow-sm">
                 <h3 className="text-stone-400 text-xs font-bold uppercase tracking-wider mb-4 flex items-center">
-                    <Briefcase size={14} className="mr-2" /> Kurumsal Bilgiler
+                    <Briefcase size={14} className="mr-2" /> {t('profile.corporateInfo')}
                 </h3>
                 
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-stone-300 mb-1.5">Şirket Adı</label>
+                        <label className="block text-sm font-medium text-stone-300 mb-1.5">{t('profile.companyName')}</label>
                         <input 
                             type="text" 
                             value={formData.companyName}
                             onChange={(e) => handleChange('companyName', e.target.value)}
-                            placeholder="Firma adını giriniz"
+                            placeholder={t('profile.companyName.placeholder')}
                             className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 text-stone-200 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all placeholder-stone-600"
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-stone-300 mb-1.5">Ünvan / Departman</label>
+                        <label className="block text-sm font-medium text-stone-300 mb-1.5">{t('profile.jobTitle')}</label>
                         <input 
                             type="text" 
                             value={formData.title}
                             onChange={(e) => handleChange('title', e.target.value)}
-                            placeholder="Örn: Ziraat Mühendisi"
+                            placeholder={t('profile.jobTitle.placeholder')}
                             className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 text-stone-200 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all placeholder-stone-600"
                         />
                     </div>
@@ -196,11 +203,11 @@ export const ProfileScreen: React.FC<ProfileProps> = ({ onBack }) => {
             >
                 {isSaving ? (
                     <>
-                        <Loader2 className="animate-spin mr-2" size={20} /> Kaydediliyor...
+                        <Loader2 className="animate-spin mr-2" size={20} /> {t('profile.saving')}
                     </>
                 ) : (
                     <>
-                        <Save className="mr-2" size={20} /> Değişiklikleri Kaydet
+                        <Save className="mr-2" size={20} /> {t('profile.save')}
                     </>
                 )}
             </button>
@@ -210,7 +217,7 @@ export const ProfileScreen: React.FC<ProfileProps> = ({ onBack }) => {
         {showSuccess && (
             <div className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-emerald-800/90 text-white px-6 py-3 rounded-full shadow-2xl backdrop-blur flex items-center animate-in slide-in-from-bottom-5 fade-in duration-300 z-50">
                 <CheckCircle size={18} className="mr-2" />
-                <span className="font-bold text-sm">Profil başarıyla güncellendi</span>
+                <span className="font-bold text-sm">{t('profile.success')}</span>
             </div>
         )}
 

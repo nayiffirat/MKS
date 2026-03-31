@@ -1,8 +1,9 @@
 
 import React, { useEffect, useState } from 'react';
-import { Farmer, Prescription, VisitLog, UserProfile } from '../types';
+import { Farmer, Prescription, VisitLog, UserProfile, Payment, ManualDebt } from '../types';
 import { dbService } from '../services/db';
-import { Loader2, Phone, MapPin, FileText, Calendar, MessageCircle, ArrowLeft, ExternalLink, User, Wheat, ChevronRight } from 'lucide-react';
+import { Loader2, Phone, MapPin, FileText, Calendar, MessageCircle, ArrowLeft, ExternalLink, User, Wheat, ChevronRight, Wallet, CreditCard, TrendingDown } from 'lucide-react';
+import { formatCurrency, getCurrencySymbol } from '../utils/currency';
 
 interface ProducerPortalProps {
     farmerId: string;
@@ -14,6 +15,8 @@ export const ProducerPortal: React.FC<ProducerPortalProps> = ({ farmerId, engine
     const [farmer, setFarmer] = useState<Farmer | null>(null);
     const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
     const [visits, setVisits] = useState<VisitLog[]>([]);
+    const [payments, setPayments] = useState<Payment[]>([]);
+    const [manualDebts, setManualDebts] = useState<ManualDebt[]>([]);
     const [engineerProfile, setEngineerProfile] = useState<UserProfile | null>(null);
     const [loading, setLoading] = useState(true);
 
@@ -28,6 +31,8 @@ export const ProducerPortal: React.FC<ProducerPortalProps> = ({ farmerId, engine
                         setFarmer(data.farmer);
                         setPrescriptions(data.prescriptions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
                         setVisits(data.visits.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+                        setPayments(data.payments || []);
+                        setManualDebts(data.manualDebts || []);
                         if (data.profile) setEngineerProfile(data.profile);
                     }
                 } else {
@@ -37,12 +42,16 @@ export const ProducerPortal: React.FC<ProducerPortalProps> = ({ farmerId, engine
                     
                     if (targetFarmer) {
                         setFarmer(targetFarmer);
-                        const [pList, vList] = await Promise.all([
+                        const [pList, vList, payList, debtList] = await Promise.all([
                             dbService.getPrescriptionsByFarmer(farmerId),
-                            dbService.getVisitsByFarmer(farmerId)
+                            dbService.getVisitsByFarmer(farmerId),
+                            dbService.getPayments(),
+                            dbService.getManualDebts()
                         ]);
                         setPrescriptions(pList.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
                         setVisits(vList.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+                        setPayments(payList.filter(p => p.farmerId === farmerId));
+                        setManualDebts(debtList.filter(d => d.farmerId === farmerId));
                         
                         // Try to get engineer profile
                         const profileStr = localStorage.getItem('mks_user_profile');
@@ -60,6 +69,13 @@ export const ProducerPortal: React.FC<ProducerPortalProps> = ({ farmerId, engine
 
         loadPortalData();
     }, [farmerId, engineerId]);
+
+    const totalPrescriptionDebt = prescriptions.reduce((acc, p) => acc + (p.totalAmount || 0), 0);
+    const totalManualDebt = manualDebts.reduce((acc, d) => acc + d.amount, 0);
+    const totalDebt = totalPrescriptionDebt + totalManualDebt;
+    const totalPaid = payments.reduce((acc, p) => acc + p.amount, 0);
+    const currentBalance = totalDebt - totalPaid;
+    const currency = engineerProfile?.currency || 'TRY';
 
     if (loading) {
         return (
@@ -126,8 +142,22 @@ export const ProducerPortal: React.FC<ProducerPortalProps> = ({ farmerId, engine
                     <div className="relative z-10">
                         <span className="text-emerald-200 text-[10px] font-black uppercase tracking-[0.3em] mb-2 block">Üretici Portalı</span>
                         <h2 className="text-3xl font-black text-white mb-2">Hoş Geldiniz,<br/>{farmer.fullName}</h2>
-                        <div className="flex items-center text-emerald-100/70 text-sm font-medium">
+                        <div className="flex items-center text-emerald-100/70 text-sm font-medium mb-6">
                             <MapPin size={14} className="mr-1.5" /> {farmer.village}
+                        </div>
+                        
+                        {/* Financial Summary */}
+                        <div className="bg-black/20 backdrop-blur-md rounded-2xl p-5 border border-white/10">
+                            <div className="flex items-center justify-between mb-2">
+                                <span className="text-emerald-100/70 text-xs font-bold uppercase tracking-wider">Güncel Bakiye</span>
+                                <Wallet size={16} className="text-emerald-300" />
+                            </div>
+                            <div className="text-3xl font-black text-white tracking-tight">
+                                {formatCurrency(Math.abs(currentBalance), currency)}
+                            </div>
+                            <div className="text-emerald-200/70 text-xs font-medium mt-1">
+                                {currentBalance > 0 ? 'Ödenmesi Gereken Tutar' : currentBalance < 0 ? 'Alacaklı Durumdasınız' : 'Borcunuz Bulunmuyor'}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -135,7 +165,7 @@ export const ProducerPortal: React.FC<ProducerPortalProps> = ({ farmerId, engine
                 {/* Recent Prescriptions */}
                 <section>
                     <div className="flex items-center justify-between mb-4 px-2">
-                        <h3 className="text-stone-400 font-black text-[10px] uppercase tracking-[0.2em]">Son Reçeteleriniz</h3>
+                        <h3 className="text-stone-400 font-black text-[10px] uppercase tracking-[0.2em]">Son İşlemleriniz</h3>
                         <span className="text-[10px] text-stone-600 font-bold">{prescriptions.length} Kayıt</span>
                     </div>
                     <div className="space-y-3">

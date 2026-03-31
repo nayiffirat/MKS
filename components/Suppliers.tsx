@@ -4,20 +4,27 @@ import {
     Truck, Plus, Trash2, Edit2, ChevronRight, ChevronLeft, 
     Package, CreditCard, ArrowUpRight, ArrowDownRight, 
     Search, Phone, MapPin, Calendar, DollarSign, 
-    AlertCircle, CheckCircle2, FlaskConical, Info, X
+    AlertCircle, CheckCircle2, FlaskConical, Info, X, User, RefreshCcw,
+    Receipt, Save, Barcode
 } from 'lucide-react';
+import BarcodeScanner from './BarcodeScanner';
 import { useAppViewModel } from '../context/AppContext';
 import { dbService } from '../services/db';
 import { Supplier, SupplierPurchase, SupplierPayment, PesticideCategory, InventoryItem } from '../types';
+import { formatCurrency, getCurrencySuffix } from '../utils/currency';
 
 export const Suppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     const { 
-        suppliers, addSupplier, updateSupplier, deleteSupplier, 
+        suppliers, addSupplier, updateSupplier, 
         addSupplierPurchase, updateSupplierPurchase, deleteSupplierPurchase,
-        addSupplierPayment, deleteSupplierPayment,
+        addSupplierPayment, updateSupplierPayment, deleteSupplierPayment,
+        softDeleteSupplier,
         inventory, addInventoryItem, showToast, hapticFeedback,
         prescriptions,
-        accounts
+        accounts, userProfile,
+        activeTeamMember,
+        teamMembers,
+        visits
     } = useAppViewModel();
 
     const [searchTerm, setSearchTerm] = useState('');
@@ -25,17 +32,24 @@ export const Suppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
+    const [isReturnModalOpen, setIsReturnModalOpen] = useState(false);
     const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
     const [isDebtModalOpen, setIsDebtModalOpen] = useState(false);
     const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
 
     // Form States
     const [newSupplier, setNewSupplier] = useState({ name: '', phoneNumber: '', address: '' });
-    const [newPayment, setNewPayment] = useState({ amount: '', method: 'CASH' as any, note: '', dueDate: new Date().toISOString().split('T')[0], accountId: '' });
+    const [newPayment, setNewPayment] = useState({ amount: '', method: 'CASH' as any, note: '', dueDate: new Date().toISOString().split('T')[0], accountId: '', installments: 1, producerCardMonths: 0 });
     const [newPurchase, setNewPurchase] = useState<{
         items: { pesticideId: string, pesticideName: string, quantity: number, unit: string, buyingPrice: number }[],
-        note: string
-    }>({ items: [], note: '' });
+        note: string,
+        receiptNo: string
+    }>({ items: [], note: '', receiptNo: '' });
+    const [newReturn, setNewReturn] = useState<{
+        items: { pesticideId: string, pesticideName: string, quantity: number, unit: string, buyingPrice: number }[],
+        note: string,
+        receiptNo: string
+    }>({ items: [], note: '', receiptNo: '' });
     
     // New Pesticide Form (Inside Purchase)
     const [isAddingNewPesticide, setIsAddingNewPesticide] = useState(false);
@@ -61,14 +75,6 @@ export const Suppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         showToast('Tedarikçi güncellendi', 'success');
     };
 
-    const handleDeleteSupplier = async (id: string) => {
-        if (window.confirm('Bu tedarikçiyi silmek istediğinize emin misiniz? Bu işlem tedarikçiye ait tüm alım ve ödeme kayıtlarını da silecektir.')) {
-            await deleteSupplier(id);
-            showToast('Tedarikçi ve tüm kayıtları silindi', 'info');
-            setSelectedSupplier(null);
-        }
-    };
-
     const handleAddPurchase = async () => {
         if (!selectedSupplier || newPurchase.items.length === 0) return;
         
@@ -77,32 +83,92 @@ export const Suppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         await addSupplierPurchase({
             supplierId: selectedSupplier.id,
             date: new Date().toISOString(),
+            receiptNo: newPurchase.receiptNo,
             items: newPurchase.items,
             totalAmount,
-            note: newPurchase.note
+            note: newPurchase.note,
+            createdById: activeTeamMember?.id
         });
         
         setIsPurchaseModalOpen(false);
-        setNewPurchase({ items: [], note: '' });
+        setNewPurchase({ items: [], note: '', receiptNo: '' });
         showToast('Alım başarıyla kaydedildi ve depoya aktarıldı', 'success');
     };
+
+    const handleAddReturn = async () => {
+        if (!selectedSupplier || newReturn.items.length === 0) return;
+        
+        const totalAmount = newReturn.items.reduce((acc, item) => acc + (item.buyingPrice * item.quantity), 0);
+        
+        // Convert quantities to negative for returns
+        const returnItems = newReturn.items.map(item => ({
+            ...item,
+            quantity: -Math.abs(item.quantity)
+        }));
+
+        await addSupplierPurchase({
+            supplierId: selectedSupplier.id,
+            date: new Date().toISOString(),
+            receiptNo: newReturn.receiptNo,
+            items: returnItems,
+            totalAmount: -Math.abs(totalAmount),
+            note: newReturn.note ? `İADE: ${newReturn.note}` : 'İADE',
+            createdById: activeTeamMember?.id
+        });
+        
+        setIsReturnModalOpen(false);
+        setNewReturn({ items: [], note: '', receiptNo: '' });
+        showToast('İade başarıyla kaydedildi ve depodan düşüldü', 'success');
+    };
+
+    const [editingPayment, setEditingPayment] = useState<SupplierPayment | null>(null);
 
     const handleAddPayment = async () => {
         if (!selectedSupplier || !newPayment.amount) return;
         
-        await addSupplierPayment({
-            supplierId: selectedSupplier.id,
-            amount: parseFloat(newPayment.amount),
-            date: new Date().toISOString(),
-            method: newPayment.method,
-            dueDate: (newPayment.method === 'CHECK' || newPayment.method === 'PROMISSORY_NOTE') ? newPayment.dueDate : undefined,
-            note: newPayment.note,
-            accountId: newPayment.accountId || undefined
-        });
+        if (editingPayment) {
+            await updateSupplierPayment({
+                ...editingPayment,
+                amount: parseFloat(newPayment.amount),
+                method: newPayment.method,
+                dueDate: (newPayment.method === 'CHECK' || newPayment.method === 'PROMISSORY_NOTE') ? newPayment.dueDate : undefined,
+                note: newPayment.note,
+                accountId: newPayment.accountId || undefined
+            });
+            showToast('Ödeme güncellendi', 'success');
+        } else {
+            await addSupplierPayment({
+                supplierId: selectedSupplier.id,
+                amount: parseFloat(newPayment.amount),
+                date: new Date().toISOString(),
+                method: newPayment.method,
+                dueDate: (newPayment.method === 'CHECK' || newPayment.method === 'PROMISSORY_NOTE') ? newPayment.dueDate : undefined,
+                note: newPayment.note,
+                accountId: newPayment.accountId || undefined,
+                createdById: activeTeamMember?.id,
+                installments: newPayment.method === 'CARD' ? newPayment.installments : undefined,
+                producerCardMonths: newPayment.method === 'CARD' ? newPayment.producerCardMonths : undefined
+            });
+            showToast('Ödeme kaydedildi', 'success');
+        }
         
         setIsPaymentModalOpen(false);
-        setNewPayment({ amount: '', method: 'CASH', note: '', dueDate: new Date().toISOString().split('T')[0], accountId: '' });
-        showToast('Ödeme kaydedildi', 'success');
+        setEditingPayment(null);
+        setNewPayment({ amount: '', method: 'CASH', note: '', dueDate: new Date().toISOString().split('T')[0], accountId: '', installments: 1, producerCardMonths: 0 });
+    };
+
+    const handleEditPayment = (payment: SupplierPayment) => {
+        setEditingPayment(payment);
+        setNewPayment({
+            amount: payment.amount.toString(),
+            method: payment.method,
+            note: payment.note || '',
+            dueDate: payment.dueDate || new Date().toISOString().split('T')[0],
+            accountId: payment.accountId || '',
+            installments: payment.installments || 1,
+            producerCardMonths: payment.producerCardMonths || 0
+        });
+        setIsPaymentModalOpen(true);
     };
 
     const handleAddNewPesticideToPurchase = () => {
@@ -144,14 +210,25 @@ export const Suppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         };
     };
 
+    const handleClosePayment = () => {
+        setIsPaymentModalOpen(false);
+        setEditingPayment(null);
+        setNewPayment({ amount: '', method: 'CASH', note: '', dueDate: new Date().toISOString().split('T')[0], accountId: '', installments: 1, producerCardMonths: 0 });
+    };
+
     if (selectedSupplier) {
         return (
             <SupplierDetailView 
                 supplier={selectedSupplier} 
                 onBack={() => setSelectedSupplier(null)}
                 onOpenPurchase={() => setIsPurchaseModalOpen(true)}
-                onOpenPayment={() => setIsPaymentModalOpen(true)}
+                onOpenPayment={() => {
+                    setEditingPayment(null);
+                    setNewPayment({ amount: '', method: 'CASH', note: '', dueDate: new Date().toISOString().split('T')[0], accountId: '', installments: 1, producerCardMonths: 0 });
+                    setIsPaymentModalOpen(true);
+                }}
                 onOpenDebt={() => setIsDebtModalOpen(true)}
+                onOpenReturn={() => setIsReturnModalOpen(true)}
                 getProductStats={getProductStats}
                 isPurchaseModalOpen={isPurchaseModalOpen}
                 setIsPurchaseModalOpen={setIsPurchaseModalOpen}
@@ -175,9 +252,11 @@ export const Suppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                 updateSupplierPurchase={updateSupplierPurchase}
                 deleteSupplierPurchase={deleteSupplierPurchase}
                 deleteSupplierPayment={deleteSupplierPayment}
+                handleEditPayment={handleEditPayment}
+                handleClosePayment={handleClosePayment}
+                editingPayment={editingPayment}
                 showToast={showToast}
                 onEdit={(s: Supplier) => { setEditingSupplier(s); setIsEditModalOpen(true); }}
-                onDelete={(id: string) => handleDeleteSupplier(id)}
                 accounts={accounts}
             />
         );
@@ -241,13 +320,6 @@ export const Suppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                                 >
                                     <Edit2 size={14} />
                                 </button>
-                                <button 
-                                    onClick={(e) => { e.stopPropagation(); handleDeleteSupplier(supplier.id); }}
-                                    className="p-2.5 bg-rose-500/10 text-rose-500 rounded-xl hover:bg-rose-500 hover:text-white transition-all active:scale-90 border border-rose-500/20"
-                                    title="Tedarikçiyi Sil"
-                                >
-                                    <Trash2 size={16} />
-                                </button>
                             </div>
                         </div>
 
@@ -255,13 +327,13 @@ export const Suppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                             <div className="bg-stone-950/50 p-3 rounded-2xl border border-white/5">
                                 <span className="text-[9px] text-stone-500 font-black uppercase tracking-widest block mb-1">Toplam Alım</span>
                                 <span className="text-stone-200 font-black font-mono text-sm">
-                                    {Math.round(supplier.totalDebt).toLocaleString('tr-TR')} <span className="text-[10px] text-stone-600 font-sans">TL</span>
+                                    {formatCurrency(Math.round(supplier.totalDebt), userProfile?.currency || 'TRY')}
                                 </span>
                             </div>
                             <div className={`p-3 rounded-2xl border ${supplier.balance < 0 ? 'bg-rose-500/5 border-rose-500/10' : 'bg-emerald-500/5 border-emerald-500/10'}`}>
                                 <span className="text-[9px] text-stone-500 font-black uppercase tracking-widest block mb-1">Bakiye</span>
                                 <span className={`font-black font-mono text-sm ${supplier.balance < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                                    {Math.round(Math.abs(supplier.balance)).toLocaleString('tr-TR')} <span className="text-[10px] opacity-60 font-sans">TL</span>
+                                    {formatCurrency(Math.round(Math.abs(supplier.balance)), userProfile?.currency || 'TRY')}
                                     {supplier.balance < 0 && <span className="text-[8px] ml-1 opacity-60 font-sans">(Borç)</span>}
                                 </span>
                             </div>
@@ -385,6 +457,7 @@ export const Suppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 };
 
 const DebtModal = ({ supplier, onClose, onSave }: any) => {
+    const { userProfile, teamMembers } = useAppViewModel();
     const [amount, setAmount] = useState('');
     const [note, setNote] = useState('');
 
@@ -397,7 +470,7 @@ const DebtModal = ({ supplier, onClose, onSave }: any) => {
                 </h2>
                 <div className="space-y-4">
                     <div>
-                        <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest ml-1 mb-1.5 block">Borç Tutarı (TL)</label>
+                        <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest ml-1 mb-1.5 block">Borç Tutarı ({getCurrencySuffix(userProfile?.currency || 'TRY')})</label>
                         <input 
                             type="number" 
                             className="w-full bg-stone-950 border border-white/5 rounded-2xl p-4 text-sm text-stone-100 outline-none focus:border-amber-500/50 transition-all font-mono"
@@ -436,13 +509,15 @@ const DebtModal = ({ supplier, onClose, onSave }: any) => {
 };
 
 const SupplierDetailView = ({ 
-    supplier, onBack, onOpenPurchase, onOpenPayment, onOpenDebt, getProductStats,
+    supplier, onBack, onOpenPurchase, onOpenPayment, onOpenDebt, onOpenReturn, getProductStats,
     isPurchaseModalOpen, setIsPurchaseModalOpen, handleAddPurchase, newPurchase, setNewPurchase, inventory,
     isAddingNewPesticide, setIsAddingNewPesticide, newPesticide, setNewPesticide, handleAddNewPesticideToPurchase,
-    isPaymentModalOpen, setIsPaymentModalOpen, handleAddPayment, newPayment, setNewPayment,
+    isPaymentModalOpen, setIsPaymentModalOpen, handleAddPayment, newPayment, setNewPayment, handleEditPayment, handleClosePayment, editingPayment,
     isDebtModalOpen, setIsDebtModalOpen, addSupplierPurchase, updateSupplierPurchase, deleteSupplierPurchase, deleteSupplierPayment, showToast,
-    onEdit, onDelete, accounts
+    isReturnModalOpen, setIsReturnModalOpen, handleAddReturn, newReturn, setNewReturn,
+    onEdit, accounts, softDeleteSupplier
 }: any) => {
+    const { userProfile, teamMembers } = useAppViewModel();
     const [activeTab, setActiveTab] = useState<'PURCHASES' | 'PAYMENTS'>('PURCHASES');
     const [purchases, setPurchases] = useState<SupplierPurchase[]>([]);
     const [payments, setPayments] = useState<SupplierPayment[]>([]);
@@ -462,7 +537,7 @@ const SupplierDetailView = ({
 
     React.useEffect(() => {
         loadData();
-    }, [supplier.id]);
+    }, [supplier]);
 
     const handleDeletePurchase = async (id: string) => {
         console.log('Tedarikçi alımı siliniyor:', id);
@@ -492,8 +567,9 @@ const SupplierDetailView = ({
         }
     };
 
-    const handleUpdatePurchase = async (purchase: SupplierPurchase) => {
-        await updateSupplierPurchase(purchase);
+    const handleUpdatePurchase = async () => {
+        if (!editingPurchase) return;
+        await updateSupplierPurchase(editingPurchase);
         setEditingPurchase(null);
         showToast('Alım kaydı güncellendi', 'success');
         loadData();
@@ -537,9 +613,13 @@ const SupplierDetailView = ({
                         <Edit2 size={18} />
                     </button>
                     <button 
-                        onClick={() => onDelete(supplier.id)}
-                        className="p-2.5 bg-rose-500/10 text-rose-500 rounded-xl hover:bg-rose-500 hover:text-white transition-all border border-rose-500/20 active:scale-95"
-                        title="Tedarikçiyi Sil"
+                        onClick={async () => {
+                            if (window.confirm('Bu tedarikçiyi ve tüm kayıtlarını silmek istediğinize emin misiniz?')) {
+                                await softDeleteSupplier(supplier.id);
+                                showToast('Tedarikçi silindi', 'info');
+                            }
+                        }}
+                        className="p-2.5 bg-stone-900 text-stone-400 rounded-xl hover:text-rose-400 transition-colors border border-white/5 active:scale-95"
                     >
                         <Trash2 size={18} />
                     </button>
@@ -550,13 +630,13 @@ const SupplierDetailView = ({
                 <div className="bg-stone-900 border border-white/5 p-4 rounded-3xl">
                     <span className="text-[10px] text-stone-500 font-black uppercase tracking-widest block mb-1">Toplam Alım</span>
                     <div className="text-xl font-black text-stone-100 font-mono">
-                        {Math.round(supplier.totalDebt).toLocaleString('tr-TR')} <span className="text-xs font-sans text-stone-500">TL</span>
+                        {formatCurrency(Math.round(supplier.totalDebt), userProfile?.currency || 'TRY')}
                     </div>
                 </div>
                 <div className={`p-4 rounded-3xl border ${supplier.balance < 0 ? 'bg-rose-500/5 border-rose-500/10' : 'bg-emerald-500/5 border-emerald-500/10'}`}>
                     <span className="text-[10px] text-stone-500 font-black uppercase tracking-widest block mb-1">Bakiye</span>
                     <div className={`text-xl font-black font-mono ${supplier.balance < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                        {Math.round(Math.abs(supplier.balance)).toLocaleString('tr-TR')} <span className="text-xs font-sans opacity-60">TL</span>
+                        {formatCurrency(Math.round(Math.abs(supplier.balance)), userProfile?.currency || 'TRY')}
                     </div>
                     <span className="text-[8px] font-bold uppercase tracking-wider opacity-60">
                         {supplier.balance < 0 ? 'Ödenecek Borç' : 'Alacaklı'}
@@ -564,27 +644,34 @@ const SupplierDetailView = ({
                 </div>
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex gap-1 sm:gap-2">
                 <button 
                     onClick={onOpenPurchase}
-                    className="flex-1 py-3 bg-emerald-600 text-white rounded-2xl font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 active:scale-95 transition-all"
+                    className="flex-1 py-2 sm:py-3 bg-emerald-600 text-white rounded-xl sm:rounded-2xl font-bold text-[9px] sm:text-xs uppercase tracking-wider flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 active:scale-95 transition-all"
                 >
                     <Package size={14} />
-                    Alış Yap
+                    <span className="text-center">Alış Yap</span>
                 </button>
                 <button 
                     onClick={onOpenPayment}
-                    className="flex-1 py-3 bg-blue-600 text-white rounded-2xl font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 active:scale-95 transition-all"
+                    className="flex-1 py-2 sm:py-3 bg-blue-600 text-white rounded-xl sm:rounded-2xl font-bold text-[9px] sm:text-xs uppercase tracking-wider flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 active:scale-95 transition-all"
                 >
                     <CreditCard size={14} />
-                    Ödeme Yap
+                    <span className="text-center">Ödeme Yap</span>
                 </button>
                 <button 
                     onClick={onOpenDebt}
-                    className="flex-1 py-3 bg-amber-600 text-white rounded-2xl font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 active:scale-95 transition-all"
+                    className="flex-1 py-2 sm:py-3 bg-amber-600 text-white rounded-xl sm:rounded-2xl font-bold text-[9px] sm:text-xs uppercase tracking-wider flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 active:scale-95 transition-all"
                 >
                     <AlertCircle size={14} />
-                    Borç Ekle
+                    <span className="text-center">Borç Ekle</span>
+                </button>
+                <button 
+                    onClick={onOpenReturn}
+                    className="flex-1 py-2 sm:py-3 bg-rose-600 text-white rounded-xl sm:rounded-2xl font-bold text-[9px] sm:text-xs uppercase tracking-wider flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 active:scale-95 transition-all"
+                >
+                    <RefreshCcw size={14} />
+                    <span className="text-center">İade Yap</span>
                 </button>
             </div>
 
@@ -656,13 +743,24 @@ const SupplierDetailView = ({
                                     <div key={purchase.id} className="bg-stone-900/40 border border-white/5 rounded-2xl p-4">
                                         <div className="flex justify-between items-start mb-2">
                                             <div className="flex items-center gap-2">
-                                                <div className="p-1.5 bg-emerald-500/10 rounded-lg text-emerald-500">
-                                                    <ArrowDownRight size={14} />
+                                                <div className={`p-1.5 rounded-lg ${purchase.totalAmount < 0 ? 'bg-rose-500/10 text-rose-500' : 'bg-emerald-500/10 text-emerald-500'}`}>
+                                                    {purchase.totalAmount < 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
                                                 </div>
-                                                <span className="text-[10px] font-black text-stone-300 uppercase tracking-wider">Ürün Alımı</span>
+                                                <div className="flex flex-col">
+                                                    <span className="text-[10px] font-black text-stone-300 uppercase tracking-wider">{purchase.totalAmount < 0 ? 'Ürün İadesi' : 'Ürün Alımı'}</span>
+                                                    {purchase.receiptNo && (
+                                                        <span className={`text-[8px] font-bold uppercase tracking-widest ${purchase.totalAmount < 0 ? 'text-rose-500' : 'text-emerald-500'}`}>Fiş No: {purchase.receiptNo}</span>
+                                                    )}
+                                                </div>
                                             </div>
                                             <div className="flex items-center gap-2">
-                                                <span className="text-[9px] font-bold text-stone-500 font-mono">{new Date(purchase.date).toLocaleDateString('tr-TR')}</span>
+                                                <span className="text-[9px] font-bold text-stone-500 font-mono flex items-center gap-1">
+                                                    {new Date(purchase.date).toLocaleDateString('tr-TR')}
+                                                    <span className="flex items-center bg-stone-800/50 px-1 py-0.5 rounded ml-1">
+                                                        <User size={8} className="mr-0.5" />
+                                                        {purchase.createdById ? (teamMembers.find((m: any) => m.id === purchase.createdById)?.fullName || 'Yönetici') : 'Yönetici'}
+                                                    </span>
+                                                </span>
                                                 <button 
                                                     onClick={() => setEditingPurchase(purchase)}
                                                     className="p-1.5 text-stone-500 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-all"
@@ -682,13 +780,13 @@ const SupplierDetailView = ({
                                             {purchase.items.map((item, idx) => (
                                                 <div key={idx} className="flex justify-between text-[11px]">
                                                     <span className="text-stone-400">{item.pesticideName} ({item.quantity} {item.unit})</span>
-                                                    <span className="text-stone-500 font-mono">{(item.buyingPrice * item.quantity).toLocaleString('tr-TR')} TL</span>
+                                                    <span className="text-stone-500 font-mono">{formatCurrency(item.buyingPrice * item.quantity, userProfile?.currency || 'TRY')}</span>
                                                 </div>
                                             ))}
                                         </div>
                                         <div className="pt-2 border-t border-white/5 flex justify-between items-center">
                                             <span className="text-[10px] font-black text-stone-500 uppercase tracking-widest">Toplam</span>
-                                            <span className="text-sm font-black text-stone-100 font-mono">{purchase.totalAmount.toLocaleString('tr-TR')} TL</span>
+                                            <span className="text-sm font-black text-stone-100 font-mono">{formatCurrency(purchase.totalAmount, userProfile?.currency || 'TRY')}</span>
                                         </div>
                                     </div>
                                 ))}
@@ -707,21 +805,36 @@ const SupplierDetailView = ({
                                                 <span className="text-[10px] font-black text-stone-200 uppercase tracking-wider">Ödeme Yapıldı</span>
                                                 <span className="text-[8px] font-bold text-stone-600 bg-stone-950 px-1.5 py-0.5 rounded uppercase tracking-widest">{payment.method}</span>
                                             </div>
-                                            <div className="text-[9px] text-stone-500 font-mono mt-0.5">{new Date(payment.date).toLocaleDateString('tr-TR')}</div>
+                                            <div className="text-[9px] text-stone-500 font-mono mt-0.5 flex items-center gap-1">
+                                                {new Date(payment.date).toLocaleDateString('tr-TR')}
+                                                <span className="flex items-center bg-stone-800/50 px-1 py-0.5 rounded ml-1">
+                                                    <User size={8} className="mr-0.5" />
+                                                    {payment.createdById ? (teamMembers.find((m: any) => m.id === payment.createdById)?.fullName || 'Yönetici') : 'Yönetici'}
+                                                </span>
+                                            </div>
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-3">
                                         <div className="text-right">
-                                            <div className="text-sm font-black text-emerald-400 font-mono">-{payment.amount.toLocaleString('tr-TR')} TL</div>
+                                            <div className="text-sm font-black text-emerald-400 font-mono">-{formatCurrency(payment.amount, userProfile?.currency || 'TRY')}</div>
                                             {payment.note && <div className="text-[8px] text-stone-600 italic truncate max-w-[100px]">{payment.note}</div>}
                                         </div>
-                                        <button 
-                                            onClick={() => handleDeletePayment(payment.id)}
-                                            className="p-2.5 text-stone-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-xl transition-all active:scale-95 border border-transparent hover:border-rose-500/20"
-                                            title="Ödemeyi Sil"
-                                        >
-                                            <Trash2 size={18} />
-                                        </button>
+                                        <div className="flex items-center gap-1">
+                                            <button 
+                                                onClick={() => handleEditPayment(payment)}
+                                                className="p-2.5 text-stone-500 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-xl transition-all active:scale-95 border border-transparent hover:border-emerald-500/20"
+                                                title="Ödemeyi Düzenle"
+                                            >
+                                                <Edit2 size={18} />
+                                            </button>
+                                            <button 
+                                                onClick={() => handleDeletePayment(payment.id)}
+                                                className="p-2.5 text-stone-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-xl transition-all active:scale-95 border border-transparent hover:border-rose-500/20"
+                                                title="Ödemeyi Sil"
+                                            >
+                                                <Trash2 size={18} />
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             ))}
@@ -750,6 +863,8 @@ const SupplierDetailView = ({
                     newPesticide={newPesticide}
                     setNewPesticide={setNewPesticide}
                     handleAddNewPesticideToPurchase={handleAddNewPesticideToPurchase}
+                    userProfile={userProfile}
+                    showToast={showToast}
                 />
             )}
 
@@ -757,11 +872,13 @@ const SupplierDetailView = ({
             {isPaymentModalOpen && (
                 <PaymentModal 
                     supplier={supplier}
-                    onClose={() => setIsPaymentModalOpen(false)}
+                    onClose={handleClosePayment}
                     onSave={handleAddPayment}
                     newPayment={newPayment}
                     setNewPayment={setNewPayment}
                     accounts={accounts}
+                    userProfile={userProfile}
+                    isEdit={!!editingPayment}
                 />
             )}
 
@@ -786,6 +903,24 @@ const SupplierDetailView = ({
             )}
 
             {/* Edit Purchase Modal */}
+            {isReturnModalOpen && (
+                <PurchaseModal 
+                    supplier={supplier}
+                    onClose={() => setIsReturnModalOpen(false)}
+                    onSave={handleAddReturn}
+                    newPurchase={newReturn}
+                    setNewPurchase={setNewReturn}
+                    inventory={inventory}
+                    isAddingNewPesticide={isAddingNewPesticide}
+                    setIsAddingNewPesticide={setIsAddingNewPesticide}
+                    newPesticide={newPesticide}
+                    setNewPesticide={setNewPesticide}
+                    handleAddNewPesticideToPurchase={handleAddNewPesticideToPurchase}
+                    isReturn={true}
+                    showToast={showToast}
+                />
+            )}
+            
             {editingPurchase && (
                 <PurchaseModal 
                     supplier={supplier}
@@ -800,6 +935,8 @@ const SupplierDetailView = ({
                     setNewPesticide={setNewPesticide}
                     handleAddNewPesticideToPurchase={handleAddNewPesticideToPurchase}
                     isEdit={true}
+                    isReturn={editingPurchase.totalAmount < 0}
+                    showToast={showToast}
                 />
             )}
         </div>
@@ -809,14 +946,46 @@ const SupplierDetailView = ({
 const PurchaseModal = ({ 
     supplier, onClose, onSave, newPurchase, setNewPurchase, inventory, 
     isAddingNewPesticide, setIsAddingNewPesticide, newPesticide, setNewPesticide, handleAddNewPesticideToPurchase,
-    isEdit = false
+    isEdit = false, isReturn = false, showToast
 }: any) => {
+    const { userProfile, teamMembers } = useAppViewModel();
     const [searchTerm, setSearchTerm] = useState('');
+    const [isScanning, setIsScanning] = useState(false);
+    
+    const handleScan = (barcode: string) => {
+        const item = inventory.find((i: InventoryItem) => i.barcode === barcode);
+        if (item) {
+            handleAddItem(item);
+        } else {
+            showToast('Ürün bulunamadı', 'error');
+        }
+    };
     
     const filteredInventory = useMemo(() => {
         if (!searchTerm) return [];
         return inventory.filter((i: InventoryItem) => i.pesticideName.toLowerCase().includes(searchTerm.toLowerCase())).slice(0, 5);
     }, [inventory, searchTerm]);
+
+    const handleAddNewPesticideToPurchaseLocal = () => {
+        if (!newPesticide.name) return;
+        
+        const tempId = `new-${crypto.randomUUID()}`;
+        const newItem = {
+            pesticideId: tempId,
+            pesticideName: newPesticide.name,
+            quantity: isReturn ? -1 : 1,
+            unit: newPesticide.unit,
+            buyingPrice: 0
+        };
+        
+        setNewPurchase({
+            ...newPurchase,
+            items: [...newPurchase.items, newItem]
+        });
+        
+        setIsAddingNewPesticide(false);
+        setNewPesticide({ name: '', category: PesticideCategory.OTHER, unit: 'Adet' });
+    };
 
     const handleAddItem = (item: InventoryItem) => {
         const exists = newPurchase.items.find((i: any) => i.pesticideId === item.pesticideId);
@@ -827,7 +996,7 @@ const PurchaseModal = ({
             items: [...newPurchase.items, {
                 pesticideId: item.pesticideId,
                 pesticideName: item.pesticideName,
-                quantity: 1,
+                quantity: isReturn ? -1 : 1,
                 unit: item.unit,
                 buyingPrice: item.buyingPrice
             }]
@@ -843,9 +1012,13 @@ const PurchaseModal = ({
     };
 
     const updateItem = (id: string, field: string, value: any) => {
+        let finalValue = value;
+        if (field === 'quantity' && isReturn) {
+            finalValue = -Math.abs(value);
+        }
         setNewPurchase({
             ...newPurchase,
-            items: newPurchase.items.map((i: any) => i.pesticideId === id ? { ...i, [field]: value } : i)
+            items: newPurchase.items.map((i: any) => i.pesticideId === id ? { ...i, [field]: finalValue } : i)
         });
     };
 
@@ -856,118 +1029,170 @@ const PurchaseModal = ({
             <div className="bg-stone-900 border border-white/10 w-full max-w-md rounded-[2.5rem] p-6 shadow-2xl animate-in zoom-in-95 duration-300 my-auto">
                 <div className="flex justify-between items-center mb-6">
                     <h2 className="text-xl font-black text-stone-100 flex items-center gap-3">
-                        <Package className="text-emerald-500" />
-                        {isEdit ? 'Alımı Düzenle' : 'Ürün Alımı'}
+                        {isReturn ? <RefreshCcw className="text-rose-500" /> : <Package className="text-emerald-500" />}
+                        {isReturn ? 'İade Yap' : (isEdit ? 'Alımı Düzenle' : 'Ürün Alımı')}
                     </h2>
                     <button onClick={onClose} className="p-2 bg-stone-800 rounded-full text-stone-500"><X size={16} /></button>
                 </div>
 
-                <div className="space-y-4">
-                    <div className="relative">
-                        <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest ml-1 mb-1.5 block">Ürün Ekle</label>
-                        <div className="relative">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-600" size={14} />
-                            <input 
-                                type="text" 
-                                className="w-full bg-stone-950 border border-white/5 rounded-2xl py-3 pl-9 pr-4 text-xs text-stone-100 outline-none focus:border-emerald-500/50 transition-all"
-                                placeholder="Ürün ara..."
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                            />
+                <div className="space-y-5">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest ml-1 mb-1.5 block">Fiş Numarası</label>
+                            <div className="relative">
+                                <Receipt className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-600" size={14} />
+                                <input 
+                                    type="text" 
+                                    className="w-full bg-stone-950 border border-white/5 rounded-2xl py-3 pl-9 pr-4 text-xs text-stone-100 outline-none focus:border-emerald-500/50 transition-all"
+                                    placeholder="Fiş no giriniz..."
+                                    value={newPurchase.receiptNo || ''}
+                                    onChange={(e) => setNewPurchase({...newPurchase, receiptNo: e.target.value})}
+                                />
+                            </div>
                         </div>
-                        
-                        {searchTerm && (
-                            <div className="absolute z-10 w-full mt-2 bg-stone-800 border border-white/10 rounded-2xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2">
-                                {filteredInventory.map((item: InventoryItem) => (
-                                    <button 
-                                        key={item.id}
-                                        onClick={() => handleAddItem(item)}
-                                        className="w-full p-3 text-left hover:bg-stone-700 flex items-center justify-between border-b border-white/5 last:border-0"
-                                    >
-                                        <div className="flex items-center gap-2">
-                                            <FlaskConical size={14} className="text-emerald-500" />
-                                            <span className="text-xs font-bold text-stone-200">{item.pesticideName}</span>
-                                        </div>
-                                        <Plus size={14} className="text-stone-500" />
-                                    </button>
-                                ))}
+
+                        <div className="relative">
+                            <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest ml-1 mb-1.5 block">Ürün Ekle</label>
+                            <div className="flex gap-2">
+                                <div className="relative flex-1">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-600" size={14} />
+                                    <input 
+                                        type="text" 
+                                        className="w-full bg-stone-950 border border-white/5 rounded-2xl py-3 pl-9 pr-4 text-xs text-stone-100 outline-none focus:border-emerald-500/50 transition-all"
+                                        placeholder="Ürün ara..."
+                                        value={searchTerm}
+                                        onChange={(e) => setSearchTerm(e.target.value)}
+                                    />
+                                </div>
                                 <button 
-                                    onClick={() => setIsAddingNewPesticide(true)}
-                                    className="w-full p-3 text-left hover:bg-emerald-900/20 flex items-center gap-2 text-emerald-400 border-t border-white/10 bg-emerald-500/5"
+                                    onClick={() => setIsScanning(true)}
+                                    className="bg-stone-800 p-3 rounded-xl border border-white/5 text-stone-300 hover:bg-stone-700 transition-colors"
+                                    title="Barkod Tara"
                                 >
-                                    <Plus size={14} />
-                                    <span className="text-xs font-black uppercase tracking-wider">Yeni İlaç Kaydı Yap</span>
+                                    <Barcode size={20} />
                                 </button>
                             </div>
-                        )}
+                            
+                            {searchTerm && (
+                                <div className="absolute z-20 w-full mt-2 bg-stone-800 border border-white/10 rounded-2xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2">
+                                    {filteredInventory.map((item: InventoryItem) => (
+                                        <button 
+                                            key={item.id}
+                                            onClick={() => handleAddItem(item)}
+                                            className="w-full p-3 text-left hover:bg-stone-700 flex items-center justify-between border-b border-white/5 last:border-0 transition-colors"
+                                        >
+                                            <div className="flex items-center gap-3">
+                                                <div className="p-1.5 bg-stone-900 rounded-lg">
+                                                    <FlaskConical size={14} className="text-emerald-500" />
+                                                </div>
+                                                <span className="text-xs font-bold text-stone-200">{item.pesticideName}</span>
+                                            </div>
+                                            <Plus size={14} className="text-stone-400" />
+                                        </button>
+                                    ))}
+                                    <button 
+                                        onClick={() => setIsAddingNewPesticide(true)}
+                                        className="w-full p-3 text-left hover:bg-emerald-900/40 flex items-center gap-3 text-emerald-400 border-t border-white/10 bg-emerald-500/10 transition-colors"
+                                    >
+                                        <div className="p-1.5 bg-emerald-500/20 rounded-lg">
+                                            <Plus size={14} />
+                                        </div>
+                                        <span className="text-xs font-black uppercase tracking-wider">Yeni İlaç Kaydı Yap</span>
+                                    </button>
+                                </div>
+                            )}
+                        </div>
                     </div>
 
                     <div className="space-y-3 max-h-60 overflow-y-auto pr-1 custom-scrollbar">
                         {newPurchase.items.map((item: any) => (
-                            <div key={item.pesticideId} className="bg-stone-950/50 border border-white/5 rounded-2xl p-3 space-y-3">
-                                <div className="flex justify-between items-center">
-                                    <span className="text-xs font-black text-stone-200 truncate pr-4">{item.pesticideName}</span>
-                                            <button 
-                                                onClick={() => removeItem(item.pesticideId)} 
-                                                className="p-2 text-rose-500 hover:bg-rose-500/10 rounded-lg transition-all active:scale-90"
-                                                title="Ürünü Çıkar"
-                                            >
-                                                <Trash2 size={16} />
-                                            </button>
+                            <div key={item.pesticideId} className="bg-stone-950/50 border border-white/5 rounded-2xl p-4 space-y-4">
+                                <div className="flex justify-between items-center border-b border-white/5 pb-3">
+                                    <div className="flex items-center gap-3">
+                                        <div className="p-2 bg-stone-900 rounded-xl">
+                                            <FlaskConical size={16} className="text-emerald-500" />
+                                        </div>
+                                        <span className="text-sm font-bold text-stone-200">{item.pesticideName}</span>
+                                    </div>
+                                    <button 
+                                        onClick={() => removeItem(item.pesticideId)} 
+                                        className="p-2 text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all active:scale-90"
+                                        title="Ürünü Çıkar"
+                                    >
+                                        <Trash2 size={16} />
+                                    </button>
                                 </div>
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div>
-                                        <label className="text-[8px] font-black text-stone-600 uppercase tracking-widest ml-1 mb-1 block">Miktar ({item.unit})</label>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="bg-stone-900 rounded-xl p-1">
+                                        <label className="text-[9px] font-black text-stone-500 uppercase tracking-widest ml-2 mb-1 block pt-2">Miktar ({item.unit})</label>
                                         <input 
                                             type="number" 
-                                            className="w-full bg-stone-900 border border-white/5 rounded-xl p-2 text-xs text-stone-100 outline-none"
-                                            value={item.quantity}
+                                            className="w-full bg-transparent border-none p-2 text-sm font-bold text-stone-100 outline-none"
+                                            value={Math.abs(item.quantity)}
                                             onChange={(e) => updateItem(item.pesticideId, 'quantity', parseFloat(e.target.value) || 0)}
                                         />
                                     </div>
-                                    <div>
-                                        <label className="text-[8px] font-black text-stone-600 uppercase tracking-widest ml-1 mb-1 block">Alış Fiyatı (TL)</label>
+                                    <div className="bg-stone-900 rounded-xl p-1">
+                                        <label className="text-[9px] font-black text-stone-500 uppercase tracking-widest ml-2 mb-1 block pt-2">{isReturn ? 'İade Fiyatı' : 'Alış Fiyatı'} ({getCurrencySuffix(userProfile?.currency || 'TRY')})</label>
                                         <input 
                                             type="number" 
-                                            className="w-full bg-stone-900 border border-white/5 rounded-xl p-2 text-xs text-stone-100 outline-none"
+                                            className="w-full bg-transparent border-none p-2 text-sm font-bold text-stone-100 outline-none"
                                             value={item.buyingPrice}
                                             onChange={(e) => updateItem(item.pesticideId, 'buyingPrice', parseFloat(e.target.value) || 0)}
                                         />
                                     </div>
                                 </div>
+                                <div className="flex justify-between items-center pt-2 px-1">
+                                    <span className="text-[10px] font-bold text-stone-500 uppercase tracking-widest">Ara Toplam</span>
+                                    <span className="text-sm font-black text-emerald-400 font-mono">{formatCurrency(Math.abs(item.quantity) * item.buyingPrice, userProfile?.currency || 'TRY')}</span>
+                                </div>
                             </div>
                         ))}
                         {newPurchase.items.length === 0 && (
-                            <div className="py-8 text-center border-2 border-dashed border-white/5 rounded-3xl">
-                                <Package size={32} className="text-stone-800 mx-auto mb-2" />
-                                <p className="text-stone-600 text-[10px] font-bold uppercase tracking-widest">Ürün eklemek için yukarıdan arayın</p>
+                            <div className="py-10 text-center border-2 border-dashed border-white/5 rounded-[2rem] bg-stone-950/30">
+                                <div className="w-16 h-16 bg-stone-900 rounded-full flex items-center justify-center mx-auto mb-4">
+                                    <Package size={24} className="text-stone-600" />
+                                </div>
+                                <p className="text-stone-500 text-[10px] font-black uppercase tracking-widest">Ürün eklemek için yukarıdan arayın</p>
                             </div>
                         )}
                     </div>
 
-                    <div className="pt-4 border-t border-white/5 flex justify-between items-center">
-                        <span className="text-xs font-black text-stone-500 uppercase tracking-widest">Toplam Tutar</span>
-                        <span className="text-lg font-black text-emerald-400 font-mono">{total.toLocaleString('tr-TR')} TL</span>
+                    <div className="bg-stone-950/80 border border-white/5 rounded-2xl p-5 flex justify-between items-center mt-4">
+                        <div className="flex flex-col">
+                            <span className="text-[10px] font-black text-stone-500 uppercase tracking-widest mb-1">Genel Toplam</span>
+                            <span className="text-xs font-medium text-stone-400">{newPurchase.items.length} Kalem Ürün</span>
+                        </div>
+                        <span className="text-2xl font-black text-emerald-400 font-mono">{formatCurrency(total, userProfile?.currency || 'TRY')}</span>
                     </div>
                 </div>
 
-                <div className="flex gap-3 mt-8">
+                <div className="flex gap-3 mt-6">
                     <button 
                         onClick={onClose}
-                        className="flex-1 py-4 bg-stone-800 text-stone-400 rounded-2xl font-bold text-sm active:scale-95 transition-all"
+                        className="flex-1 py-4 bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-2xl font-bold text-sm active:scale-95 transition-all flex items-center justify-center gap-2"
                     >
+                        <X size={16} />
                         İptal
                     </button>
                     <button 
                         onClick={onSave}
                         disabled={newPurchase.items.length === 0}
-                        className="flex-1 py-4 bg-emerald-600 text-white rounded-2xl font-bold text-sm active:scale-95 transition-all shadow-lg shadow-emerald-900/20 disabled:opacity-50"
+                        className={`flex-1 py-4 ${isReturn ? 'bg-rose-600 hover:bg-rose-500 shadow-rose-900/20' : 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/20'} text-white rounded-2xl font-bold text-sm active:scale-95 transition-all shadow-lg disabled:opacity-50 flex items-center justify-center gap-2`}
                     >
-                        Kaydet
+                        <Save size={16} />
+                        {isReturn ? 'İadeyi Kaydet' : 'Kaydet'}
                     </button>
                 </div>
             </div>
 
+            {isScanning && (
+                <BarcodeScanner 
+                    onScan={handleScan}
+                    onClose={() => setIsScanning(false)}
+                />
+            )}
+            
             {/* New Pesticide Sub-Modal */}
             {isAddingNewPesticide && (
                 <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-black/90 backdrop-blur-md animate-in fade-in duration-300">
@@ -1010,7 +1235,7 @@ const PurchaseModal = ({
                                 Vazgeç
                             </button>
                             <button 
-                                onClick={handleAddNewPesticideToPurchase}
+                                onClick={handleAddNewPesticideToPurchaseLocal}
                                 className="flex-1 py-3 bg-emerald-600 text-white rounded-xl font-bold text-xs"
                             >
                                 Listeye Ekle
@@ -1023,19 +1248,19 @@ const PurchaseModal = ({
     );
 };
 
-const PaymentModal = ({ supplier, onClose, onSave, newPayment, setNewPayment, accounts }: any) => {
+const PaymentModal = ({ supplier, onClose, onSave, newPayment, setNewPayment, accounts, userProfile, isEdit = false }: any) => {
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
             <div className="bg-stone-900 border border-white/10 w-full max-w-md rounded-[2.5rem] p-6 shadow-2xl animate-in zoom-in-95 duration-300">
                 <h2 className="text-xl font-black text-stone-100 mb-6 flex items-center gap-3">
-                    <CreditCard className="text-blue-500" />
-                    Ödeme Yap
+                    <CreditCard className={isEdit ? "text-emerald-500" : "text-blue-500"} />
+                    {isEdit ? 'Ödemeyi Düzenle' : 'Ödeme Yap'}
                 </h2>
                 <div className="space-y-4">
                     <div>
-                        <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest ml-1 mb-1.5 block">Ödeme Tutarı (TL)</label>
+                        <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest ml-1 mb-1.5 block">Ödeme Tutarı ({getCurrencySuffix(userProfile?.currency || 'TRY')})</label>
                         <input 
-                            type="number" 
+                            type="number"
                             className="w-full bg-stone-950 border border-white/5 rounded-2xl p-4 text-sm text-stone-100 outline-none focus:border-blue-500/50 transition-all font-mono"
                             placeholder="0.00"
                             value={newPayment.amount}
@@ -1051,7 +1276,7 @@ const PaymentModal = ({ supplier, onClose, onSave, newPayment, setNewPayment, ac
                         >
                             <option value="">Hesap Seçilmedi</option>
                             {accounts.map((acc: any) => (
-                                <option key={acc.id} value={acc.id}>{acc.name} ({new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(acc.balance)})</option>
+                                <option key={acc.id} value={acc.id}>{acc.name} ({new Intl.NumberFormat('tr-TR', { style: 'currency', currency: userProfile?.currency || 'TRY' }).format(acc.balance)})</option>
                             ))}
                         </select>
                     </div>
@@ -1061,7 +1286,7 @@ const PaymentModal = ({ supplier, onClose, onSave, newPayment, setNewPayment, ac
                             {['CASH', 'CARD', 'CHECK', 'PROMISSORY_NOTE', 'OTHER'].map(method => (
                                 <button 
                                     key={method}
-                                    onClick={() => setNewPayment({...newPayment, method})}
+                                    onClick={() => setNewPayment({...newPayment, method, installments: 1, producerCardMonths: 0})}
                                     className={`py-3 rounded-xl text-[9px] font-black uppercase tracking-widest border transition-all ${newPayment.method === method ? 'bg-blue-600 border-blue-500 text-white' : 'bg-stone-950 border-white/5 text-stone-500'}`}
                                 >
                                     {method === 'CASH' ? 'Nakit' : method === 'CARD' ? 'Kart' : method === 'CHECK' ? 'Çek' : method === 'PROMISSORY_NOTE' ? 'Senet' : 'Diğer'}
@@ -1069,6 +1294,59 @@ const PaymentModal = ({ supplier, onClose, onSave, newPayment, setNewPayment, ac
                             ))}
                         </div>
                     </div>
+                    {newPayment.method === 'CARD' && (
+                        <div className="space-y-4 animate-in slide-in-from-top-2 duration-300">
+                            <div>
+                                <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest ml-1 mb-1.5 block">Kart Tipi</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button 
+                                        onClick={() => setNewPayment({...newPayment, producerCardMonths: 0})}
+                                        className={`py-2.5 rounded-xl text-[9px] font-black uppercase tracking-widest border transition-all ${!newPayment.producerCardMonths ? 'bg-stone-100 border-stone-100 text-stone-900' : 'bg-stone-950 border-white/5 text-stone-500'}`}
+                                    >
+                                        Normal Kart / Taksit
+                                    </button>
+                                    <button 
+                                        onClick={() => setNewPayment({...newPayment, installments: 1, producerCardMonths: 1})}
+                                        className={`py-2.5 rounded-xl text-[9px] font-black uppercase tracking-widest border transition-all ${newPayment.producerCardMonths > 0 ? 'bg-stone-100 border-stone-100 text-stone-900' : 'bg-stone-950 border-white/5 text-stone-500'}`}
+                                    >
+                                        Üretici Kart
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            {newPayment.producerCardMonths > 0 ? (
+                                <div>
+                                    <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest ml-1 mb-1.5 block">Ödeme Vadesi (Ay)</label>
+                                    <div className="grid grid-cols-6 gap-1">
+                                        {[1, 2, 3, 4, 5, 6].map(m => (
+                                            <button 
+                                                key={m}
+                                                onClick={() => setNewPayment({...newPayment, producerCardMonths: m})}
+                                                className={`py-2 rounded-lg text-[10px] font-black border transition-all ${newPayment.producerCardMonths === m ? 'bg-blue-600 border-blue-500 text-white' : 'bg-stone-950 border-white/5 text-stone-500'}`}
+                                            >
+                                                {m}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            ) : (
+                                <div>
+                                    <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest ml-1 mb-1.5 block">Taksit Sayısı</label>
+                                    <div className="grid grid-cols-6 gap-1">
+                                        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(t => (
+                                            <button 
+                                                key={t}
+                                                onClick={() => setNewPayment({...newPayment, installments: t})}
+                                                className={`py-2 rounded-lg text-[10px] font-black border transition-all ${newPayment.installments === t ? 'bg-blue-600 border-blue-500 text-white' : 'bg-stone-950 border-white/5 text-stone-500'}`}
+                                            >
+                                                {t}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
                     {(newPayment.method === 'CHECK' || newPayment.method === 'PROMISSORY_NOTE') && (
                         <div className="animate-in slide-in-from-top-2 duration-300">
                             <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest ml-1 mb-1.5 block">Vade Tarihi</label>
@@ -1102,9 +1380,9 @@ const PaymentModal = ({ supplier, onClose, onSave, newPayment, setNewPayment, ac
                     </button>
                     <button 
                         onClick={onSave}
-                        className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-bold text-sm active:scale-95 transition-all shadow-lg shadow-blue-900/20"
+                        className={`flex-1 py-4 text-white rounded-2xl font-bold text-sm active:scale-95 transition-all shadow-lg ${isEdit ? 'bg-emerald-600 shadow-emerald-900/20' : 'bg-blue-600 shadow-blue-900/20'}`}
                     >
-                        Ödemeyi Kaydet
+                        {isEdit ? 'Güncelle' : 'Ödemeyi Kaydet'}
                     </button>
                 </div>
             </div>

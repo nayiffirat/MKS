@@ -8,18 +8,31 @@ import {
     Download, Users, Ruler, Sprout, MapPin, Loader2, ArrowUpRight, 
     FileText, X, Calendar, Activity, Zap, ClipboardCheck, 
     AlertTriangle, TrendingUp, History, Scale, BookOpen, 
-    ChevronRight, PieChart as PieIcon, BarChart3, LineChart as LineIcon, Truck, DollarSign
+    ChevronRight, PieChart as PieIcon, BarChart3, LineChart as LineIcon, Truck, DollarSign, Package
 } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { dbService } from '../services/db';
 import { useAppViewModel } from '../context/AppContext';
 import { Prescription } from '../types';
+import { formatCurrency } from '../utils/currency';
 
-    type StatTab = 'OVERVIEW' | 'LAND' | 'PESTICIDES' | 'VISITS' | 'CONSUMPTION' | 'SALES' | 'DEBTS' | 'RECEIVABLES';
+    type StatTab = 'OVERVIEW' | 'LAND' | 'PESTICIDES' | 'VISITS' | 'CONSUMPTION' | 'SALES' | 'DEBTS' | 'RECEIVABLES' | 'INVENTORY';
 
     export const StatisticsScreen: React.FC = () => {
-    const { stats, farmers, reminders, notifications, inventory, suppliers } = useAppViewModel();
+    const { 
+        stats, 
+        farmers, 
+        reminders, 
+        notifications, 
+        inventory, 
+        suppliers, 
+        userProfile,
+        farmerLabel,
+        farmerPluralLabel,
+        prescriptionLabel
+    } = useAppViewModel();
+    const isCompany = userProfile.accountType === 'COMPANY';
     const [activeTab, setActiveTab] = useState<StatTab>('OVERVIEW');
     const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
     const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
@@ -281,7 +294,7 @@ import { Prescription } from '../types';
                         {/* Summary Cards */}
                         <div className="grid grid-cols-2 gap-3">
                             <QuickStatCard 
-                                title="Toplam Üretici" 
+                                title={`Toplam ${farmerLabel}`} 
                                 value={stats.totalFarmers} 
                                 icon={Users} 
                                 color="blue" 
@@ -503,14 +516,14 @@ import { Prescription } from '../types';
                                 <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/10 rounded-full blur-2xl group-hover:bg-emerald-500/20 transition-all"></div>
                                 <h3 className="text-stone-400 text-[10px] font-bold uppercase tracking-widest">Toplam Gelir</h3>
                                 <p className="text-xl font-black text-emerald-400 font-mono mt-1">
-                                    {salesData.totalRevenue.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                                    {formatCurrency(salesData.totalRevenue, userProfile?.currency || 'TRY')}
                                 </p>
                             </div>
                             <div className="bg-stone-900 p-5 rounded-2xl border border-white/5 shadow-sm relative overflow-hidden group">
                                 <div className="absolute top-0 right-0 w-24 h-24 bg-red-500/10 rounded-full blur-2xl group-hover:bg-red-500/20 transition-all"></div>
                                 <h3 className="text-stone-400 text-[10px] font-bold uppercase tracking-widest">Toplam Maliyet</h3>
                                 <p className="text-xl font-black text-red-400 font-mono mt-1">
-                                    {salesData.totalCost.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                                    {formatCurrency(salesData.totalCost, userProfile?.currency || 'TRY')}
                                 </p>
                             </div>
                             <div className="bg-stone-900 p-5 rounded-2xl border border-white/5 shadow-sm relative overflow-hidden group">
@@ -518,7 +531,7 @@ import { Prescription } from '../types';
                                 <h3 className="text-stone-400 text-[10px] font-bold uppercase tracking-widest">Net Kar / Zarar</h3>
                                 <div className="flex items-baseline gap-2">
                                     <p className={`text-xl font-black font-mono mt-1 ${salesData.totalProfit >= 0 ? 'text-blue-400' : 'text-rose-400'}`}>
-                                        {salesData.totalProfit.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                                        {formatCurrency(salesData.totalProfit, userProfile?.currency || 'TRY')}
                                     </p>
                                     <span className={`text-[10px] font-bold ${salesData.margin >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
                                         %{salesData.margin.toFixed(1)}
@@ -559,7 +572,7 @@ import { Prescription } from '../types';
                                             <Tooltip 
                                                 contentStyle={{backgroundColor: '#1c1917', borderColor: '#333', borderRadius: '12px', color: '#fff', boxShadow: '0 10px 30px -10px rgba(0,0,0,0.5)'}}
                                                 itemStyle={{color: '#10b981', fontWeight: 'bold', fontFamily: 'monospace'}}
-                                                formatter={(value: number) => [value.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' }), 'Tutar']}
+                                                formatter={(value: number) => [formatCurrency(value, userProfile?.currency || 'TRY'), 'Tutar']}
                                                 labelStyle={{color: '#9ca3af', fontSize: '12px', marginBottom: '4px', fontWeight: 'bold'}}
                                             />
                                             <Area 
@@ -595,7 +608,7 @@ import { Prescription } from '../types';
                                             <Tooltip 
                                                 cursor={{fill: '#ffffff05'}}
                                                 contentStyle={{backgroundColor: '#1c1917', borderColor: '#333', borderRadius: '12px', color: '#fff', boxShadow: '0 10px 30px -10px rgba(0,0,0,0.5)'}}
-                                                formatter={(value: number) => [value.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' }), 'Tutar']}
+                                                formatter={(value: number) => [formatCurrency(value, userProfile?.currency || 'TRY'), 'Tutar']}
                                                 itemStyle={{color: '#3b82f6', fontWeight: 'bold', fontFamily: 'monospace'}}
                                                 labelStyle={{color: '#9ca3af', fontSize: '12px', marginBottom: '4px', fontWeight: 'bold'}}
                                             />
@@ -619,7 +632,7 @@ import { Prescription } from '../types';
                             <div className="relative z-10">
                                 <h3 className="text-stone-400 text-[10px] font-bold uppercase tracking-widest mb-1">Toplam Tedarikçi Borcu</h3>
                                 <p className="text-3xl font-black text-rose-400 font-mono">
-                                    {Math.round(supplierDebtData.totalSupplierDebt).toLocaleString('tr-TR')}
+                                    {formatCurrency(Math.round(supplierDebtData.totalSupplierDebt), userProfile?.currency || 'TRY')}
                                 </p>
                                 <p className="text-[10px] text-stone-500 mt-2 font-medium">Toplam {supplierDebtData.debts.length} tedarikçiye borç bulunmaktadır.</p>
                             </div>
@@ -644,7 +657,7 @@ import { Prescription } from '../types';
                                                 <span className="text-xs font-bold text-stone-200">{s.name}</span>
                                             </div>
                                             <span className="text-sm font-black text-rose-400 font-mono">
-                                                {Math.round(s.debt).toLocaleString('tr-TR')}
+                                                {formatCurrency(Math.round(s.debt), userProfile?.currency || 'TRY')}
                                             </span>
                                         </div>
                                     ))
@@ -661,7 +674,7 @@ import { Prescription } from '../types';
                             <div className="relative z-10">
                                 <h3 className="text-stone-400 text-[10px] font-bold uppercase tracking-widest mb-1">Toplam Üretici Alacağı</h3>
                                 <p className="text-3xl font-black text-emerald-400 font-mono">
-                                    {Math.round(farmerReceivableData.totalFarmerReceivables).toLocaleString('tr-TR')}
+                                    {formatCurrency(Math.round(farmerReceivableData.totalFarmerReceivables), userProfile?.currency || 'TRY')}
                                 </p>
                                 <p className="text-[10px] text-stone-500 mt-2 font-medium">Toplam {farmerReceivableData.receivables.length} üreticiden alacak bulunmaktadır.</p>
                             </div>
@@ -686,11 +699,102 @@ import { Prescription } from '../types';
                                                 <span className="text-xs font-bold text-stone-200">{f.name}</span>
                                             </div>
                                             <span className="text-sm font-black text-emerald-400 font-mono">
-                                                {Math.round(f.amount).toLocaleString('tr-TR')}
+                                                {formatCurrency(Math.round(f.amount), userProfile?.currency || 'TRY')}
                                             </span>
                                         </div>
                                     ))
                                 )}
+                            </div>
+                        </div>
+                    </div>
+                );
+            case 'INVENTORY':
+                return (
+                    <div className="animate-in fade-in slide-in-from-bottom-2 duration-500 space-y-6">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div className="bg-stone-900 p-5 rounded-2xl border border-white/5 shadow-sm relative overflow-hidden group">
+                                <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/10 rounded-full blur-2xl group-hover:bg-blue-500/20 transition-all"></div>
+                                <h3 className="text-stone-400 text-[10px] font-bold uppercase tracking-widest mb-2">Toplam Stok Maliyeti</h3>
+                                <div className="space-y-2">
+                                    <div className="flex justify-between items-end">
+                                        <span className="text-[10px] text-stone-500 uppercase tracking-widest">Vadeli</span>
+                                        <span className="text-xl font-black text-stone-200 font-mono">
+                                            {formatCurrency(stats.inventoryValue, userProfile?.currency || 'TRY')}
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between items-end">
+                                        <span className="text-[10px] text-stone-500 uppercase tracking-widest">Peşin</span>
+                                        <span className="text-lg font-black text-stone-400 font-mono">
+                                            {formatCurrency(stats.cashInventoryValue, userProfile?.currency || 'TRY')}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="bg-stone-900 p-5 rounded-2xl border border-white/5 shadow-sm relative overflow-hidden group">
+                                <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/10 rounded-full blur-2xl group-hover:bg-emerald-500/20 transition-all"></div>
+                                <h3 className="text-stone-400 text-[10px] font-bold uppercase tracking-widest mb-2">Potansiyel Ciro</h3>
+                                <div className="space-y-2">
+                                    <div className="flex justify-between items-end">
+                                        <span className="text-[10px] text-stone-500 uppercase tracking-widest">Vadeli</span>
+                                        <span className="text-xl font-black text-emerald-400 font-mono">
+                                            {formatCurrency(stats.potentialRevenue, userProfile?.currency || 'TRY')}
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between items-end">
+                                        <span className="text-[10px] text-stone-500 uppercase tracking-widest">Peşin</span>
+                                        <span className="text-lg font-black text-emerald-500/70 font-mono">
+                                            {formatCurrency(stats.cashPotentialRevenue, userProfile?.currency || 'TRY')}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-stone-900 p-6 rounded-2xl border border-white/5 shadow-sm">
+                            <h3 className="text-stone-100 font-bold mb-6 flex items-center text-sm uppercase tracking-wider">
+                                <BarChart3 size={16} className="mr-2 text-blue-500"/> Vadeli vs Peşin Karşılaştırması
+                            </h3>
+                            <div className="h-[300px] w-full">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart
+                                        data={[
+                                            {
+                                                name: 'Stok Maliyeti',
+                                                'Vadeli': stats.inventoryValue,
+                                                'Peşin': stats.cashInventoryValue
+                                            },
+                                            {
+                                                name: 'Potansiyel Ciro',
+                                                'Vadeli': stats.potentialRevenue,
+                                                'Peşin': stats.cashPotentialRevenue
+                                            }
+                                        ]}
+                                        margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                                    >
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#262626" vertical={false} />
+                                        <XAxis 
+                                            dataKey="name" 
+                                            stroke="#57534e" 
+                                            fontSize={10} 
+                                            tickLine={false} 
+                                            axisLine={false}
+                                        />
+                                        <YAxis 
+                                            stroke="#57534e" 
+                                            fontSize={10} 
+                                            tickLine={false} 
+                                            axisLine={false}
+                                            tickFormatter={(value) => `${value / 1000}k`}
+                                        />
+                                        <Tooltip 
+                                            contentStyle={{ backgroundColor: '#1c1917', border: 'none', borderRadius: '12px', fontSize: '12px' }}
+                                            itemStyle={{ fontWeight: 'bold' }}
+                                            formatter={(value: number) => formatCurrency(value, userProfile?.currency || 'TRY')}
+                                        />
+                                        <Bar dataKey="Vadeli" fill="#a8a29e" radius={[4, 4, 0, 0]} barSize={40} />
+                                        <Bar dataKey="Peşin" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={40} />
+                                    </BarChart>
+                                </ResponsiveContainer>
                             </div>
                         </div>
                     </div>
@@ -746,6 +850,12 @@ import { Prescription } from '../types';
                     label="Satışlar" 
                 />
                 <TabButton 
+                    active={activeTab === 'INVENTORY'} 
+                    onClick={() => setActiveTab('INVENTORY')} 
+                    icon={Package} 
+                    label="Stok" 
+                />
+                <TabButton 
                     active={activeTab === 'DEBTS'} 
                     onClick={() => setActiveTab('DEBTS')} 
                     icon={Truck} 
@@ -775,7 +885,7 @@ import { Prescription } from '../types';
                 </div>
 
                 <div className="grid grid-cols-3 gap-6 mb-10">
-                    <ReportStatBox label="Toplam Üretici" value={stats.totalFarmers} />
+                    <ReportStatBox label={`Toplam ${farmerLabel}`} value={stats.totalFarmers} />
                     <ReportStatBox label="Toplam Arazi" value={`${stats.totalArea} da`} />
                     <ReportStatBox label="Aktif Görevler" value={stats.activeReminders} />
                 </div>
@@ -862,16 +972,16 @@ import { Prescription } from '../types';
                         <div className="grid grid-cols-2 gap-4 mb-6">
                             <div className="p-4 bg-white/5 rounded-xl border border-white/5">
                                 <p className="text-stone-500 text-[10px] font-bold uppercase mb-1">Toplam Gelir</p>
-                                <p className="text-emerald-400 font-mono text-lg font-black">{salesData.totalRevenue.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}</p>
+                                <p className="text-emerald-400 font-mono text-lg font-black">{formatCurrency(salesData.totalRevenue, userProfile?.currency || 'TRY')}</p>
                             </div>
                             <div className="p-4 bg-white/5 rounded-xl border border-white/5">
                                 <p className="text-stone-500 text-[10px] font-bold uppercase mb-1">Toplam Maliyet</p>
-                                <p className="text-red-400 font-mono text-lg font-black">{salesData.totalCost.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}</p>
+                                <p className="text-red-400 font-mono text-lg font-black">{formatCurrency(salesData.totalCost, userProfile?.currency || 'TRY')}</p>
                             </div>
                             <div className="p-4 bg-white/5 rounded-xl border border-white/5">
                                 <p className="text-stone-500 text-[10px] font-bold uppercase mb-1">Net Kar/Zarar</p>
                                 <p className={`font-mono text-lg font-black ${salesData.totalProfit >= 0 ? 'text-blue-400' : 'text-rose-400'}`}>
-                                    {salesData.totalProfit.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                                    {formatCurrency(salesData.totalProfit, userProfile?.currency || 'TRY')}
                                 </p>
                             </div>
                             <div className="p-4 bg-white/5 rounded-xl border border-white/5">
@@ -894,13 +1004,13 @@ import { Prescription } from '../types';
                                             supplierDebtData.debts.map((s, i) => (
                                                 <tr key={i} className="border-b border-white/5 text-stone-300">
                                                     <td className="py-2">{s.name}</td>
-                                                    <td className="py-2 text-right font-mono text-rose-400">{s.debt.toLocaleString('tr-TR')} TL</td>
+                                                    <td className="py-2 text-right font-mono text-rose-400">{formatCurrency(s.debt, userProfile?.currency || 'TRY')}</td>
                                                 </tr>
                                             ))
                                         )}
                                         <tr className="font-black text-rose-500">
                                             <td className="py-3 uppercase">Toplam</td>
-                                            <td className="py-3 text-right font-mono">{supplierDebtData.totalSupplierDebt.toLocaleString('tr-TR')} TL</td>
+                                            <td className="py-3 text-right font-mono">{formatCurrency(supplierDebtData.totalSupplierDebt, userProfile?.currency || 'TRY')}</td>
                                         </tr>
                                     </tbody>
                                 </table>
@@ -915,13 +1025,13 @@ import { Prescription } from '../types';
                                             farmerReceivableData.receivables.map((f, i) => (
                                                 <tr key={i} className="border-b border-white/5 text-stone-300">
                                                     <td className="py-2">{f.name}</td>
-                                                    <td className="py-2 text-right font-mono text-emerald-400">{f.amount.toLocaleString('tr-TR')} TL</td>
+                                                    <td className="py-2 text-right font-mono text-emerald-400">{formatCurrency(f.amount, userProfile?.currency || 'TRY')}</td>
                                                 </tr>
                                             ))
                                         )}
                                         <tr className="font-black text-emerald-500">
                                             <td className="py-3 uppercase">Toplam</td>
-                                            <td className="py-3 text-right font-mono">{farmerReceivableData.totalFarmerReceivables.toLocaleString('tr-TR')} TL</td>
+                                            <td className="py-3 text-right font-mono">{formatCurrency(farmerReceivableData.totalFarmerReceivables, userProfile?.currency || 'TRY')}</td>
                                         </tr>
                                     </tbody>
                                 </table>

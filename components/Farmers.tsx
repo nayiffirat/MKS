@@ -4,12 +4,14 @@ import { dbService } from '../services/db';
 import { useAppViewModel } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { ContactService, ContactInfo } from '../services/contact';
-import { Farmer, VisitLog, Prescription, ManualDebt } from '../types';
+import { Farmer, VisitLog, Prescription, ManualDebt, Payment, Pesticide } from '../types';
 import { COMMON_CROPS } from '../constants';
-import { Search, Phone, MessageCircle, MapPin, Wheat, ChevronLeft, ChevronRight, Contact, Loader2, User, Ruler, FileText, Calendar, Navigation, Plus, X, ArrowLeft, Edit2, Trash2, CheckSquare, Square, Check, FlaskConical, Clock, ImageIcon, Upload, AlertCircle, MessageSquare, Share2, Save, Download, FileJson, RefreshCw, Wallet, History, CreditCard, TrendingDown, TrendingUp as TrendingUpIcon, Send, Copy } from 'lucide-react';
+import { Search, Phone, MessageCircle, MapPin, Wheat, ChevronLeft, ChevronRight, Contact, Loader2, User, Ruler, FileText, Calendar, Navigation, Plus, X, ArrowLeft, Edit2, Trash2, CheckSquare, Square, Check, FlaskConical, Clock, ImageIcon, Upload, AlertCircle, MessageSquare, Share2, Save, Download, FileJson, RefreshCw, RefreshCcw, Wallet, History, CreditCard, TrendingDown, TrendingUp as TrendingUpIcon, Send, Copy, ClipboardList, AlertTriangle } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
+import { formatCurrency, getCurrencySymbol } from '../utils/currency';
+import { ConfirmationModal } from './ConfirmationModal';
 
 interface FarmersProps {
   onBack: () => void;
@@ -42,9 +44,10 @@ interface FarmerModalProps {
     };
     setData: (data: any) => void;
     onSave: (e: React.FormEvent) => void;
+    farmerLabel: string;
 }
 
-const FarmerModal: React.FC<FarmerModalProps> = ({ isOpen, onClose, mode, isSaving, data, setData, onSave }) => {
+const FarmerModal: React.FC<FarmerModalProps> = ({ isOpen, onClose, mode, isSaving, data, setData, onSave, farmerLabel }) => {
     if (!isOpen) return null;
 
     const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -80,14 +83,14 @@ const FarmerModal: React.FC<FarmerModalProps> = ({ isOpen, onClose, mode, isSavi
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="bg-stone-900 rounded-3xl w-full max-w-md p-5 shadow-2xl relative border border-white/10 animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
             <button onClick={onClose} className="absolute top-3 right-3 p-1.5 bg-stone-800 rounded-full text-stone-400 hover:text-stone-200 z-10"><X size={16} /></button>
-            <div className="text-center mb-4 shrink-0"><h2 className="text-base font-bold text-stone-100">{mode === 'ADD' ? 'Yeni Çiftçi Ekle' : 'Çiftçiyi Düzenle'}</h2></div>
+            <div className="text-center mb-4 shrink-0"><h2 className="text-base font-bold text-stone-100">{mode === 'ADD' ? `Yeni ${farmerLabel} Ekle` : `${farmerLabel}yi Düzenle`}</h2></div>
             
             <form onSubmit={onSave} className="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-4">
               <div className="space-y-2.5">
-                <div><label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Ad Soyad</label><input required type="text" value={data.fullName} onChange={e => setData({...data, fullName: e.target.value})} className="w-full p-2.5 bg-stone-950 border border-stone-800 rounded-xl outline-none font-medium text-white text-xs focus:border-emerald-500/50 transition-all" placeholder="İsim" /></div>
+                <div><label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Ad Soyad</label><input required type="text" value={data.fullName} onChange={e => setData({...data, fullName: e.target.value})} className="w-full p-2 bg-stone-950 border border-stone-800 rounded-xl outline-none font-medium text-white text-xs focus:border-emerald-500/50 transition-all" placeholder="İsim" /></div>
                 <div className="grid grid-cols-2 gap-2.5">
-                    <div><label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Telefon</label><input required type="tel" value={data.phoneNumber} onChange={handlePhoneChange} className="w-full p-2.5 bg-stone-950 border border-stone-800 rounded-xl outline-none font-medium text-white text-xs focus:border-emerald-500/50 transition-all" /></div>
-                    <div><label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Köy</label><input required type="text" value={data.village} onChange={e => setData({...data, village: e.target.value})} className="w-full p-2.5 bg-stone-950 border border-stone-800 rounded-xl outline-none font-medium text-white text-xs focus:border-emerald-500/50 transition-all" /></div>
+                    <div><label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Telefon</label><input required type="tel" value={data.phoneNumber} onChange={handlePhoneChange} className="w-full p-2 bg-stone-950 border border-stone-800 rounded-xl outline-none font-medium text-white text-xs focus:border-emerald-500/50 transition-all" /></div>
+                    <div><label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Köy</label><input required type="text" value={data.village} onChange={e => setData({...data, village: e.target.value})} className="w-full p-2 bg-stone-950 border border-stone-800 rounded-xl outline-none font-medium text-white text-xs focus:border-emerald-500/50 transition-all" /></div>
                 </div>
               </div>
 
@@ -171,7 +174,7 @@ const FarmerModal: React.FC<FarmerModalProps> = ({ isOpen, onClose, mode, isSavi
 
               <div className="pt-2 shrink-0">
                 <button disabled={isSaving} type="submit" className="w-full bg-emerald-700 text-white py-3.5 rounded-2xl font-bold text-xs shadow-xl shadow-emerald-900/20 flex justify-center items-center active:scale-95 transition-all border border-emerald-500/20">
-                    {isSaving ? <Loader2 size={18} className="animate-spin" /> : 'Çiftçiyi Kaydet'}
+                    {isSaving ? <Loader2 size={18} className="animate-spin" /> : `${farmerLabel}yi Kaydet`}
                 </button>
               </div>
             </form>
@@ -182,7 +185,44 @@ const FarmerModal: React.FC<FarmerModalProps> = ({ isOpen, onClose, mode, isSavi
 
 export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescription, onEditPrescription, onEditVisit, selectedFarmerId, onSelectFarmer }) => {
   const { currentUser } = useAuth();
-  const { accounts, addPayment, deletePayment: removePayment, addManualDebt, deleteManualDebt, payments, prescriptions, manualDebts, bulkAddFarmers, addFarmer, updateFarmer, deleteFarmer, userProfile, updateUserProfile, updateVisit, deleteVisit, showToast, hapticFeedback } = useAppViewModel();
+  const { 
+    accounts, 
+    addPayment, 
+    updatePayment,
+    softDeletePayment: removePayment, 
+    addManualDebt, 
+    updateManualDebt, 
+    deleteManualDebt, 
+    payments, 
+    prescriptions, 
+    manualDebts, 
+    bulkAddFarmers, 
+    addFarmer, 
+    updateFarmer, 
+    softDeleteFarmer, 
+    userProfile, 
+    updateUserProfile, 
+    updateVisit, 
+    softDeleteVisit, 
+    showToast, 
+    hapticFeedback, 
+    activeTeamMember,
+    teamMembers,
+    farmerLabel,
+    farmerPluralLabel,
+    prescriptionLabel,
+    inventory,
+    addPrescription,
+    togglePrescriptionStatus,
+    softDeletePrescription,
+    t
+  } = useAppViewModel();
+  const isCompany = userProfile.accountType === 'COMPANY';
+  const isSales = activeTeamMember?.role === 'SALES';
+  const isDealer = userProfile.accountType === 'DEALER';
+
+  const canEditFarmer = !isSales && (!isCompany || (activeTeamMember?.role === 'MANAGER'));
+  const canCreateFarmer = canEditFarmer;
   const [farmers, setFarmers] = useState<Farmer[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedFarmer, setSelectedFarmer] = useState<Farmer | null>(null);
@@ -215,11 +255,28 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           if (onSelectFarmer) onSelectFarmer(null);
           else setSelectedFarmer(null);
         }
+
+        if (state.modal) {
+          setIsModalOpen(true);
+        } else {
+          setIsModalOpen(false);
+        }
       }
     };
     window.addEventListener('popstate', handlePop);
     return () => window.removeEventListener('popstate', handlePop);
   }, [farmers, onSelectFarmer]);
+
+  const toggleModal = (open: boolean) => {
+    if (open === isModalOpen) return;
+    if (open) {
+      window.history.pushState({ ...window.history.state, modal: 'FARMER_FORM' }, '');
+    } else if (window.history.state?.modal === 'FARMER_FORM') {
+      window.history.back();
+      return;
+    }
+    setIsModalOpen(open);
+  };
 
   const changeFarmerSelection = (farmer: Farmer | null) => {
     if (farmer === selectedFarmer) return;
@@ -267,6 +324,8 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
 
   // Prescription Detail & Sharing
   const [selectedPrescription, setSelectedPrescription] = useState<Prescription | null>(null);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [prescriptionToDelete, setPrescriptionToDelete] = useState<string | null>(null);
   const [isProcessingPdf, setIsProcessingPdf] = useState(false);
   const receiptRef = useRef<HTMLDivElement>(null);
 
@@ -290,21 +349,48 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   });
   
   // Detail View Tab State
-  const [activeTab, setActiveTab] = useState<'GENERAL' | 'VISITS' | 'PRESCRIPTIONS' | 'DEBT'>('GENERAL');
+  const [activeTab, setActiveTab] = useState<'GENERAL' | 'VISITS' | 'PRESCRIPTIONS' | 'DEBT'>('DEBT');
+
+  const tabs = useMemo(() => {
+    const allTabs = [
+        { id: 'GENERAL', label: 'Genel Bilgiler', icon: User },
+        { id: 'VISITS', label: 'Ziyaretler', icon: ClipboardList },
+        { id: 'PRESCRIPTIONS', label: prescriptionLabel, icon: FileText },
+        { id: 'DEBT', label: 'Borç / Tahsilat', icon: Wallet }
+    ];
+    
+    if (isSales || isDealer) {
+        // Only show: carileri (list), borçlarını (DEBT), reçetelerini (PRESCRIPTIONS)
+        // We also keep GENERAL for basic info if needed, but the request says "sadece..."
+        // Let's stick to the request: carileri, borçlarını, reçetelerini.
+        return allTabs.filter(t => t.id === 'DEBT' || t.id === 'PRESCRIPTIONS');
+    }
+    return allTabs;
+  }, [isSales, isDealer, prescriptionLabel]);
 
   // Payment Modal State
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentNote, setPaymentNote] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CHECK' | 'TEDYE'>('CASH');
+  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedAccountId, setSelectedAccountId] = useState('');
   const [isSavingPayment, setIsSavingPayment] = useState(false);
+  const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
 
   // Manual Debt Modal State
   const [isManualDebtModalOpen, setIsManualDebtModalOpen] = useState(false);
+  const [editingManualDebt, setEditingManualDebt] = useState<ManualDebt | null>(null);
   const [debtAmount, setDebtAmount] = useState('');
   const [debtNote, setDebtNote] = useState('');
   const [debtDate, setDebtDate] = useState(new Date().toISOString().split('T')[0]);
   const [isSavingDebt, setIsSavingDebt] = useState(false);
+
+  // Return Modal State
+  const [isReturnModalOpen, setIsReturnModalOpen] = useState(false);
+  const [returnItems, setReturnItems] = useState<{ pesticideId: string, pesticideName: string, quantity: number, unitPrice: number }[]>([]);
+  const [isSavingReturn, setIsSavingReturn] = useState(false);
+  const [returnSearchTerm, setReturnSearchTerm] = useState('');
 
   // Report Modal State
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
@@ -364,7 +450,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       
       // Sum all transactions BEFORE the selected year
       farmerPrescriptions.forEach(p => {
-          if (new Date(p.date).getFullYear() < selectedYear) {
+          if (new Date(p.date).getFullYear() < selectedYear && p.priceType !== 'CASH') {
               balance -= (p.totalAmount || 0);
           }
       });
@@ -386,7 +472,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
 
   const yearTotalPaid = useMemo(() => filteredPayments.reduce((acc, p) => acc + p.amount, 0), [filteredPayments]);
   const yearTotalDebt = useMemo(() => 
-    filteredPrescriptions.reduce((acc, p) => acc + (p.totalAmount || 0), 0) + 
+    filteredPrescriptions.filter(p => p.priceType !== 'CASH').reduce((acc, p) => acc + (p.totalAmount || 0), 0) + 
     filteredManualDebts.filter(d => !d.id.startsWith('turnover-')).reduce((acc, d) => acc + d.amount, 0),
   [filteredPrescriptions, filteredManualDebts]);
 
@@ -394,7 +480,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
 
   // Overall totals for report or general info if needed
   const totalPaid = farmerPayments.reduce((acc, p) => acc + p.amount, 0);
-  const totalDebt = farmerPrescriptions.reduce((acc, p) => acc + (p.totalAmount || 0), 0) + farmerManualDebts.filter(d => !d.id.startsWith('turnover-')).reduce((acc, d) => acc + d.amount, 0);
+  const totalDebt = farmerPrescriptions.filter(p => p.priceType !== 'CASH').reduce((acc, p) => acc + (p.totalAmount || 0), 0) + farmerManualDebts.filter(d => !d.id.startsWith('turnover-')).reduce((acc, d) => acc + d.amount, 0);
   const overallBalance = totalPaid - totalDebt;
 
   useEffect(() => {
@@ -420,7 +506,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   // --- VISIT ACTIONS ---
   const handleDeleteVisit = async (visitId: string) => {
       if (window.confirm("Bu ziyaret kaydını silmek istediğinize emin misiniz?")) {
-          await deleteVisit(visitId);
+          await softDeleteVisit(visitId);
           showToast('Ziyaret kaydı silindi', 'success');
           hapticFeedback('medium');
           await loadFarmerDetails(); // Listeyi yenile
@@ -433,7 +519,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       let text = `*ZİRAİ REÇETE*\n`;
       text += `Sayın *${selectedFarmer.fullName}*,\n\n`;
       text += `Tarih: ${new Date(selectedPrescription.date).toLocaleDateString('tr-TR')}\n`;
-      text += `Reçete No: ${selectedPrescription.prescriptionNo}\n\n`;
+      text += `${prescriptionLabel} No: ${selectedPrescription.prescriptionNo}\n\n`;
       text += `*Kullanılacak İlaçlar:*\n`;
       
       selectedPrescription.items.forEach(item => {
@@ -446,6 +532,27 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       
       const url = `https://wa.me/${selectedFarmer.phoneNumber.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`;
       window.open(url, '_blank');
+  };
+
+  const handleCopyPortalLink = async () => {
+      if (!selectedFarmer || !currentUser) return;
+      
+      const portalUrl = `${window.location.origin}${window.location.pathname}?portalId=${selectedFarmer.id}&engineerId=${currentUser.uid}`;
+      
+      let text = `Sayın *${selectedFarmer.fullName}*,\n\n`;
+      text += `Size özel hazırladığımız *${farmerLabel} Portalı*'na aşağıdaki linkten ulaşabilirsiniz. Bu portal üzerinden güncel borç durumunuzu, aldığınız ilaçları ve ${prescriptionLabel.toLowerCase()}lerinizi takip edebilirsiniz.\n\n`;
+      text += `🔗 *Portal Linkiniz:*\n${portalUrl}\n\n`;
+      text += `İyi çalışmalar dileriz.`;
+      
+      try {
+          await navigator.clipboard.writeText(text);
+          showToast('Portal linki ve mesajı kopyalandı', 'success');
+          hapticFeedback('success');
+      } catch (err) {
+          console.error('Failed to copy link: ', err);
+          showToast('Link kopyalanamadı', 'error');
+          hapticFeedback('error');
+      }
   };
 
   const handlePdfAction = async (action: 'SHARE' | 'DOWNLOAD') => {
@@ -482,7 +589,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
             const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
             const shareData = {
                 files: [file],
-                title: 'Zirai Reçete'
+                title: `Zirai ${prescriptionLabel}`
                 // text alanı Android'de dosya paylaşımını bozabiliyor, bu yüzden boş bırakıyoruz.
             };
 
@@ -605,7 +712,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   };
 
   const resetModal = () => {
-      setIsModalOpen(false); setModalMode('ADD');
+      toggleModal(false); setModalMode('ADD');
       setEditFarmerData({ 
           id: '', 
           fullName: '', 
@@ -629,57 +736,167 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
               currentStage: f.currentStage || ''
           }))
       });
-      setModalMode('EDIT'); setIsModalOpen(true);
+      setModalMode('EDIT'); toggleModal(true);
   };
 
   const handleSavePayment = async () => {
       if (!selectedFarmer || !paymentAmount) return;
       setIsSavingPayment(true);
       try {
-          await addPayment({
-              farmerId: selectedFarmer.id,
-              amount: Number(paymentAmount),
-              date: new Date().toISOString(),
-              method: 'CASH',
-              note: paymentNote,
-              accountId: selectedAccountId || undefined
-          });
-          showToast('Ödeme kaydedildi', 'success');
+          if (editingPayment) {
+              await updatePayment({
+                  ...editingPayment,
+                  amount: Number(paymentAmount),
+                  note: paymentNote,
+                  method: paymentMethod,
+                  dueDate: (paymentMethod === 'CHECK' || paymentMethod === 'TEDYE') ? paymentDate : undefined,
+                  accountId: selectedAccountId || undefined
+              });
+              showToast('Ödeme güncellendi', 'success');
+          } else {
+              await addPayment({
+                  farmerId: selectedFarmer.id,
+                  amount: Number(paymentAmount),
+                  date: new Date().toISOString(),
+                  method: paymentMethod,
+                  dueDate: (paymentMethod === 'CHECK' || paymentMethod === 'TEDYE') ? paymentDate : undefined,
+                  note: paymentNote,
+                  accountId: selectedAccountId || undefined,
+                  createdById: activeTeamMember?.id
+              });
+              showToast('Ödeme kaydedildi', 'success');
+          }
           hapticFeedback('success');
           setIsPaymentModalOpen(false);
+          setEditingPayment(null);
           setPaymentAmount('');
           setPaymentNote('');
+          setPaymentMethod('CASH');
+          setPaymentDate(new Date().toISOString().split('T')[0]);
           setSelectedAccountId('');
           await loadFarmerDetails();
       } catch (e) {
-          showToast('Ödeme kaydedilemedi', 'error');
+          showToast('İşlem başarısız', 'error');
       } finally {
           setIsSavingPayment(false);
       }
+  };
+
+  const findLastPriceForPesticide = (pesticideId: string) => {
+      const sortedPrescriptions = [...farmerPrescriptions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      for (const p of sortedPrescriptions) {
+          const item = p.items.find(i => i.pesticideId === pesticideId);
+          if (item && item.unitPrice) {
+              return item.unitPrice;
+          }
+      }
+      return 0;
+  };
+
+  const handleAddReturnItem = (pesticide: Pesticide) => {
+      if (returnItems.some(i => i.pesticideId === pesticide.id)) {
+          showToast('Bu ürün zaten iade listesinde', 'error');
+          return;
+      }
+      const lastPrice = findLastPriceForPesticide(pesticide.id);
+      setReturnItems([...returnItems, {
+          pesticideId: pesticide.id,
+          pesticideName: pesticide.name,
+          quantity: 1,
+          unitPrice: lastPrice
+      }]);
+      setReturnSearchTerm('');
+  };
+
+  const handleSaveReturn = async () => {
+      if (!selectedFarmer || returnItems.length === 0) return;
+      setIsSavingReturn(true);
+      try {
+          const totalAmount = returnItems.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
+          const prescriptionData = {
+              farmerId: selectedFarmer.id,
+              date: new Date().toISOString(),
+              engineerName: userProfile.fullName,
+              items: returnItems.map(item => ({
+                  pesticideId: item.pesticideId,
+                  pesticideName: item.pesticideName,
+                  dosage: 'İade',
+                  quantity: (-item.quantity).toString(),
+                  unitPrice: item.unitPrice,
+                  totalPrice: -(item.quantity * item.unitPrice),
+                  priceType: 'CASH' as const
+              })),
+              isOfficial: false,
+              totalAmount: -totalAmount,
+              isProcessed: false,
+              isInventoryProcessed: false
+          };
+          
+          const id = await addPrescription(prescriptionData);
+          await togglePrescriptionStatus(id);
+          
+          showToast('İade başarıyla kaydedildi', 'success');
+          hapticFeedback('success');
+          setIsReturnModalOpen(false);
+          setReturnItems([]);
+          await loadFarmerDetails();
+      } catch (error) {
+          showToast('İade kaydedilirken hata oluştu', 'error');
+      } finally {
+          setIsSavingReturn(false);
+      }
+  };
+
+  const handleEditPayment = (payment: Payment) => {
+      setEditingPayment(payment);
+      setPaymentAmount(payment.amount.toString());
+      setPaymentNote(payment.note || '');
+      setSelectedAccountId(payment.accountId || '');
+      setIsPaymentModalOpen(true);
   };
 
   const handleSaveManualDebt = async () => {
       if (!selectedFarmer || !debtAmount) return;
       setIsSavingDebt(true);
       try {
-          await addManualDebt({
-              farmerId: selectedFarmer.id,
-              amount: Number(debtAmount),
-              date: new Date(debtDate).toISOString(),
-              note: debtNote
-          });
-          showToast('Borç kaydedildi', 'success');
+          if (editingManualDebt) {
+              await updateManualDebt({
+                  ...editingManualDebt,
+                  amount: Number(debtAmount),
+                  date: new Date(debtDate).toISOString(),
+                  note: debtNote
+              });
+              showToast('Borç güncellendi', 'success');
+          } else {
+              await addManualDebt({
+                  farmerId: selectedFarmer.id,
+                  amount: Number(debtAmount),
+                  date: new Date(debtDate).toISOString(),
+                  note: debtNote,
+                  createdById: activeTeamMember?.id
+              });
+              showToast('Borç kaydedildi', 'success');
+          }
           hapticFeedback('success');
           setIsManualDebtModalOpen(false);
+          setEditingManualDebt(null);
           setDebtAmount('');
           setDebtNote('');
           setDebtDate(new Date().toISOString().split('T')[0]);
           await loadFarmerDetails();
       } catch (e) {
-          showToast('Borç kaydedilemedi', 'error');
+          showToast('İşlem başarısız', 'error');
       } finally {
           setIsSavingDebt(false);
       }
+  };
+
+  const handleEditManualDebt = (debt: ManualDebt) => {
+      setEditingManualDebt(debt);
+      setDebtAmount(debt.amount.toString());
+      setDebtNote(debt.note || '');
+      setDebtDate(new Date(debt.date).toISOString().split('T')[0]);
+      setIsManualDebtModalOpen(true);
   };
 
   const handleDeleteManualDebt = async (id: string) => {
@@ -687,6 +904,8 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           await deleteManualDebt(id);
           showToast('Borç kaydı silindi', 'success');
           hapticFeedback('medium');
+          setIsManualDebtModalOpen(false);
+          setEditingManualDebt(null);
           await loadFarmerDetails();
       }
   };
@@ -699,7 +918,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       text += `Dönem: ${reportStartDate ? new Date(reportStartDate).toLocaleDateString('tr-TR') : 'Başlangıç'} - ${reportEndDate ? new Date(reportEndDate).toLocaleDateString('tr-TR') : 'Güncel'}\n\n`;
       
       const filteredItems = [
-          ...farmerPrescriptions.map(p => ({ ...p, type: 'DEBT', label: 'Reçete Satışı' })),
+          ...farmerPrescriptions.map(p => ({ ...p, type: p.priceType === 'CASH' ? 'CASH' : 'DEBT', label: p.priceType === 'CASH' ? 'Peşin Satış' : `${prescriptionLabel} Satışı` })),
           ...farmerPayments.map(p => ({ ...p, type: 'PAYMENT', label: 'Tahsilat' })),
           ...farmerManualDebts.map(d => ({ ...d, type: 'DEBT', label: 'Manuel Borç' }))
       ]
@@ -714,13 +933,13 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       filteredItems.forEach(item => {
           const date = new Date(item.date).toLocaleDateString('tr-TR');
           const amount = (item as any).amount || (item as any).totalAmount;
-          text += `${date} | ${item.label}: *${item.type === 'DEBT' ? '-' : '+'}${amount.toLocaleString('tr-TR')} ₺*\n`;
+          text += `${date} | ${item.label}: *${item.type === 'DEBT' ? '-' : item.type === 'CASH' ? '' : '+'}${formatCurrency(amount, userProfile?.currency || 'TRY')}*\n`;
       });
 
       text += `\n*TOPLAM DURUM:*\n`;
-      text += `Toplam Alış: *${totalDebt.toLocaleString('tr-TR')} ₺*\n`;
-      text += `Toplam Ödeme: *${totalPaid.toLocaleString('tr-TR')} ₺*\n`;
-      text += `*KALAN BAKİYE: ${Math.abs(overallBalance).toLocaleString('tr-TR')} ₺ ${overallBalance >= 0 ? 'ALACAK' : 'BORÇ'}*\n`;
+      text += `Toplam Alış: *${formatCurrency(totalDebt, userProfile?.currency || 'TRY')}*\n`;
+      text += `Toplam Ödeme: *${formatCurrency(totalPaid, userProfile?.currency || 'TRY')}*\n`;
+      text += `*KALAN BAKİYE: ${formatCurrency(Math.abs(overallBalance), userProfile?.currency || 'TRY')} ${overallBalance >= 0 ? 'ALACAK' : 'BORÇ'}*\n`;
       
       const url = `https://wa.me/${selectedFarmer.phoneNumber.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`;
       window.open(url, '_blank');
@@ -814,8 +1033,8 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const handleDeleteFarmer = async () => {
       if (!selectedFarmer) return;
       if (window.confirm("Bu çiftçiyi ve tüm kayıtlarını silmek istediğinize emin misiniz?")) {
-          await deleteFarmer(selectedFarmer.id); 
-          showToast('Çiftçi kaydı silindi', 'success');
+          await softDeleteFarmer(selectedFarmer.id); 
+          showToast(`${farmerLabel} kaydı silindi`, 'success');
           hapticFeedback('medium');
           changeFarmerSelection(null); 
           await loadFarmers();
@@ -829,7 +1048,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       const fManualDebts = manualDebts.filter(d => d.farmerId === farmer.id);
       
       const totalPaid = fPayments.reduce((acc, p) => acc + p.amount, 0);
-      const totalDebt = fPrescriptions.reduce((acc, p) => acc + (p.totalAmount || 0), 0) + 
+      const totalDebt = fPrescriptions.filter(p => p.priceType !== 'CASH').reduce((acc, p) => acc + (p.totalAmount || 0), 0) + 
                         fManualDebts.filter(d => !d.id.startsWith('turnover-')).reduce((acc, d) => acc + d.amount, 0);
       
       const overallBalance = totalPaid - totalDebt;
@@ -853,7 +1072,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           f.fullName,
           f.phoneNumber,
           f.village,
-          `${Math.abs(f.overallBalance || 0).toLocaleString('tr-TR')} TL ${f.overallBalance && f.overallBalance >= 0 ? 'ALACAK' : 'BORC'}`
+          `${formatCurrency(Math.abs(f.overallBalance || 0), userProfile?.currency || 'TRY')} ${f.overallBalance && f.overallBalance >= 0 ? 'ALACAK' : 'BORC'}`
       ]);
 
       (doc as any).autoTable({
@@ -890,19 +1109,33 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                     <button onClick={() => setSelectedPrescription(null)} className="flex items-center text-stone-400 hover:text-stone-200 font-medium px-2 py-1 -ml-2 rounded-lg hover:bg-white/5 transition-colors text-xs">
                         <ChevronLeft className="mr-1" size={18}/> Cariye Dön
                     </button>
-                    <button 
-                        onClick={() => onEditPrescription(selectedPrescription.id)}
-                        className="flex items-center px-3 py-1.5 bg-stone-800 text-stone-300 rounded-xl border border-white/5 hover:text-emerald-400 hover:bg-stone-700 transition-all active:scale-95"
-                    >
-                        <Edit2 size={14} className="mr-1.5" />
-                        <span className="text-[10px] font-black uppercase tracking-wide">Düzenle</span>
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button 
+                            onClick={() => onEditPrescription(selectedPrescription.id)}
+                            className="flex items-center px-3 py-1.5 bg-stone-800 text-stone-300 rounded-xl border border-white/5 hover:text-emerald-400 hover:bg-stone-700 transition-all active:scale-95"
+                        >
+                            <Edit2 size={14} className="mr-1.5" />
+                            <span className="text-[10px] font-black uppercase tracking-wide">Düzenle</span>
+                        </button>
+                        <button 
+                            onClick={() => {
+                                setPrescriptionToDelete(selectedPrescription.id);
+                                setIsDeleteModalOpen(true);
+                            }}
+                            className="flex items-center px-3 py-1.5 bg-stone-800 text-stone-300 rounded-xl border border-white/5 hover:text-rose-400 hover:bg-stone-700 transition-all active:scale-95"
+                        >
+                            <Trash2 size={14} className="mr-1.5" />
+                            <span className="text-[10px] font-black uppercase tracking-wide">Sil</span>
+                        </button>
+                    </div>
                 </div>
                 <div ref={receiptRef} className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-sm mx-auto relative overflow-hidden text-stone-900 mb-6 border border-stone-300 mt-2">
                     <div className="absolute top-0 left-0 w-full h-2 bg-emerald-600"></div>
                     <div className="flex justify-between items-start mb-6 pt-2">
                         <div>
-                            <h3 className="font-black text-lg text-stone-900 tracking-tight">ZİRAİ REÇETE</h3>
+                            <h3 className="font-black text-lg text-stone-900 tracking-tight">
+                                {selectedPrescription.totalAmount && selectedPrescription.totalAmount < 0 ? 'İADE MAKBUZU' : 'ZİRAİ REÇETE'}
+                            </h3>
                             <p className="text-[9px] text-stone-500 font-bold uppercase tracking-widest mt-1">No: {selectedPrescription.prescriptionNo}</p>
                             {selectedPrescription.fieldId && (
                                 <p className="text-[10px] text-emerald-600 font-bold mt-1">
@@ -917,7 +1150,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                     </div>
                     
                     <div className="min-h-[200px]">
-                        {selectedPrescription.totalAmount && selectedPrescription.totalAmount > 0 ? (
+                        {selectedPrescription.totalAmount && selectedPrescription.totalAmount !== 0 ? (
                             <table className="w-full text-xs">
                                 <thead className="bg-stone-50 text-stone-500 uppercase text-[8px] font-black tracking-widest border-b border-stone-100">
                                     <tr>
@@ -935,22 +1168,24 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                                 <div className="text-[9px] text-stone-500 font-mono mt-0.5">Doz: {item.dosage}</div>
                                             </td>
                                             <td className="p-2 text-center font-bold text-stone-700">
-                                                {item.quantity || '-'}
+                                                {item.quantity ? Math.abs(Number(item.quantity)) : '-'}
                                             </td>
                                             <td className="p-2 text-right font-mono text-stone-600">
-                                                {item.unitPrice ? item.unitPrice.toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' ₺' : '-'}
+                                                {item.unitPrice ? formatCurrency(item.unitPrice, userProfile?.currency || 'TRY') : '-'}
                                             </td>
                                             <td className="p-2 text-right font-mono font-bold text-stone-800">
-                                                {item.totalPrice ? item.totalPrice.toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' ₺' : '-'}
+                                                {item.totalPrice ? formatCurrency(Math.abs(item.totalPrice), userProfile?.currency || 'TRY') : '-'}
                                             </td>
                                         </tr>
                                     ))}
                                 </tbody>
                                 <tfoot>
                                     <tr className="bg-stone-50/50 border-t border-stone-200">
-                                        <td colSpan={3} className="p-2 text-right font-bold text-stone-500 uppercase text-[9px] tracking-widest pt-3">Reçete Toplamı</td>
+                                        <td colSpan={3} className="p-2 text-right font-bold text-stone-500 uppercase text-[9px] tracking-widest pt-3">
+                                            {selectedPrescription.totalAmount < 0 ? 'İade Toplamı' : `${prescriptionLabel} Toplamı`}
+                                        </td>
                                         <td className="p-2 text-right font-black text-emerald-600 font-mono text-sm pt-3">
-                                            {selectedPrescription.totalAmount.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                                            {formatCurrency(Math.abs(selectedPrescription.totalAmount), userProfile?.currency || 'TRY')}
                                         </td>
                                     </tr>
                                 </tfoot>
@@ -1022,6 +1257,22 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                         {isProcessingPdf ? <Loader2 size={16} className="animate-spin"/> : <Download size={16}/>} 
                     </button>
                 </div>
+
+                <ConfirmationModal 
+                    isOpen={isDeleteModalOpen}
+                    onClose={() => { setIsDeleteModalOpen(false); setPrescriptionToDelete(null); }}
+                    onConfirm={async () => {
+                        if (prescriptionToDelete) {
+                            await softDeletePrescription(prescriptionToDelete);
+                            showToast(`${prescriptionLabel} silindi`, 'info');
+                            hapticFeedback('medium');
+                            setSelectedPrescription(null);
+                            setPrescriptionToDelete(null);
+                        }
+                    }}
+                    title={`${prescriptionLabel} Silinecek`}
+                    message={t('prescription.delete_confirm', { label: prescriptionLabel.toLowerCase() }) || `Bu ${prescriptionLabel.toLowerCase()}yi silmek istediğinize emin misiniz?`}
+                />
             </div>
          );
      }
@@ -1075,7 +1326,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                             </thead>
                             <tbody>
                                 {[
-                                    ...farmerPrescriptions.map(p => ({ ...p, type: 'DEBT', label: 'Reçete Satışı' })),
+                                    ...farmerPrescriptions.map(p => ({ ...p, type: p.priceType === 'CASH' ? 'CASH' : 'DEBT', label: p.priceType === 'CASH' ? 'Peşin Satış' : ((p.totalAmount || 0) < 0 ? 'İade Makbuzu' : `${prescriptionLabel} Satışı`) })),
                                     ...farmerPayments.map(p => ({ ...p, type: 'PAYMENT', label: 'Tahsilat' })),
                                     ...farmerManualDebts.map(d => ({ ...d, type: 'DEBT', label: 'Manuel Borç' }))
                                 ]
@@ -1090,9 +1341,9 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                     <tr key={idx} className="border-b border-stone-100">
                                         <td className="py-4 text-sm">{new Date(item.date).toLocaleDateString('tr-TR')}</td>
                                         <td className="py-4 text-sm font-bold">{item.label}</td>
-                                        <td className="py-4 text-sm text-stone-500">{(item as any).note || '-'}</td>
-                                        <td className="py-4 text-sm text-right font-bold text-rose-600">{item.type === 'DEBT' ? `${((item as any).amount || (item as any).totalAmount).toLocaleString('tr-TR')} ₺` : '-'}</td>
-                                        <td className="py-4 text-sm text-right font-bold text-emerald-600">{item.type === 'PAYMENT' ? `${(item as any).amount.toLocaleString('tr-TR')} ₺` : '-'}</td>
+                                        <td className="py-4 text-sm text-stone-500">{(item as any).note || (item.type === 'CASH' ? `Tutar: ${formatCurrency(Math.abs((item as any).amount || (item as any).totalAmount), userProfile?.currency || 'TRY')}` : '-')}</td>
+                                        <td className="py-4 text-sm text-right font-bold text-rose-600">{item.type === 'DEBT' ? formatCurrency(Math.abs((item as any).amount || (item as any).totalAmount), userProfile?.currency || 'TRY') : '-'}</td>
+                                        <td className="py-4 text-sm text-right font-bold text-emerald-600">{item.type === 'PAYMENT' ? formatCurrency(Math.abs((item as any).amount), userProfile?.currency || 'TRY') : '-'}</td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -1102,15 +1353,15 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                             <div className="w-80 space-y-3">
                                 <div className="flex justify-between items-center py-2 border-b border-stone-100">
                                     <span className="text-xs font-bold text-stone-500 uppercase">Toplam Alışlar</span>
-                                    <span className="text-lg font-bold text-rose-600">{totalDebt.toLocaleString('tr-TR')} ₺</span>
+                                    <span className="text-lg font-bold text-rose-600">{formatCurrency(totalDebt, userProfile?.currency || 'TRY')}</span>
                                 </div>
                                 <div className="flex justify-between items-center py-2 border-b border-stone-100">
                                     <span className="text-xs font-bold text-stone-500 uppercase">Toplam Ödemeler</span>
-                                    <span className="text-lg font-bold text-emerald-600">{totalPaid.toLocaleString('tr-TR')} ₺</span>
+                                    <span className="text-lg font-bold text-emerald-600">{formatCurrency(totalPaid, userProfile?.currency || 'TRY')}</span>
                                 </div>
                                 <div className="flex justify-between items-center py-4 bg-stone-900 text-white px-6 rounded-2xl shadow-xl">
                                     <span className="text-sm font-black uppercase tracking-widest">Kalan Bakiye</span>
-                                    <span className="text-2xl font-black">{Math.round(Math.abs(overallBalance)).toLocaleString('tr-TR')} ₺ {overallBalance >= 0 ? 'ALACAK' : 'BORÇ'}</span>
+                                    <span className="text-2xl font-black">{formatCurrency(Math.round(Math.abs(overallBalance)), userProfile?.currency || 'TRY')} {overallBalance >= 0 ? 'ALACAK' : 'BORÇ'}</span>
                                 </div>
                             </div>
                         </div>
@@ -1154,32 +1405,33 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
 
      return (
         <div className="pb-24 animate-in slide-in-from-right duration-300">
-            {/* STABILIZED HEADER: Sticky & Better Buttons */}
-            <div className="sticky top-0 z-20 bg-stone-950/90 backdrop-blur-xl border-b border-white/5 py-3 mb-4 -mx-4 px-4 flex justify-between items-center shadow-lg shadow-black/20">
-                 <button onClick={() => changeFarmerSelection(null)} className="flex items-center text-stone-400 hover:text-stone-200 font-bold px-3 py-2 -ml-2 rounded-xl hover:bg-white/5 transition-colors text-xs">
-                     <ChevronLeft className="mr-1" size={18}/> Geri
-                 </button>
-                 <div className="flex items-center space-x-2">
-                     <button onClick={openEditModal} className="flex items-center px-4 py-2 bg-stone-800 text-stone-300 rounded-xl border border-white/5 hover:text-emerald-400 hover:bg-stone-700 transition-all active:scale-95 shadow-md">
-                        <Edit2 size={14} className="mr-1.5" />
-                        <span className="text-[10px] font-black uppercase tracking-wide">Düzenle</span>
-                     </button>
-                     <button onClick={handleDeleteFarmer} className="flex items-center justify-center w-9 h-9 bg-stone-800 text-stone-400 rounded-xl border border-white/5 hover:text-red-400 hover:bg-stone-700 transition-all active:scale-95 shadow-md">
-                        <Trash2 size={14} />
-                     </button>
-                 </div>
-            </div>
-
             {/* Compact Profile Card */}
             <div className="bg-stone-900/80 backdrop-blur rounded-3xl p-4 shadow-lg border border-white/5 mb-4 flex flex-col items-center relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-full h-16 bg-gradient-to-b from-emerald-900/10 to-transparent -z-10"></div>
                 
                 <div className="flex items-center space-x-3 w-full mb-4">
+                    <button onClick={() => changeFarmerSelection(null)} className="p-2 bg-stone-800 text-stone-400 rounded-xl hover:text-stone-200 transition-colors active:scale-90">
+                        <ChevronLeft size={18}/>
+                    </button>
                     <div className="w-12 h-12 bg-stone-800 border border-emerald-500/20 rounded-2xl flex items-center justify-center text-xl font-black text-emerald-500 shadow-lg">
                         {selectedFarmer.fullName.charAt(0)}
                     </div>
                     <div className="flex-1 min-w-0 text-left">
-                        <h2 className="text-base font-black text-stone-100 truncate tracking-tight">{selectedFarmer.fullName}</h2>
+                        <div className="flex items-center justify-between gap-2">
+                            <h2 className="text-base font-black text-stone-100 truncate tracking-tight">{selectedFarmer.fullName}</h2>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                                {canEditFarmer && (
+                                    <button onClick={openEditModal} className="p-1.5 bg-stone-800/60 text-stone-400 rounded-lg hover:text-emerald-400 transition-all active:scale-90 border border-white/5">
+                                        <Edit2 size={12} />
+                                    </button>
+                                )}
+                                {canEditFarmer && (
+                                    <button onClick={handleDeleteFarmer} className="p-1.5 bg-stone-800/60 text-stone-400 rounded-lg hover:text-red-400 transition-all active:scale-90 border border-white/5">
+                                        <Trash2 size={12} />
+                                    </button>
+                                )}
+                            </div>
+                        </div>
                         <div className="flex items-center text-stone-500 text-xs mt-0.5 font-bold">
                             <MapPin size={10} className="mr-1 text-emerald-500/70"/> {selectedFarmer.village}
                         </div>
@@ -1207,13 +1459,21 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                         )
                     ))}
                 </div>
+
+                <button 
+                    onClick={handleCopyPortalLink}
+                    className="w-full mt-3 py-2.5 bg-emerald-900/20 text-emerald-400 border border-emerald-500/20 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-emerald-900/40 transition-colors"
+                >
+                    <Copy size={14} />
+                    {farmerLabel} Portalı Linkini Kopyala
+                </button>
             </div>
 
             {/* Tabs */}
             <div className="flex p-1 bg-stone-900/60 backdrop-blur rounded-xl mb-2 border border-white/5 shadow-inner">
-                {(['GENERAL', 'VISITS', 'PRESCRIPTIONS', 'DEBT'] as const).map(tab => (
-                    <button key={tab} onClick={() => setActiveTab(tab)} className={`flex-1 py-2 text-[9px] font-black uppercase tracking-wider rounded-lg transition-all duration-200 ${activeTab === tab ? 'bg-stone-700 text-white shadow-md' : 'text-stone-500 hover:text-stone-300'}`}>
-                        {tab === 'GENERAL' ? 'Genel' : (tab === 'VISITS' ? 'Ziyaret' : (tab === 'PRESCRIPTIONS' ? 'Reçete' : 'Cari'))}
+                {tabs.map(tab => (
+                    <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`flex-1 py-2 text-[9px] font-black uppercase tracking-wider rounded-lg transition-all duration-200 ${activeTab === tab.id ? 'bg-stone-700 text-white shadow-md' : 'text-stone-500 hover:text-stone-300'}`}>
+                        {tab.label}
                     </button>
                 ))}
             </div>
@@ -1276,11 +1536,13 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                 </div>
                             </div>
                         </div>
-                        <div className="flex gap-2">
-                            <button onClick={() => onNavigateToPrescription(selectedFarmer.id)} className="flex-1 py-3.5 bg-emerald-700 text-white rounded-2xl font-bold shadow-lg hover:bg-emerald-600 active:scale-95 transition-all flex items-center justify-center text-xs uppercase tracking-wider">
-                                <FileText className="mr-2" size={16}/> Yeni Reçete Yaz
-                            </button>
-                        </div>
+                        {canEditFarmer && (
+                            <div className="flex gap-2">
+                                <button onClick={() => onNavigateToPrescription(selectedFarmer.id)} className="flex-1 py-3.5 bg-emerald-700 text-white rounded-2xl font-bold shadow-lg hover:bg-emerald-600 active:scale-95 transition-all flex items-center justify-center text-xs uppercase tracking-wider">
+                                    <FileText className="mr-2" size={16}/> Yeni {prescriptionLabel} Yaz
+                                </button>
+                            </div>
+                        )}
                     </div>
                 )}
 
@@ -1288,29 +1550,35 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                     <div className="space-y-3">
                         {/* Balance Card */}
                         <div className="bg-stone-900/80 backdrop-blur p-4 rounded-2xl border border-white/5 shadow-sm">
-                            <div className="flex justify-between items-center mb-4">
-                                <h3 className="font-bold text-stone-200 text-xs flex items-center uppercase tracking-wider opacity-70"><Wallet size={14} className="mr-1.5 text-emerald-500"/> Cari Durum</h3>
-                                <div className="flex gap-2">
-                                    <button onClick={() => setIsReportModalOpen(true)} className="bg-blue-600 text-white px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider shadow-lg shadow-blue-900/20 active:scale-95 transition-all flex items-center">
-                                        <Download size={12} className="mr-1"/> Raporla
+                            <div className="mb-4">
+                                <div className="flex gap-1.5 w-full">
+                                    <button onClick={() => setIsReportModalOpen(true)} className="flex-1 bg-blue-600 text-white px-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-wider shadow-md active:scale-95 transition-all flex items-center justify-center">
+                                        <Download size={10} className="mr-1"/> Rapor
                                     </button>
-                                    <button onClick={() => setIsManualDebtModalOpen(true)} className="bg-rose-600 text-white px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider shadow-lg shadow-rose-900/20 active:scale-95 transition-all flex items-center">
-                                        <Plus size={12} className="mr-1"/> Borç Ekle
-                                    </button>
-                                    <button onClick={() => setIsPaymentModalOpen(true)} className="bg-emerald-600 text-white px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider shadow-lg shadow-emerald-900/20 active:scale-95 transition-all flex items-center">
-                                        <CreditCard size={12} className="mr-1"/> Tahsilat Al
-                                    </button>
+                                    {canEditFarmer && (
+                                        <>
+                                            <button onClick={() => setIsManualDebtModalOpen(true)} className="flex-1 bg-rose-600 text-white px-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-wider shadow-md active:scale-95 transition-all flex items-center justify-center">
+                                                <Plus size={10} className="mr-1"/> Borç
+                                            </button>
+                                            <button onClick={() => setIsPaymentModalOpen(true)} className="flex-1 bg-emerald-600 text-white px-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-wider shadow-md active:scale-95 transition-all flex items-center justify-center">
+                                                <CreditCard size={10} className="mr-1"/> Tahsilat
+                                            </button>
+                                            <button onClick={() => setIsReturnModalOpen(true)} className="flex-1 bg-amber-600 text-white px-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-wider shadow-md active:scale-95 transition-all flex items-center justify-center">
+                                                <RefreshCcw size={10} className="mr-1"/> İade Al
+                                            </button>
+                                        </>
+                                    )}
                                 </div>
                             </div>
                             
                             <div className="grid grid-cols-2 gap-3 mb-4">
                                 <div className="bg-stone-950/50 p-3 rounded-xl border border-white/5">
                                     <p className="text-[8px] text-stone-500 uppercase font-black mb-1">{selectedYear} Toplam Borç</p>
-                                    <p className="text-lg font-black text-rose-500">{(yearTotalDebt + (openingBalance < 0 ? Math.abs(openingBalance) : 0)).toLocaleString('tr-TR')} ₺</p>
+                                    <p className="text-lg font-black text-rose-500">{formatCurrency((yearTotalDebt + (openingBalance < 0 ? Math.abs(openingBalance) : 0)), userProfile?.currency || 'TRY')}</p>
                                 </div>
                                 <div className="bg-stone-950/50 p-3 rounded-xl border border-white/5">
                                     <p className="text-[8px] text-stone-500 uppercase font-black mb-1">{selectedYear} Toplam Ödeme</p>
-                                    <p className="text-lg font-black text-emerald-500">{(yearTotalPaid + (openingBalance > 0 ? openingBalance : 0)).toLocaleString('tr-TR')} ₺</p>
+                                    <p className="text-lg font-black text-emerald-500">{formatCurrency((yearTotalPaid + (openingBalance > 0 ? openingBalance : 0)), userProfile?.currency || 'TRY')}</p>
                                 </div>
                             </div>
 
@@ -1318,7 +1586,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                 <div>
                                     <p className="text-[9px] text-stone-400 uppercase font-black mb-0.5">{selectedYear} Sonu Bakiye</p>
                                     <p className={`text-xl font-black ${yearBalance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                        {Math.round(Math.abs(yearBalance)).toLocaleString('tr-TR')} ₺
+                                        {formatCurrency(Math.round(Math.abs(yearBalance)), userProfile?.currency || 'TRY')}
                                         <span className="text-xs font-bold ml-1">{yearBalance >= 0 ? 'Alacaklı' : 'Borçlu'}</span>
                                     </p>
                                 </div>
@@ -1347,14 +1615,14 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                         </div>
                                         <div className="text-right">
                                             <p className={`text-xs font-black ${openingBalance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                                {openingBalance >= 0 ? '+' : ''}{openingBalance.toLocaleString('tr-TR')} ₺
+                                                {openingBalance >= 0 ? '+' : ''}{formatCurrency(openingBalance, userProfile?.currency || 'TRY')}
                                             </p>
                                         </div>
                                     </div>
                                 )}
 
                                 {[
-                                    ...filteredPrescriptions.map(p => ({ ...p, type: 'DEBT', label: 'Reçete Satışı' })), 
+                                    ...filteredPrescriptions.map(p => ({ ...p, type: p.priceType === 'CASH' ? 'CASH' : 'DEBT', label: p.priceType === 'CASH' ? 'Peşin Satış' : ((p.totalAmount || 0) < 0 ? 'İade Makbuzu' : `${prescriptionLabel} Satışı`) })), 
                                     ...filteredPayments.map(p => ({ ...p, type: 'PAYMENT', label: 'Tahsilat' })),
                                     ...filteredManualDebts.filter(d => !d.id.startsWith('turnover-')).map(d => ({ ...d, type: 'DEBT', label: 'Manuel Borç' }))
                                 ]
@@ -1366,21 +1634,33 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                         return (
                                             <div 
                                                 key={idx} 
-                                                className={`p-3 bg-stone-950/50 rounded-xl border border-white/5 flex items-center justify-between group relative ${item.label === 'Reçete Satışı' ? 'cursor-pointer hover:bg-stone-900/80 active:scale-[0.98] transition-all' : ''}`}
+                                                className={`p-3 bg-stone-950/50 rounded-xl border border-white/5 flex items-center justify-between group relative cursor-pointer hover:bg-stone-900/80 active:scale-[0.98] transition-all`}
                                                 onClick={() => {
-                                                    if (item.label === 'Reçete Satışı') {
+                                                    if (item.label === `${prescriptionLabel} Satışı` || item.label === 'İade Makbuzu') {
                                                         const prescription = farmerPrescriptions.find(p => p.id === item.id);
                                                         if (prescription) setSelectedPrescription(prescription);
+                                                    } else if (item.label === 'Manuel Borç') {
+                                                        const debt = farmerManualDebts.find(d => d.id === item.id);
+                                                        if (debt) handleEditManualDebt(debt);
+                                                    } else if (item.label === 'Tahsilat') {
+                                                        const payment = farmerPayments.find(p => p.id === item.id);
+                                                        if (payment) handleEditPayment(payment);
                                                     }
                                                 }}
                                             >
                                                 <div className="flex items-center gap-3">
-                                                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${item.type === 'DEBT' ? 'bg-rose-900/20 text-rose-500' : 'bg-emerald-900/20 text-emerald-500'}`}>
-                                                        {item.type === 'DEBT' ? <FileText size={14} /> : <CreditCard size={14} />}
+                                                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${item.type === 'DEBT' ? 'bg-rose-900/20 text-rose-500' : item.type === 'CASH' ? 'bg-blue-900/20 text-blue-500' : 'bg-emerald-900/20 text-emerald-500'}`}>
+                                                        {item.type === 'DEBT' || item.type === 'CASH' ? <FileText size={14} /> : <CreditCard size={14} />}
                                                     </div>
                                                     <div>
                                                         <p className="text-[10px] font-bold text-stone-200">{item.label}</p>
-                                                        <p className="text-[8px] text-stone-500">{new Date(item.date).toLocaleDateString('tr-TR')}</p>
+                                                        <div className="flex items-center gap-2 mt-0.5">
+                                                            <p className="text-[8px] text-stone-500">{new Date(item.date).toLocaleDateString('tr-TR')}</p>
+                                                            <span className="text-[7px] text-stone-400 font-bold flex items-center bg-stone-800/50 px-1 py-0.5 rounded">
+                                                                <User size={8} className="mr-0.5" />
+                                                                {(item as any).createdById ? (teamMembers.find(m => m.id === (item as any).createdById)?.fullName || 'Yönetici') : 'Yönetici'}
+                                                            </span>
+                                                        </div>
                                                         {dueDate && (
                                                             <p className={`text-[7px] font-bold mt-0.5 ${isOverdue ? 'text-rose-500 animate-pulse' : 'text-amber-500'}`}>
                                                                 Vade: {dueDate}
@@ -1390,20 +1670,30 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                                 </div>
                                                 <div className="text-right flex items-center gap-3">
                                                     <div>
-                                                        <p className={`text-xs font-black ${item.type === 'DEBT' ? 'text-rose-400' : 'text-emerald-400'}`}>
-                                                            {item.type === 'DEBT' ? '-' : '+'}{(item as any).amount?.toLocaleString('tr-TR') || (item as any).totalAmount?.toLocaleString('tr-TR')} ₺
+                                                        <p className={`text-xs font-black ${item.type === 'DEBT' ? ((item as any).totalAmount < 0 ? 'text-emerald-400' : 'text-rose-400') : item.type === 'CASH' ? 'text-blue-400' : 'text-emerald-400'}`}>
+                                                            {item.type === 'DEBT' ? ((item as any).totalAmount < 0 ? '+' : '-') : item.type === 'CASH' ? '' : '+'}{formatCurrency(Math.abs((item as any).amount || (item as any).totalAmount), userProfile?.currency || 'TRY')}
                                                         </p>
                                                         {(item as any).note && <p className="text-[7px] text-stone-500 italic truncate max-w-[60px]">{(item as any).note}</p>}
                                                     </div>
                                                     {item.type === 'PAYMENT' ? (
-                                                        <button onClick={() => handleDeletePayment(item.id)} className="opacity-0 group-hover:opacity-100 p-1 text-stone-500 hover:text-rose-500 transition-all">
-                                                            <Trash2 size={12}/>
-                                                        </button>
-                                                    ) : (
-                                                        (item as any).id.startsWith('manual') && (
-                                                            <button onClick={() => handleDeleteManualDebt(item.id)} className="opacity-0 group-hover:opacity-100 p-1 text-stone-500 hover:text-rose-500 transition-all">
+                                                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                                                            <button onClick={(e) => { e.stopPropagation(); handleEditPayment(item as any); }} className="p-1 text-stone-500 hover:text-emerald-500">
+                                                                <Edit2 size={12}/>
+                                                            </button>
+                                                            <button onClick={(e) => { e.stopPropagation(); handleDeletePayment(item.id); }} className="p-1 text-stone-500 hover:text-rose-500 transition-all">
                                                                 <Trash2 size={12}/>
                                                             </button>
+                                                        </div>
+                                                    ) : (
+                                                        item.label === 'Manuel Borç' && (
+                                                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                                                                <button onClick={(e) => { e.stopPropagation(); handleEditManualDebt(item as any); }} className="p-1 text-stone-500 hover:text-emerald-500">
+                                                                    <Edit2 size={12}/>
+                                                                </button>
+                                                                <button onClick={(e) => { e.stopPropagation(); handleDeleteManualDebt(item.id); }} className="p-1 text-stone-500 hover:text-rose-500">
+                                                                    <Trash2 size={12}/>
+                                                                </button>
+                                                            </div>
                                                         )
                                                     )}
                                                 </div>
@@ -1443,7 +1733,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                 </div>
                                 <div className="flex flex-wrap gap-1">{p.items.map((item, idx) => (<span key={idx} className="text-[8px] bg-stone-800 text-stone-400 px-1.5 py-0.5 rounded flex items-center"><FlaskConical size={8} className="mr-1 text-stone-500"/>{item.pesticideName}</span>))}</div>
                             </div>
-                        )) : <div className="text-center py-6 text-stone-600 text-[10px]">Reçete yok.</div>}
+                        )) : <div className="text-center py-6 text-stone-600 text-[10px]">{prescriptionLabel} yok.</div>}
                     </div>
                 )}
             </div>
@@ -1458,6 +1748,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                 data={editFarmerData}
                 setData={setEditFarmerData}
                 onSave={handleSaveFarmer}
+                farmerLabel={farmerLabel}
             />
             
             {/* Payment Modal */}
@@ -1475,7 +1766,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                         
                         <div className="space-y-4">
                             <div>
-                                <label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Ödeme Tutarı (₺)</label>
+                                <label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Ödeme Tutarı ({getCurrencySymbol(userProfile?.currency || 'TRY')})</label>
                                 <input 
                                     type="number" 
                                     value={paymentAmount} 
@@ -1485,6 +1776,38 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                 />
                             </div>
                             <div>
+                                <label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Ödeme Yöntemi</label>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {[
+                                        { id: 'CASH', label: 'Nakit' },
+                                        { id: 'CHECK', label: 'Çek' },
+                                        { id: 'TEDYE', label: 'Tediye' }
+                                    ].map(method => (
+                                        <button 
+                                            key={method.id}
+                                            onClick={() => setPaymentMethod(method.id as any)}
+                                            className={`py-3 rounded-xl text-[9px] font-black uppercase tracking-widest border transition-all ${paymentMethod === method.id ? 'bg-emerald-600 border-emerald-500 text-white' : 'bg-stone-950 border-stone-800 text-stone-500'}`}
+                                        >
+                                            {method.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            {(paymentMethod === 'CHECK' || paymentMethod === 'TEDYE') && (
+                                <div className="animate-in slide-in-from-top-2 duration-300">
+                                    <label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Vade Tarihi</label>
+                                    <div className="relative">
+                                        <Calendar size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-500" />
+                                        <input 
+                                            type="date" 
+                                            className="w-full bg-stone-950 border border-stone-800 rounded-2xl p-3.5 pl-12 text-xs text-stone-100 outline-none focus:border-emerald-500/50 transition-all"
+                                            value={paymentDate}
+                                            onChange={(e) => setPaymentDate(e.target.value)}
+                                        />
+                                    </div>
+                                </div>
+                            )}
+                            <div>
                                 <label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Hesap Seçin</label>
                                 <select 
                                     value={selectedAccountId}
@@ -1493,7 +1816,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                 >
                                     <option value="">Hesap Seçilmedi</option>
                                     {accounts.map(acc => (
-                                        <option key={acc.id} value={acc.id}>{acc.name} ({new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(acc.balance)})</option>
+                                        <option key={acc.id} value={acc.id}>{acc.name} ({new Intl.NumberFormat('tr-TR', { style: 'currency', currency: userProfile?.currency || 'TRY' }).format(acc.balance)})</option>
                                     ))}
                                 </select>
                             </div>
@@ -1518,14 +1841,131 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                 </div>
             )}
 
+            {/* Return Modal */}
+            {isReturnModalOpen && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex flex-col items-center justify-center p-4 animate-in fade-in duration-200">
+                    <div className="bg-stone-900 rounded-3xl w-full max-w-lg p-5 shadow-2xl relative border border-white/10 animate-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col">
+                        <button onClick={() => setIsReturnModalOpen(false)} className="absolute top-3 right-3 p-1.5 bg-stone-800 rounded-full text-stone-400 hover:text-stone-200 z-10"><X size={16} /></button>
+                        <div className="text-center mb-4 shrink-0">
+                            <div className="w-12 h-12 bg-amber-900/30 text-amber-500 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                                <RefreshCcw size={24} />
+                            </div>
+                            <h2 className="text-base font-bold text-stone-100">İade Al</h2>
+                            <p className="text-[10px] text-stone-500 mt-1">{selectedFarmer?.fullName}</p>
+                        </div>
+                        
+                        <div className="space-y-4 flex-1 overflow-y-auto pr-1">
+                            {/* Product Search */}
+                            <div>
+                                <label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Ürün Ara</label>
+                                <div className="relative">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-600" size={16} />
+                                    <input 
+                                        type="text" 
+                                        value={returnSearchTerm} 
+                                        onChange={e => setReturnSearchTerm(e.target.value)}
+                                        className="w-full p-3 bg-stone-950 border border-stone-800 rounded-xl outline-none text-stone-200 text-xs pl-10 focus:border-amber-500/50 transition-all" 
+                                        placeholder="İade edilecek ürünü arayın..."
+                                    />
+                                </div>
+                                {returnSearchTerm.length > 1 && (
+                                    <div className="mt-2 bg-stone-950 border border-stone-800 rounded-xl overflow-hidden max-h-40 overflow-y-auto">
+                                        {inventory.filter(p => p.pesticideName.toLowerCase().includes(returnSearchTerm.toLowerCase())).map(p => (
+                                            <button 
+                                                key={p.pesticideId} 
+                                                onClick={() => handleAddReturnItem({ id: p.pesticideId, name: p.pesticideName, activeIngredient: '', defaultDosage: '', category: p.category })}
+                                                className="w-full text-left p-3 hover:bg-stone-900 text-stone-300 text-xs border-b border-stone-800/50 last:border-0"
+                                            >
+                                                {p.pesticideName}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Return Items */}
+                            {returnItems.length > 0 && (
+                                <div className="space-y-2">
+                                    <label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">İade Edilecek Ürünler</label>
+                                    {returnItems.map((item, index) => (
+                                        <div key={item.pesticideId} className="bg-stone-950 p-3 rounded-xl border border-stone-800 flex items-center gap-3">
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-xs font-bold text-stone-200 truncate">{item.pesticideName}</p>
+                                                <div className="flex items-center gap-2 mt-1">
+                                                    <div className="flex items-center bg-stone-900 rounded-lg overflow-hidden border border-stone-800">
+                                                        <button onClick={() => {
+                                                            const newItems = [...returnItems];
+                                                            newItems[index].quantity = Math.max(1, newItems[index].quantity - 1);
+                                                            setReturnItems(newItems);
+                                                        }} className="px-2 py-1 text-stone-400 hover:text-white">-</button>
+                                                        <span className="px-2 text-xs font-bold text-stone-200 min-w-[2rem] text-center">{item.quantity}</span>
+                                                        <button onClick={() => {
+                                                            const newItems = [...returnItems];
+                                                            newItems[index].quantity += 1;
+                                                            setReturnItems(newItems);
+                                                        }} className="px-2 py-1 text-stone-400 hover:text-white">+</button>
+                                                    </div>
+                                                    <span className="text-[10px] text-stone-500">x</span>
+                                                    <input 
+                                                        type="number"
+                                                        value={item.unitPrice}
+                                                        onChange={e => {
+                                                            const newItems = [...returnItems];
+                                                            newItems[index].unitPrice = Number(e.target.value);
+                                                            setReturnItems(newItems);
+                                                        }}
+                                                        className="w-20 bg-stone-900 border border-stone-800 rounded-lg px-2 py-1 text-xs text-stone-200 outline-none focus:border-amber-500/50"
+                                                    />
+                                                    <span className="text-[10px] text-stone-500">{userProfile?.currency || 'TRY'}</span>
+                                                </div>
+                                            </div>
+                                            <div className="text-right shrink-0">
+                                                <p className="text-sm font-black text-amber-500">{formatCurrency(item.quantity * item.unitPrice, userProfile?.currency || 'TRY')}</p>
+                                                <button onClick={() => setReturnItems(returnItems.filter((_, i) => i !== index))} className="text-[10px] text-rose-500 hover:text-rose-400 mt-1 uppercase font-bold">Kaldır</button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    <div className="pt-3 border-t border-stone-800 flex justify-between items-center">
+                                        <span className="text-xs font-bold text-stone-400 uppercase">Toplam İade Tutarı</span>
+                                        <span className="text-lg font-black text-amber-500">
+                                            {formatCurrency(returnItems.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0), userProfile?.currency || 'TRY')}
+                                        </span>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                        
+                        <div className="shrink-0 pt-4 mt-2 border-t border-white/5">
+                            <button 
+                                onClick={handleSaveReturn}
+                                disabled={isSavingReturn || returnItems.length === 0}
+                                className="w-full bg-amber-700 text-white py-3.5 rounded-2xl font-bold text-xs shadow-xl shadow-amber-900/20 flex justify-center items-center active:scale-95 transition-all border border-amber-500/20 disabled:opacity-50"
+                            >
+                                {isSavingReturn ? <Loader2 size={18} className="animate-spin" /> : 'İadeyi Onayla'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
 
             {/* Manual Debt Modal */}
             {isManualDebtModalOpen && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
                     <div className="bg-stone-900 rounded-3xl w-full max-w-sm shadow-2xl border border-white/10 overflow-hidden animate-in zoom-in-95 duration-200">
                         <div className="p-4 border-b border-white/5 flex justify-between items-center">
-                            <h2 className="text-sm font-bold text-stone-100 flex items-center"><Plus className="mr-2 text-rose-500" size={16}/> Borç Ekle</h2>
-                            <button onClick={() => setIsManualDebtModalOpen(false)} className="text-stone-500 hover:text-stone-300"><X size={18}/></button>
+                            <h2 className="text-sm font-bold text-stone-100 flex items-center">
+                                {editingManualDebt ? <Edit2 className="mr-2 text-emerald-500" size={16}/> : <Plus className="mr-2 text-rose-500" size={16}/>} 
+                                {editingManualDebt ? 'Borç Düzenle' : 'Borç Ekle'}
+                            </h2>
+                            <div className="flex items-center gap-2">
+                                {editingManualDebt && (
+                                    <button onClick={() => handleDeleteManualDebt(editingManualDebt.id)} className="text-stone-500 hover:text-rose-500 transition-colors p-1" title="Sil">
+                                        <Trash2 size={16}/>
+                                    </button>
+                                )}
+                                <button onClick={() => { setIsManualDebtModalOpen(false); setEditingManualDebt(null); }} className="text-stone-500 hover:text-stone-300 p-1"><X size={18}/></button>
+                            </div>
                         </div>
                         <div className="p-4 space-y-4">
                             <div>
@@ -1533,7 +1973,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                 <input type="date" value={debtDate} onChange={(e) => setDebtDate(e.target.value)} className="w-full bg-stone-950 border border-white/10 rounded-xl px-4 py-3 text-stone-100 text-sm focus:border-rose-500 outline-none transition-all" />
                             </div>
                             <div>
-                                <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Tutar (₺)</label>
+                                <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Tutar ({getCurrencySymbol(userProfile?.currency || 'TRY')})</label>
                                 <input type="number" value={debtAmount} onChange={(e) => setDebtAmount(e.target.value)} className="w-full bg-stone-950 border border-white/10 rounded-xl px-4 py-3 text-stone-100 text-sm focus:border-rose-500 outline-none transition-all" placeholder="0.00" />
                             </div>
                             <div>
@@ -1605,7 +2045,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       <div className="flex items-center justify-between mb-3 mt-2 px-1">
           <button onClick={onBack} className="flex items-center text-stone-400 hover:text-stone-200 font-medium py-1 rounded-lg transition-colors text-xs"><ArrowLeft size={16} className="mr-1"/> Geri</button>
           <div className="text-right">
-              <span className="text-[9px] font-bold text-stone-500 uppercase tracking-widest block">{farmers.length} Çiftçi</span>
+              <span className="text-[9px] font-bold text-stone-500 uppercase tracking-widest block">{farmers.length} {farmerLabel}</span>
               {userProfile.lastSyncTime && (
                   <span className="text-[8px] text-emerald-500/80 flex items-center justify-end mt-0.5">
                       <Check size={8} className="mr-0.5" />
@@ -1618,7 +2058,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       <div className="sticky top-0 z-10 bg-stone-950/80 backdrop-blur-md pb-2 pt-0">
          <div className="bg-stone-900 rounded-xl shadow-sm border border-white/5 flex items-center p-0.5">
              <Search className="text-stone-500 ml-2" size={14} />
-             <input type="text" placeholder="Çiftçi adı veya köy ara..." className="w-full p-2 bg-transparent outline-none font-medium text-stone-200 placeholder-stone-600 text-[11px]" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+             <input type="text" placeholder={`${farmerLabel} adı veya köy ara...`} className="w-full p-2 bg-transparent outline-none font-medium text-stone-200 placeholder-stone-600 text-[11px]" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
              <button onClick={downloadFarmersPdf} className="p-1.5 bg-stone-800 hover:bg-stone-700 text-rose-400 rounded-lg transition-all m-0.5 flex items-center justify-center" title="PDF İndir">
                  <FileText size={14}/>
              </button>
@@ -1626,7 +2066,9 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                  {isSyncing ? <Loader2 size={10} className="animate-spin"/> : <RefreshCw size={10}/>}
                  {isSyncing ? '...' : 'Senk'}
              </button>
-             <button onClick={handleContactImport} disabled={isImporting} className={`p-1.5 rounded-lg transition-all m-0.5 flex items-center justify-center ${isImporting ? 'bg-emerald-900/30 text-emerald-500' : 'bg-stone-800 hover:bg-stone-700 text-emerald-500'}`}>{isImporting ? <Loader2 size={14} className="animate-spin"/> : <Contact size={14}/>}</button>
+             {canCreateFarmer && (
+                <button onClick={handleContactImport} disabled={isImporting} className={`p-1.5 rounded-lg transition-all m-0.5 flex items-center justify-center ${isImporting ? 'bg-emerald-900/30 text-emerald-500' : 'bg-stone-800 hover:bg-stone-700 text-emerald-500'}`}>{isImporting ? <Loader2 size={14} className="animate-spin"/> : <Contact size={14}/>}</button>
+             )}
          </div>
       </div>
 
@@ -1650,7 +2092,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                 <div className="flex items-center space-x-3">
                     <div className="text-right">
                         <div className={`text-xs font-bold ${farmer.overallBalance && farmer.overallBalance < 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
-                            {Math.abs(farmer.overallBalance || 0).toLocaleString('tr-TR')} ₺
+                            {formatCurrency(Math.abs(farmer.overallBalance || 0), userProfile?.currency || 'TRY')}
                         </div>
                         <div className="text-[8px] text-stone-500 uppercase tracking-wider">
                             {farmer.overallBalance && farmer.overallBalance < 0 ? 'Borç' : 'Alacak'}
@@ -1672,7 +2114,11 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
         {filteredFarmers.length === 0 && <div className="text-center py-10"><User size={28} className="mx-auto mb-2 text-stone-700"/><p className="text-stone-500 text-[10px]">Kayıt yok.</p></div>}
       </div>
 
-      <button onClick={() => { setModalMode('ADD'); setIsModalOpen(true); }} className="fixed bottom-32 right-5 bg-emerald-600 text-white p-3 rounded-full shadow-lg shadow-emerald-900/50 hover:bg-emerald-500 transition-all transform hover:scale-105 z-50 flex items-center justify-center"><Plus size={22} /></button>
+      {canCreateFarmer && (
+          <button onClick={() => { setModalMode('ADD'); toggleModal(true); }} className="fixed bottom-32 right-5 bg-emerald-600 text-white px-6 py-3 rounded-full shadow-lg shadow-emerald-900/50 hover:bg-emerald-500 transition-all transform hover:scale-105 z-50 flex items-center justify-center gap-2 font-bold text-sm">
+            <Plus size={22} /> Yeni Cari
+          </button>
+      )}
 
       {/* Modals (Import & Add/Edit) */}
       {isImportModalOpen && (
@@ -1694,6 +2140,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
         data={editFarmerData}
         setData={setEditFarmerData}
         onSave={handleSaveFarmer}
+        farmerLabel={farmerLabel}
       />
 
     </div>

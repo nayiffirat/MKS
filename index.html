@@ -5,7 +5,7 @@
     <meta name="google-site-verification" content="NRTE041qYBntCrTDv58_8U6BkMA0ZN512QlfEv8JY1Y" />
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <meta name="theme-color" content="#0c0a09" />
+    <meta name="theme-color" content="#216e48" />
     
     <title>Mühendis Kayıt Sistemi - Ziraat Mühendisleri İçin Tarla ve Çiftçi Yönetimi</title>
     <meta name="description" content="Ziraat Mühendisleri için özel olarak tasarlanmış, çevrimdışı çalışabilen tarla, çiftçi, reçete ve ziyaret yönetim sistemi. Çiftçilerinizi ve tarlalarınızı dijital ortamda takip edin." />
@@ -24,7 +24,19 @@
     <meta property="twitter:description" content="Ziraat Mühendisleri için dijital yönetim ve takip asistanı." />
     
     <!-- App Icons -->
-    <link rel="icon" type="image/png" href="/icons/favicon.png" />
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <link rel="apple-touch-icon" href="/logo.svg" />
+    <link rel="apple-touch-icon" sizes="152x152" href="/logo.svg" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/logo.svg" />
+    <link rel="apple-touch-icon" sizes="167x167" href="/logo.svg" />
+    
+    <!-- Apple PWA Meta Tags -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Mühendis Kayıt" />
+    
+    <!-- Manifest -->
+    <link rel="manifest" href="/manifest.json" />
     
     <!-- Tailwind CSS (Hızlı kurulum için CDN bırakıldı, ancak production'da local önerilir) -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -113,6 +125,9 @@
         opacity: 1 !important;
       }
     </style>
+    <script>
+      window.process = window.process || { env: {} };
+    </script>
 <script type="importmap">
 {
   "imports": {

@@ -39,7 +39,8 @@ export const Kasa: React.FC<KasaProps> = ({ onBack }) => {
     addTransaction, 
     deleteTransaction,
     showToast,
-    hapticFeedback
+    hapticFeedback,
+    userProfile
   } = useAppViewModel();
 
   const [viewMode, setViewMode] = useState<'ACCOUNTS' | 'TRANSACTIONS'>('ACCOUNTS');
@@ -47,6 +48,64 @@ export const Kasa: React.FC<KasaProps> = ({ onBack }) => {
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<'ALL' | 'INCOME' | 'EXPENSE'>('ALL');
+
+  // Account Detail View States
+  const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [touchStart, setTouchStart] = useState(0);
+  const [touchEnd, setTouchEnd] = useState(0);
+
+  const handleAccountClick = (account: Account) => {
+    setSelectedAccount(account);
+    setSelectedDate(new Date());
+    hapticFeedback('light');
+  };
+
+  const prevDay = () => {
+    const d = new Date(selectedDate);
+    d.setDate(d.getDate() - 1);
+    setSelectedDate(d);
+    hapticFeedback('light');
+  };
+
+  const nextDay = () => {
+    const d = new Date(selectedDate);
+    d.setDate(d.getDate() + 1);
+    setSelectedDate(d);
+    hapticFeedback('light');
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => setTouchStart(e.targetTouches[0].clientX);
+  const handleTouchMove = (e: React.TouchEvent) => setTouchEnd(e.targetTouches[0].clientX);
+  const handleTouchEnd = () => {
+    if (!touchStart || !touchEnd) return;
+    const distance = touchStart - touchEnd;
+    const isLeftSwipe = distance > 50;
+    const isRightSwipe = distance < -50;
+    if (isLeftSwipe) nextDay();
+    if (isRightSwipe) prevDay();
+    setTouchStart(0);
+    setTouchEnd(0);
+  };
+
+  const isToday = (date: Date) => {
+    const today = new Date();
+    return date.getDate() === today.getDate() &&
+      date.getMonth() === today.getMonth() &&
+      date.getFullYear() === today.getFullYear();
+  };
+
+  const isYesterday = (date: Date) => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    return date.getDate() === yesterday.getDate() &&
+      date.getMonth() === yesterday.getMonth() &&
+      date.getFullYear() === yesterday.getFullYear();
+  };
+
+  const formatDate = (date: Date) => {
+    return new Intl.DateTimeFormat('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' }).format(date);
+  };
 
   // Form states
   const [accountName, setAccountName] = useState('');
@@ -62,6 +121,20 @@ export const Kasa: React.FC<KasaProps> = ({ onBack }) => {
       return matchesSearch && matchesFilter;
     });
   }, [transactions, searchTerm, filterType]);
+
+  const selectedDayTransactions = useMemo(() => {
+    if (!selectedAccount) return [];
+    return transactions.filter(tx => {
+      if (tx.accountId !== selectedAccount.id) return false;
+      const txDate = new Date(tx.date);
+      return txDate.getDate() === selectedDate.getDate() &&
+             txDate.getMonth() === selectedDate.getMonth() &&
+             txDate.getFullYear() === selectedDate.getFullYear();
+    });
+  }, [transactions, selectedAccount, selectedDate]);
+
+  const dailyIncome = useMemo(() => selectedDayTransactions.filter(t => t.type === 'INCOME').reduce((a, b) => a + b.amount, 0), [selectedDayTransactions]);
+  const dailyExpense = useMemo(() => selectedDayTransactions.filter(t => t.type === 'EXPENSE').reduce((a, b) => a + b.amount, 0), [selectedDayTransactions]);
 
   const totalBalance = useMemo(() => {
     return accounts.reduce((acc, curr) => acc + curr.balance, 0);
@@ -132,8 +205,128 @@ export const Kasa: React.FC<KasaProps> = ({ onBack }) => {
   };
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(amount);
+    return new Intl.NumberFormat('tr-TR', { style: 'currency', currency: userProfile.currency || 'TRY' }).format(amount);
   };
+
+  if (selectedAccount) {
+    return (
+      <div className="flex flex-col h-full bg-stone-950">
+        {/* Detail Header */}
+        <div className="bg-gradient-to-br from-stone-900 to-stone-950 px-6 pt-8 pb-6 border-b border-white/5 relative overflow-hidden">
+          <div className={`absolute -right-10 -top-10 w-40 h-40 rounded-full blur-3xl opacity-20 ${selectedAccount.type === 'CASH' ? 'bg-amber-500' : 'bg-blue-500'}`}></div>
+          
+          <div className="relative z-10">
+            <button 
+              onClick={() => setSelectedAccount(null)} 
+              className="flex items-center gap-2 text-stone-400 hover:text-white mb-6 transition-colors"
+            >
+              <ChevronLeft size={20} />
+              <span className="text-xs font-bold uppercase tracking-wider">Kasalar</span>
+            </button>
+            
+            <div className="flex items-center gap-4 mb-6">
+              <div className={`w-16 h-16 rounded-3xl flex items-center justify-center shadow-xl ${selectedAccount.type === 'CASH' ? 'bg-amber-500/10 text-amber-500 shadow-amber-500/10' : 'bg-blue-500/10 text-blue-500 shadow-blue-500/10'}`}>
+                {selectedAccount.bankLogo ? (
+                  <span className="text-4xl">{selectedAccount.bankLogo}</span>
+                ) : (
+                  selectedAccount.type === 'CASH' ? <Banknote size={32} /> : <CreditCard size={32} />
+                )}
+              </div>
+              <div>
+                <h2 className="text-2xl font-black text-white tracking-tight">{selectedAccount.name}</h2>
+                <p className="text-[10px] font-black text-stone-500 uppercase tracking-widest">{selectedAccount.type === 'CASH' ? 'Nakit Kasa' : 'Banka Hesabı'}</p>
+              </div>
+            </div>
+            
+            <div>
+              <p className="text-[10px] font-black text-stone-500 uppercase tracking-widest mb-1">Güncel Bakiye</p>
+              <p className="text-4xl font-black text-white font-mono tracking-tight">{formatCurrency(selectedAccount.balance)}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Date Navigator */}
+        <div className="flex items-center justify-between px-4 py-3 bg-stone-900 border-b border-white/5">
+          <button onClick={prevDay} className="p-2 text-stone-400 hover:text-white hover:bg-white/5 rounded-xl transition-all">
+            <ChevronLeft size={20} />
+          </button>
+          <div className="flex flex-col items-center">
+            <span className="text-sm font-bold text-white">{formatDate(selectedDate)}</span>
+            <span className="text-[9px] font-black text-stone-500 uppercase tracking-widest">
+              {isToday(selectedDate) ? 'Bugün' : isYesterday(selectedDate) ? 'Dün' : ''}
+            </span>
+          </div>
+          <button onClick={nextDay} className="p-2 text-stone-400 hover:text-white hover:bg-white/5 rounded-xl transition-all">
+            <ChevronRight size={20} />
+          </button>
+        </div>
+
+        {/* Daily Summary */}
+        <div className="flex gap-2 px-6 py-4 bg-stone-950">
+          <div className="flex-1 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-3 flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-emerald-500/20 text-emerald-500 flex items-center justify-center">
+              <ArrowDownLeft size={16} />
+            </div>
+            <div>
+              <p className="text-[9px] font-black text-emerald-500/70 uppercase tracking-widest">Giriş</p>
+              <p className="text-sm font-bold text-emerald-400 font-mono">{formatCurrency(dailyIncome)}</p>
+            </div>
+          </div>
+          <div className="flex-1 bg-rose-500/10 border border-rose-500/20 rounded-2xl p-3 flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-rose-500/20 text-rose-500 flex items-center justify-center">
+              <ArrowUpRight size={16} />
+            </div>
+            <div>
+              <p className="text-[9px] font-black text-rose-500/70 uppercase tracking-widest">Çıkış</p>
+              <p className="text-sm font-bold text-rose-400 font-mono">{formatCurrency(dailyExpense)}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Transactions List */}
+        <div 
+          className="flex-1 overflow-y-auto p-6 pt-2"
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+        >
+          <div className="bg-stone-900 rounded-3xl border border-white/5 overflow-hidden">
+            {selectedDayTransactions.map((tx, idx) => (
+              <div key={tx.id} className={`p-5 flex items-center justify-between hover:bg-white/5 transition-colors ${idx !== selectedDayTransactions.length - 1 ? 'border-b border-white/5' : ''}`}>
+                <div className="flex items-center gap-4">
+                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${tx.type === 'INCOME' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>
+                    {tx.type === 'INCOME' ? <ArrowDownLeft size={24} /> : <ArrowUpRight size={24} />}
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-stone-100">{tx.description}</h4>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-[9px] font-black text-stone-500 uppercase tracking-widest">{tx.category || 'Genel'}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className={`font-black text-lg font-mono ${tx.type === 'INCOME' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {tx.type === 'INCOME' ? '+' : '-'}{formatCurrency(tx.amount)}
+                  </p>
+                  <p className="text-[10px] font-bold text-stone-500 mt-0.5 font-mono">
+                    {new Date(tx.date).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
+                  </p>
+                </div>
+              </div>
+            ))}
+
+            {selectedDayTransactions.length === 0 && (
+              <div className="py-20 flex flex-col items-center justify-center text-stone-600">
+                <History size={48} className="mb-4 opacity-20" />
+                <p className="text-sm font-bold uppercase tracking-widest">Bu tarihte işlem yok</p>
+                <p className="text-xs text-stone-500 mt-2">Sağa veya sola kaydırarak günleri değiştirebilirsiniz</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full bg-stone-950">
@@ -201,26 +394,34 @@ export const Kasa: React.FC<KasaProps> = ({ onBack }) => {
         {viewMode === 'ACCOUNTS' ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {accounts.map(account => (
-              <div key={account.id} className="bg-stone-900 rounded-3xl p-6 border border-white/5 hover:border-white/10 transition-all group">
+              <div 
+                key={account.id} 
+                onClick={() => handleAccountClick(account)}
+                className="bg-stone-900 rounded-3xl p-6 border border-white/5 hover:border-white/10 transition-all group cursor-pointer active:scale-[0.98]"
+              >
                 <div className="flex justify-between items-start mb-4">
                   <div className="flex items-center gap-4">
                     <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${account.type === 'CASH' ? 'bg-amber-500/10 text-amber-500' : 'bg-blue-500/10 text-blue-500'}`}>
-                      {account.type === 'CASH' ? <Banknote size={28} /> : <CreditCard size={28} />}
+                      {account.bankLogo ? (
+                        <span className="text-3xl">{account.bankLogo}</span>
+                      ) : (
+                        account.type === 'CASH' ? <Banknote size={28} /> : <CreditCard size={28} />
+                      )}
                     </div>
                     <div>
-                      <h3 className="font-bold text-stone-100 text-lg">{account.name}</h3>
+                      <h3 className="font-bold text-stone-100 text-lg group-hover:text-emerald-400 transition-colors">{account.name}</h3>
                       <p className="text-stone-500 text-[10px] font-black uppercase tracking-wider">{account.type === 'CASH' ? 'Nakit Kasa' : 'Banka Hesabı'}</p>
                     </div>
                   </div>
                   <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button 
-                      onClick={() => handleEditAccount(account)}
+                      onClick={(e) => { e.stopPropagation(); handleEditAccount(account); }}
                       className="p-2 hover:bg-white/5 rounded-xl text-stone-500 hover:text-blue-400 transition-colors"
                     >
                       <Edit2 size={18} />
                     </button>
                     <button 
-                      onClick={() => setShowDeleteConfirm(account.id)}
+                      onClick={(e) => { e.stopPropagation(); setShowDeleteConfirm(account.id); }}
                       className="p-2 hover:bg-white/5 rounded-xl text-stone-500 hover:text-rose-400 transition-colors"
                     >
                       <Trash2 size={18} />
@@ -241,7 +442,7 @@ export const Kasa: React.FC<KasaProps> = ({ onBack }) => {
                         <p className="text-stone-400 font-mono text-xs truncate">{account.iban}</p>
                       </div>
                       <button 
-                        onClick={() => shareIban(account)}
+                        onClick={(e) => { e.stopPropagation(); shareIban(account); }}
                         className="ml-4 bg-emerald-500/10 text-emerald-500 p-3 rounded-2xl hover:bg-emerald-500/20 transition-colors active:scale-90"
                       >
                         <Share2 size={20} />

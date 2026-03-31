@@ -6,17 +6,19 @@ import {
     CreditCard, Calendar, CheckCircle2, AlertCircle, 
     Search, Filter, Plus, Trash2, Clock, 
     ArrowLeft, ChevronRight, Check, X, DollarSign,
-    TrendingDown, CalendarClock
+    TrendingDown, TrendingUp, CalendarClock
 } from 'lucide-react';
+import { formatCurrency } from '../utils/currency';
 
 interface PaymentsProps {
     onBack?: () => void;
 }
 
 export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
-    const { myPayments, updateMyPayment, deleteMyPayment, showToast, hapticFeedback } = useAppViewModel();
+    const { myPayments, updateMyPayment, deleteMyPayment, showToast, hapticFeedback, userProfile } = useAppViewModel();
     const [searchTerm, setSearchTerm] = useState('');
     const [filter, setFilter] = useState<'ALL' | 'PENDING' | 'PAID'>('ALL');
+    const [activeTab, setActiveTab] = useState<'RECEIVABLES' | 'PAYABLES'>('RECEIVABLES');
 
     const getLedColor = (payment: MyPayment) => {
         if (payment.status === 'PAID') return 'border-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.4)]';
@@ -38,7 +40,11 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
     const handleTogglePaid = async (payment: MyPayment) => {
         const newStatus = payment.status === 'PAID' ? 'PENDING' : 'PAID';
         await updateMyPayment({ ...payment, status: newStatus });
-        showToast(newStatus === 'PAID' ? 'Ödeme ödendi olarak işaretlendi' : 'Ödeme bekliyor olarak işaretlendi', 'success');
+        const isReceivable = !!payment.farmerId;
+        const msg = newStatus === 'PAID' 
+            ? (isReceivable ? 'Tahsil edildi olarak işaretlendi' : 'Ödeme ödendi olarak işaretlendi')
+            : 'Bekliyor olarak işaretlendi';
+        showToast(msg, 'success');
         hapticFeedback('success');
     };
 
@@ -50,8 +56,14 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
         }
     };
 
-    const filteredPayments = myPayments.filter(p => {
-        const matchesSearch = p.supplierName.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    const tabFilteredPayments = myPayments.filter(p => {
+        if (activeTab === 'RECEIVABLES') return !!p.farmerId;
+        return !p.farmerId;
+    });
+
+    const filteredPayments = tabFilteredPayments.filter(p => {
+        const name = (p.supplierName || p.farmerName || '').toLowerCase();
+        const matchesSearch = name.includes(searchTerm.toLowerCase()) || 
                              (p.note || '').toLowerCase().includes(searchTerm.toLowerCase());
         const matchesFilter = filter === 'ALL' || 
                              (filter === 'PAID' && p.status === 'PAID') || 
@@ -59,8 +71,8 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
         return matchesSearch && matchesFilter;
     });
 
-    const pendingCount = myPayments.filter(p => p.status === 'PENDING').length;
-    const totalPendingAmount = myPayments.filter(p => p.status === 'PENDING').reduce((acc, p) => acc + p.amount, 0);
+    const pendingCount = tabFilteredPayments.filter(p => p.status === 'PENDING').length;
+    const totalPendingAmount = tabFilteredPayments.filter(p => p.status === 'PENDING').reduce((acc, p) => acc + p.amount, 0);
 
     return (
         <div className="min-h-screen bg-stone-950 pb-24">
@@ -74,15 +86,31 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
                             </button>
                         )}
                         <div>
-                            <h1 className="text-xl font-black text-white tracking-tight">Ödemelerim</h1>
-                            <p className="text-[10px] font-bold text-stone-500 uppercase tracking-widest">Çek, Senet ve Vadeli Ödemeler</p>
+                            <h1 className="text-xl font-black text-white tracking-tight">Çek, Senet, Tedye</h1>
+                            <p className="text-[10px] font-bold text-stone-500 uppercase tracking-widest">Müşteri Alacakları ve Ödemelerim</p>
                         </div>
                     </div>
-                    <div className="bg-emerald-500/10 px-3 py-1.5 rounded-full border border-emerald-500/20">
-                        <span className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">
+                    <div className={`px-3 py-1.5 rounded-full border ${activeTab === 'RECEIVABLES' ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-rose-500/10 border-rose-500/20'}`}>
+                        <span className={`text-[10px] font-black uppercase tracking-widest ${activeTab === 'RECEIVABLES' ? 'text-emerald-500' : 'text-rose-500'}`}>
                             {pendingCount} Bekleyen
                         </span>
                     </div>
+                </div>
+
+                {/* Tabs */}
+                <div className="flex p-1 bg-stone-950/50 backdrop-blur rounded-xl mb-4 border border-white/5 shadow-inner">
+                    <button 
+                        onClick={() => setActiveTab('RECEIVABLES')} 
+                        className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all duration-200 ${activeTab === 'RECEIVABLES' ? 'bg-emerald-600 text-white shadow-md' : 'text-stone-500 hover:text-stone-300'}`}
+                    >
+                        Müşteri Alacakları
+                    </button>
+                    <button 
+                        onClick={() => setActiveTab('PAYABLES')} 
+                        className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all duration-200 ${activeTab === 'PAYABLES' ? 'bg-rose-600 text-white shadow-md' : 'text-stone-500 hover:text-stone-300'}`}
+                    >
+                        Tedarikçi Ödemeleri
+                    </button>
                 </div>
 
                 {/* Search & Filter */}
@@ -91,7 +119,7 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
                         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-500" />
                         <input 
                             type="text"
-                            placeholder="Tedarikçi veya not ara..."
+                            placeholder="İsim veya not ara..."
                             value={searchTerm}
                             onChange={e => setSearchTerm(e.target.value)}
                             className="w-full bg-stone-950 border border-white/5 rounded-xl py-2.5 pl-10 pr-4 text-sm text-white outline-none focus:border-emerald-500/30 transition-all"
@@ -112,14 +140,16 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
             <div className="px-4 py-6 space-y-6">
                 {/* Summary Card */}
                 <div className="bg-gradient-to-br from-stone-900 to-stone-950 p-5 rounded-3xl border border-white/5 shadow-xl relative overflow-hidden group">
-                    <div className="absolute -right-4 -top-4 w-24 h-24 bg-emerald-500/10 rounded-full blur-2xl group-hover:bg-emerald-500/20 transition-all duration-500"></div>
+                    <div className={`absolute -right-4 -top-4 w-24 h-24 rounded-full blur-2xl transition-all duration-500 ${activeTab === 'RECEIVABLES' ? 'bg-emerald-500/10 group-hover:bg-emerald-500/20' : 'bg-rose-500/10 group-hover:bg-rose-500/20'}`}></div>
                     <div className="relative z-10">
                         <div className="flex items-center gap-2 mb-1">
-                            <TrendingDown size={14} className="text-rose-500" />
-                            <span className="text-[10px] font-black text-stone-500 uppercase tracking-widest">Toplam Bekleyen Ödeme</span>
+                            {activeTab === 'RECEIVABLES' ? <TrendingUp size={14} className="text-emerald-500" /> : <TrendingDown size={14} className="text-rose-500" />}
+                            <span className="text-[10px] font-black text-stone-500 uppercase tracking-widest">
+                                {activeTab === 'RECEIVABLES' ? 'Toplam Bekleyen Tahsilat' : 'Toplam Bekleyen Ödeme'}
+                            </span>
                         </div>
                         <div className="text-3xl font-black text-white tracking-tighter">
-                            {totalPendingAmount.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                            {formatCurrency(totalPendingAmount, userProfile?.currency || 'TRY')}
                         </div>
                     </div>
                 </div>
@@ -129,7 +159,9 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
                     {filteredPayments.length === 0 ? (
                         <div className="py-20 flex flex-col items-center justify-center text-stone-600">
                             <CreditCard size={48} className="mb-4 opacity-20" />
-                            <p className="text-sm font-bold uppercase tracking-widest">Kayıtlı ödeme bulunamadı</p>
+                            <p className="text-sm font-bold uppercase tracking-widest">
+                                {activeTab === 'RECEIVABLES' ? 'Kayıtlı tahsilat bulunamadı' : 'Kayıtlı ödeme bulunamadı'}
+                            </p>
                         </div>
                     ) : (
                         filteredPayments.map(payment => (
@@ -139,14 +171,18 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
                             >
                                 <div className="flex justify-between items-start mb-3">
                                     <div className="flex items-center gap-3">
-                                        <div className={`p-2.5 rounded-xl ${payment.type === 'CHECK' ? 'bg-blue-500/10 text-blue-500' : 'bg-purple-500/10 text-purple-500'}`}>
-                                            <CreditCard size={20} />
+                                        <div className={`p-2.5 rounded-xl ${payment.farmerId ? 'bg-emerald-500/10 text-emerald-500' : payment.type === 'CHECK' ? 'bg-blue-500/10 text-blue-500' : 'bg-purple-500/10 text-purple-500'}`}>
+                                            {payment.farmerId ? <CalendarClock size={20} /> : <CreditCard size={20} />}
                                         </div>
                                         <div>
-                                            <h3 className="font-bold text-white leading-tight">{payment.supplierName}</h3>
+                                            <h3 className="font-bold text-white leading-tight">{payment.supplierName || payment.farmerName}</h3>
                                             <div className="flex items-center gap-1.5 mt-0.5">
+                                                <span className={`text-[9px] font-black uppercase tracking-widest ${payment.farmerId ? 'text-emerald-500' : 'text-stone-500'}`}>
+                                                    {payment.farmerId ? 'MÜŞTERİ ALACAĞI' : 'TEDARİKÇİ ÖDEMESİ'}
+                                                </span>
+                                                <span className="w-1 h-1 rounded-full bg-stone-700"></span>
                                                 <span className="text-[9px] font-black text-stone-500 uppercase tracking-widest">
-                                                    {payment.type === 'CHECK' ? 'ÇEK' : 'SENET'}
+                                                    {payment.type === 'CHECK' ? 'ÇEK' : payment.type === 'TEDYE' ? 'TEDYE' : payment.type === 'PROMISSORY_NOTE' ? 'SENET' : 'DİĞER'}
                                                 </span>
                                                 <span className="w-1 h-1 rounded-full bg-stone-700"></span>
                                                 <span className="text-[9px] font-black text-stone-500 uppercase tracking-widest">
@@ -157,7 +193,7 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
                                     </div>
                                     <div className="text-right">
                                         <div className="text-lg font-black text-white tracking-tight">
-                                            {payment.amount.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                                            {formatCurrency(payment.amount, userProfile?.currency || 'TRY')}
                                         </div>
                                         <div className="flex items-center justify-end gap-1 mt-0.5">
                                             <Clock size={10} className="text-stone-600" />
@@ -184,7 +220,9 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
                                         }`}
                                     >
                                         {payment.status === 'PAID' ? <CheckCircle2 size={14} /> : <Check size={14} />}
-                                        {payment.status === 'PAID' ? 'ÖDENDİ' : 'ÖDENDİ İŞARETLE'}
+                                        {payment.status === 'PAID' 
+                                            ? (payment.farmerId ? 'TAHSİL EDİLDİ' : 'ÖDENDİ') 
+                                            : (payment.farmerId ? 'TAHSİL EDİLDİ İŞARETLE' : 'ÖDENDİ İŞARETLE')}
                                     </button>
                                     <button 
                                         onClick={() => handleDelete(payment.id)}

@@ -6,19 +6,28 @@ import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, 
   Tooltip, CartesianGrid 
 } from 'recharts';
-import { Users, FileText, Sprout, Plus, X, Calendar, ChevronRight, Droplet, ArrowRight, Zap, MapPin, Send, Loader2, CalendarCheck, Clock, Mic, Bell, CalendarClock, TrendingUp, AlertCircle, Bug, Package, Route, FlaskConical, Star, Truck, Search, DollarSign, Trash2, Wallet, Sparkles, ScanSearch } from 'lucide-react';
+import { Users, FileText, Sprout, Plus, X, Calendar, ChevronRight, Droplet, ArrowRight, Zap, MapPin, Send, Loader2, CalendarCheck, Clock, Mic, Bell, CalendarClock, TrendingUp, AlertCircle, Bug, Package, Route, FlaskConical, Star, Truck, Search, DollarSign, Trash2, Wallet, Sparkles, ScanSearch, Calculator } from 'lucide-react';
 import { ViewState, Pesticide, PesticideCategory, SupplierPurchase } from '../types';
 import { dbService } from '../services/db';
+import { formatCurrency, getCurrencySuffix } from '../utils/currency';
 
 interface DashboardProps {
   onNavigate: (view: any) => void;
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
-  const { addFarmer, userProfile, reminders, stats, prescriptions, inventory, suppliers, farmers, addSupplierPurchase, showToast, hapticFeedback } = useAppViewModel();
+  const { addFarmer, userProfile, reminders, stats, prescriptions, inventory, suppliers, farmers, addSupplierPurchase, showToast, hapticFeedback, activeTeamMember, t, language } = useAppViewModel();
+  const isCompany = userProfile.accountType === 'COMPANY';
+  const isSales = activeTeamMember?.role === 'SALES';
+  const canCreatePrescription = !isSales;
+  const canCreateFarmer = !isSales;
+  const farmerLabel = t(isCompany ? 'label.customer' : 'label.farmer');
+  const farmerPluralLabel = t(isCompany ? 'label.customers' : 'label.farmers');
+  const prescriptionLabel = t(isCompany ? 'label.order' : 'label.prescription');
   const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
   const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
   const [purchaseItems, setPurchaseItems] = useState<{ pesticideId: string, pesticideName: string, quantity: number, unit: string, buyingPrice: number }[]>([]);
+  const [receiptNo, setReceiptNo] = useState('');
   const [pesticides, setPesticides] = useState<Pesticide[]>([]);
   const [searchPestTerm, setSearchPestTerm] = useState('');
   const [isNewPesticide, setIsNewPesticide] = useState(false);
@@ -73,15 +82,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
       await addSupplierPurchase({
           supplierId: selectedSupplierId,
           date: new Date().toISOString(),
+          receiptNo,
           items: purchaseItems,
           totalAmount
       });
 
-      showToast('Mal alımı başarıyla kaydedildi', 'success');
+      showToast(t('dashboard.purchase_success'), 'success');
       hapticFeedback('success');
       setIsPurchaseModalOpen(false);
       setPurchaseItems([]);
       setSelectedSupplierId('');
+      setReceiptNo('');
   };
 
   // Daily Sales Chart Data
@@ -102,14 +113,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     });
 
     return days.map(date => ({
-        date: new Date(date).toLocaleDateString('tr-TR', { weekday: 'short' }),
+        date: new Date(date).toLocaleDateString(language === 'tr' ? 'tr-TR' : language === 'ar' ? 'ar-SA' : 'en-US', { weekday: 'short' }),
         amount: salesMap[date] || 0,
         fullDate: date
     }));
-  }, [prescriptions]);
+  }, [prescriptions, language]);
 
   const getFirstName = (fullName: string) => {
-      if (!fullName) return 'Mühendis';
+      if (!fullName) return t('dashboard.hello').replace(',', '');
       return fullName.split(' ')[0];
   };
 
@@ -126,13 +137,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 <div className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-white/5 rounded-full border border-white/10 backdrop-blur-md mb-1 shadow-sm">
                     <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
                     <span className="text-[8px] font-black text-stone-500 uppercase tracking-widest">
-                        {new Date().toLocaleDateString('tr-TR', { weekday: 'short', day: 'numeric', month: 'short' })}
+                        {new Date().toLocaleDateString(language === 'tr' ? 'tr-TR' : language === 'ar' ? 'ar-SA' : 'en-US', { weekday: 'short', day: 'numeric', month: 'short' })}
                     </span>
                 </div>
                 
                 <div className="flex items-center justify-between">
                     <div className="space-y-0.5">
-                        <h2 className="text-[10px] font-medium text-stone-500 tracking-tight">Merhaba,</h2>
+                        <h2 className="text-[10px] font-medium text-stone-500 tracking-tight">{t('dashboard.hello')}</h2>
                         <h1 className="text-lg font-black text-stone-100 truncate tracking-tight">
                             {getFirstName(userProfile.fullName)}
                         </h1>
@@ -142,7 +153,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                         className="flex items-center gap-2 px-3 py-2 bg-emerald-600 text-white rounded-full shadow-lg shadow-emerald-900/20 active:scale-95 transition-all border border-emerald-500/20"
                     >
                         <Sparkles size={16} className="animate-pulse" />
-                        <span className="text-[10px] font-black uppercase tracking-widest">Saha Asistanı</span>
+                        <span className="text-[10px] font-black uppercase tracking-widest">{t('dashboard.field_assistant')}</span>
                     </button>
                 </div>
             </div>
@@ -160,10 +171,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 <div className="p-1.5 bg-amber-500/20 rounded-lg shrink-0">
                     <CalendarCheck className="text-amber-500" size={12} />
                 </div>
-                <h4 className="text-stone-500 font-black text-[8px] uppercase tracking-widest">Bugün</h4>
+                <h4 className="text-stone-500 font-black text-[8px] uppercase tracking-widest">{t('dashboard.today')}</h4>
             </div>
             <p className="text-stone-200 text-[10px] truncate w-full leading-tight font-bold">
-                {nextReminder ? nextReminder.title : 'Plan yok.'}
+                {nextReminder ? nextReminder.title : t('dashboard.no_plan')}
             </p>
           </button>
 
@@ -176,15 +187,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 <div className="p-1.5 bg-emerald-500/20 rounded-lg shrink-0">
                     <CalendarClock className="text-emerald-500" size={12} />
                 </div>
-                <h4 className="text-stone-500 font-black text-[8px] uppercase tracking-widest">Yarın</h4>
+                <h4 className="text-stone-500 font-black text-[8px] uppercase tracking-widest">{t('dashboard.tomorrow')}</h4>
             </div>
             <div className="relative z-10">
                 {stats.tomorrowReminders > 0 ? (
                     <p className="text-emerald-400 text-xs font-black tracking-wide">
-                        {stats.tomorrowReminders} Plan
+                        {stats.tomorrowReminders} {t('dashboard.plans')}
                     </p>
                 ) : (
-                    <p className="text-stone-600 text-[10px] font-bold">Yok.</p>
+                    <p className="text-stone-600 text-[10px] font-bold">{t('dashboard.no_plan')}</p>
                 )}
             </div>
           </button>
@@ -202,13 +213,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                   <div className="p-1.5 bg-rose-500/20 rounded-lg group-hover:bg-rose-500/30 transition-colors">
                       <Truck size={12} className="text-rose-500" />
                   </div>
-                  <h3 className="text-[8px] font-black text-stone-500 uppercase tracking-widest">Borçlarım</h3>
+                  <h3 className="text-[8px] font-black text-stone-500 uppercase tracking-widest">{t('dashboard.my_debts')}</h3>
               </div>
               <div className="flex items-end gap-0.5">
                   <span className="text-lg font-black text-rose-400 font-mono">
-                      {Math.round(totalSupplierDebt).toLocaleString('tr-TR')}
+                      {formatCurrency(Math.round(totalSupplierDebt), userProfile?.currency || 'TRY')}
                   </span>
-                  <span className="text-[8px] text-stone-600 mb-0.5 font-black">TL</span>
               </div>
           </div>
 
@@ -220,13 +230,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                   <div className="p-1.5 bg-emerald-500/20 rounded-lg group-hover:bg-emerald-500/30 transition-colors">
                       <DollarSign size={12} className="text-emerald-500" />
                   </div>
-                  <h3 className="text-[8px] font-black text-stone-500 uppercase tracking-widest">Alacaklarım</h3>
+                  <h3 className="text-[8px] font-black text-stone-500 uppercase tracking-widest">{t('dashboard.my_receivables')}</h3>
               </div>
               <div className="flex items-end gap-0.5">
                   <span className="text-lg font-black text-emerald-400 font-mono">
-                      {Math.round(stats.totalDebt).toLocaleString('tr-TR')}
+                      {formatCurrency(Math.round(stats.totalDebt), userProfile?.currency || 'TRY')}
                   </span>
-                  <span className="text-[8px] text-stone-600 mb-0.5 font-black">TL</span>
               </div>
           </div>
       </div>
@@ -236,7 +245,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
           <div className="bg-rose-900/20 border border-rose-500/20 rounded-xl p-2 animate-pulse">
               <div className="flex items-center gap-1.5 mb-1.5">
                   <AlertCircle size={12} className="text-rose-500" />
-                  <h4 className="text-[8px] font-black text-rose-500 uppercase tracking-widest">Bölgesel Risk Uyarısı</h4>
+                  <h4 className="text-[8px] font-black text-rose-500 uppercase tracking-widest">{t('dashboard.regional_risk')}</h4>
               </div>
               <div className="space-y-1">
                   {stats.regionalAlerts.map((alert, idx) => (
@@ -245,7 +254,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                               <Bug size={10} className="text-rose-400" />
                               <span className="text-[9px] font-bold text-rose-100">{alert.village}: {alert.type}</span>
                           </div>
-                          <span className="text-[7px] font-black bg-rose-500 text-white px-1 py-0.5 rounded-full uppercase">Kritik</span>
+                          <span className="text-[7px] font-black bg-rose-500 text-white px-1 py-0.5 rounded-full uppercase">{t('dashboard.critical')}</span>
                       </div>
                   ))}
               </div>
@@ -254,69 +263,84 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
 
       <div>
         <h3 className="font-black text-stone-600 text-[8px] mb-2 flex items-center uppercase tracking-widest pl-1">
-             Hızlı İşlemler
+             {t('dashboard.quick_actions')}
         </h3>
         <div className="grid grid-cols-2 gap-2 mb-2">
             <button 
                 onClick={() => onNavigate('FARMERS')}
-                className="group flex items-center gap-2.5 p-3 bg-emerald-900/10 backdrop-blur-sm rounded-2xl border border-emerald-500/20 active:scale-95 transition-all shadow-md"
+                className="group flex items-center gap-2.5 p-2.5 bg-emerald-900/10 backdrop-blur-sm rounded-2xl border border-emerald-500/20 active:scale-95 transition-all shadow-md"
             >
                 <div className="bg-emerald-600 text-white p-2 rounded-xl shadow-lg shadow-emerald-900/30">
                     <Users size={16}/>
                 </div>
                 <div className="text-left">
-                    <span className="block font-black text-[9px] text-emerald-100 uppercase tracking-wider">CARİLER</span>
-                    <span className="text-[7px] text-emerald-500/70 font-bold uppercase">Çiftçi Hesapları</span>
+                    <span className="block font-black text-[9px] text-emerald-100 uppercase tracking-wider">{t('dashboard.accounts')}</span>
+                    <span className="text-[7px] text-emerald-500/70 font-bold uppercase">{farmerLabel} {t('dashboard.accounts').toLowerCase()}</span>
                 </div>
             </button>
 
-            <button 
-                onClick={() => onNavigate('PRESCRIPTION_NEW')}
-                className="group flex items-center gap-2.5 p-3 bg-stone-900/60 backdrop-blur-sm rounded-2xl border border-white/10 active:scale-95 transition-all shadow-md"
-            >
-                <div className="bg-blue-600/20 text-blue-400 p-2 rounded-xl border border-blue-500/20 group-hover:bg-blue-600 group-hover:text-white transition-colors">
-                    <FileText size={16}/>
-                </div>
-                <div className="text-left">
-                    <span className="block font-black text-[9px] text-stone-200 uppercase tracking-wider">REÇETE</span>
-                    <span className="text-[7px] text-stone-600 font-bold uppercase">Yeni Kayıt</span>
-                </div>
-            </button>
+            {canCreatePrescription ? (
+                <button 
+                    onClick={() => onNavigate('PRESCRIPTION_NEW')}
+                    className="group flex items-center gap-2.5 p-2.5 bg-stone-900/60 backdrop-blur-sm rounded-2xl border border-white/10 active:scale-95 transition-all shadow-md"
+                >
+                    <div className="bg-blue-600/20 text-blue-400 p-2 rounded-xl border border-blue-500/20 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                        <FileText size={16}/>
+                    </div>
+                    <div className="text-left">
+                        <span className="block font-black text-[9px] text-stone-200 uppercase tracking-wider">{prescriptionLabel.toUpperCase()}</span>
+                        <span className="text-[7px] text-stone-600 font-bold uppercase">{t('dashboard.new_record')}</span>
+                    </div>
+                </button>
+            ) : (
+                <button 
+                    onClick={() => onNavigate('PRESCRIPTION_LIST')}
+                    className="group flex items-center gap-2.5 p-2.5 bg-stone-900/60 backdrop-blur-sm rounded-2xl border border-white/10 active:scale-95 transition-all shadow-md"
+                >
+                    <div className="bg-blue-600/20 text-blue-400 p-2 rounded-xl border border-blue-500/20 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                        <FileText size={16}/>
+                    </div>
+                    <div className="text-left">
+                        <span className="block font-black text-[9px] text-stone-200 uppercase tracking-wider">{prescriptionLabel.toUpperCase()}</span>
+                        <span className="text-[7px] text-stone-600 font-bold uppercase">{t('dashboard.list')}</span>
+                    </div>
+                </button>
+            )}
         </div>
 
         <div className="grid grid-cols-2 gap-2">
             <button 
-                onClick={() => onNavigate('KASA')}
-                className="group flex items-center gap-2.5 p-3 bg-stone-900/60 backdrop-blur-sm rounded-2xl border border-white/10 active:scale-95 transition-all shadow-md"
+                onClick={() => setIsPurchaseModalOpen(true)}
+                className="group flex items-center gap-2.5 p-2.5 bg-stone-900/60 backdrop-blur-sm rounded-2xl border border-white/10 active:scale-95 transition-all shadow-md"
             >
-                <div className="bg-blue-600/20 text-blue-400 p-2 rounded-xl border border-blue-500/20 group-hover:bg-blue-600 group-hover:text-white transition-colors">
-                    <Wallet size={16}/>
+                <div className="bg-amber-600/20 text-amber-400 p-2 rounded-xl border border-amber-500/20 group-hover:bg-amber-600 group-hover:text-white transition-colors">
+                    <Truck size={16}/>
                 </div>
                 <div className="text-left">
-                    <span className="block font-black text-[9px] text-stone-200 uppercase tracking-wider">KASA</span>
-                    <span className="text-[7px] text-stone-600 font-bold uppercase">Banka & Nakit</span>
+                    <span className="block font-black text-[9px] text-stone-200 uppercase tracking-wider">{t('dashboard.purchase')}</span>
+                    <span className="text-[7px] text-stone-600 font-bold uppercase">{t('dashboard.supplier_purchase')}</span>
                 </div>
             </button>
 
             <button 
                 onClick={() => onNavigate('INVENTORY')}
-                className="group flex items-center gap-2.5 p-3 bg-stone-900/60 backdrop-blur-sm rounded-2xl border border-white/10 active:scale-95 transition-all shadow-md"
+                className="group flex items-center gap-2.5 p-2.5 bg-stone-900/60 backdrop-blur-sm rounded-2xl border border-white/10 active:scale-95 transition-all shadow-md"
             >
                 <div className="bg-purple-600/20 text-purple-400 p-2 rounded-xl border border-purple-500/20 group-hover:bg-purple-600 group-hover:text-white transition-colors">
                     <Package size={16}/>
                 </div>
                 <div className="text-left">
-                    <span className="block font-black text-[9px] text-stone-200 uppercase tracking-wider">DEPOM</span>
-                    <span className="text-[7px] text-stone-600 font-bold uppercase">Stok Durumu</span>
+                    <span className="block font-black text-[9px] text-stone-200 uppercase tracking-wider">{t('dashboard.my_warehouse')}</span>
+                    <span className="text-[7px] text-stone-600 font-bold uppercase">{t('dashboard.stock_status')}</span>
                 </div>
             </button>
         </div>
 
         <div className="grid grid-cols-4 gap-2 mt-3">
-            <ActionButton onClick={() => onNavigate('VISIT_NEW')} icon={Calendar} label="ZİYARET" color="blue" />
-            <ActionButton onClick={() => onNavigate('AI_DIAGNOSIS')} icon={ScanSearch} label="AI TEŞHİS" color="emerald" />
-            <ActionButton onClick={() => onNavigate('MIXTURE_TEST')} icon={FlaskConical} label="KARIŞIM" color="purple" />
-            <ActionButton onClick={() => setIsPurchaseModalOpen(true)} icon={Truck} label="ALIM YAP" color="amber" />
+            <ActionButton onClick={() => onNavigate('VISIT_NEW')} icon={Calendar} label={t('dashboard.visit')} color="blue" />
+            <ActionButton onClick={() => onNavigate('CALCULATOR')} icon={Calculator} label={t('dashboard.calculate')} color="emerald" />
+            <ActionButton onClick={() => onNavigate('MIXTURE_TEST')} icon={FlaskConical} label={t('dashboard.mixture')} color="purple" />
+            <ActionButton onClick={() => onNavigate('KASA')} icon={Wallet} label={t('dashboard.safe')} color="amber" />
         </div>
       </div>
 
@@ -327,13 +351,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                   <div className="p-1 bg-emerald-500/10 rounded-lg">
                       <TrendingUp size={12} className="text-emerald-500" />
                   </div>
-                  <h3 className="text-[8px] font-black text-stone-400 uppercase tracking-widest">Satış Performansı</h3>
+                  <h3 className="text-[8px] font-black text-stone-400 uppercase tracking-widest">{t('dashboard.sales_performance')}</h3>
               </div>
               <button 
                 onClick={() => onNavigate('STATISTICS')}
                 className="text-[7px] font-black text-stone-600 uppercase tracking-widest hover:text-emerald-500 transition-colors"
               >
-                  Detay <ChevronRight size={8} className="inline" />
+                  {t('dashboard.detail')} <ChevronRight size={8} className="inline" />
               </button>
           </div>
           
@@ -357,7 +381,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                       <Tooltip 
                           contentStyle={{ backgroundColor: '#1c1917', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '10px', fontSize: '9px' }}
                           itemStyle={{ color: '#10b981', fontWeight: 'bold' }}
-                          formatter={(value: number) => [`${value.toLocaleString('tr-TR')} TL`, 'Satış']}
+                          formatter={(value: number) => [formatCurrency(value, userProfile?.currency || 'TRY'), t('dashboard.sales_performance')]}
                           labelStyle={{ color: '#737373', marginBottom: '2px' }}
                       />
                       <Area 
@@ -381,8 +405,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 <div className="w-10 h-1 bg-stone-800 rounded-full mb-4"></div>
                 <div className="w-full flex justify-between items-center">
                     <div>
-                        <h2 className="text-base font-bold text-stone-100">Hızlı Mal Alımı</h2>
-                        <p className="text-[9px] text-stone-600 font-black uppercase tracking-widest">Tedarikçiden Stok Girişi</p>
+                        <h2 className="text-base font-bold text-stone-100">{t('dashboard.quick_purchase')}</h2>
+                        <p className="text-[9px] text-stone-600 font-black uppercase tracking-widest">{t('dashboard.supplier_stock_entry')}</p>
                     </div>
                     <button onClick={() => setIsPurchaseModalOpen(false)} className="p-2 bg-stone-800 rounded-full text-stone-500 hover:text-white transition-colors"><X size={16} /></button>
                 </div>
@@ -390,27 +414,44 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
             
             <form onSubmit={handlePurchaseSubmit} className="space-y-4">
               {/* Supplier Selection */}
-              <div>
-                  <label className="text-[8px] font-black text-stone-600 ml-1 uppercase tracking-widest mb-1 block">Tedarikçi Seçin</label>
-                  <select 
-                    required 
-                    value={selectedSupplierId} 
-                    onChange={e => setSelectedSupplierId(e.target.value)}
-                    className="w-full p-3 bg-stone-950 border border-stone-800 focus:border-emerald-500/30 rounded-xl outline-none font-bold transition-all text-white text-xs"
-                  >
-                      <option value="">Tedarikçi Seçiniz...</option>
-                      {suppliers.map(s => (
-                          <option key={s.id} value={s.id}>{s.name}</option>
-                      ))}
-                  </select>
-                  {suppliers.length === 0 && (
-                      <p className="text-[10px] text-amber-500 mt-1 ml-1 font-medium">Önce bir tedarikçi eklemelisiniz.</p>
-                  )}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                    <label className="text-[8px] font-black text-stone-600 ml-1 uppercase tracking-widest mb-1 block">{t('dashboard.select_supplier')}</label>
+                    <div className="relative">
+                        <select 
+                          required 
+                          value={selectedSupplierId} 
+                          onChange={e => setSelectedSupplierId(e.target.value)}
+                          className="w-full h-[48px] px-4 bg-stone-950 border border-stone-800 focus:border-emerald-500/30 rounded-xl outline-none font-bold transition-all text-white text-sm appearance-none"
+                        >
+                            <option value="">Tedarikçi Seçiniz...</option>
+                            {suppliers.map(s => (
+                                <option key={s.id} value={s.id}>{s.name}</option>
+                            ))}
+                        </select>
+                        <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none">
+                            <svg className="w-4 h-4 text-stone-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <label className="text-[8px] font-black text-stone-600 ml-1 uppercase tracking-widest mb-1 block">{t('dashboard.receipt_no')}</label>
+                    <input 
+                        type="text" 
+                        value={receiptNo}
+                        onChange={e => setReceiptNo(e.target.value)}
+                        placeholder={t('dashboard.optional')} 
+                        className="w-full h-[48px] px-4 bg-stone-950 border border-stone-800 focus:border-emerald-500/30 rounded-xl outline-none font-bold transition-all text-white placeholder-stone-800 text-sm"
+                    />
+                </div>
               </div>
+              {suppliers.length === 0 && (
+                  <p className="text-[10px] text-amber-500 mt-1 ml-1 font-medium">{t('dashboard.need_supplier')}</p>
+              )}
 
               {/* Item Search */}
               <div className="relative">
-                  <label className="text-[8px] font-black text-stone-600 ml-1 uppercase tracking-widest mb-1 block">Ürün Ekle</label>
+                  <label className="text-[8px] font-black text-stone-600 ml-1 uppercase tracking-widest mb-1 block">{t('dashboard.add_product')}</label>
                   <div className="flex gap-2">
                     <div className="relative flex-1">
                         <Search className="absolute left-3 top-3 text-stone-700" size={14} />
@@ -418,7 +459,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                             type="text" 
                             value={searchPestTerm}
                             onChange={e => setSearchPestTerm(e.target.value)}
-                            placeholder="Ürün adı veya etken madde..." 
+                            placeholder={t('dashboard.product_placeholder')} 
                             className="w-full p-3 pl-9 bg-stone-950 border border-stone-800 focus:border-emerald-500/30 rounded-xl outline-none font-bold transition-all text-white placeholder-stone-800 text-xs"
                         />
                     </div>
@@ -443,7 +484,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                             className="w-full text-left p-3 hover:bg-emerald-900/20 border-t border-emerald-500/10 transition-colors flex items-center gap-2"
                           >
                               <Plus size={14} className="text-emerald-500" />
-                              <span className="text-xs font-bold text-emerald-400">"{searchPestTerm}" olarak yeni ekle</span>
+                              <span className="text-xs font-bold text-emerald-400">"{searchPestTerm}" {t('dashboard.add_new')}</span>
                           </button>
                       </div>
                   )}
@@ -465,7 +506,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                           </div>
                           <div className="grid grid-cols-3 gap-2">
                               <div>
-                                  <label className="text-[8px] font-black text-stone-600 uppercase tracking-widest mb-1 block">Miktar</label>
+                                  <label className="text-[8px] font-black text-stone-600 uppercase tracking-widest mb-1 block">{t('dashboard.quantity')}</label>
                                   <input 
                                     type="number" 
                                     value={item.quantity}
@@ -474,30 +515,35 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                         newItems[idx].quantity = Number(e.target.value);
                                         setPurchaseItems(newItems);
                                     }}
-                                    className="w-full p-2 bg-stone-900 border border-stone-800 rounded-lg text-xs font-bold text-white outline-none"
+                                    className="w-full h-[34px] px-2 bg-stone-900 border border-stone-800 rounded-lg text-xs font-bold text-white outline-none"
                                   />
                               </div>
                               <div>
-                                  <label className="text-[8px] font-black text-stone-600 uppercase tracking-widest mb-1 block">Birim</label>
-                                  <select 
-                                    value={item.unit}
-                                    onChange={e => {
-                                        const newItems = [...purchaseItems];
-                                        newItems[idx].unit = e.target.value;
-                                        setPurchaseItems(newItems);
-                                    }}
-                                    className="w-full p-2 bg-stone-900 border border-stone-800 rounded-lg text-xs font-bold text-white outline-none"
-                                  >
-                                      <option value="Adet">Adet</option>
-                                      <option value="Litre">Litre</option>
-                                      <option value="Kg">Kg</option>
-                                      <option value="Kutu">Kutu</option>
-                                  </select>
+                                  <label className="text-[8px] font-black text-stone-600 uppercase tracking-widest mb-1 block">{t('dashboard.unit')}</label>
+                                  <div className="relative">
+                                      <select 
+                                        value={item.unit}
+                                        onChange={e => {
+                                            const newItems = [...purchaseItems];
+                                            newItems[idx].unit = e.target.value;
+                                            setPurchaseItems(newItems);
+                                        }}
+                                        className="w-full h-[34px] pl-2 pr-6 bg-stone-900 border border-stone-800 rounded-lg text-xs font-bold text-white outline-none appearance-none"
+                                      >
+                                          <option value="Adet">{t('dashboard.unit_piece')}</option>
+                                          <option value="Litre">{t('dashboard.unit_liter')}</option>
+                                          <option value="Kg">{t('dashboard.unit_kg')}</option>
+                                          <option value="Kutu">{t('dashboard.unit_box')}</option>
+                                      </select>
+                                      <div className="absolute inset-y-0 right-2 flex items-center pointer-events-none">
+                                          <svg className="w-3 h-3 text-stone-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                                      </div>
+                                  </div>
                               </div>
                               <div>
-                                  <label className="text-[8px] font-black text-stone-600 uppercase tracking-widest mb-1 block">Alış Fiyatı</label>
+                                  <label className="text-[8px] font-black text-stone-600 uppercase tracking-widest mb-1 block">{t('dashboard.buying_price')}</label>
                                   <div className="relative">
-                                      <DollarSign className="absolute left-2 top-2.5 text-stone-700" size={10} />
+                                      <DollarSign className="absolute left-2 top-1/2 -translate-y-1/2 text-stone-700" size={10} />
                                       <input 
                                         type="number" 
                                         value={item.buyingPrice}
@@ -506,7 +552,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                             newItems[idx].buyingPrice = Number(e.target.value);
                                             setPurchaseItems(newItems);
                                         }}
-                                        className="w-full p-2 pl-6 bg-stone-900 border border-stone-800 rounded-lg text-xs font-bold text-white outline-none"
+                                        className="w-full h-[34px] pl-6 pr-2 bg-stone-900 border border-stone-800 rounded-lg text-xs font-bold text-white outline-none"
                                       />
                                   </div>
                               </div>
@@ -516,7 +562,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                   {purchaseItems.length === 0 && (
                       <div className="py-8 text-center border-2 border-dashed border-stone-800 rounded-2xl">
                           <Package size={24} className="text-stone-800 mx-auto mb-2 opacity-50" />
-                          <p className="text-[10px] text-stone-600 font-bold uppercase tracking-widest">Henüz ürün eklenmedi</p>
+                          <p className="text-[10px] text-stone-600 font-bold uppercase tracking-widest">{t('dashboard.no_product_added')}</p>
                       </div>
                   )}
               </div>
@@ -524,9 +570,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
               {/* Summary & Submit */}
               <div className="pt-4 border-t border-white/5">
                   <div className="flex justify-between items-center mb-4 px-1">
-                      <span className="text-[10px] font-black text-stone-500 uppercase tracking-widest">Toplam Tutar</span>
+                      <span className="text-[10px] font-black text-stone-500 uppercase tracking-widest">{t('dashboard.total_amount')}</span>
                       <span className="text-lg font-black text-emerald-400 font-mono">
-                          {purchaseItems.reduce((sum, item) => sum + (item.quantity * item.buyingPrice), 0).toLocaleString('tr-TR')} TL
+                          {formatCurrency(purchaseItems.reduce((sum, item) => sum + (item.quantity * item.buyingPrice), 0), userProfile?.currency || 'TRY')}
                       </span>
                   </div>
                   <button 
@@ -534,7 +580,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                     disabled={!selectedSupplierId || purchaseItems.length === 0}
                     className="w-full bg-emerald-600 text-white py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-emerald-900/30 hover:bg-emerald-500 active:scale-[0.97] transition-all disabled:opacity-30 disabled:active:scale-100 border border-white/10"
                   >
-                      Alımı Kaydet
+                      {t('dashboard.save_purchase')}
                   </button>
               </div>
             </form>
@@ -556,7 +602,7 @@ const ActionButton = ({ onClick, icon: Icon, label, color }: { onClick: () => vo
     return (
         <button 
             onClick={onClick}
-            className="group flex flex-col items-center justify-center p-3 bg-stone-900 border border-white/5 rounded-2xl active:scale-95 transition-all shadow-md"
+            className="group flex flex-col items-center justify-center p-2.5 bg-stone-900 border border-white/5 rounded-2xl active:scale-95 transition-all shadow-md"
         >
             <div className={`p-2 rounded-xl group-hover:text-white transition-colors mb-1 ${colorClasses[color] || colorClasses.emerald}`}>
                 <Icon size={18}/>

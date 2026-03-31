@@ -1,15 +1,15 @@
 
 import React from 'react';
-import { Type, User, ChevronRight, Briefcase, UserRound, Sun, Settings, RefreshCw } from 'lucide-react';
+import { Type, User, ChevronRight, Briefcase, UserRound, Sun, Settings, RefreshCw, Globe } from 'lucide-react';
 import { useAppViewModel } from '../context/AppContext';
-import { UIScale } from '../types';
+import { UIScale, Language } from '../types';
 
 interface SettingsProps {
     onNavigate: (view: any) => void;
 }
 
 export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
-  const { uiScale, setUiScale, userProfile, updateUserProfile, performManualTurnover } = useAppViewModel();
+  const { uiScale, setUiScale, userProfile, updateUserProfile, performManualTurnover, language, setLanguage, t } = useAppViewModel();
 
   const handleScaleChange = (scale: UIScale) => {
     setUiScale(scale);
@@ -25,8 +25,8 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
                   <User size={20} />
               </div>
               <div>
-                  <h3 className="font-bold text-stone-100 text-lg tracking-tight">Hesap Ayarları</h3>
-                  <p className="text-[10px] text-stone-500 font-bold uppercase tracking-widest">Kişisel Bilgiler</p>
+                  <h3 className="font-bold text-stone-100 text-lg tracking-tight">{t('settings.account')}</h3>
+                  <p className="text-[10px] text-stone-500 font-bold uppercase tracking-widest">{t('settings.personal')}</p>
               </div>
           </div>
 
@@ -40,10 +40,10 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
                   </div>
                   <div className="min-w-0">
                       <h4 className="font-bold text-stone-200 group-hover:text-emerald-400 transition-colors truncate">
-                          {userProfile.fullName || 'Profil Oluştur'}
+                          {userProfile.fullName || t('settings.profile.create')}
                       </h4>
                       <p className="text-[10px] text-stone-500 font-bold uppercase truncate">
-                          {userProfile.title || 'Düzenlemek için dokun'}
+                          {userProfile.title || t('settings.profile.edit')}
                       </p>
                   </div>
               </div>
@@ -58,15 +58,17 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
                   <Type size={20} />
               </div>
               <div>
-                  <h3 className="font-bold text-stone-100 text-lg tracking-tight">Erişilebilirlik</h3>
-                  <p className="text-[10px] text-stone-500 font-bold uppercase tracking-widest">Arayüz Ölçeği</p>
+                  <h3 className="font-bold text-stone-100 text-lg tracking-tight">{t('nav.group.general')}</h3>
+                  <p className="text-[10px] text-stone-500 font-bold uppercase tracking-widest">{t('settings.language.desc')}</p>
               </div>
           </div>
           
           <div className="flex p-1 bg-stone-950/40 rounded-2xl border border-stone-800 mb-6">
               {(['SMALL', 'MEDIUM', 'LARGE'] as const).map((scaleOption) => {
                   const isActive = uiScale === scaleOption;
-                  let label = scaleOption === 'SMALL' ? 'Küçük' : scaleOption === 'MEDIUM' ? 'Orta' : 'Büyük';
+                  let label = scaleOption === 'SMALL' ? t('settings.scale.small') : 
+                              scaleOption === 'MEDIUM' ? t('settings.scale.medium') : 
+                              t('settings.scale.large');
 
                   return (
                       <button
@@ -90,8 +92,8 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
                       <Sun size={18} />
                   </div>
                   <div>
-                      <h4 className="text-xs font-bold text-stone-200">Yüksek Kontrast (Saha Modu)</h4>
-                      <p className="text-[9px] text-stone-600 font-bold uppercase">Güneş altında daha iyi görünürlük</p>
+                      <h4 className="text-xs font-bold text-stone-200">{t('settings.contrast')}</h4>
+                      <p className="text-[9px] text-stone-600 font-bold uppercase">{t('settings.contrast.desc')}</p>
                   </div>
               </div>
               <button 
@@ -108,8 +110,8 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
                   <UserRound size={20} />
               </div>
               <div>
-                  <h3 className="font-bold text-stone-100 text-lg tracking-tight">Asistan Sesi</h3>
-                  <p className="text-[10px] text-stone-500 font-bold uppercase tracking-widest">Saha Asistanı Karakteri</p>
+                  <h3 className="font-bold text-stone-100 text-lg tracking-tight">{t('settings.voice')}</h3>
+                  <p className="text-[10px] text-stone-500 font-bold uppercase tracking-widest">{t('settings.voice.desc')}</p>
               </div>
           </div>
           <div className="flex p-1 bg-stone-950/40 rounded-2xl border border-stone-800">
@@ -121,7 +123,7 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
                       : 'text-stone-600 hover:text-stone-300'
                   }`}
               >
-                  Erkek (Tok)
+                  {t('settings.voice.male')}
               </button>
               <button
                   onClick={() => updateUserProfile({ ...userProfile, assistantVoice: 'female' })}
@@ -131,8 +133,70 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
                       : 'text-stone-600 hover:text-stone-300'
                   }`}
               >
-                  Kadın (Sakin)
+                  {t('settings.voice.female')}
               </button>
+          </div>
+
+          {/* Currency Selection */}
+          <div className="flex items-center space-x-3 mb-4 mt-6">
+              <div className="p-2.5 bg-amber-900/30 text-amber-400 rounded-xl">
+                  <Briefcase size={20} />
+              </div>
+              <div>
+                  <h3 className="font-bold text-stone-100 text-lg tracking-tight">{t('settings.currency')}</h3>
+                  <p className="text-[10px] text-stone-500 font-bold uppercase tracking-widest">{t('settings.currency.desc')}</p>
+              </div>
+          </div>
+          <div className="flex p-1 bg-stone-950/40 rounded-2xl border border-stone-800">
+              {(['TRY', 'USD', 'EUR'] as const).map((currencyOption) => {
+                  const isActive = (userProfile.currency || 'TRY') === currencyOption;
+                  let label = currencyOption === 'TRY' ? t('settings.currency.try') : currencyOption === 'USD' ? t('settings.currency.usd') : t('settings.currency.eur');
+
+                  return (
+                      <button
+                          key={currencyOption}
+                          onClick={() => updateUserProfile({ ...userProfile, currency: currencyOption })}
+                          className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all duration-300 ${
+                              isActive 
+                              ? 'bg-amber-600 text-white shadow-lg' 
+                              : 'text-stone-600 hover:text-stone-300'
+                          }`}
+                      >
+                          {label}
+                      </button>
+                  );
+              })}
+          </div>
+
+          {/* Language Settings */}
+          <div className="flex items-center space-x-3 mb-4 mt-6">
+              <div className="p-2.5 bg-purple-900/30 text-purple-400 rounded-xl">
+                  <Globe size={20} />
+              </div>
+              <div>
+                  <h3 className="font-bold text-stone-100 text-lg tracking-tight">{t('settings.language')}</h3>
+                  <p className="text-[10px] text-stone-500 font-bold uppercase tracking-widest">{t('settings.language.desc')}</p>
+              </div>
+          </div>
+          <div className="flex p-1 bg-stone-950/40 rounded-2xl border border-stone-800">
+              {(['tr', 'en', 'ar'] as Language[]).map((langOption) => {
+                  const isActive = language === langOption;
+                  let label = langOption === 'tr' ? 'Türkçe' : langOption === 'en' ? 'English' : 'العربية';
+
+                  return (
+                      <button
+                          key={langOption}
+                          onClick={() => setLanguage(langOption)}
+                          className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all duration-300 ${
+                              isActive 
+                              ? 'bg-purple-600 text-white shadow-lg' 
+                              : 'text-stone-600 hover:text-stone-300'
+                          }`}
+                      >
+                          {label}
+                      </button>
+                  );
+              })}
           </div>
       </div>
 
@@ -143,14 +207,14 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
                   <RefreshCw size={20} />
               </div>
               <div>
-                  <h3 className="font-bold text-stone-100 text-lg tracking-tight">Sistem İşlemleri</h3>
-                  <p className="text-[10px] text-stone-500 font-bold uppercase tracking-widest">Yıl Sonu İşlemleri</p>
+                  <h3 className="font-bold text-stone-100 text-lg tracking-tight">{t('settings.system')}</h3>
+                  <p className="text-[10px] text-stone-500 font-bold uppercase tracking-widest">{t('settings.system.desc')}</p>
               </div>
           </div>
           
           <button 
             onClick={() => {
-              if (window.confirm('Yeni yıla devir işlemi yapmak istediğinize emin misiniz? Bu işlem mevcut bakiyeleri yeni yıla devir bakiyesi olarak aktaracaktır.')) {
+              if (window.confirm(t('settings.turnover.confirm'))) {
                 performManualTurnover();
               }
             }}
@@ -161,8 +225,8 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
                       <RefreshCw size={18} />
                   </div>
                   <div className="text-left">
-                      <h4 className="text-xs font-bold text-stone-200 group-hover:text-purple-400 transition-colors">Yeni Yıla Devret</h4>
-                      <p className="text-[9px] text-stone-600 font-bold uppercase">Bakiyeleri yeni yıla aktar</p>
+                      <h4 className="text-xs font-bold text-stone-200 group-hover:text-purple-400 transition-colors">{t('settings.turnover')}</h4>
+                      <p className="text-[9px] text-stone-600 font-bold uppercase">{t('settings.turnover.desc')}</p>
                   </div>
               </div>
               <ChevronRight size={18} className="text-stone-700 group-hover:text-purple-400 transition-colors" />

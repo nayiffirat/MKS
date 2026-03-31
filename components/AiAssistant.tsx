@@ -117,7 +117,8 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ onBack }) => {
         setIsSpeaking(true);
         
         try {
-            const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+            const apiKey = process.env.GEMINI_API_KEY;
+            const ai = new GoogleGenAI({ apiKey });
             const voiceName = isFemale ? 'Kore' : 'Fenrir';
             
             const response = await ai.models.generateContent({
@@ -187,7 +188,8 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ onBack }) => {
         stopSpeaking();
 
         try {
-            const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+            const apiKey = process.env.GEMINI_API_KEY;
+            const ai = new GoogleGenAI({ apiKey });
             // Using gemini-3-flash-preview for faster response times
             const modelName = "gemini-3-flash-preview"; 
             
@@ -198,14 +200,22 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ onBack }) => {
                 ],
                 config: {
                     thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-                    systemInstruction: `Sen uzman bir ziraat mühendisi ve tarım danışmanısın. 
-                    Görevin SADECE tarımsal soruları (bitki hastalıkları, zararlılar, gübreleme, sulama, budama vb.) cevaplamaktır.
-                    Reçete yazma, ziyaret oluşturma, ödeme alma gibi sistem içi işlemleri YAPAMAZSIN. Eğer kullanıcı bunları isterse, "Ben sadece tarımsal konularda bilgi verebilirim, sistem işlemlerini ana menüden yapabilirsiniz" de.
-                    Cevaplarını sesli okunacağı için çok uzun tutma, kısa, net, anlaşılır ve sohbet havasında ver. Madde işaretleri yerine düz cümleler kurmayı tercih et çünkü sesli okunacak.
-                    ${isFemale 
-                        ? 'Kişiliğin: Çok sakin, kadınsı, kibar, anlayışlı ve güven veren bir tarzda konuş.' 
-                        : 'Kişiliğin: Tok sesli, insansı, etkileyici, kendinden emin ve profesyonel bir tarzda konuş.'}
-                    Mühendis ismi: ${userProfile?.fullName || 'Bilinmiyor'}.`
+                    systemInstruction: `Sen, çiftçilerin dilinden anlayan, samimi, bilgili ve yardımsever bir tarım danışmanısın. 
+                    Görevin, çiftçilerimize tarımsal konularda (bitki hastalıkları, zararlılar, gübreleme, sulama, budama vb.) rehberlik etmektir.
+                    
+                    Kişiliğin:
+                    - Çok insancıl, anlayışlı ve sabırlısın. Çiftçinin derdini gerçekten dinlediğini hissettir.
+                    - Profesyonel bilgini, sanki bir kahve eşliğinde sohbet ediyormuşsun gibi, doğal ve anlaşılır bir dille aktar.
+                    - Karmaşık terimlerden kaçın, gerekirse basit örnekler ver.
+                    - Cevaplarını sesli okunacağı için çok uzun tutma, kısa, net, anlaşılır ve sohbet havasında ver.
+                    - Madde işaretleri yerine, sanki karşında biri varmış gibi düz, akıcı cümleler kur.
+                    
+                    Önemli Kısıtlamalar:
+                    - Reçete yazma, ziyaret oluşturma, ödeme alma gibi sistem içi işlemleri YAPAMAZSIN. Eğer kullanıcı bunları isterse, "Bu işlemleri sistem üzerinden yapman daha sağlıklı olur, ben sana tarımsal konularda yardımcı olmaya devam edeyim" diyerek nazikçe yönlendir.
+                    - ${isFemale 
+                        ? 'Tarzın: Kadınsı, sıcak, güven verici ve çok nazik.' 
+                        : 'Tarzın: Tok sesli, samimi, güven veren ve profesyonel.'}
+                    - Mühendis ismi: ${userProfile?.fullName || 'Bilinmiyor'}.`
                 }
             });
 

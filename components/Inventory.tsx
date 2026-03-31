@@ -2,9 +2,10 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
     Search, Plus, Package, DollarSign, TrendingUp, 
     Trash2, Edit2, Save, X, AlertCircle, Filter,
-    ArrowUpRight, ArrowDownRight, BarChart3, PieChart, RefreshCw, Loader2, FlaskConical,
-    History, User, Calendar, List, Download
+    ArrowUpRight, ArrowDownRight, BarChart3, PieChart, FlaskConical,
+    History, User, Calendar, List, Download, Eye, EyeOff, Camera, Barcode
 } from 'lucide-react';
+import BarcodeScanner from './BarcodeScanner';
 import { 
     ResponsiveContainer, BarChart, Bar, XAxis, YAxis, 
     CartesianGrid, Tooltip, Cell, PieChart as RePieChart, Pie
@@ -14,6 +15,7 @@ import autoTable from 'jspdf-autotable';
 import { dbService } from '../services/db';
 import { InventoryItem, Pesticide, PesticideCategory } from '../types';
 import { useAppViewModel } from '../context/AppContext';
+import { formatCurrency, getCurrencySuffix } from '../utils/currency';
 
 export const InventoryScreen: React.FC = () => {
     const { 
@@ -29,12 +31,18 @@ export const InventoryScreen: React.FC = () => {
         prescriptions,
         stats,
         userProfile,
-        updateUserProfile
+        updateUserProfile,
+        activeTeamMember,
+        prescriptionLabel,
+        farmerLabel,
+        farmerPluralLabel
     } = useAppViewModel();
+    const isCompany = userProfile.accountType === 'COMPANY';
+    const isSales = activeTeamMember?.role === 'SALES';
+    const canEditInventory = !isSales;
     
     const [pesticides, setPesticides] = useState<Pesticide[]>([]);
     const [loading, setLoading] = useState(false);
-    const [syncing, setSyncing] = useState(false);
     const [activeTab, setActiveTab] = useState<'LIST' | 'ANALYSIS' | 'PROFIT_LOSS'>('LIST');
     
     // Search & Filter
@@ -45,9 +53,13 @@ export const InventoryScreen: React.FC = () => {
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+    const [showProfitability, setShowProfitability] = useState(false);
     const [isListMenuOpen, setIsListMenuOpen] = useState(false);
+    const [stockFilter, setStockFilter] = useState<'ALL' | 'OUT_OF_STOCK' | 'IN_STOCK'>('ALL');
+    const [isStockMenuOpen, setIsStockMenuOpen] = useState(false);
     const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
     const [selectedDetailItem, setSelectedDetailItem] = useState<InventoryItem | null>(null);
+    const [isScanning, setIsScanning] = useState(false);
     
     // Form States
     const [searchPesticideTerm, setSearchPesticideTerm] = useState('');
@@ -56,8 +68,11 @@ export const InventoryScreen: React.FC = () => {
         quantity: '',
         unit: 'Adet',
         buyingPrice: '',
+        cashBuyingPrice: '',
         sellingPrice: '',
-        lowStockThreshold: ''
+        cashPrice: '',
+        lowStockThreshold: '',
+        barcode: ''
     });
 
     useEffect(() => {
@@ -73,17 +88,24 @@ export const InventoryScreen: React.FC = () => {
 
     const filteredInventory = useMemo(() => {
         return inventory.filter(item => {
-            const matchesSearch = item.pesticideName.toLowerCase().includes(searchTerm.toLowerCase());
+            const matchesSearch = item.pesticideName.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                                (item.barcode && item.barcode.includes(searchTerm));
             const matchesCategory = categoryFilter === 'ALL' || item.category === categoryFilter;
-            return matchesSearch && matchesCategory;
+            
+            let matchesStock = true;
+            if (stockFilter === 'OUT_OF_STOCK') matchesStock = item.quantity <= 0;
+            else if (stockFilter === 'IN_STOCK') matchesStock = item.quantity > 0;
+            
+            return matchesSearch && matchesCategory && matchesStock;
         });
-    }, [inventory, searchTerm, categoryFilter]);
+    }, [inventory, searchTerm, categoryFilter, stockFilter]);
 
     const filteredPesticides = useMemo(() => {
         if (!searchPesticideTerm) return [];
         return pesticides.filter(p => 
             p.name.toLowerCase().includes(searchPesticideTerm.toLowerCase()) || 
-            p.activeIngredient.toLowerCase().includes(searchPesticideTerm.toLowerCase())
+            p.activeIngredient.toLowerCase().includes(searchPesticideTerm.toLowerCase()) ||
+            (p.barcode && p.barcode.includes(searchPesticideTerm))
         ).slice(0, 10);
     }, [pesticides, searchPesticideTerm]);
 
@@ -105,6 +127,9 @@ export const InventoryScreen: React.FC = () => {
             await dbService.addGlobalPesticide(newPest);
         }
 
+        const buyingPrice = Number(formData.buyingPrice) || 0;
+        const cashPrice = Number(formData.cashPrice) || 0;
+
         const newItem: InventoryItem = {
             id: crypto.randomUUID(),
             pesticideId: finalPesticideId,
@@ -112,8 +137,11 @@ export const InventoryScreen: React.FC = () => {
             category: selectedPesticide.category,
             quantity: Number(formData.quantity) || 0,
             unit: formData.unit,
-            buyingPrice: Number(formData.buyingPrice) || 0,
+            buyingPrice: buyingPrice,
+            cashBuyingPrice: Number(formData.cashBuyingPrice) || 0,
             sellingPrice: Number(formData.sellingPrice) || 0,
+            cashPrice: cashPrice === 0 ? buyingPrice : cashPrice,
+            barcode: formData.barcode,
             lastUpdated: new Date().toISOString(),
             lowStockThreshold: Number(formData.lowStockThreshold) || 0
         };
@@ -127,12 +155,18 @@ export const InventoryScreen: React.FC = () => {
     const handleUpdateItem = async () => {
         if (!selectedItem) return;
 
+        const buyingPrice = Number(formData.buyingPrice) || 0;
+        const cashPrice = Number(formData.cashPrice) || 0;
+
         const updatedItem: InventoryItem = {
             ...selectedItem,
             quantity: Number(formData.quantity) || 0,
             unit: formData.unit,
-            buyingPrice: Number(formData.buyingPrice) || 0,
+            buyingPrice: buyingPrice,
+            cashBuyingPrice: Number(formData.cashBuyingPrice) || 0,
             sellingPrice: Number(formData.sellingPrice) || 0,
+            cashPrice: cashPrice === 0 ? buyingPrice : cashPrice,
+            barcode: formData.barcode,
             lastUpdated: new Date().toISOString(),
             lowStockThreshold: Number(formData.lowStockThreshold) || 0
         };
@@ -143,59 +177,25 @@ export const InventoryScreen: React.FC = () => {
         closeModal();
     };
 
-    const syncOldPrescriptions = async () => {
-        if (syncing) return;
-        setSyncing(true);
-        try {
-            console.log("Starting sync...");
-            const allPrescriptions = await dbService.getAllPrescriptions();
-            console.log("Found prescriptions:", allPrescriptions.length);
-            
-            const toProcess = allPrescriptions.filter(p => p.isProcessed && !p.isInventoryProcessed);
-            console.log("Prescriptions to process:", toProcess.length);
-            
-            if (toProcess.length === 0) {
-                showToast("Senkronize edilecek yeni işlenmiş reçete bulunamadı.", 'info');
-                return;
-            }
-
-            if (!confirm(`${toProcess.length} adet işlenmiş reçete depoya yansıtılacak. Devam edilsin mi?`)) {
-                return;
-            }
-
-            for (const p of toProcess) {
-                await dbService.processInventory(p);
-            }
-
-            await refreshInventory();
-            await refreshStats();
-            showToast(`${toProcess.length} reçete başarıyla senkronize edildi`, 'success');
-            hapticFeedback('success');
-        } catch (error) {
-            console.error("Sync error:", error);
-            showToast("Senkronizasyon sırasında bir hata oluştu.", 'error');
-            hapticFeedback('error');
-        } finally {
-            setSyncing(false);
-        }
-    };
-
     const handleDeleteItem = async (id: string) => {
         if (confirm('Bu ürünü depodan silmek istediğinize emin misiniz?')) {
             try {
                 await deleteInventoryItem(id);
                 showToast('Ürün depodan silindi', 'success');
                 hapticFeedback('medium');
+                return true;
             } catch (error) {
                 console.error("Delete error:", error);
                 showToast("Ürün silinirken bir hata oluştu.", 'error');
                 hapticFeedback('error');
+                return false;
             }
         }
+        return false;
     };
 
     const openAddModal = () => {
-        setFormData({ quantity: '', unit: 'Adet', buyingPrice: '', sellingPrice: '', lowStockThreshold: '5' });
+        setFormData({ quantity: '', unit: 'Adet', buyingPrice: '', cashBuyingPrice: '', sellingPrice: '', cashPrice: '', lowStockThreshold: '5', barcode: '' });
         setSelectedPesticide(null);
         setSearchPesticideTerm('');
         setIsAddModalOpen(true);
@@ -207,8 +207,11 @@ export const InventoryScreen: React.FC = () => {
             quantity: item.quantity.toString(),
             unit: item.unit,
             buyingPrice: item.buyingPrice.toString(),
+            cashBuyingPrice: (item.cashBuyingPrice || 0).toString(),
             sellingPrice: item.sellingPrice.toString(),
-            lowStockThreshold: (item.lowStockThreshold || 0).toString()
+            cashPrice: (item.cashPrice || 0).toString(),
+            lowStockThreshold: (item.lowStockThreshold || 0).toString(),
+            barcode: item.barcode || ''
         });
         setIsEditModalOpen(true);
     };
@@ -223,6 +226,7 @@ export const InventoryScreen: React.FC = () => {
         setIsAddModalOpen(false);
         setIsEditModalOpen(false);
         setIsDetailModalOpen(false);
+        setShowProfitability(false);
         setIsListMenuOpen(false);
         setSelectedItem(null);
         setSelectedDetailItem(null);
@@ -284,28 +288,29 @@ export const InventoryScreen: React.FC = () => {
                 tr(item.pesticideName),
                 tr(item.category),
                 tr(item.unit),
-                `${item.sellingPrice.toLocaleString('tr-TR')} TL`
+                `${formatCurrency(item.sellingPrice, userProfile?.currency || 'TRY')}`
             ]);
         } else if (type === 'INTERNAL') {
             title = 'IC STOK VE MALIYET LISTESI';
-            head = [[tr('Ürün Adı'), tr('Kategori'), tr('Stok'), tr('Birim'), tr('Alış Fiyatı')]];
+            head = [[tr('Ürün Adı'), tr('Kategori'), tr('Stok'), tr('Birim'), tr('Alış Fiyatı (Vadeli)'), tr('Alış Fiyatı (Peşin)')]];
             body = sortedInventory.map(item => [
                 tr(item.pesticideName),
                 tr(item.category),
                 item.quantity,
                 tr(item.unit),
-                `${item.buyingPrice.toLocaleString('tr-TR')} TL`
+                `${formatCurrency(item.buyingPrice, userProfile?.currency || 'TRY')}`,
+                `${formatCurrency(item.cashBuyingPrice || 0, userProfile?.currency || 'TRY')}`
             ]);
         } else {
             title = 'TAM STOK VE FINANSAL RAPOR';
-            head = [[tr('Ürün Adı'), tr('Kategori'), tr('Stok'), tr('Alış'), tr('Satış'), tr('Toplam Maliyet')]];
+            head = [[tr('Ürün Adı'), tr('Kategori'), tr('Stok'), tr('Alış (V/P)'), tr('Satış (V/P)'), tr('Toplam Maliyet (V/P)')]];
             body = sortedInventory.map(item => [
                 tr(item.pesticideName),
                 tr(item.category),
                 `${item.quantity} ${tr(item.unit)}`,
-                `${item.buyingPrice.toLocaleString('tr-TR')} TL`,
-                `${item.sellingPrice.toLocaleString('tr-TR')} TL`,
-                `${(item.quantity * item.buyingPrice).toLocaleString('tr-TR')} TL`
+                `${formatCurrency(item.buyingPrice, userProfile?.currency || 'TRY')} / ${formatCurrency(item.cashBuyingPrice || 0, userProfile?.currency || 'TRY')}`,
+                `${formatCurrency(item.sellingPrice, userProfile?.currency || 'TRY')} / ${formatCurrency(item.cashPrice || 0, userProfile?.currency || 'TRY')}`,
+                `${formatCurrency(item.quantity * item.buyingPrice, userProfile?.currency || 'TRY')} / ${formatCurrency(item.quantity * (item.cashBuyingPrice || 0), userProfile?.currency || 'TRY')}`
             ]);
         }
 
@@ -325,12 +330,12 @@ export const InventoryScreen: React.FC = () => {
             headStyles: { 
                 fillColor: [16, 185, 129], 
                 textColor: 255,
-                fontSize: 10,
+                fontSize: 9,
                 fontStyle: 'bold',
                 halign: 'center'
             },
             styles: { 
-                fontSize: 9, 
+                fontSize: 8, 
                 cellPadding: 4,
                 font: 'helvetica',
                 textColor: [60, 60, 60],
@@ -347,11 +352,13 @@ export const InventoryScreen: React.FC = () => {
         if (type !== 'CUSTOMER') {
             const finalY = (doc as any).lastAutoTable.finalY + 15;
             const totalCost = sortedInventory.reduce((acc, i) => acc + (i.quantity * i.buyingPrice), 0);
+            const totalCashCost = sortedInventory.reduce((acc, i) => acc + (i.quantity * (i.cashBuyingPrice || 0)), 0);
             const totalRevenue = sortedInventory.reduce((acc, i) => acc + (i.quantity * i.sellingPrice), 0);
+            const totalCashRevenue = sortedInventory.reduce((acc, i) => acc + (i.quantity * (i.cashPrice || 0)), 0);
             
             // Summary Box Background
             doc.setFillColor(245, 247, 246);
-            doc.roundedRect(14, finalY, 182, type === 'FULL' ? 35 : 20, 3, 3, 'F');
+            doc.roundedRect(14, finalY, 182, type === 'FULL' ? 45 : 25, 3, 3, 'F');
             
             doc.setFontSize(10);
             doc.setFont('helvetica', 'bold');
@@ -360,20 +367,20 @@ export const InventoryScreen: React.FC = () => {
             
             doc.setFontSize(11);
             doc.setTextColor(40, 40, 40);
-            doc.text(tr(`Toplam Stok Maliyeti:`), 20, finalY + 16);
-            doc.text(`${totalCost.toLocaleString('tr-TR')} TL`, 190, finalY + 16, { align: 'right' });
+            doc.text(tr(`Toplam Stok Maliyeti (Vadeli / Peşin):`), 20, finalY + 16);
+            doc.text(`${formatCurrency(totalCost, userProfile?.currency || 'TRY')} / ${formatCurrency(totalCashCost, userProfile?.currency || 'TRY')}`, 190, finalY + 16, { align: 'right' });
             
             if (type === 'FULL') {
-                doc.text(tr(`Toplam Potansiyel Ciro:`), 20, finalY + 23);
-                doc.text(`${totalRevenue.toLocaleString('tr-TR')} TL`, 190, finalY + 23, { align: 'right' });
+                doc.text(tr(`Toplam Potansiyel Ciro (Vadeli / Peşin):`), 20, finalY + 23);
+                doc.text(`${formatCurrency(totalRevenue, userProfile?.currency || 'TRY')} / ${formatCurrency(totalCashRevenue, userProfile?.currency || 'TRY')}`, 190, finalY + 23, { align: 'right' });
                 
                 doc.setDrawColor(220, 220, 220);
                 doc.line(20, finalY + 26, 190, finalY + 26);
                 
                 doc.setFontSize(12);
                 doc.setTextColor(16, 185, 129);
-                doc.text(tr(`Tahmini Net Kar:`), 20, finalY + 31);
-                doc.text(`${(totalRevenue - totalCost).toLocaleString('tr-TR')} TL`, 190, finalY + 31, { align: 'right' });
+                doc.text(tr(`Tahmini Net Kar (Vadeli / Peşin):`), 20, finalY + 31);
+                doc.text(`${formatCurrency(totalRevenue - totalCost, userProfile?.currency || 'TRY')} / ${formatCurrency(totalCashRevenue - totalCashCost, userProfile?.currency || 'TRY')}`, 190, finalY + 31, { align: 'right' });
             }
         }
 
@@ -419,7 +426,7 @@ export const InventoryScreen: React.FC = () => {
             const item = p.items.find(i => i.pesticideId === selectedDetailItem.pesticideId);
             if (item) {
                 history.push({
-                    farmerName: farmerMap[p.farmerId] || 'Bilinmeyen Çiftçi',
+                    farmerName: farmerMap[p.farmerId] || `Bilinmeyen ${farmerLabel}`,
                     date: p.date,
                     price: item.unitPrice || 0,
                     quantity: item.quantity || '0'
@@ -430,12 +437,54 @@ export const InventoryScreen: React.FC = () => {
         return history.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     }, [selectedDetailItem, prescriptions, farmerMap]);
 
+    const profitabilityMetrics = useMemo(() => {
+        if (!selectedDetailItem) return null;
+
+        const buyingPrice = selectedDetailItem.buyingPrice || 0;
+        const sellingPrice = selectedDetailItem.sellingPrice || 0;
+        
+        // 1. Kârlılık Oranı (%)
+        const profitMargin = buyingPrice > 0 ? ((sellingPrice - buyingPrice) / buyingPrice) * 100 : 0;
+
+        // 2. Kalan Stoktan Yapılacak Kâr
+        const remainingStock = selectedDetailItem.quantity || 0;
+        const expectedProfit = remainingStock * (sellingPrice - buyingPrice);
+
+        // 3. Bu üründen yapılan satışlardan elde edilen kâr
+        let totalRealizedProfit = 0;
+        let totalSoldQuantity = 0;
+
+        prescriptions.forEach(p => {
+            const item = p.items.find(i => i.pesticideId === selectedDetailItem.pesticideId);
+            if (item && item.unitPrice) {
+                const qtyStr = item.quantity || '0';
+                const parsedQty = parseFloat(qtyStr);
+                if (!isNaN(parsedQty) && parsedQty !== 0) {
+                    const profitPerUnit = item.unitPrice - buyingPrice;
+                    totalRealizedProfit += (profitPerUnit * parsedQty);
+                    totalSoldQuantity += parsedQty;
+                }
+            }
+        });
+
+        return {
+            profitMargin,
+            expectedProfit,
+            totalRealizedProfit,
+            totalSoldQuantity
+        };
+    }, [selectedDetailItem, prescriptions]);
+
     // Analysis Data
     const analysisData = useMemo(() => {
         const totalCost = inventory.reduce((acc, item) => acc + (item.quantity * item.buyingPrice), 0);
         const totalPotentialRevenue = inventory.reduce((acc, item) => acc + (item.quantity * item.sellingPrice), 0);
+        const cashTotalCost = inventory.reduce((acc, item) => acc + (item.quantity * (item.cashBuyingPrice || 0)), 0);
+        const cashTotalPotentialRevenue = inventory.reduce((acc, item) => acc + (item.quantity * (item.cashPrice || 0)), 0);
         const potentialProfit = totalPotentialRevenue - totalCost;
         const profitMargin = totalCost > 0 ? (potentialProfit / totalCost) * 100 : 0;
+        const cashPotentialProfit = cashTotalPotentialRevenue - cashTotalCost;
+        const cashProfitMargin = cashTotalCost > 0 ? (cashPotentialProfit / cashTotalCost) * 100 : 0;
 
         const categoryDistribution = inventory.reduce((acc, item) => {
             acc[item.category] = (acc[item.category] || 0) + (item.quantity * item.buyingPrice);
@@ -449,6 +498,10 @@ export const InventoryScreen: React.FC = () => {
             totalPotentialRevenue,
             potentialProfit,
             profitMargin,
+            cashTotalCost,
+            cashTotalPotentialRevenue,
+            cashPotentialProfit,
+            cashProfitMargin,
             chartData
         };
     }, [inventory]);
@@ -495,50 +548,53 @@ export const InventoryScreen: React.FC = () => {
     return (
         <div className="p-4 pb-32 max-w-5xl mx-auto animate-in fade-in duration-500">
             {/* Header */}
-            <div className="flex justify-between items-end mb-6">
-                <div>
-                    <h1 className="text-2xl font-black text-stone-100 tracking-tight flex items-center gap-2">
-                        <Package className="text-emerald-500" size={28} />
-                        DEPOM
-                    </h1>
-                    <p className="text-stone-500 text-xs font-bold uppercase tracking-widest mt-1">Stok ve Maliyet Yönetimi</p>
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+                <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center border border-emerald-500/20">
+                        <Package className="text-emerald-500" size={24} />
+                    </div>
+                    <div className="flex items-baseline gap-2">
+                        <h1 className="text-2xl font-black text-stone-100 tracking-tight">DEPOM</h1>
+                        <span className="text-stone-500 text-[8px] font-black uppercase tracking-widest opacity-50">Stok & Maliyet Yönetimi</span>
+                    </div>
                 </div>
-                <div className="flex gap-2 relative">
+                
+                <div className="flex items-center gap-2">
                     <div className="relative">
                         <button 
                             onClick={() => setIsListMenuOpen(!isListMenuOpen)}
-                            className="bg-stone-800 hover:bg-stone-700 text-stone-300 px-3 py-2 rounded-xl font-bold text-xs border border-white/5 active:scale-95 transition-all flex items-center gap-2"
+                            className="bg-stone-900/80 hover:bg-stone-800 text-stone-300 px-3 py-1.5 rounded-xl font-black text-[11px] border border-white/10 active:scale-95 transition-all flex items-center gap-1.5 group shadow-sm uppercase tracking-wider"
                         >
-                            <List size={16} />
-                            Listele
+                            <List size={14} className="text-stone-500 group-hover:text-emerald-400 transition-colors" />
+                            Depo Raporu
                         </button>
                         
                         {isListMenuOpen && (
                             <>
                                 <div className="fixed inset-0 z-30" onClick={() => setIsListMenuOpen(false)}></div>
-                                <div className="absolute top-full right-0 mt-2 w-56 bg-stone-900 border border-white/10 rounded-2xl shadow-2xl z-40 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                                <div className="absolute top-full left-0 mt-2 w-52 bg-stone-900 border border-white/10 rounded-2xl shadow-2xl z-40 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
                                     <div className="p-2 border-b border-white/5 bg-stone-950/50">
-                                        <span className="text-[10px] font-black text-stone-500 uppercase tracking-widest px-2">PDF Rapor Seçenekleri</span>
+                                        <span className="text-[9px] font-black text-stone-500 uppercase tracking-widest px-2">PDF Rapor Seçenekleri</span>
                                     </div>
                                     <button 
-                                        onClick={() => generateInventoryPDF('CUSTOMER')}
-                                        className="w-full text-left px-4 py-3 text-xs font-bold text-stone-300 hover:bg-stone-800 hover:text-emerald-400 flex items-center gap-3 transition-colors"
+                                        onClick={() => { generateInventoryPDF('CUSTOMER'); setIsListMenuOpen(false); }}
+                                        className="w-full text-left px-4 py-2.5 text-[10px] font-bold text-stone-300 hover:bg-stone-800 hover:text-emerald-400 flex items-center gap-3 transition-colors"
                                     >
-                                        <User size={14} className="text-blue-400" />
+                                        <User size={12} className="text-blue-400" />
                                         Müşteri Fiyat Listesi
                                     </button>
                                     <button 
-                                        onClick={() => generateInventoryPDF('INTERNAL')}
-                                        className="w-full text-left px-4 py-3 text-xs font-bold text-stone-300 hover:bg-stone-800 hover:text-emerald-400 flex items-center gap-3 transition-colors"
+                                        onClick={() => { generateInventoryPDF('INTERNAL'); setIsListMenuOpen(false); }}
+                                        className="w-full text-left px-4 py-2.5 text-[10px] font-bold text-stone-300 hover:bg-stone-800 hover:text-emerald-400 flex items-center gap-3 transition-colors"
                                     >
-                                        <Package size={14} className="text-amber-400" />
+                                        <Package size={12} className="text-amber-400" />
                                         İç Stok & Maliyet Listesi
                                     </button>
                                     <button 
-                                        onClick={() => generateInventoryPDF('FULL')}
-                                        className="w-full text-left px-4 py-3 text-xs font-bold text-stone-300 hover:bg-stone-800 hover:text-emerald-400 flex items-center gap-3 transition-colors"
+                                        onClick={() => { generateInventoryPDF('FULL'); setIsListMenuOpen(false); }}
+                                        className="w-full text-left px-4 py-2.5 text-[10px] font-bold text-stone-300 hover:bg-stone-800 hover:text-emerald-400 flex items-center gap-3 transition-colors"
                                     >
-                                        <TrendingUp size={14} className="text-emerald-400" />
+                                        <TrendingUp size={12} className="text-emerald-400" />
                                         Tam Finansal Rapor
                                     </button>
                                 </div>
@@ -546,63 +602,96 @@ export const InventoryScreen: React.FC = () => {
                         )}
                     </div>
 
-                    <button 
-                        onClick={syncOldPrescriptions}
-                        disabled={syncing}
-                        className={`bg-stone-800 hover:bg-stone-700 text-stone-300 px-3 py-2 rounded-xl font-bold text-xs border border-white/5 active:scale-95 transition-all flex items-center gap-2 ${syncing ? 'opacity-50 cursor-not-allowed' : ''}`}
-                        title="İşlenmiş reçeteleri stoktan düşer"
-                    >
-                        <RefreshCw size={16} className={syncing ? "animate-spin" : ""} />
-                        {syncing ? 'Senkronize Ediliyor...' : 'Senkronize Et'}
-                    </button>
-                    <button 
-                        onClick={openAddModal}
-                        className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl font-bold text-sm shadow-lg shadow-emerald-900/20 active:scale-95 transition-all flex items-center gap-2"
-                    >
-                        <Plus size={18} />
-                        Ürün Ekle
-                    </button>
+                    <div className="relative">
+                        <button 
+                            onClick={() => setIsStockMenuOpen(!isStockMenuOpen)}
+                            className={`px-3 py-1.5 rounded-xl border transition-all flex items-center gap-1.5 font-black text-[11px] uppercase tracking-wider shadow-sm active:scale-95 ${stockFilter !== 'ALL' ? 'bg-amber-500/20 border-amber-500/50 text-amber-400' : 'bg-stone-900/80 border-white/10 text-stone-500 hover:text-stone-300'}`}
+                        >
+                            {stockFilter === 'ALL' ? <List size={14} /> : stockFilter === 'OUT_OF_STOCK' ? <EyeOff size={14} /> : <Eye size={14} />}
+                            {stockFilter === 'ALL' ? "Tümünü Göster" : stockFilter === 'OUT_OF_STOCK' ? "Bitenleri Göster" : "Kalanları Göster"}
+                        </button>
+
+                        {isStockMenuOpen && (
+                            <>
+                                <div className="fixed inset-0 z-30" onClick={() => setIsStockMenuOpen(false)}></div>
+                                <div className="absolute top-full right-0 mt-2 w-40 bg-stone-900 border border-white/10 rounded-2xl shadow-2xl z-40 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                                    <button 
+                                        onClick={() => { setStockFilter('ALL'); setIsStockMenuOpen(false); }}
+                                        className={`w-full text-left px-4 py-2.5 text-[10px] font-bold flex items-center gap-3 transition-colors ${stockFilter === 'ALL' ? 'bg-stone-800 text-emerald-400' : 'text-stone-400 hover:bg-stone-800 hover:text-stone-200'}`}
+                                    >
+                                        <List size={12} /> Tümünü Göster
+                                    </button>
+                                    <button 
+                                        onClick={() => { setStockFilter('OUT_OF_STOCK'); setIsStockMenuOpen(false); }}
+                                        className={`w-full text-left px-4 py-2.5 text-[10px] font-bold flex items-center gap-3 transition-colors ${stockFilter === 'OUT_OF_STOCK' ? 'bg-stone-800 text-amber-400' : 'text-stone-400 hover:bg-stone-800 hover:text-stone-200'}`}
+                                    >
+                                        <EyeOff size={12} /> Bitenleri Göster
+                                    </button>
+                                    <button 
+                                        onClick={() => { setStockFilter('IN_STOCK'); setIsStockMenuOpen(false); }}
+                                        className={`w-full text-left px-4 py-2.5 text-[10px] font-bold flex items-center gap-3 transition-colors ${stockFilter === 'IN_STOCK' ? 'bg-stone-800 text-emerald-400' : 'text-stone-400 hover:bg-stone-800 hover:text-stone-200'}`}
+                                    >
+                                        <Eye size={12} /> Kalanları Göster
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+
+                    {canEditInventory && (
+                        <button 
+                            onClick={openAddModal}
+                            className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-xl font-black text-[11px] shadow-lg shadow-emerald-900/20 active:scale-95 transition-all flex items-center gap-1.5 uppercase tracking-wider"
+                        >
+                            <Plus size={16} />
+                            Ürün Ekle
+                        </button>
+                    )}
                 </div>
             </div>
 
             {/* Tabs */}
-            <div className="flex gap-2 mb-6 bg-stone-900/50 p-1 rounded-xl border border-white/5 w-fit">
+            <div className="flex gap-1.5 mb-6 bg-stone-900/80 p-1 rounded-2xl border border-white/10 w-fit shadow-inner">
                 <button 
                     onClick={() => setActiveTab('LIST')}
-                    className={`px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${activeTab === 'LIST' ? 'bg-stone-800 text-emerald-400 shadow-sm' : 'text-stone-500 hover:text-stone-300'}`}
+                    className={`px-3 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${activeTab === 'LIST' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/40' : 'text-stone-500 hover:text-stone-300 hover:bg-stone-800/50'}`}
                 >
-                    <Package size={16} /> Stok Listesi
+                    <Package size={14} /> Stok Listesi
                 </button>
-                <button 
-                    onClick={() => setActiveTab('ANALYSIS')}
-                    className={`px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${activeTab === 'ANALYSIS' ? 'bg-stone-800 text-emerald-400 shadow-sm' : 'text-stone-500 hover:text-stone-300'}`}
-                >
-                    <BarChart3 size={16} /> Finansal Analiz
-                </button>
-                <button 
-                    onClick={() => setActiveTab('PROFIT_LOSS')}
-                    className={`px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${activeTab === 'PROFIT_LOSS' ? 'bg-stone-800 text-emerald-400 shadow-sm' : 'text-stone-500 hover:text-stone-300'}`}
-                >
-                    <TrendingUp size={16} /> Kar / Zarar
-                </button>
+                {!isSales && (
+                    <>
+                        <button 
+                            onClick={() => setActiveTab('ANALYSIS')}
+                            className={`px-3 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${activeTab === 'ANALYSIS' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/40' : 'text-stone-500 hover:text-stone-300 hover:bg-stone-800/50'}`}
+                        >
+                            <BarChart3 size={14} /> Finansal Analiz
+                        </button>
+                        <button 
+                            onClick={() => setActiveTab('PROFIT_LOSS')}
+                            className={`px-3 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${activeTab === 'PROFIT_LOSS' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/40' : 'text-stone-500 hover:text-stone-300 hover:bg-stone-800/50'}`}
+                        >
+                            <TrendingUp size={14} /> Kar / Zarar
+                        </button>
+                    </>
+                )}
             </div>
 
             {activeTab === 'LIST' && (
                 <div className="space-y-4 animate-in slide-in-from-bottom-2 duration-300">
                     {/* Search & Filter */}
-                    <div className="flex gap-3 mb-4">
-                        <div className="flex-1 bg-stone-900 border border-white/5 rounded-xl flex items-center px-3 shadow-sm">
-                            <Search className="text-stone-500" size={18} />
+                    <div className="flex gap-2 mb-4">
+                        <div className="flex-[4] bg-stone-900/80 border border-white/10 rounded-xl flex items-center px-3 shadow-sm focus-within:border-emerald-500/50 transition-all">
+                            <Search className="text-stone-500" size={16} />
                             <input 
                                 type="text"
                                 placeholder="Ürün ara..."
-                                className="w-full bg-transparent p-3 text-stone-200 outline-none text-sm font-medium placeholder-stone-600"
+                                className="w-full bg-transparent p-2 text-stone-200 outline-none text-xs font-medium placeholder-stone-600"
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
                             />
                         </div>
                         <select 
-                            className="bg-stone-900 border border-white/5 rounded-xl px-3 text-stone-400 text-sm font-medium outline-none"
+                            className="flex-1 bg-stone-900/80 border border-white/10 rounded-xl px-2 text-stone-400 text-[10px] font-bold outline-none cursor-pointer hover:text-stone-200 transition-colors min-w-[100px]"
                             value={categoryFilter}
                             onChange={(e) => setCategoryFilter(e.target.value)}
                         >
@@ -620,76 +709,64 @@ export const InventoryScreen: React.FC = () => {
                                 <div 
                                     key={item.id} 
                                     onClick={() => openDetailModal(item)}
-                                    className={`bg-stone-900/80 backdrop-blur border rounded-xl p-2 shadow-sm transition-all group cursor-pointer active:scale-[0.98] ${
-                                        item.quantity === 0 
-                                        ? 'border-red-500/50 shadow-[0_0_10px_rgba(239,68,68,0.1)]' 
-                                        : 'border-white/5 hover:border-emerald-500/20'
+                                    className={`bg-stone-900/80 backdrop-blur border rounded-2xl p-4 shadow-sm transition-all group cursor-pointer active:scale-[0.98] relative overflow-hidden ${
+                                        item.quantity <= 0 
+                                        ? 'border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.1)]' 
+                                        : 'border-white/5 hover:border-emerald-500/30 hover:bg-stone-900'
                                     }`}
                                 >
-                                    <div className="flex justify-between items-start mb-1.5">
+                                    {/* Stock Badge - High Visibility */}
+                                    <div className={`absolute top-0 right-0 px-3 py-1.5 rounded-bl-2xl font-black font-mono text-xs flex items-center gap-1.5 shadow-lg z-10 ${
+                                        item.quantity <= 0 ? 'bg-red-500 text-white' : 'bg-emerald-500 text-stone-950'
+                                    }`}>
+                                        <Package size={12} />
+                                        {item.quantity} <span className="text-[8px] opacity-70 font-sans uppercase">{item.unit}</span>
+                                    </div>
+
+                                    <div className="flex justify-between items-start mb-4 pr-16">
                                         <div className="flex-1 min-w-0">
-                                            <h3 className="font-bold text-stone-100 text-xs truncate tracking-tight">{item.pesticideName}</h3>
-                                            <span className="text-[7px] font-bold text-stone-500 bg-stone-950/50 px-1 py-0.5 rounded border border-white/5 uppercase tracking-widest mt-0.5 inline-block">
+                                            <h3 className="font-black text-stone-100 text-sm truncate tracking-tight group-hover:text-emerald-400 transition-colors uppercase">{item.pesticideName}</h3>
+                                            <span className="text-[8px] font-black text-stone-500 bg-stone-950/50 px-2 py-0.5 rounded-full border border-white/5 uppercase tracking-widest mt-1 inline-block">
                                                 {item.category}
                                             </span>
                                         </div>
-                                        <div className="flex gap-1 ml-2">
-                                            <button 
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    openEditModal(item);
-                                                }} 
-                                                className="p-1 bg-stone-800/60 text-stone-400 rounded-lg hover:text-emerald-400 hover:bg-stone-700 transition-all active:scale-90 border border-white/5"
-                                                title="Düzenle"
-                                            >
-                                                <Edit2 size={12} />
-                                            </button>
-                                            <button 
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    handleDeleteItem(item.id);
-                                                }} 
-                                                className="p-1 bg-stone-800/60 text-stone-400 rounded-lg hover:text-red-400 hover:bg-red-900/20 transition-all active:scale-90 border border-white/5"
-                                                title="Sil"
-                                            >
-                                                <Trash2 size={12} />
-                                            </button>
-                                        </div>
                                     </div>
                                     
-                                    <div className="grid grid-cols-3 gap-1.5 mt-2">
-                                        <div className="bg-stone-950/30 p-1.5 rounded-lg border border-white/5">
-                                            <span className="text-[7px] text-stone-500 font-bold uppercase block mb-0.5 tracking-wider">Stok</span>
-                                            <span className="text-emerald-400 font-black font-mono text-xs">
-                                                {item.quantity} <span className="text-[7px] text-stone-600 font-bold font-sans uppercase">{item.unit}</span>
-                                            </span>
+                                    <div className="space-y-2">
+                                        {/* Row 1: Peşin */}
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div className="bg-stone-950/40 p-2 rounded-xl border border-white/5 group-hover:border-blue-500/20 transition-colors">
+                                                <span className="text-[8px] text-stone-500 font-black uppercase block mb-0.5 tracking-wider">Peşin Alış</span>
+                                                <span className="text-stone-300 font-black font-mono text-xs">
+                                                    {formatCurrency(Math.round(item.cashBuyingPrice || 0), userProfile?.currency || 'TRY')}
+                                                </span>
+                                            </div>
+                                            <div className="bg-stone-950/40 p-2 rounded-xl border border-white/5 group-hover:border-blue-500/20 transition-colors">
+                                                <span className="text-[8px] text-stone-500 font-black uppercase block mb-0.5 tracking-wider">Peşin Satış</span>
+                                                <span className="text-blue-400 font-black font-mono text-xs">
+                                                    {formatCurrency(Math.round(item.cashPrice || 0), userProfile?.currency || 'TRY')}
+                                                </span>
+                                            </div>
                                         </div>
-                                        <div className="bg-stone-950/30 p-1.5 rounded-lg border border-white/5">
-                                            <span className="text-[7px] text-stone-500 font-bold uppercase block mb-0.5 tracking-wider">Alış</span>
-                                            <span className="text-stone-300 font-black font-mono text-xs">
-                                                {Math.round(item.buyingPrice).toLocaleString('tr-TR')} <span className="text-[7px] text-stone-600 font-bold font-sans uppercase">₺</span>
-                                            </span>
-                                        </div>
-                                        <div className="bg-stone-950/30 p-1.5 rounded-lg border border-white/5">
-                                            <span className="text-[7px] text-stone-500 font-bold uppercase block mb-0.5 tracking-wider">Satış</span>
-                                            <span className="text-amber-400 font-black font-mono text-xs">
-                                                {Math.round(item.sellingPrice).toLocaleString('tr-TR')} <span className="text-[7px] text-stone-600 font-bold font-sans uppercase">₺</span>
-                                            </span>
+
+                                        {/* Row 2: Vadeli */}
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div className="bg-stone-950/40 p-2 rounded-xl border border-white/5 group-hover:border-amber-500/20 transition-colors">
+                                                <span className="text-[8px] text-stone-500 font-black uppercase block mb-0.5 tracking-wider">Vadeli Alış</span>
+                                                <span className="text-stone-300 font-black font-mono text-xs">
+                                                    {formatCurrency(Math.round(item.buyingPrice), userProfile?.currency || 'TRY')}
+                                                </span>
+                                            </div>
+                                            <div className="bg-stone-950/40 p-2 rounded-xl border border-white/5 group-hover:border-amber-500/20 transition-colors">
+                                                <span className="text-[8px] text-stone-500 font-black uppercase block mb-0.5 tracking-wider">Vadeli Satış</span>
+                                                <span className="text-amber-400 font-black font-mono text-xs">
+                                                    {formatCurrency(Math.round(item.sellingPrice), userProfile?.currency || 'TRY')}
+                                                </span>
+                                            </div>
                                         </div>
                                     </div>
 
-                                    <div className="mt-3 pt-3 border-t border-white/5 flex justify-between items-center">
-                                        <div className="text-[10px] text-stone-600 font-mono">
-                                            Son Güncelleme: {new Date(item.lastUpdated).toLocaleDateString()}
-                                        </div>
-                                        <div className={`text-xs font-bold px-2 py-1 rounded-full ${
-                                            (item.sellingPrice - item.buyingPrice) > 0 
-                                            ? 'text-emerald-400 bg-emerald-900/20' 
-                                            : 'text-red-400 bg-red-900/20'
-                                        }`}>
-                                            Kar: {(item.sellingPrice - item.buyingPrice).toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
-                                        </div>
-                                    </div>
+                                    {/* Date removed for space saving */}
                                 </div>
                             ))
                         ) : (
@@ -710,33 +787,68 @@ export const InventoryScreen: React.FC = () => {
                         <div className="bg-stone-900 p-5 rounded-2xl border border-white/5 relative overflow-hidden">
                             <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/10 rounded-full blur-2xl -mr-10 -mt-10"></div>
                             <h3 className="text-xs font-bold text-stone-500 uppercase tracking-widest mb-1">Toplam Stok Maliyeti</h3>
-                            <p className="text-2xl font-black text-stone-200 font-mono">
-                                {analysisData.totalCost.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
-                            </p>
-                            <div className="mt-2 text-[10px] text-stone-500">Depodaki ürünlerin toplam alış değeri</div>
+                            <div className="space-y-2">
+                                <div>
+                                    <p className="text-[10px] text-stone-500 uppercase tracking-widest">Vadeli</p>
+                                    <p className="text-xl font-black text-stone-200 font-mono">
+                                        {formatCurrency(analysisData.totalCost, userProfile?.currency || 'TRY')}
+                                    </p>
+                                </div>
+                                <div>
+                                    <p className="text-[10px] text-stone-500 uppercase tracking-widest">Peşin</p>
+                                    <p className="text-lg font-black text-stone-400 font-mono">
+                                        {formatCurrency(analysisData.cashTotalCost, userProfile?.currency || 'TRY')}
+                                    </p>
+                                </div>
+                            </div>
                         </div>
 
                         <div className="bg-stone-900 p-5 rounded-2xl border border-white/5 relative overflow-hidden">
                             <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/10 rounded-full blur-2xl -mr-10 -mt-10"></div>
                             <h3 className="text-xs font-bold text-stone-500 uppercase tracking-widest mb-1">Potansiyel Ciro</h3>
-                            <p className="text-2xl font-black text-emerald-400 font-mono">
-                                {analysisData.totalPotentialRevenue.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
-                            </p>
-                            <div className="mt-2 text-[10px] text-stone-500">Tüm stok satıldığında elde edilecek gelir</div>
+                            <div className="space-y-2">
+                                <div>
+                                    <p className="text-[10px] text-stone-500 uppercase tracking-widest">Vadeli</p>
+                                    <p className="text-xl font-black text-emerald-400 font-mono">
+                                        {formatCurrency(analysisData.totalPotentialRevenue, userProfile?.currency || 'TRY')}
+                                    </p>
+                                </div>
+                                <div>
+                                    <p className="text-[10px] text-stone-500 uppercase tracking-widest">Peşin</p>
+                                    <p className="text-lg font-black text-emerald-500/70 font-mono">
+                                        {formatCurrency(analysisData.cashTotalPotentialRevenue, userProfile?.currency || 'TRY')}
+                                    </p>
+                                </div>
+                            </div>
                         </div>
 
                         <div className="bg-stone-900 p-5 rounded-2xl border border-white/5 relative overflow-hidden">
                             <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/10 rounded-full blur-2xl -mr-10 -mt-10"></div>
                             <h3 className="text-xs font-bold text-stone-500 uppercase tracking-widest mb-1">Tahmini Kar</h3>
-                            <div className="flex items-end gap-2">
-                                <p className={`text-2xl font-black font-mono ${analysisData.potentialProfit >= 0 ? 'text-amber-400' : 'text-red-400'}`}>
-                                    {analysisData.potentialProfit.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
-                                </p>
-                                <span className={`text-xs font-bold mb-1 ${analysisData.profitMargin >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                                    %{analysisData.profitMargin.toFixed(1)}
-                                </span>
+                            <div className="space-y-2">
+                                <div>
+                                    <p className="text-[10px] text-stone-500 uppercase tracking-widest">Vadeli</p>
+                                    <div className="flex items-end gap-2">
+                                        <p className={`text-xl font-black font-mono ${analysisData.potentialProfit >= 0 ? 'text-amber-400' : 'text-red-400'}`}>
+                                            {formatCurrency(analysisData.potentialProfit, userProfile?.currency || 'TRY')}
+                                        </p>
+                                        <span className={`text-xs font-bold mb-1 ${analysisData.profitMargin >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                                            %{analysisData.profitMargin.toFixed(1)}
+                                        </span>
+                                    </div>
+                                </div>
+                                <div>
+                                    <p className="text-[10px] text-stone-500 uppercase tracking-widest">Peşin</p>
+                                    <div className="flex items-end gap-2">
+                                        <p className={`text-lg font-black font-mono ${analysisData.cashPotentialProfit >= 0 ? 'text-amber-500/70' : 'text-red-500/70'}`}>
+                                            {formatCurrency(analysisData.cashPotentialProfit, userProfile?.currency || 'TRY')}
+                                        </p>
+                                        <span className={`text-[10px] font-bold mb-0.5 ${analysisData.cashProfitMargin >= 0 ? 'text-emerald-500/70' : 'text-red-500/70'}`}>
+                                            %{analysisData.cashProfitMargin.toFixed(1)}
+                                        </span>
+                                    </div>
+                                </div>
                             </div>
-                            <div className="mt-2 text-[10px] text-stone-500">Beklenen net kar marjı</div>
                         </div>
                     </div>
 
@@ -765,7 +877,7 @@ export const InventoryScreen: React.FC = () => {
                                         </Pie>
                                         <Tooltip 
                                             contentStyle={{ backgroundColor: '#1c1917', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', fontSize: '10px' }}
-                                            formatter={(value: number) => value.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                                            formatter={(value: number) => formatCurrency(value, userProfile?.currency || 'TRY')}
                                         />
                                     </RePieChart>
                                 </ResponsiveContainer>
@@ -806,7 +918,7 @@ export const InventoryScreen: React.FC = () => {
                                                 </div>
                                                 <div className="text-right">
                                                     <div className="text-xs font-bold text-emerald-400 font-mono">
-                                                        +{profit.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                                                        +{formatCurrency(profit, userProfile?.currency || 'TRY')}
                                                     </div>
                                                     <div className="text-[10px] text-stone-500 font-mono">
                                                         %{margin.toFixed(0)} Marj
@@ -832,7 +944,7 @@ export const InventoryScreen: React.FC = () => {
                                 </div>
                                 <span className="text-stone-500 text-[10px] font-bold uppercase tracking-wider">Satılan Ürün Maliyeti</span>
                             </div>
-                            <div className="text-2xl font-black text-stone-100">{profitLossData.totalSoldCost.toLocaleString('tr-TR')} <span className="text-sm font-normal text-stone-500">TL</span></div>
+                            <div className="text-2xl font-black text-stone-100">{formatCurrency(profitLossData.totalSoldCost, userProfile?.currency || 'TRY')}</div>
                             <p className="text-[10px] text-stone-600 mt-2 font-medium">{profitLossData.processedCount} adet işlenmiş reçete baz alınmıştır.</p>
                         </div>
 
@@ -843,8 +955,8 @@ export const InventoryScreen: React.FC = () => {
                                 </div>
                                 <span className="text-stone-500 text-[10px] font-bold uppercase tracking-wider">Satış Geliri</span>
                             </div>
-                            <div className="text-2xl font-black text-stone-100">{profitLossData.totalSoldRevenue.toLocaleString('tr-TR')} <span className="text-sm font-normal text-stone-500">TL</span></div>
-                            <p className="text-[10px] text-stone-600 mt-2 font-medium">Reçetelerdeki birim fiyatlar üzerinden hesaplanmıştır.</p>
+                            <div className="text-2xl font-black text-stone-100">{formatCurrency(profitLossData.totalSoldRevenue, userProfile?.currency || 'TRY')}</div>
+                            <p className="text-[10px] text-stone-600 mt-2 font-medium">{prescriptionLabel}lerdeki birim fiyatlar üzerinden hesaplanmıştır.</p>
                         </div>
 
                         <div className="bg-stone-900 border border-white/5 p-5 rounded-2xl shadow-sm relative overflow-hidden">
@@ -856,7 +968,7 @@ export const InventoryScreen: React.FC = () => {
                                 <span className="text-stone-500 text-[10px] font-bold uppercase tracking-wider">Net Kar / Zarar</span>
                             </div>
                             <div className={`text-2xl font-black ${profitLossData.totalProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                {profitLossData.totalProfit.toLocaleString('tr-TR')} <span className="text-sm font-normal opacity-60">TL</span>
+                                {formatCurrency(profitLossData.totalProfit, userProfile?.currency || 'TRY')}
                             </div>
                             <div className="flex items-center gap-2 mt-2">
                                 <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${profitLossData.totalProfit >= 0 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
@@ -881,20 +993,20 @@ export const InventoryScreen: React.FC = () => {
                         <div className="space-y-6">
                             <div className="flex justify-between items-center pb-4 border-b border-white/5">
                                 <span className="text-stone-400 font-medium">Toplam Satış Geliri</span>
-                                <span className="text-stone-100 font-black">{profitLossData.totalSoldRevenue.toLocaleString('tr-TR')} TL</span>
+                                <span className="text-stone-100 font-black">{formatCurrency(profitLossData.totalSoldRevenue, userProfile?.currency || 'TRY')}</span>
                             </div>
                             <div className="flex justify-between items-center pb-4 border-b border-white/5">
                                 <span className="text-stone-400 font-medium">Toplam Ürün Maliyeti</span>
-                                <span className="text-stone-100 font-black text-red-400">-{profitLossData.totalSoldCost.toLocaleString('tr-TR')} TL</span>
+                                <span className="text-stone-100 font-black text-red-400">-{formatCurrency(profitLossData.totalSoldCost, userProfile?.currency || 'TRY')}</span>
                             </div>
                             <div className="flex justify-between items-center pb-4 border-b border-white/5">
                                 <span className="text-stone-400 font-medium">İşletme Giderleri</span>
-                                <span className="text-stone-100 font-black text-red-400">-{profitLossData.totalExpenses.toLocaleString('tr-TR')} TL</span>
+                                <span className="text-stone-100 font-black text-red-400">-{formatCurrency(profitLossData.totalExpenses, userProfile?.currency || 'TRY')}</span>
                             </div>
                             <div className="flex justify-between items-center pt-2">
                                 <span className="text-stone-100 font-black text-lg">Toplam Kar</span>
                                 <span className={`text-2xl font-black ${profitLossData.totalProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                    {profitLossData.totalProfit.toLocaleString('tr-TR')} TL
+                                    {formatCurrency(profitLossData.totalProfit, userProfile?.currency || 'TRY')}
                                 </span>
                             </div>
                         </div>
@@ -1018,7 +1130,7 @@ export const InventoryScreen: React.FC = () => {
 
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-2">
-                                    <label className="text-xs font-bold text-stone-500 uppercase tracking-widest">Alış Fiyatı (TL)</label>
+                                    <label className="text-xs font-bold text-stone-500 uppercase tracking-widest">Vadeli Alış ({getCurrencySuffix(userProfile?.currency || 'TRY')})</label>
                                     <div className="relative">
                                         <DollarSign className="absolute left-3 top-3 text-stone-600" size={14} />
                                         <input 
@@ -1031,7 +1143,20 @@ export const InventoryScreen: React.FC = () => {
                                     </div>
                                 </div>
                                 <div className="space-y-2">
-                                    <label className="text-xs font-bold text-stone-500 uppercase tracking-widest">Satış Fiyatı (TL)</label>
+                                    <label className="text-xs font-bold text-stone-500 uppercase tracking-widest">Peşin Alış ({getCurrencySuffix(userProfile?.currency || 'TRY')})</label>
+                                    <div className="relative">
+                                        <DollarSign className="absolute left-3 top-3 text-stone-600" size={14} />
+                                        <input 
+                                            type="number" 
+                                            className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 pl-8 text-stone-200 text-sm outline-none focus:border-emerald-500/50 font-mono"
+                                            value={formData.cashBuyingPrice}
+                                            onChange={(e) => setFormData({...formData, cashBuyingPrice: e.target.value})}
+                                            placeholder="0.00"
+                                        />
+                                    </div>
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-xs font-bold text-stone-500 uppercase tracking-widest">Vadeli Satış ({getCurrencySuffix(userProfile?.currency || 'TRY')})</label>
                                     <div className="relative">
                                         <DollarSign className="absolute left-3 top-3 text-stone-600" size={14} />
                                         <input 
@@ -1040,6 +1165,19 @@ export const InventoryScreen: React.FC = () => {
                                             value={formData.sellingPrice}
                                             onChange={(e) => setFormData({...formData, sellingPrice: e.target.value})}
                                             placeholder="0.00"
+                                        />
+                                    </div>
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-xs font-bold text-stone-500 uppercase tracking-widest">Peşin Satış ({getCurrencySuffix(userProfile?.currency || 'TRY')})</label>
+                                    <div className="relative">
+                                        <DollarSign className="absolute left-3 top-3 text-stone-600" size={14} />
+                                        <input 
+                                            type="number" 
+                                            className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 pl-8 text-stone-200 text-sm outline-none focus:border-emerald-500/50 font-mono"
+                                            value={formData.cashPrice}
+                                            onChange={(e) => setFormData({...formData, cashPrice: e.target.value})}
+                                            placeholder={formData.buyingPrice ? `${formData.buyingPrice} (V. Alış)` : "0.00"}
                                         />
                                     </div>
                                 </div>
@@ -1056,6 +1194,28 @@ export const InventoryScreen: React.FC = () => {
                                         />
                                     </div>
                                 </div>
+                                <div className="space-y-2">
+                                    <label className="text-xs font-bold text-stone-500 uppercase tracking-widest">Barkod (Opsiyonel)</label>
+                                    <div className="flex gap-2">
+                                        <div className="relative flex-1">
+                                            <Barcode className="absolute left-3 top-3 text-stone-600" size={14} />
+                                            <input 
+                                                type="text" 
+                                                className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 pl-8 text-stone-200 text-sm outline-none focus:border-emerald-500/50 font-mono"
+                                                value={formData.barcode}
+                                                onChange={(e) => setFormData({...formData, barcode: e.target.value})}
+                                                placeholder="Barkod girin veya tarayın"
+                                            />
+                                        </div>
+                                        <button 
+                                            onClick={() => setIsScanning(true)}
+                                            className="bg-stone-800 p-3 rounded-xl border border-white/5 text-stone-300 hover:bg-stone-700 transition-colors"
+                                            title="Barkod Tara"
+                                        >
+                                            <Camera size={20} />
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                             
                             {/* Profit Preview */}
@@ -1063,7 +1223,7 @@ export const InventoryScreen: React.FC = () => {
                                 <div className="bg-stone-950 p-3 rounded-xl border border-white/5 flex justify-between items-center">
                                     <span className="text-xs text-stone-500 font-bold">Birim Kar:</span>
                                     <span className={`text-sm font-black font-mono ${Number(formData.sellingPrice) - Number(formData.buyingPrice) > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                        {(Number(formData.sellingPrice) - Number(formData.buyingPrice)).toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                                        {formatCurrency(Number(formData.sellingPrice) - Number(formData.buyingPrice), userProfile?.currency || 'TRY')}
                                     </span>
                                 </div>
                             )}
@@ -1097,30 +1257,103 @@ export const InventoryScreen: React.FC = () => {
                                 <h3 className="text-xl font-black text-stone-100 tracking-tight">{selectedDetailItem.pesticideName}</h3>
                                 <p className="text-[10px] font-bold text-stone-500 uppercase tracking-widest mt-1">{selectedDetailItem.category}</p>
                             </div>
-                            <button onClick={closeModal} className="p-2 bg-stone-800 text-stone-400 rounded-xl hover:text-stone-200 transition-colors">
-                                <X size={20} />
-                            </button>
+                            <div className="flex items-center gap-2">
+                                {canEditInventory && (
+                                    <div className="flex items-center gap-1.5 mr-2 pr-2 border-r border-white/10">
+                                        <button 
+                                            onClick={() => {
+                                                closeModal();
+                                                openEditModal(selectedDetailItem);
+                                            }} 
+                                            className="p-2 bg-stone-800 text-stone-400 rounded-xl hover:text-emerald-400 transition-colors"
+                                            title="Düzenle"
+                                        >
+                                            <Edit2 size={16} />
+                                        </button>
+                                        <button 
+                                            onClick={async () => {
+                                                const success = await handleDeleteItem(selectedDetailItem.id);
+                                                if (success) closeModal();
+                                            }} 
+                                            className="p-2 bg-stone-800 text-stone-400 rounded-xl hover:text-red-400 transition-colors"
+                                            title="Sil"
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
+                                    </div>
+                                )}
+                                <button 
+                                    onClick={() => setShowProfitability(!showProfitability)} 
+                                    className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${showProfitability ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-stone-800 text-stone-400 hover:text-stone-200 border border-transparent'}`}
+                                >
+                                    <TrendingUp size={16} /> Kâr Oranı
+                                </button>
+                                <button onClick={closeModal} className="p-2 bg-stone-800 text-stone-400 rounded-xl hover:text-stone-200 transition-colors">
+                                    <X size={20} />
+                                </button>
+                            </div>
                         </div>
                         
                         <div className="p-6 overflow-y-auto custom-scrollbar space-y-6">
+                            {/* Profitability View */}
+                            {showProfitability && profitabilityMetrics && (
+                                <div className="space-y-4 animate-in slide-in-from-top-4 duration-300">
+                                    <h4 className="text-xs font-black text-emerald-500 uppercase tracking-widest flex items-center gap-2">
+                                        <TrendingUp size={14} /> Kârlılık Analizi
+                                    </h4>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div className="bg-emerald-500/10 p-4 rounded-2xl border border-emerald-500/20">
+                                            <span className="text-[10px] text-emerald-500/80 font-bold uppercase block mb-1">Kârlılık Oranı</span>
+                                            <span className="text-emerald-400 font-black text-2xl font-mono">
+                                                %{profitabilityMetrics.profitMargin.toFixed(2)}
+                                            </span>
+                                        </div>
+                                        <div className="bg-blue-500/10 p-4 rounded-2xl border border-blue-500/20">
+                                            <span className="text-[10px] text-blue-500/80 font-bold uppercase block mb-1">Gerçekleşen Kâr ({profitabilityMetrics.totalSoldQuantity} Satış)</span>
+                                            <span className="text-blue-400 font-black text-xl font-mono">
+                                                {formatCurrency(profitabilityMetrics.totalRealizedProfit, userProfile?.currency || 'TRY')}
+                                            </span>
+                                        </div>
+                                        <div className="bg-amber-500/10 p-4 rounded-2xl border border-amber-500/20 col-span-2">
+                                            <span className="text-[10px] text-amber-500/80 font-bold uppercase block mb-1">Kalan Stoktan Beklenen Kâr</span>
+                                            <span className="text-amber-400 font-black text-xl font-mono">
+                                                {formatCurrency(profitabilityMetrics.expectedProfit, userProfile?.currency || 'TRY')}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
                             {/* Stock Info */}
-                            <div className="grid grid-cols-3 gap-3">
+                            <div className="grid grid-cols-2 gap-3">
                                 <div className="bg-stone-950/50 p-4 rounded-2xl border border-white/5">
                                     <span className="text-[10px] text-stone-500 font-bold uppercase block mb-1">Mevcut Stok</span>
-                                    <span className="text-emerald-400 font-black text-xl">
+                                    <span className={`${selectedDetailItem.quantity <= 0 ? 'text-red-400' : 'text-emerald-400'} font-black text-xl`}>
                                         {selectedDetailItem.quantity} <span className="text-xs text-stone-600 font-sans">{selectedDetailItem.unit}</span>
                                     </span>
                                 </div>
                                 <div className="bg-stone-950/50 p-4 rounded-2xl border border-white/5">
-                                    <span className="text-[10px] text-stone-500 font-bold uppercase block mb-1">Alış Fiyatı</span>
+                                    <span className="text-[10px] text-stone-500 font-bold uppercase block mb-1">Vadeli Alış</span>
                                     <span className="text-stone-300 font-bold text-lg">
-                                        {selectedDetailItem.buyingPrice.toLocaleString('tr-TR')} ₺
+                                        {formatCurrency(selectedDetailItem.buyingPrice, userProfile?.currency || 'TRY')}
                                     </span>
                                 </div>
                                 <div className="bg-stone-950/50 p-4 rounded-2xl border border-white/5">
-                                    <span className="text-[10px] text-stone-500 font-bold uppercase block mb-1">Satış Fiyatı</span>
+                                    <span className="text-[10px] text-stone-500 font-bold uppercase block mb-1">Peşin Alış</span>
                                     <span className="text-stone-300 font-bold text-lg">
-                                        {selectedDetailItem.sellingPrice.toLocaleString('tr-TR')} ₺
+                                        {formatCurrency(selectedDetailItem.cashBuyingPrice || 0, userProfile?.currency || 'TRY')}
+                                    </span>
+                                </div>
+                                <div className="bg-stone-950/50 p-4 rounded-2xl border border-white/5">
+                                    <span className="text-[10px] text-stone-500 font-bold uppercase block mb-1">Vadeli Satış</span>
+                                    <span className="text-amber-400 font-bold text-lg">
+                                        {formatCurrency(selectedDetailItem.sellingPrice, userProfile?.currency || 'TRY')}
+                                    </span>
+                                </div>
+                                <div className="bg-stone-950/50 p-4 rounded-2xl border border-white/5">
+                                    <span className="text-[10px] text-stone-500 font-bold uppercase block mb-1">Peşin Satış</span>
+                                    <span className="text-blue-400 font-bold text-lg">
+                                        {formatCurrency((selectedDetailItem.cashPrice || 0), userProfile?.currency || 'TRY')}
                                     </span>
                                 </div>
                             </div>
@@ -1129,7 +1362,7 @@ export const InventoryScreen: React.FC = () => {
                             <div>
                                 <h4 className="text-xs font-black text-stone-500 uppercase tracking-widest mb-4 flex items-center gap-2">
                                     <History size={14} className="text-blue-500" />
-                                    Satış Geçmişi (Reçeteler)
+                                    Satış Geçmişi ({prescriptionLabel}ler)
                                 </h4>
                                 
                                 <div className="space-y-2">
@@ -1150,7 +1383,7 @@ export const InventoryScreen: React.FC = () => {
                                                 </div>
                                                 <div className="text-right">
                                                     <div className="text-sm font-black text-emerald-400 font-mono">
-                                                        {sale.price.toLocaleString('tr-TR')} ₺
+                                                        {formatCurrency(sale.price, userProfile?.currency || 'TRY')}
                                                     </div>
                                                     <div className="text-[10px] text-stone-600 font-bold">
                                                         Miktar: {sale.quantity}
@@ -1167,20 +1400,33 @@ export const InventoryScreen: React.FC = () => {
                             </div>
                         </div>
 
-                        <div className="p-6 border-t border-white/10 bg-stone-950/50">
-                            <button 
-                                onClick={() => {
-                                    closeModal();
-                                    openEditModal(selectedDetailItem);
-                                }}
-                                className="w-full py-3 bg-stone-800 hover:bg-stone-700 text-stone-200 rounded-2xl font-bold text-sm transition-all active:scale-95 flex items-center justify-center gap-2"
-                            >
-                                <Edit2 size={16} />
-                                Stok Bilgilerini Düzenle
-                            </button>
-                        </div>
+                        {canEditInventory && (
+                            <div className="p-6 border-t border-white/10 bg-stone-950/50">
+                                <button 
+                                    onClick={() => {
+                                        closeModal();
+                                        openEditModal(selectedDetailItem);
+                                    }}
+                                    className="w-full py-3 bg-stone-800 hover:bg-stone-700 text-stone-200 rounded-2xl font-bold text-sm transition-all active:scale-95 flex items-center justify-center gap-2"
+                                >
+                                    <Edit2 size={16} />
+                                    Stok Bilgilerini Düzenle
+                                </button>
+                            </div>
+                        )}
                     </div>
                 </div>
+            )}
+            {/* Barcode Scanner Modal */}
+            {isScanning && (
+                <BarcodeScanner 
+                    onScan={(code) => {
+                        setFormData(prev => ({ ...prev, barcode: code }));
+                        setIsScanning(false);
+                        showToast('Barkod tarandı', 'success');
+                    }}
+                    onClose={() => setIsScanning(false)}
+                />
             )}
         </div>
     );

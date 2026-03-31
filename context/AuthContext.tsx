@@ -21,14 +21,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        // Tarayıcı kapatılsa bile oturumun açık kalmasını sağlar (Local Persistence)
         const initAuth = async () => {
-            try {
-                await setPersistence(auth, browserLocalPersistence);
-            } catch (error) {
-                console.error("Persistence error:", error);
-            }
-
+            // Firebase remembers the last set persistence. 
+            // We set it explicitly during login.
             const unsubscribe = onAuthStateChanged(auth, (user) => {
                 setCurrentUser(user);
                 setLoading(false);
