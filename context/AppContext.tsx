@@ -138,6 +138,7 @@ interface AppContextType {
   addTransaction: (transaction: Omit<Transaction, 'id'>) => Promise<void>;
   deleteTransaction: (id: string) => Promise<void>;
   performManualTurnover: () => Promise<void>;
+  isInitialized: boolean;
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
   hapticFeedback: (type?: 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error') => Promise<void>;
   language: Language;
@@ -153,7 +154,6 @@ const DEFAULT_PROFILE: UserProfile = {
   companyName: '',
   title: '',
   highContrastMode: false,
-  accountType: 'DEALER',
   language: 'tr'
 };
 
@@ -223,7 +223,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
   const [toasts, setToasts] = useState<{id: string, message: string, type: 'success' | 'error' | 'info'}[]>([]);
-  const isInitialized = useRef(false);
+  const [isInitialized, setIsInitialized] = useState(false);
 
   const [uiScale, setUiScaleState] = useState<UIScale>(() => {
     if (typeof window !== 'undefined') {
@@ -286,10 +286,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const syncUserProfile = (profile: UserProfile) => {
       setUserProfile(profile);
       localStorage.setItem('mks_user_profile', safeStringify(profile));
-      if (profile.accountType === 'DEALER') {
-          setActiveTeamMember(null);
-          localStorage.removeItem('mks_active_team_member');
-      }
+      setActiveTeamMember(null);
+      localStorage.removeItem('mks_active_team_member');
   };
 
   const isAdmin = userProfile.role === 'admin' || auth.currentUser?.email === 'nayiffirat@gmail.com';
@@ -317,10 +315,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setUserProfile(prev => {
               const updated = { ...prev, ...updates };
               localStorage.setItem('mks_user_profile', safeStringify(updated));
-              if (updated.accountType === 'DEALER') {
-                  setActiveTeamMember(null);
-                  localStorage.removeItem('mks_active_team_member');
-              }
+              setActiveTeamMember(null);
+              localStorage.removeItem('mks_active_team_member');
               return updated;
           });
       }
@@ -526,10 +522,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ...pData, 
         id, 
         prescriptionNo: id,
-        createdById: activeTeamMember?.id
+        createdById: activeTeamMember?.id,
+        isInventoryProcessed: false
     };
     await dbService.addPrescription(prescription);
+    await dbService.processInventory(prescription);
     await refreshPrescriptions();
+    await refreshInventory();
     await refreshStats();
     return id;
   };
@@ -550,13 +549,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const updated: Prescription = { ...p, isProcessed: !p.isProcessed };
     await dbService.updatePrescription(updated);
     
-    // Inventory synchronization
-    if (updated.isProcessed && !updated.isInventoryProcessed) {
-        await dbService.processInventory(updated);
-    } else if (!updated.isProcessed && updated.isInventoryProcessed) {
-        await dbService.revertInventory(updated);
-    }
-
     // Fetch the absolute latest state from DB to ensure isInventoryProcessed is correct
     const latest = await dbService.getAllPrescriptions();
     const finalUpdated = latest.find(item => item.id === id) || updated;
@@ -1097,6 +1089,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isInventoryProcessed: false,
         deletedAt: new Date().toISOString()
       });
+      await refreshPrescriptions();
+      await refreshInventory();
       await refreshStats();
     }
   };
@@ -1107,6 +1101,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (target) {
       const { deletedAt, ...rest } = target;
       await dbService.updatePrescription(rest as Prescription);
+      await dbService.processInventory(rest as Prescription);
+      await refreshPrescriptions();
+      await refreshInventory();
       await refreshStats();
     }
   };
@@ -1284,7 +1281,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             if (existing) {
                 const updatedItem = {
                     ...existing,
-                    quantity: Math.max(0, existing.quantity - item.quantity),
+                    quantity: Math.max(0, Number(existing.quantity) - Number(item.quantity)),
                     lastUpdated: new Date().toISOString()
                 };
                 await dbService.updateInventoryItem(updatedItem);
@@ -1355,7 +1352,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (existing) {
             const updatedItem = {
                 ...existing,
-                quantity: Math.max(0, existing.quantity + item.quantity),
+                quantity: Math.max(0, Number(existing.quantity) + Number(item.quantity)),
                 buyingPrice: item.buyingPrice, // Update buying price to latest
                 lastUpdated: new Date().toISOString()
             };
@@ -1383,10 +1380,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 pesticideId: finalPesticideId,
                 pesticideName: item.pesticideName,
                 category: PesticideCategory.OTHER,
-                quantity: item.quantity,
+                quantity: Number(item.quantity),
                 unit: item.unit,
-                buyingPrice: item.buyingPrice,
-                sellingPrice: item.buyingPrice * 1.2, // Default 20% margin
+                buyingPrice: Number(item.buyingPrice),
+                sellingPrice: Number(item.buyingPrice) * 1.2, // Default 20% margin
                 lastUpdated: new Date().toISOString()
             };
             await dbService.addInventoryItem(newInventoryItem);
@@ -1416,7 +1413,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             if (existing) {
                 const updatedItem = {
                     ...existing,
-                    quantity: Math.max(0, existing.quantity - item.quantity),
+                    quantity: Math.max(0, Number(existing.quantity) - Number(item.quantity)),
                     lastUpdated: new Date().toISOString()
                 };
                 await dbService.updateInventoryItem(updatedItem);
@@ -1436,7 +1433,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (existing) {
             const updatedItem = {
                 ...existing,
-                quantity: existing.quantity + item.quantity,
+                quantity: Math.max(0, Number(existing.quantity) + Number(item.quantity)),
                 buyingPrice: item.buyingPrice,
                 lastUpdated: new Date().toISOString()
             };
@@ -1464,10 +1461,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 pesticideId: finalPesticideId,
                 pesticideName: item.pesticideName,
                 category: PesticideCategory.OTHER,
-                quantity: item.quantity,
+                quantity: Number(item.quantity),
                 unit: item.unit,
-                buyingPrice: item.buyingPrice,
-                sellingPrice: item.buyingPrice * 1.2, // Default 20% margin
+                buyingPrice: Number(item.buyingPrice),
+                sellingPrice: Number(item.buyingPrice) * 1.2, // Default 20% margin
                 lastUpdated: new Date().toISOString()
             };
             await dbService.addInventoryItem(newInventoryItem);
@@ -1498,7 +1495,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             if (existing) {
                 const updatedItem = {
                     ...existing,
-                    quantity: Math.max(0, existing.quantity - item.quantity),
+                    quantity: Math.max(0, Number(existing.quantity) - Number(item.quantity)),
                     lastUpdated: new Date().toISOString()
                 };
                 await dbService.updateInventoryItem(updatedItem);
@@ -1954,8 +1951,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   useEffect(() => {
     const init = async () => {
-        if (isInitialized.current) return;
-        isInitialized.current = true;
+        if (isInitialized) return;
         
         // Sync language from profile
         if (userProfile.language) {
@@ -1966,6 +1962,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         await refreshStats();
         await checkWeatherAlerts();
         
+        setIsInitialized(true);
+
         try {
             const permission = await LocalNotifications.requestPermissions();
             if (permission.display !== 'granted') console.warn("Bildirim izinleri verilmedi.");
@@ -1974,9 +1972,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     init();
   }, []);
 
-    const prescriptionLabel = userProfile.accountType === 'COMPANY' ? t('label.order') : t('label.prescription');
-    const farmerLabel = userProfile.accountType === 'COMPANY' ? t('label.customer') : t('label.farmer');
-    const farmerPluralLabel = userProfile.accountType === 'COMPANY' ? t('label.customers') : t('label.farmers');
+    const prescriptionLabel = t('label.prescription');
+    const farmerLabel = t('label.farmer');
+    const farmerPluralLabel = t('label.farmers');
 
     return (
     <AppContext.Provider value={{ 
@@ -1999,6 +1997,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         accounts, addAccount, updateAccount, deleteAccount,
         transactions, addTransaction, deleteTransaction,
         performManualTurnover,
+        isInitialized,
         showToast, hapticFeedback,
         language, setLanguage, t
     }}>

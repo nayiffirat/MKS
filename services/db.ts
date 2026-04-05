@@ -107,27 +107,39 @@ const FS_ORG = "g892bEaJyGfEq1Fa67yb";
 const FS_USERS = "users";
 
 const sanitizeForFirestore = (obj: any, cache = new WeakSet()): any => {
-  if (obj === undefined) return null;
-  if (obj === null) return null;
-  if (obj instanceof Date) return obj;
+  if (obj === undefined || obj === null) return null;
   
-  if (typeof obj === 'object') {
-    if (cache.has(obj)) return null; // Circular reference found
-    cache.add(obj);
+  // Basic types
+  if (typeof obj !== 'object') return obj;
+  
+  // Special types that Firestore handles
+  if (obj instanceof Date) return obj;
+  if (obj instanceof RegExp) return obj.toString();
+  
+  // Handle circular references
+  if (cache.has(obj)) return null;
+  cache.add(obj);
 
-    if (Array.isArray(obj)) {
-      return obj.map(item => sanitizeForFirestore(item, cache));
-    }
-    
-    const newObj: any = {};
-    Object.keys(obj).forEach(key => {
-      const val = obj[key];
-      newObj[key] = sanitizeForFirestore(val, cache);
-    });
-    return newObj;
+  // Arrays
+  if (Array.isArray(obj)) {
+    return obj.map(item => sanitizeForFirestore(item, cache));
   }
   
-  return obj;
+  // Plain objects
+  const newObj: any = {};
+  try {
+    Object.keys(obj).forEach(key => {
+      const val = obj[key];
+      // Skip functions and other non-serializable properties
+      if (typeof val === 'function') return;
+      newObj[key] = sanitizeForFirestore(val, cache);
+    });
+  } catch (e) {
+    console.warn("Error sanitizing object for Firestore:", e);
+    return null;
+  }
+  
+  return newObj;
 };
 
 export const initDB = async () => {
@@ -741,7 +753,7 @@ const dbServiceObj = {
     for (const item of prescription.items) {
         if (!item.quantity) continue;
         
-        const qty = parseInt(item.quantity);
+        const qty = Number(item.quantity);
         if (isNaN(qty) || qty === 0) continue;
 
         const existingIndex = allInventory.findIndex(i => i.pesticideId === item.pesticideId);
@@ -798,7 +810,7 @@ const dbServiceObj = {
     for (const item of prescription.items) {
         if (!item.quantity) continue;
         
-        const qty = parseInt(item.quantity);
+        const qty = Number(item.quantity);
         if (isNaN(qty) || qty === 0) continue;
 
         const existingIndex = allInventory.findIndex(i => i.pesticideId === item.pesticideId);

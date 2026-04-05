@@ -5,6 +5,8 @@ import { Expense } from '../types';
 import { Plus, Trash2, Receipt, Calendar, Tag, ChevronLeft, AlertCircle, TrendingDown, User, Edit2, X, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { formatCurrency, getCurrencySymbol } from '../utils/currency';
+import { ConfirmationModal } from './ConfirmationModal';
+import { EmptyState } from './EmptyState';
 
 interface ExpensesProps {
   onBack: () => void;
@@ -102,13 +104,20 @@ export const ExpensesScreen: React.FC<ExpensesProps> = ({ onBack }) => {
     setSelectedExpense(updatedExpense); // Update details view
   };
 
+  const [expenseToDelete, setExpenseToDelete] = useState<string | null>(null);
+
   const handleDelete = async (id: string) => {
-    if (window.confirm('Bu gider kaydını silmek istediğinize emin misiniz?')) {
-      await deleteExpense(id);
+    setExpenseToDelete(id);
+  };
+
+  const confirmDelete = async () => {
+    if (expenseToDelete) {
+      await deleteExpense(expenseToDelete);
       await hapticFeedback('medium');
-      if (selectedExpense?.id === id) {
+      if (selectedExpense?.id === expenseToDelete) {
         setSelectedExpense(null);
       }
+      setExpenseToDelete(null);
     }
   };
 
@@ -210,10 +219,14 @@ export const ExpensesScreen: React.FC<ExpensesProps> = ({ onBack }) => {
             </div>
             
             {filteredExpenses.length === 0 ? (
-              <div className="bg-stone-900/50 border border-dashed border-stone-800 rounded-2xl p-12 text-center">
-                <Receipt size={48} className="mx-auto text-stone-700 mb-4" />
-                <p className="text-stone-500">Bu kategoride henüz kaydedilmiş bir gider yok.</p>
-              </div>
+              <EmptyState
+                  icon={Receipt}
+                  title="Gider bulunamadı"
+                  description="Bu kategoride henüz kaydedilmiş bir gider yok."
+                  actionLabel="Yeni Gider Ekle"
+                  onAction={() => setIsAddModalOpen(true)}
+                  actionIcon={Plus}
+              />
             ) : (
               filteredExpenses.map((expense) => (
                 <motion.div 
@@ -617,6 +630,14 @@ export const ExpensesScreen: React.FC<ExpensesProps> = ({ onBack }) => {
           </div>
         )}
       </AnimatePresence>
+
+      <ConfirmationModal
+        isOpen={!!expenseToDelete}
+        onClose={() => setExpenseToDelete(null)}
+        onConfirm={confirmDelete}
+        title="Gider Kaydı Silinecek"
+        message="Bu gider kaydını silmek istediğinize emin misiniz?"
+      />
     </div>
   );
 };

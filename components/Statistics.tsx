@@ -32,7 +32,6 @@ import { formatCurrency } from '../utils/currency';
         farmerPluralLabel,
         prescriptionLabel
     } = useAppViewModel();
-    const isCompany = userProfile.accountType === 'COMPANY';
     const [activeTab, setActiveTab] = useState<StatTab>('OVERVIEW');
     const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
     const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
@@ -91,7 +90,7 @@ import { formatCurrency } from '../utils/currency';
             const date = new Date(p.date);
             const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
             
-            // Reçete toplam tutarı varsa kullan, yoksa kalemleri topla
+            // Fatura toplam tutarı varsa kullan, yoksa kalemleri topla
             let prescriptionTotal = p.totalAmount || 0;
             
             // Eğer totalAmount yoksa ve items içinde totalPrice varsa onları topla (geriye dönük uyumluluk)

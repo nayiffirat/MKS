@@ -12,9 +12,8 @@ interface VisitsProps {
 
 export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) => {
     const { userProfile, updateVisit, softDeleteVisit, updateUserProfile, showToast, hapticFeedback } = useAppViewModel();
-    const isCompany = userProfile.accountType === 'COMPANY';
-    const farmerLabel = isCompany ? 'Bayi' : 'Çiftçi';
-    const farmerPluralLabel = isCompany ? 'Bayiler' : 'Çiftçiler';
+    const farmerLabel = 'Çiftçi';
+    const farmerPluralLabel = 'Çiftçiler';
     // Yeni mod eklendi: 'DETAIL'
     const [viewMode, setViewMode] = useState<'LIST' | 'FORM' | 'SUCCESS' | 'DETAIL' | 'QUICK_VISIT'>('LIST');
 
@@ -139,12 +138,13 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
     }, [viewMode, editingId]);
 
     const loadData = async () => {
-        const [vList, fList] = await Promise.all([dbService.getAllVisits(), dbService.getFarmers()]);
+        const [vList, fListRaw] = await Promise.all([dbService.getAllVisits(), dbService.getFarmers()]);
+        const fList = fListRaw.filter(f => !f.deletedAt);
         const sortedVisits = [...vList].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
         setVisits(sortedVisits);
         setFarmers(fList);
         const fMap: Record<string, Farmer> = {};
-        fList.forEach(f => { fMap[f.id] = f; });
+        fListRaw.forEach(f => { fMap[f.id] = f; });
         setFarmerMap(fMap);
     };
 

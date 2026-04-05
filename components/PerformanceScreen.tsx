@@ -7,7 +7,6 @@ import { formatCurrency } from '../utils/currency';
 export const PerformanceScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     const { teamMembers, prescriptions, visits, userProfile, farmers } = useAppViewModel();
     const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
-    const isCompany = userProfile.accountType === 'COMPANY';
 
     const farmerMap = React.useMemo(() => {
         const map: Record<string, string> = {};
@@ -72,16 +71,16 @@ export const PerformanceScreen: React.FC<{ onBack: () => void }> = ({ onBack }) 
                         {salesPerformance.map(sp => (
                             <button 
                                 key={sp.id} 
-                                onClick={() => isCompany && setSelectedMemberId(sp.id || null)}
-                                className={`w-full flex items-center justify-between p-4 bg-stone-950 rounded-xl border border-stone-800 transition-all text-left group ${isCompany ? 'hover:border-emerald-500/50 cursor-pointer' : 'cursor-default'}`}
+                                onClick={() => setSelectedMemberId(sp.id || null)}
+                                className="w-full flex items-center justify-between p-4 bg-stone-950 rounded-xl border border-stone-800 transition-all text-left group hover:border-emerald-500/50 cursor-pointer"
                             >
                                 <div>
-                                    <h3 className={`text-white font-medium transition-colors ${isCompany ? 'group-hover:text-emerald-400' : ''}`}>{sp.fullName}</h3>
+                                    <h3 className="text-white font-medium transition-colors group-hover:text-emerald-400">{sp.fullName}</h3>
                                     <p className="text-xs text-stone-500">{sp.orderCount} Sipariş</p>
                                 </div>
                                 <div className="text-right flex items-center gap-3">
                                     <p className="text-emerald-500 font-bold">₺{sp.totalSales.toLocaleString('tr-TR')}</p>
-                                    {isCompany && <ArrowRight size={16} className="text-stone-700 group-hover:text-emerald-500 transition-colors" />}
+                                    <ArrowRight size={16} className="text-stone-700 group-hover:text-emerald-500 transition-colors" />
                                 </div>
                             </button>
                         ))}
@@ -103,16 +102,16 @@ export const PerformanceScreen: React.FC<{ onBack: () => void }> = ({ onBack }) 
                         {warehousePerformance.map(wp => (
                             <button 
                                 key={wp.id} 
-                                onClick={() => isCompany && setSelectedMemberId(wp.id || null)}
-                                className={`w-full flex items-center justify-between p-4 bg-stone-950 rounded-xl border border-stone-800 transition-all text-left group ${isCompany ? 'hover:border-blue-500/50 cursor-pointer' : 'cursor-default'}`}
+                                onClick={() => setSelectedMemberId(wp.id || null)}
+                                className="w-full flex items-center justify-between p-4 bg-stone-950 rounded-xl border border-stone-800 transition-all text-left group hover:border-blue-500/50 cursor-pointer"
                             >
                                 <div>
-                                    <h3 className={`text-white font-medium transition-colors ${isCompany ? 'group-hover:text-blue-400' : ''}`}>{wp.fullName}</h3>
+                                    <h3 className="text-white font-medium transition-colors group-hover:text-blue-400">{wp.fullName}</h3>
                                     <p className="text-xs text-stone-500">Teslim Edilen</p>
                                 </div>
                                 <div className="text-right flex items-center gap-3">
                                     <p className="text-blue-500 font-bold">{wp.deliveredCount} Sipariş</p>
-                                    {isCompany && <ArrowRight size={16} className="text-stone-700 group-hover:text-blue-500 transition-colors" />}
+                                    <ArrowRight size={16} className="text-stone-700 group-hover:text-blue-500 transition-colors" />
                                 </div>
                             </button>
                         ))}

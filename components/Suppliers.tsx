@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
     Truck, Plus, Trash2, Edit2, ChevronRight, ChevronLeft, 
     Package, CreditCard, ArrowUpRight, ArrowDownRight, 
@@ -12,6 +12,9 @@ import { useAppViewModel } from '../context/AppContext';
 import { dbService } from '../services/db';
 import { Supplier, SupplierPurchase, SupplierPayment, PesticideCategory, InventoryItem } from '../types';
 import { formatCurrency, getCurrencySuffix } from '../utils/currency';
+import { ConfirmationModal } from './ConfirmationModal';
+import { ListSkeleton } from './Skeleton';
+import { EmptyState } from './EmptyState';
 
 export const Suppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     const { 
@@ -24,11 +27,13 @@ export const Suppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         accounts, userProfile,
         activeTeamMember,
         teamMembers,
-        visits
+        visits,
+        isInitialized
     } = useAppViewModel();
 
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
+    const [isLoading, setIsLoading] = useState(!isInitialized);
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
@@ -36,6 +41,24 @@ export const Suppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
     const [isDebtModalOpen, setIsDebtModalOpen] = useState(false);
     const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
+    
+    useEffect(() => {
+        if (isInitialized) {
+            setIsLoading(false);
+        }
+    }, [isInitialized]);
+
+    const [confirmModal, setConfirmModal] = useState<{
+        isOpen: boolean;
+        title: string;
+        message: string;
+        onConfirm: () => void;
+    }>({
+        isOpen: false,
+        title: '',
+        message: '',
+        onConfirm: () => {}
+    });
 
     // Form States
     const [newSupplier, setNewSupplier] = useState({ name: '', phoneNumber: '', address: '' });
@@ -256,8 +279,14 @@ export const Suppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                 handleClosePayment={handleClosePayment}
                 editingPayment={editingPayment}
                 showToast={showToast}
+                isReturnModalOpen={isReturnModalOpen}
+                setIsReturnModalOpen={setIsReturnModalOpen}
+                handleAddReturn={handleAddReturn}
+                newReturn={newReturn}
+                setNewReturn={setNewReturn}
                 onEdit={(s: Supplier) => { setEditingSupplier(s); setIsEditModalOpen(true); }}
                 accounts={accounts}
+                softDeleteSupplier={softDeleteSupplier}
             />
         );
     }
@@ -292,7 +321,22 @@ export const Suppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {filteredSuppliers.map(supplier => (
+                {isLoading ? (
+                    <div className="col-span-1 md:col-span-2">
+                        <ListSkeleton count={4} />
+                    </div>
+                ) : filteredSuppliers.length === 0 ? (
+                    <div className="col-span-1 md:col-span-2">
+                        <EmptyState
+                            icon={Package}
+                            title={searchTerm ? "Tedarikçi bulunamadı" : "Henüz tedarikçi eklenmemiş"}
+                            description={!searchTerm ? "İlk tedarikçinizi ekleyerek alım ve ödeme takibine başlayın." : ""}
+                            actionLabel={!searchTerm ? "Yeni Tedarikçi Ekle" : undefined}
+                            onAction={!searchTerm ? () => setIsAddModalOpen(true) : undefined}
+                            actionIcon={Plus}
+                        />
+                    </div>
+                ) : filteredSuppliers.map(supplier => (
                     <div 
                         key={supplier.id}
                         onClick={() => setSelectedSupplier(supplier)}
@@ -452,6 +496,15 @@ export const Suppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                     </div>
                 </div>
             )}
+
+            <ConfirmationModal
+                isOpen={confirmModal.isOpen}
+                onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+                onConfirm={confirmModal.onConfirm}
+                title={confirmModal.title}
+                message={confirmModal.message}
+                variant="danger"
+            />
         </div>
     );
 };
@@ -523,6 +576,17 @@ const SupplierDetailView = ({
     const [payments, setPayments] = useState<SupplierPayment[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [editingPurchase, setEditingPurchase] = useState<SupplierPurchase | null>(null);
+    const [confirmModal, setConfirmModal] = useState<{
+        isOpen: boolean;
+        title: string;
+        message: string;
+        onConfirm: () => void;
+    }>({
+        isOpen: false,
+        title: '',
+        message: '',
+        onConfirm: () => {}
+    });
 
     const loadData = async () => {
         setIsLoading(true);
@@ -541,30 +605,40 @@ const SupplierDetailView = ({
 
     const handleDeletePurchase = async (id: string) => {
         console.log('Tedarikçi alımı siliniyor:', id);
-        if (window.confirm('Bu alım kaydını silmek istediğinize emin misiniz? Stoklar geri alınacaktır.')) {
-            try {
-                await deleteSupplierPurchase(id);
-                showToast('Alım kaydı silindi', 'info');
-                await loadData();
-            } catch (error) {
-                console.error('Alım silme hatası:', error);
-                showToast('Alım silinirken bir hata oluştu', 'error');
+        setConfirmModal({
+            isOpen: true,
+            title: 'Alım Kaydı Silinecek',
+            message: 'Bu alım kaydını silmek istediğinize emin misiniz? Stoklar geri alınacaktır.',
+            onConfirm: async () => {
+                try {
+                    await deleteSupplierPurchase(id);
+                    showToast('Alım kaydı silindi', 'info');
+                    await loadData();
+                } catch (error) {
+                    console.error('Alım silme hatası:', error);
+                    showToast('Alım silinirken bir hata oluştu', 'error');
+                }
             }
-        }
+        });
     };
 
     const handleDeletePayment = async (id: string) => {
         console.log('Tedarikçi ödemesi siliniyor:', id);
-        if (window.confirm('Bu ödeme kaydını silmek istediğinize emin misiniz?')) {
-            try {
-                await deleteSupplierPayment(id);
-                showToast('Ödeme kaydı silindi', 'info');
-                await loadData();
-            } catch (error) {
-                console.error('Ödeme silme hatası:', error);
-                showToast('Ödeme silinirken bir hata oluştu', 'error');
+        setConfirmModal({
+            isOpen: true,
+            title: 'Ödeme Kaydı Silinecek',
+            message: 'Bu ödeme kaydını silmek istediğinize emin misiniz?',
+            onConfirm: async () => {
+                try {
+                    await deleteSupplierPayment(id);
+                    showToast('Ödeme kaydı silindi', 'info');
+                    await loadData();
+                } catch (error) {
+                    console.error('Ödeme silme hatası:', error);
+                    showToast('Ödeme silinirken bir hata oluştu', 'error');
+                }
             }
-        }
+        });
     };
 
     const handleUpdatePurchase = async () => {
@@ -614,10 +688,15 @@ const SupplierDetailView = ({
                     </button>
                     <button 
                         onClick={async () => {
-                            if (window.confirm('Bu tedarikçiyi ve tüm kayıtlarını silmek istediğinize emin misiniz?')) {
-                                await softDeleteSupplier(supplier.id);
-                                showToast('Tedarikçi silindi', 'info');
-                            }
+                            setConfirmModal({
+                                isOpen: true,
+                                title: 'Tedarikçi Silinecek',
+                                message: 'Bu tedarikçiyi ve tüm kayıtlarını silmek istediğinize emin misiniz?',
+                                onConfirm: async () => {
+                                    await softDeleteSupplier(supplier.id);
+                                    showToast('Tedarikçi silindi', 'info');
+                                }
+                            });
                         }}
                         className="p-2.5 bg-stone-900 text-stone-400 rounded-xl hover:text-rose-400 transition-colors border border-white/5 active:scale-95"
                     >
@@ -739,7 +818,15 @@ const SupplierDetailView = ({
 
                             <h3 className="text-[10px] font-black text-stone-500 uppercase tracking-[0.2em] pl-1 mt-6">İşlem Geçmişi</h3>
                             <div className="space-y-3">
-                                {purchases.map(purchase => (
+                                {isLoading ? (
+                                    <ListSkeleton count={3} />
+                                ) : purchases.length === 0 ? (
+                                    <EmptyState
+                                        icon={Package}
+                                        title="Alım/İade kaydı yok"
+                                        description="Bu tedarikçiden henüz bir alım veya iade işlemi yapılmamış."
+                                    />
+                                ) : purchases.map(purchase => (
                                     <div key={purchase.id} className="bg-stone-900/40 border border-white/5 rounded-2xl p-4">
                                         <div className="flex justify-between items-start mb-2">
                                             <div className="flex items-center gap-2">
@@ -794,7 +881,15 @@ const SupplierDetailView = ({
                         </>
                     ) : (
                         <div className="space-y-3">
-                            {payments.map(payment => (
+                            {isLoading ? (
+                                <ListSkeleton count={3} />
+                            ) : payments.length === 0 ? (
+                                <EmptyState
+                                    icon={CreditCard}
+                                    title="Ödeme kaydı yok"
+                                    description="Bu tedarikçiye henüz bir ödeme yapılmamış."
+                                />
+                            ) : payments.map(payment => (
                                 <div key={payment.id} className="bg-stone-900/40 border border-white/5 rounded-2xl p-4 flex items-center justify-between">
                                     <div className="flex items-center gap-3">
                                         <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-400">
@@ -939,6 +1034,15 @@ const SupplierDetailView = ({
                     showToast={showToast}
                 />
             )}
+
+            <ConfirmationModal
+                isOpen={confirmModal.isOpen}
+                onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+                onConfirm={confirmModal.onConfirm}
+                title={confirmModal.title}
+                message={confirmModal.message}
+                variant="danger"
+            />
         </div>
     );
 };
@@ -969,6 +1073,16 @@ const PurchaseModal = ({
     const handleAddNewPesticideToPurchaseLocal = () => {
         if (!newPesticide.name) return;
         
+        // Check if it already exists in inventory
+        const existingItem = inventory.find((i: InventoryItem) => i.pesticideName.toLowerCase().trim() === newPesticide.name.toLowerCase().trim());
+        
+        if (existingItem) {
+            handleAddItem(existingItem);
+            setIsAddingNewPesticide(false);
+            setNewPesticide({ name: '', category: PesticideCategory.OTHER, unit: 'Adet' });
+            return;
+        }
+
         const tempId = `new-${crypto.randomUUID()}`;
         const newItem = {
             pesticideId: tempId,
@@ -1038,13 +1152,15 @@ const PurchaseModal = ({
                 <div className="space-y-5">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
-                            <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest ml-1 mb-1.5 block">Fiş Numarası</label>
+                            <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest ml-1 mb-1.5 block">
+                                {isReturn ? 'İade Fiş Numarası' : 'Fiş Numarası'}
+                            </label>
                             <div className="relative">
                                 <Receipt className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-600" size={14} />
                                 <input 
                                     type="text" 
                                     className="w-full bg-stone-950 border border-white/5 rounded-2xl py-3 pl-9 pr-4 text-xs text-stone-100 outline-none focus:border-emerald-500/50 transition-all"
-                                    placeholder="Fiş no giriniz..."
+                                    placeholder={isReturn ? "İade fiş no giriniz..." : "Fiş no giriniz..."}
                                     value={newPurchase.receiptNo || ''}
                                     onChange={(e) => setNewPurchase({...newPurchase, receiptNo: e.target.value})}
                                 />
@@ -1163,7 +1279,7 @@ const PurchaseModal = ({
                             <span className="text-[10px] font-black text-stone-500 uppercase tracking-widest mb-1">Genel Toplam</span>
                             <span className="text-xs font-medium text-stone-400">{newPurchase.items.length} Kalem Ürün</span>
                         </div>
-                        <span className="text-2xl font-black text-emerald-400 font-mono">{formatCurrency(total, userProfile?.currency || 'TRY')}</span>
+                        <span className="text-2xl font-black text-emerald-400 font-mono">{formatCurrency(Math.abs(total), userProfile?.currency || 'TRY')}</span>
                     </div>
                 </div>
 
@@ -1270,7 +1386,7 @@ const PaymentModal = ({ supplier, onClose, onSave, newPayment, setNewPayment, ac
                     <div>
                         <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest ml-1 mb-1.5 block">Hesap Seçin</label>
                         <select 
-                            className="w-full bg-stone-950 border border-white/5 rounded-2xl p-4 text-sm text-stone-100 outline-none focus:border-blue-500/50 transition-all"
+                            className="w-full h-[54px] px-4 bg-stone-950 border border-white/5 rounded-2xl text-sm text-stone-100 outline-none focus:border-blue-500/50 transition-all"
                             value={newPayment.accountId}
                             onChange={(e) => setNewPayment({...newPayment, accountId: e.target.value})}
                         >
@@ -1354,7 +1470,7 @@ const PaymentModal = ({ supplier, onClose, onSave, newPayment, setNewPayment, ac
                                 <Calendar size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-500" />
                                 <input 
                                     type="date" 
-                                    className="w-full bg-stone-950 border border-white/5 rounded-2xl p-4 pl-12 text-sm text-stone-100 outline-none focus:border-blue-500/50 transition-all"
+                                    className="w-full h-[54px] bg-stone-950 border border-white/5 rounded-2xl pl-12 pr-4 text-sm text-stone-100 outline-none focus:border-blue-500/50 transition-all"
                                     value={newPayment.dueDate}
                                     onChange={(e) => setNewPayment({...newPayment, dueDate: e.target.value})}
                                 />

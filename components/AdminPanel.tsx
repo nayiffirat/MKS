@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { ChevronLeft, Users, Shield, Calendar, Search, Save, Loader2, Edit3, X, Trash2, KeyRound, ChevronRight, Mail, Clock, LogIn } from 'lucide-react';
 import { useAppViewModel } from '../context/AppContext';
 import { UserProfile } from '../types';
+import { ConfirmationModal } from './ConfirmationModal';
+import { ListSkeleton } from './Skeleton';
+import { EmptyState } from './EmptyState';
 
 interface AdminPanelProps {
     onBack: () => void;
@@ -14,6 +17,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [editingUser, setEditingUser] = useState<(UserProfile & { uid: string, email?: string }) | null>(null);
     const [isSaving, setIsSaving] = useState(false);
+    const [confirmModal, setConfirmModal] = useState<{
+        isOpen: boolean;
+        title: string;
+        message: string;
+        onConfirm: () => void;
+        variant?: 'danger' | 'warning' | 'info';
+    }>({
+        isOpen: false,
+        title: '',
+        message: '',
+        onConfirm: () => {}
+    });
 
     useEffect(() => {
         loadUsers();
@@ -43,7 +58,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                 companyName: editingUser.companyName,
                 title: editingUser.title,
                 role: editingUser.role,
-                accountType: editingUser.accountType || 'DEALER',
                 subscriptionStatus: editingUser.subscriptionStatus,
                 subscriptionEndsAt: editingUser.subscriptionEndsAt
             });
@@ -60,16 +74,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     };
 
     const handleDeleteUser = async (uid: string) => {
-        if (window.confirm('Bu kullanıcıyı silmek istediğinize emin misiniz? Bu işlem geri alınamaz ve kullanıcının sisteme erişimini kalıcı olarak kapatır.')) {
-            try {
-                await deleteUser(uid);
-                showToast('Kullanıcı başarıyla silindi.', 'success');
-                setEditingUser(null);
-                loadUsers();
-            } catch (error) {
-                showToast('Kullanıcı silinirken hata oluştu.', 'error');
+        setConfirmModal({
+            isOpen: true,
+            title: 'Kullanıcı Silinecek',
+            message: 'Bu kullanıcıyı silmek istediğinize emin misiniz? Bu işlem geri alınamaz ve kullanıcının sisteme erişimini kalıcı olarak kapatır.',
+            variant: 'danger',
+            onConfirm: async () => {
+                try {
+                    await deleteUser(uid);
+                    showToast('Kullanıcı başarıyla silindi.', 'success');
+                    setEditingUser(null);
+                    loadUsers();
+                } catch (error) {
+                    showToast('Kullanıcı silinirken hata oluştu.', 'error');
+                }
             }
-        }
+        });
     };
 
     const handlePasswordReset = async (email?: string) => {
@@ -77,14 +97,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
             showToast('Kullanıcının e-posta adresi bulunamadı.', 'error');
             return;
         }
-        if (window.confirm(`${email} adresine şifre sıfırlama bağlantısı gönderilecek. Onaylıyor musunuz?`)) {
-            try {
-                await sendPasswordReset(email);
-                showToast('Şifre sıfırlama e-postası gönderildi.', 'success');
-            } catch (error) {
-                showToast('Şifre sıfırlama e-postası gönderilemedi.', 'error');
+        setConfirmModal({
+            isOpen: true,
+            title: 'Şifre Sıfırlama',
+            message: `${email} adresine şifre sıfırlama bağlantısı gönderilecek. Onaylıyor musunuz?`,
+            variant: 'info',
+            onConfirm: async () => {
+                try {
+                    await sendPasswordReset(email);
+                    showToast('Şifre sıfırlama e-postası gönderildi.', 'success');
+                } catch (error) {
+                    showToast('Şifre sıfırlama e-postası gönderilemedi.', 'error');
+                }
             }
-        }
+        });
     };
 
     const extendSubscription = (months: number) => {
@@ -132,10 +158,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
 
             {/* Users List */}
             {isLoading ? (
-                <div className="flex flex-col items-center justify-center py-12 text-stone-500">
-                    <Loader2 size={32} className="animate-spin mb-4 text-emerald-500" />
-                    <p className="font-bold">Kullanıcılar Yükleniyor...</p>
+                <div className="space-y-3">
+                    <ListSkeleton count={5} />
                 </div>
+            ) : filteredUsers.length === 0 ? (
+                <EmptyState
+                    icon={Users}
+                    title="Kullanıcı bulunamadı"
+                    description={searchTerm ? "Arama kriterlerinize uygun kullanıcı bulunamadı." : "Sistemde henüz kayıtlı kullanıcı yok."}
+                />
             ) : (
                 <div className="space-y-3">
                     {filteredUsers.map(user => {
@@ -157,12 +188,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                                         {user.role === 'admin' && (
                                             <Shield size={12} className="text-purple-400 flex-shrink-0" />
                                         )}
-                                        <span className={`text-[8px] font-black px-1.5 py-0.5 rounded border ${
-                                            user.accountType === 'DEALER' 
-                                                ? 'bg-orange-500/10 border-orange-500/30 text-orange-400'
-                                                : 'bg-blue-500/10 border-blue-500/30 text-blue-400' 
-                                        }`}>
-                                            {user.accountType === 'DEALER' ? 'BAYİ' : 'FİRMA'}
+                                        <span className="text-[8px] font-black px-1.5 py-0.5 rounded border bg-orange-500/10 border-orange-500/30 text-orange-400">
+                                            BAYİ
                                         </span>
                                     </div>
                                     <p className="text-xs text-stone-400 truncate">{user.email || user.uid}</p>
@@ -268,24 +295,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                             </div>
 
                             <div className="pt-2 border-t border-white/10">
-                                <label className="block text-xs font-bold text-stone-500 mb-2 uppercase tracking-widest">Hesap Türü</label>
-                                <div className="grid grid-cols-2 gap-2">
-                                    <button 
-                                        onClick={() => setEditingUser({...editingUser, accountType: 'DEALER'})}
-                                        className={`py-3 rounded-xl font-bold text-sm border ${editingUser.accountType === 'DEALER' || !editingUser.accountType ? 'bg-orange-900/30 border-orange-500 text-orange-400' : 'bg-stone-900 border-white/10 text-stone-500'}`}
-                                    >
-                                        Bayi
-                                    </button>
-                                    <button 
-                                        onClick={() => setEditingUser({...editingUser, accountType: 'COMPANY'})}
-                                        className={`py-3 rounded-xl font-bold text-sm border ${editingUser.accountType === 'COMPANY' ? 'bg-blue-900/30 border-blue-500 text-blue-400' : 'bg-stone-900 border-white/10 text-stone-500'}`}
-                                    >
-                                        Firma
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div className="pt-2 border-t border-white/10">
                                 <label className="block text-xs font-bold text-stone-500 mb-2 uppercase tracking-widest">Kullanıcı Rolü</label>
                                 <div className="grid grid-cols-2 gap-2">
                                     <button 
@@ -373,6 +382,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                     </div>
                 </div>
             )}
+
+            <ConfirmationModal
+                isOpen={confirmModal.isOpen}
+                onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+                onConfirm={confirmModal.onConfirm}
+                title={confirmModal.title}
+                message={confirmModal.message}
+                variant={confirmModal.variant}
+            />
         </div>
     );
 };

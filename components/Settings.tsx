@@ -3,6 +3,8 @@ import React from 'react';
 import { Type, User, ChevronRight, Briefcase, UserRound, Sun, Settings, RefreshCw, Globe } from 'lucide-react';
 import { useAppViewModel } from '../context/AppContext';
 import { UIScale, Language } from '../types';
+import { ConfirmationModal } from './ConfirmationModal';
+import { useState } from 'react';
 
 interface SettingsProps {
     onNavigate: (view: any) => void;
@@ -10,6 +12,7 @@ interface SettingsProps {
 
 export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
   const { uiScale, setUiScale, userProfile, updateUserProfile, performManualTurnover, language, setLanguage, t } = useAppViewModel();
+  const [isTurnoverModalOpen, setIsTurnoverModalOpen] = useState(false);
 
   const handleScaleChange = (scale: UIScale) => {
     setUiScale(scale);
@@ -213,11 +216,7 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
           </div>
           
           <button 
-            onClick={() => {
-              if (window.confirm(t('settings.turnover.confirm'))) {
-                performManualTurnover();
-              }
-            }}
+            onClick={() => setIsTurnoverModalOpen(true)}
             className="w-full flex items-center justify-between p-4 bg-stone-950/40 rounded-2xl border border-stone-800 hover:border-purple-500/50 hover:bg-stone-900 transition-all group"
           >
               <div className="flex items-center gap-3">
@@ -243,6 +242,14 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
           <p className="text-[9px] text-stone-800 mt-6 uppercase tracking-widest">© 2026 Nayif Fırat</p>
       </div>
 
+      <ConfirmationModal
+        isOpen={isTurnoverModalOpen}
+        onClose={() => setIsTurnoverModalOpen(false)}
+        onConfirm={performManualTurnover}
+        title={t('settings.turnover')}
+        message={t('settings.turnover.confirm')}
+        variant="warning"
+      />
     </div>
   );
 };

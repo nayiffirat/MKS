@@ -16,9 +16,8 @@ interface RemindersScreenProps {
 
 export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initialAddMode, initialFilter }) => {
     const { reminders, addReminder, toggleReminder, deleteReminder, editReminder, farmers, userProfile, t, language } = useAppViewModel();
-    const isCompany = userProfile.accountType === 'COMPANY';
-    const farmerLabel = isCompany ? t('label.customer') : t('label.farmer');
-    const farmerPluralLabel = isCompany ? t('label.customers') : t('label.farmers');
+    const farmerLabel = t('label.farmer');
+    const farmerPluralLabel = t('label.farmers');
     const [isAddModalOpen, setIsAddModalOpen] = useState(initialAddMode || false);
     const [filter, setFilter] = useState<'ALL' | 'PENDING' | 'COMPLETED' | 'TOMORROW'>(initialFilter || 'PENDING');
 

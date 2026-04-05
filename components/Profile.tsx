@@ -109,12 +109,8 @@ export const ProfileScreen: React.FC<ProfileProps> = ({ onBack }) => {
              <div className="z-10">
                  <h3 className="text-xl font-bold text-white leading-tight flex items-center gap-2">
                     {formData.fullName || t('profile.unnamed')}
-                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${
-                        formData.accountType === 'COMPANY' 
-                            ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' 
-                            : 'bg-orange-500/10 border-orange-500/30 text-orange-400'
-                    }`}>
-                        {formData.accountType === 'COMPANY' ? t('login.company').toUpperCase() : t('login.dealer').toUpperCase()}
+                    <span className="text-[10px] font-black px-2 py-0.5 rounded-full border bg-orange-500/10 border-orange-500/30 text-orange-400">
+                        {t('login.dealer').toUpperCase()}
                     </span>
                  </h3>
                  <p className="text-emerald-400 text-sm font-medium">{formData.title || t('profile.noTitle')}</p>

@@ -1,5 +1,4 @@
 
-export type AccountType = 'DEALER' | 'COMPANY';
 export type TeamRole = 'MANAGER' | 'SALES' | 'WAREHOUSE' | 'ACCOUNTING';
 export type Language = 'tr' | 'en' | 'ar';
 
@@ -198,7 +197,6 @@ export interface UserProfile {
   role?: 'admin' | 'user';
   subscriptionStatus?: 'trial' | 'active' | 'expired';
   subscriptionEndsAt?: string;
-  accountType?: AccountType;
   adminUsername?: string;
   adminPassword?: string;
   language?: Language;

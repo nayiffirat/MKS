@@ -22,6 +22,8 @@ export const Reports: React.FC = () => {
     prescriptionLabel
   } = useAppViewModel();
   const [generating, setGenerating] = useState<string | null>(null);
+  const [startDate, setStartDate] = useState<string>(format(new Date(new Date().getFullYear(), 0, 1), 'yyyy-MM-dd'));
+  const [endDate, setEndDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
 
   // Helper to replace Turkish chars for standard PDF fonts if needed
   const trToEn = (text: string) => {
@@ -32,6 +34,17 @@ export const Reports: React.FC = () => {
       .replace(/İ/g, 'I').replace(/ı/g, 'i')
       .replace(/Ö/g, 'O').replace(/ö/g, 'o')
       .replace(/Ç/g, 'C').replace(/ç/g, 'c');
+  };
+
+  const isWithinRange = (dateStr: string) => {
+    const date = new Date(dateStr);
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    // Set hours to 0 for accurate comparison
+    date.setHours(0, 0, 0, 0);
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+    return date >= start && date <= end;
   };
 
   const generateFarmerBalancesPDF = () => {
@@ -45,12 +58,12 @@ export const Reports: React.FC = () => {
       
       doc.setFontSize(10);
       doc.setFont("helvetica", "normal");
-      doc.text(`Tarih: ${format(new Date(), 'dd.MM.yyyy HH:mm')}`, 14, 28);
+      doc.text(`Donem: ${format(new Date(startDate), 'dd.MM.yyyy')} - ${format(new Date(endDate), 'dd.MM.yyyy')}`, 14, 28);
 
       const tableData = farmers.map(farmer => {
-        const fPayments = payments.filter(p => p.farmerId === farmer.id);
-        const fPrescriptions = prescriptions.filter(p => p.farmerId === farmer.id);
-        const fManualDebts = manualDebts.filter(d => d.farmerId === farmer.id);
+        const fPayments = payments.filter(p => p.farmerId === farmer.id && isWithinRange(p.date));
+        const fPrescriptions = prescriptions.filter(p => p.farmerId === farmer.id && isWithinRange(p.date));
+        const fManualDebts = manualDebts.filter(d => d.farmerId === farmer.id && isWithinRange(d.date));
         
         const totalPaid = fPayments.reduce((acc, p) => acc + p.amount, 0);
         const totalDebt = fPrescriptions.reduce((acc, p) => acc + (p.totalAmount || 0), 0) + 
@@ -140,9 +153,10 @@ export const Reports: React.FC = () => {
       
       doc.setFontSize(10);
       doc.setFont("helvetica", "normal");
-      doc.text(`Tarih: ${format(new Date(), 'dd.MM.yyyy HH:mm')}`, 14, 28);
+      doc.text(`Donem: ${format(new Date(startDate), 'dd.MM.yyyy')} - ${format(new Date(endDate), 'dd.MM.yyyy')}`, 14, 28);
 
-      const sortedExpenses = [...expenses].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      const filteredExpenses = expenses.filter(exp => isWithinRange(exp.date));
+      const sortedExpenses = [...filteredExpenses].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
       const tableData = sortedExpenses.map(exp => {
         return [
@@ -153,7 +167,7 @@ export const Reports: React.FC = () => {
         ];
       });
 
-      const totalExpense = expenses.reduce((acc, curr) => acc + curr.amount, 0);
+      const totalExpense = filteredExpenses.reduce((acc, curr) => acc + curr.amount, 0);
 
       autoTable(doc, {
         startY: 35,
@@ -187,7 +201,7 @@ export const Reports: React.FC = () => {
       
       doc.setFontSize(10);
       doc.setFont("helvetica", "normal");
-      doc.text(`Tarih: ${format(new Date(), 'dd.MM.yyyy HH:mm')}`, 14, 28);
+      doc.text(`Donem: ${format(new Date(startDate), 'dd.MM.yyyy')} - ${format(new Date(endDate), 'dd.MM.yyyy')}`, 14, 28);
 
       // Kasa Durumu
       let currentY = 40;
@@ -216,12 +230,15 @@ export const Reports: React.FC = () => {
       currentY = (doc as any).lastAutoTable.finalY + 15;
 
       // Genel Ozet
-      const totalIncome = payments.reduce((acc, p) => acc + p.amount, 0);
-      const totalExpense = expenses.reduce((acc, e) => acc + e.amount, 0);
+      const filteredPayments = payments.filter(p => isWithinRange(p.date));
+      const filteredExpenses = expenses.filter(e => isWithinRange(e.date));
+
+      const totalIncome = filteredPayments.reduce((acc, p) => acc + p.amount, 0);
+      const totalExpense = filteredExpenses.reduce((acc, e) => acc + e.amount, 0);
       const netProfit = totalIncome - totalExpense;
 
       doc.setFont("helvetica", "bold");
-      doc.text(trToEn("2. Gelir / Gider Ozeti (Tum Zamanlar)"), 14, currentY);
+      doc.text(trToEn("2. Gelir / Gider Ozeti (Secili Donem)"), 14, currentY);
 
       autoTable(doc, {
         startY: currentY + 5,
@@ -296,6 +313,50 @@ export const Reports: React.FC = () => {
             İşletmenizin tüm verilerini PDF olarak dışa aktarın
           </p>
         </div>
+      </div>
+
+      {/* Date Range Filter */}
+      <div className="bg-stone-900/60 backdrop-blur-md border border-white/5 rounded-3xl p-4 shadow-lg">
+          <div className="flex items-center gap-2 mb-3">
+              <Calendar size={14} className="text-emerald-500" />
+              <h3 className="text-[10px] font-black text-stone-300 uppercase tracking-widest">Rapor Tarih Aralığı</h3>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+              <div>
+                  <label className="text-[8px] font-black text-stone-500 uppercase ml-1 mb-1 block">Başlangıç</label>
+                  <input 
+                    type="date" 
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="w-full bg-stone-950 border border-white/10 rounded-xl px-3 py-2 text-stone-100 text-xs outline-none focus:border-emerald-500/50 transition-all"
+                  />
+              </div>
+              <div>
+                  <label className="text-[8px] font-black text-stone-500 uppercase ml-1 mb-1 block">Bitiş</label>
+                  <input 
+                    type="date" 
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="w-full bg-stone-950 border border-white/10 rounded-xl px-3 py-2 text-stone-100 text-xs outline-none focus:border-emerald-500/50 transition-all"
+                  />
+              </div>
+          </div>
+          <div className="flex gap-2 mt-3 overflow-x-auto no-scrollbar pb-1">
+              {[
+                  { label: 'Bu Ay', start: format(new Date(new Date().getFullYear(), new Date().getMonth(), 1), 'yyyy-MM-dd'), end: format(new Date(), 'yyyy-MM-dd') },
+                  { label: 'Geçen Ay', start: format(new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1), 'yyyy-MM-dd'), end: format(new Date(new Date().getFullYear(), new Date().getMonth(), 0), 'yyyy-MM-dd') },
+                  { label: 'Bu Yıl', start: format(new Date(new Date().getFullYear(), 0, 1), 'yyyy-MM-dd'), end: format(new Date(), 'yyyy-MM-dd') },
+                  { label: 'Tüm Zamanlar', start: '2020-01-01', end: format(new Date(), 'yyyy-MM-dd') }
+              ].map((preset, idx) => (
+                  <button 
+                    key={idx}
+                    onClick={() => { setStartDate(preset.start); setEndDate(preset.end); }}
+                    className="px-3 py-1.5 bg-stone-800 hover:bg-stone-700 text-stone-400 rounded-lg text-[9px] font-bold border border-white/5 whitespace-nowrap active:scale-95 transition-all"
+                  >
+                      {preset.label}
+                  </button>
+              ))}
+          </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

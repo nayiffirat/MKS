@@ -12,6 +12,8 @@ import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 import { formatCurrency, getCurrencySymbol } from '../utils/currency';
 import { ConfirmationModal } from './ConfirmationModal';
+import { ListSkeleton } from './Skeleton';
+import { EmptyState } from './EmptyState';
 
 interface FarmersProps {
   onBack: () => void;
@@ -44,10 +46,11 @@ interface FarmerModalProps {
     };
     setData: (data: any) => void;
     onSave: (e: React.FormEvent) => void;
+    onDelete?: () => void;
     farmerLabel: string;
 }
 
-const FarmerModal: React.FC<FarmerModalProps> = ({ isOpen, onClose, mode, isSaving, data, setData, onSave, farmerLabel }) => {
+const FarmerModal: React.FC<FarmerModalProps> = ({ isOpen, onClose, mode, isSaving, data, setData, onSave, onDelete, farmerLabel }) => {
     if (!isOpen) return null;
 
     const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -172,8 +175,20 @@ const FarmerModal: React.FC<FarmerModalProps> = ({ isOpen, onClose, mode, isSavi
                 </div>
               </div>
 
-              <div className="pt-2 shrink-0">
-                <button disabled={isSaving} type="submit" className="w-full bg-emerald-700 text-white py-3.5 rounded-2xl font-bold text-xs shadow-xl shadow-emerald-900/20 flex justify-center items-center active:scale-95 transition-all border border-emerald-500/20">
+              <div className="pt-2 shrink-0 flex gap-2">
+                {mode === 'EDIT' && onDelete && (
+                    <button 
+                        type="button" 
+                        onClick={() => {
+                            onClose();
+                            onDelete();
+                        }}
+                        className="px-4 bg-rose-900/20 text-rose-500 rounded-2xl font-bold text-xs border border-rose-500/20 hover:bg-rose-900/30 transition-all active:scale-95"
+                    >
+                        <Trash2 size={16} />
+                    </button>
+                )}
+                <button disabled={isSaving} type="submit" className="flex-1 bg-emerald-700 text-white py-3.5 rounded-2xl font-bold text-xs shadow-xl shadow-emerald-900/20 flex justify-center items-center active:scale-95 transition-all border border-emerald-500/20">
                     {isSaving ? <Loader2 size={18} className="animate-spin" /> : `${farmerLabel}yi Kaydet`}
                 </button>
               </div>
@@ -217,15 +232,26 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
     softDeletePrescription,
     t
   } = useAppViewModel();
-  const isCompany = userProfile.accountType === 'COMPANY';
   const isSales = activeTeamMember?.role === 'SALES';
-  const isDealer = userProfile.accountType === 'DEALER';
 
-  const canEditFarmer = !isSales && (!isCompany || (activeTeamMember?.role === 'MANAGER'));
+  const canEditFarmer = !isSales;
   const canCreateFarmer = canEditFarmer;
   const [farmers, setFarmers] = useState<Farmer[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedFarmer, setSelectedFarmer] = useState<Farmer | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  
+  const [confirmModal, setConfirmModal] = useState<{
+      isOpen: boolean;
+      title: string;
+      message: string;
+      onConfirm: () => void;
+  }>({
+      isOpen: false,
+      title: '',
+      message: '',
+      onConfirm: () => {}
+  });
 
   // Sync with prop
   useEffect(() => {
@@ -359,14 +385,14 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
         { id: 'DEBT', label: 'Borç / Tahsilat', icon: Wallet }
     ];
     
-    if (isSales || isDealer) {
+    if (isSales) {
         // Only show: carileri (list), borçlarını (DEBT), reçetelerini (PRESCRIPTIONS)
         // We also keep GENERAL for basic info if needed, but the request says "sadece..."
         // Let's stick to the request: carileri, borçlarını, reçetelerini.
         return allTabs.filter(t => t.id === 'DEBT' || t.id === 'PRESCRIPTIONS');
     }
     return allTabs;
-  }, [isSales, isDealer, prescriptionLabel]);
+  }, [isSales, prescriptionLabel]);
 
   // Payment Modal State
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -402,8 +428,13 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const reportRef = useRef<HTMLDivElement>(null);
 
   const loadFarmers = async () => {
-      const list = await dbService.getFarmers();
-      setFarmers(list);
+      setIsLoading(true);
+      try {
+          const list = await dbService.getFarmers();
+          setFarmers(list.filter(f => !f.deletedAt));
+      } finally {
+          setIsLoading(false);
+      }
   };
 
   useEffect(() => {
@@ -505,18 +536,23 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
 
   // --- VISIT ACTIONS ---
   const handleDeleteVisit = async (visitId: string) => {
-      if (window.confirm("Bu ziyaret kaydını silmek istediğinize emin misiniz?")) {
-          await softDeleteVisit(visitId);
-          showToast('Ziyaret kaydı silindi', 'success');
-          hapticFeedback('medium');
-          await loadFarmerDetails(); // Listeyi yenile
-      }
+      setConfirmModal({
+          isOpen: true,
+          title: 'Ziyaret Kaydı Silinecek',
+          message: 'Bu ziyaret kaydını silmek istediğinize emin misiniz?',
+          onConfirm: async () => {
+              await softDeleteVisit(visitId);
+              showToast('Ziyaret kaydı silindi', 'success');
+              hapticFeedback('medium');
+              await loadFarmerDetails(); // Listeyi yenile
+          }
+      });
   };
 
   const handleWhatsAppText = () => {
       if (!selectedPrescription || !selectedFarmer) return;
       
-      let text = `*ZİRAİ REÇETE*\n`;
+      let text = `*ZİRAİ FATURA*\n`;
       text += `Sayın *${selectedFarmer.fullName}*,\n\n`;
       text += `Tarih: ${new Date(selectedPrescription.date).toLocaleDateString('tr-TR')}\n`;
       text += `${prescriptionLabel} No: ${selectedPrescription.prescriptionNo}\n\n`;
@@ -833,7 +869,6 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           };
           
           const id = await addPrescription(prescriptionData);
-          await togglePrescriptionStatus(id);
           
           showToast('İade başarıyla kaydedildi', 'success');
           hapticFeedback('success');
@@ -900,14 +935,19 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   };
 
   const handleDeleteManualDebt = async (id: string) => {
-      if (window.confirm("Bu borç kaydını silmek istediğinize emin misiniz?")) {
-          await deleteManualDebt(id);
-          showToast('Borç kaydı silindi', 'success');
-          hapticFeedback('medium');
-          setIsManualDebtModalOpen(false);
-          setEditingManualDebt(null);
-          await loadFarmerDetails();
-      }
+      setConfirmModal({
+          isOpen: true,
+          title: 'Borç Kaydı Silinecek',
+          message: 'Bu borç kaydını silmek istediğinize emin misiniz?',
+          onConfirm: async () => {
+              await deleteManualDebt(id);
+              showToast('Borç kaydı silindi', 'success');
+              hapticFeedback('medium');
+              setIsManualDebtModalOpen(false);
+              setEditingManualDebt(null);
+              await loadFarmerDetails();
+          }
+      });
   };
 
   const handleReportWhatsAppText = () => {
@@ -1024,21 +1064,48 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   };
 
   const handleDeletePayment = async (id: string) => {
-      if (window.confirm("Bu ödeme kaydını silmek istediğinize emin misiniz?")) {
-          await removePayment(id);
-          showToast('Ödeme kaydı silindi', 'success');
-      }
+      setConfirmModal({
+          isOpen: true,
+          title: 'Ödeme Kaydı Silinecek',
+          message: 'Bu ödeme kaydını silmek istediğinize emin misiniz?',
+          onConfirm: async () => {
+              await removePayment(id);
+              showToast('Ödeme kaydı silindi', 'success');
+          }
+      });
   };
 
-  const handleDeleteFarmer = async () => {
-      if (!selectedFarmer) return;
-      if (window.confirm("Bu çiftçiyi ve tüm kayıtlarını silmek istediğinize emin misiniz?")) {
-          await softDeleteFarmer(selectedFarmer.id); 
-          showToast(`${farmerLabel} kaydı silindi`, 'success');
-          hapticFeedback('medium');
-          changeFarmerSelection(null); 
-          await loadFarmers();
+  const handleDeleteFarmer = async (farmerToMaybeDelete?: Farmer) => {
+      const targetFarmer = farmerToMaybeDelete || selectedFarmer;
+      if (!targetFarmer) return;
+
+      // Find the farmer in our calculated list to get the balance
+      const farmerInfo = farmersWithDebt.find(f => f.id === targetFarmer.id);
+      const balance = farmerInfo?.overallBalance || 0;
+      const hasRecords = farmerPrescriptions.length > 0 || farmerManualDebts.length > 0 || farmerPayments.length > 0;
+
+      let warningMessage = `Bu ${farmerLabel.toLowerCase()}yi ve tüm kayıtlarını silmek istediğinize emin misiniz?`;
+      
+      if (Math.abs(balance) > 0.01) {
+          warningMessage = `DİKKAT: Bu ${farmerLabel.toLowerCase()}nin ${formatCurrency(Math.abs(balance), userProfile?.currency || 'TRY')} tutarında ${balance < 0 ? 'BORCU' : 'ALACAĞI'} bulunmaktadır. Silme işlemi geri alınamaz. Devam etmek istiyor musunuz?`;
+      } else if (hasRecords) {
+          warningMessage = `Bu ${farmerLabel.toLowerCase()}ye ait geçmiş işlem kayıtları bulunmaktadır. Silme işlemi tüm bu kayıtları da silecektir. Devam etmek istiyor musunuz?`;
       }
+
+      setConfirmModal({
+          isOpen: true,
+          title: `${farmerLabel} Silinecek`,
+          message: warningMessage,
+          onConfirm: async () => {
+              await softDeleteFarmer(targetFarmer.id); 
+              showToast(`${farmerLabel} kaydı silindi`, 'success');
+              hapticFeedback('medium');
+              if (selectedFarmer?.id === targetFarmer.id) {
+                  changeFarmerSelection(null); 
+              }
+              await loadFarmers();
+          }
+      });
   };
 
   const farmersWithDebt = useMemo(() => {
@@ -1134,7 +1201,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                     <div className="flex justify-between items-start mb-6 pt-2">
                         <div>
                             <h3 className="font-black text-lg text-stone-900 tracking-tight">
-                                {selectedPrescription.totalAmount && selectedPrescription.totalAmount < 0 ? 'İADE MAKBUZU' : 'ZİRAİ REÇETE'}
+                                {selectedPrescription.totalAmount && selectedPrescription.totalAmount < 0 ? 'İADE MAKBUZU' : 'ZİRAİ FATURA'}
                             </h3>
                             <p className="text-[9px] text-stone-500 font-bold uppercase tracking-widest mt-1">No: {selectedPrescription.prescriptionNo}</p>
                             {selectedPrescription.fieldId && (
@@ -1426,7 +1493,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                     </button>
                                 )}
                                 {canEditFarmer && (
-                                    <button onClick={handleDeleteFarmer} className="p-1.5 bg-stone-800/60 text-stone-400 rounded-lg hover:text-red-400 transition-all active:scale-90 border border-white/5">
+                                    <button onClick={() => handleDeleteFarmer()} className="p-1.5 bg-stone-800/60 text-stone-400 rounded-lg hover:text-red-400 transition-all active:scale-90 border border-white/5">
                                         <Trash2 size={12} />
                                     </button>
                                 )}
@@ -1800,7 +1867,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                         <Calendar size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-500" />
                                         <input 
                                             type="date" 
-                                            className="w-full bg-stone-950 border border-stone-800 rounded-2xl p-3.5 pl-12 text-xs text-stone-100 outline-none focus:border-emerald-500/50 transition-all"
+                                            className="w-full h-[46px] bg-stone-950 border border-stone-800 rounded-2xl pl-10 pr-4 text-xs text-stone-100 outline-none focus:border-emerald-500/50 transition-all"
                                             value={paymentDate}
                                             onChange={(e) => setPaymentDate(e.target.value)}
                                         />
@@ -1812,7 +1879,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                 <select 
                                     value={selectedAccountId}
                                     onChange={e => setSelectedAccountId(e.target.value)}
-                                    className="w-full p-3.5 bg-stone-950 border border-stone-800 rounded-2xl outline-none text-stone-200 text-xs focus:border-emerald-500/50 transition-all"
+                                    className="w-full h-[46px] px-4 bg-stone-950 border border-stone-800 rounded-2xl outline-none text-stone-200 text-xs focus:border-emerald-500/50 transition-all"
                                 >
                                     <option value="">Hesap Seçilmedi</option>
                                     {accounts.map(acc => (
@@ -2073,7 +2140,18 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       </div>
 
       <div className="space-y-1">
-        {filteredFarmers.map(farmer => (
+        {isLoading ? (
+            <ListSkeleton count={8} />
+        ) : filteredFarmers.length === 0 ? (
+            <EmptyState
+                icon={User}
+                title={searchTerm ? t('farmer.empty_search', { label: farmerLabel.toLowerCase() }) : t('farmer.empty_list', { label: farmerLabel.toLowerCase() })}
+                description={!searchTerm ? t('farmer.empty_hint', { label: farmerLabel.toLowerCase() }) : ''}
+                actionLabel={canCreateFarmer && !searchTerm ? `Yeni ${farmerLabel} Ekle` : undefined}
+                onAction={canCreateFarmer && !searchTerm ? () => toggleModal(true) : undefined}
+                actionIcon={Plus}
+            />
+        ) : filteredFarmers.map(farmer => (
             <div key={farmer.id} onClick={() => changeFarmerSelection(farmer)} className="bg-stone-900/80 backdrop-blur rounded-xl p-2 shadow-sm border border-white/5 flex items-center justify-between hover:bg-stone-800/80 transition-all cursor-pointer group active:scale-[0.98]">
                 <div className="flex items-center space-x-2">
                     <div className="w-8 h-8 rounded-lg bg-stone-800 text-stone-500 flex items-center justify-center font-bold text-xs group-hover:bg-emerald-900/30 group-hover:text-emerald-400 transition-colors border border-white/5 shadow-inner">{farmer.fullName.charAt(0)}</div>
@@ -2140,7 +2218,16 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
         data={editFarmerData}
         setData={setEditFarmerData}
         onSave={handleSaveFarmer}
+        onDelete={handleDeleteFarmer}
         farmerLabel={farmerLabel}
+      />
+
+      <ConfirmationModal
+        isOpen={confirmModal.isOpen}
+        onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+        onConfirm={confirmModal.onConfirm}
+        title={confirmModal.title}
+        message={confirmModal.message}
       />
 
     </div>

@@ -45,9 +45,17 @@ export const Kasa: React.FC<KasaProps> = ({ onBack }) => {
 
   const [viewMode, setViewMode] = useState<'ACCOUNTS' | 'TRANSACTIONS'>('ACCOUNTS');
   const [showAddAccount, setShowAddAccount] = useState(false);
+  const [showAddMoney, setShowAddMoney] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
+  const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<'ALL' | 'INCOME' | 'EXPENSE'>('ALL');
+
+  // Add Money Form States
+  const [moneyAmount, setMoneyAmount] = useState('');
+  const [moneyDescription, setMoneyDescription] = useState('');
+  const [moneyAccountId, setMoneyAccountId] = useState('');
+  const [moneyCategory, setMoneyCategory] = useState('Diğer');
 
   // Account Detail View States
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
@@ -177,6 +185,39 @@ export const Kasa: React.FC<KasaProps> = ({ onBack }) => {
     }
   };
 
+  const handleAddMoney = async () => {
+    if (!moneyAmount || !moneyAccountId || !moneyDescription) {
+      showToast('Lütfen tüm alanları doldurunuz', 'error');
+      return;
+    }
+
+    try {
+      const amount = parseFloat(moneyAmount);
+      if (isNaN(amount) || amount <= 0) {
+        showToast('Geçerli bir tutar giriniz', 'error');
+        return;
+      }
+
+      await addTransaction({
+        accountId: moneyAccountId,
+        type: 'INCOME',
+        amount: amount,
+        date: new Date().toISOString(),
+        description: moneyDescription,
+        category: moneyCategory
+      });
+
+      showToast('Para eklendi', 'success');
+      setMoneyAmount('');
+      setMoneyDescription('');
+      setMoneyAccountId('');
+      setShowAddMoney(false);
+      hapticFeedback('success');
+    } catch (e) {
+      showToast('İşlem başarısız oldu', 'error');
+    }
+  };
+
   const resetForm = () => {
     setAccountName('');
     setAccountType('CASH');
@@ -292,7 +333,11 @@ export const Kasa: React.FC<KasaProps> = ({ onBack }) => {
         >
           <div className="bg-stone-900 rounded-3xl border border-white/5 overflow-hidden">
             {selectedDayTransactions.map((tx, idx) => (
-              <div key={tx.id} className={`p-5 flex items-center justify-between hover:bg-white/5 transition-colors ${idx !== selectedDayTransactions.length - 1 ? 'border-b border-white/5' : ''}`}>
+              <div 
+                key={tx.id} 
+                onClick={() => setSelectedTransaction(tx)}
+                className={`p-5 flex items-center justify-between hover:bg-white/5 transition-colors cursor-pointer active:bg-white/10 ${idx !== selectedDayTransactions.length - 1 ? 'border-b border-white/5' : ''}`}
+              >
                 <div className="flex items-center gap-4">
                   <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${tx.type === 'INCOME' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>
                     {tx.type === 'INCOME' ? <ArrowDownLeft size={24} /> : <ArrowUpRight size={24} />}
@@ -343,12 +388,22 @@ export const Kasa: React.FC<KasaProps> = ({ onBack }) => {
             <h1 className="text-3xl font-bold text-stone-100 tracking-tight">Kasa & Banka</h1>
             <p className="text-stone-500 mt-1 font-medium">Finansal durumunuzu yönetin</p>
           </div>
-          <button 
-            onClick={() => setShowAddAccount(true)}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white p-3 rounded-2xl shadow-lg shadow-emerald-900/20 transition-all active:scale-95"
-          >
-            <Plus size={24} />
-          </button>
+          <div className="flex gap-2">
+            <button 
+              onClick={() => setShowAddMoney(true)}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-2xl shadow-lg shadow-blue-900/20 transition-all active:scale-95 flex items-center gap-2 text-xs font-black uppercase tracking-widest"
+            >
+              <Plus size={18} />
+              Para Ekle
+            </button>
+            <button 
+              onClick={() => setShowAddAccount(true)}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-2xl shadow-lg shadow-emerald-900/20 transition-all active:scale-95 flex items-center gap-2 text-xs font-black uppercase tracking-widest"
+            >
+              <Plus size={18} />
+              Hesap Ekle
+            </button>
+          </div>
         </div>
 
         {/* Summary Card */}
@@ -501,7 +556,11 @@ export const Kasa: React.FC<KasaProps> = ({ onBack }) => {
               {filteredTransactions.map((tx, idx) => {
                 const account = accounts.find(a => a.id === tx.accountId);
                 return (
-                  <div key={tx.id} className={`p-5 flex items-center justify-between hover:bg-white/5 transition-colors ${idx !== filteredTransactions.length - 1 ? 'border-b border-white/5' : ''}`}>
+                  <div 
+                    key={tx.id} 
+                    onClick={() => setSelectedTransaction(tx)}
+                    className={`p-5 flex items-center justify-between hover:bg-white/5 transition-colors cursor-pointer active:bg-white/10 ${idx !== filteredTransactions.length - 1 ? 'border-b border-white/5' : ''}`}
+                  >
                     <div className="flex items-center gap-4">
                       <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${tx.type === 'INCOME' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>
                         {tx.type === 'INCOME' ? <ArrowDownLeft size={24} /> : <ArrowUpRight size={24} />}
@@ -537,6 +596,167 @@ export const Kasa: React.FC<KasaProps> = ({ onBack }) => {
           </div>
         )}
       </div>
+
+      {/* Add Money Modal */}
+      {showAddMoney && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="bg-stone-900 w-full max-w-lg rounded-[2.5rem] border border-white/10 shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="px-8 pt-8 pb-6 flex justify-between items-center border-b border-white/5">
+              <h2 className="text-2xl font-black text-stone-100 tracking-tight">Harici Para Ekle</h2>
+              <button onClick={() => setShowAddMoney(false)} className="p-2 hover:bg-white/5 rounded-full transition-colors">
+                <X size={24} className="text-stone-500" />
+              </button>
+            </div>
+
+            <div className="p-8 space-y-6">
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-[10px] font-black text-stone-500 uppercase tracking-widest mb-2 ml-1">Hedef Hesap</label>
+                  <select 
+                    value={moneyAccountId}
+                    onChange={(e) => setMoneyAccountId(e.target.value)}
+                    className="w-full px-5 py-4 bg-stone-950 border border-white/5 rounded-2xl text-stone-100 outline-none focus:border-blue-500/50 transition-all font-medium appearance-none"
+                  >
+                    <option value="">Hesap Seçiniz</option>
+                    {accounts.map(acc => (
+                      <option key={acc.id} value={acc.id}>{acc.name} ({formatCurrency(acc.balance)})</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black text-stone-500 uppercase tracking-widest mb-2 ml-1">Tutar</label>
+                  <div className="relative">
+                    <input 
+                      type="number"
+                      placeholder="0.00"
+                      value={moneyAmount}
+                      onChange={(e) => setMoneyAmount(e.target.value)}
+                      className="w-full pl-5 pr-16 py-4 bg-stone-950 border border-white/5 rounded-2xl text-stone-100 outline-none focus:border-blue-500/50 transition-all font-mono text-xl"
+                    />
+                    <span className="absolute right-5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">{userProfile.currency || 'TRY'}</span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black text-stone-500 uppercase tracking-widest mb-2 ml-1">Açıklama</label>
+                  <input 
+                    type="text"
+                    placeholder="İşlem açıklaması giriniz"
+                    value={moneyDescription}
+                    onChange={(e) => setMoneyDescription(e.target.value)}
+                    className="w-full px-5 py-4 bg-stone-950 border border-white/5 rounded-2xl text-stone-100 outline-none focus:border-blue-500/50 transition-all font-medium"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black text-stone-500 uppercase tracking-widest mb-2 ml-1">Kategori</label>
+                  <select 
+                    value={moneyCategory}
+                    onChange={(e) => setMoneyCategory(e.target.value)}
+                    className="w-full px-5 py-4 bg-stone-950 border border-white/5 rounded-2xl text-stone-100 outline-none focus:border-blue-500/50 transition-all font-medium appearance-none"
+                  >
+                    <option value="Diğer">Diğer</option>
+                    <option value="Sermaye">Sermaye</option>
+                    <option value="Kredi">Kredi</option>
+                    <option value="İade">İade</option>
+                    <option value="Hediye">Hediye</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-8 pb-8 flex gap-3">
+              <button 
+                onClick={() => setShowAddMoney(false)}
+                className="flex-1 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest text-stone-500 hover:bg-white/5 transition-all"
+              >
+                Vazgeç
+              </button>
+              <button 
+                onClick={handleAddMoney}
+                className="flex-[2] py-4 bg-blue-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-500 shadow-xl shadow-blue-900/20 transition-all active:scale-95"
+              >
+                Para Ekle
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Transaction Detail Modal */}
+      {selectedTransaction && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+          <div className="bg-stone-900 w-full max-w-sm rounded-[2.5rem] border border-white/10 overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className={`h-2 ${selectedTransaction.type === 'INCOME' ? 'bg-emerald-500' : 'bg-rose-500'}`}></div>
+            <div className="p-8">
+              <div className="flex justify-between items-start mb-6">
+                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${selectedTransaction.type === 'INCOME' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>
+                  {selectedTransaction.type === 'INCOME' ? <ArrowDownLeft size={32} /> : <ArrowUpRight size={32} />}
+                </div>
+                <button onClick={() => setSelectedTransaction(null)} className="p-2 hover:bg-white/5 rounded-full transition-colors">
+                  <X size={24} className="text-stone-500" />
+                </button>
+              </div>
+
+              <div className="space-y-6">
+                <div>
+                  <p className="text-stone-500 text-[10px] font-black uppercase tracking-[0.2em] mb-1">İşlem Tutarı</p>
+                  <p className={`text-3xl font-black font-mono ${selectedTransaction.type === 'INCOME' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {selectedTransaction.type === 'INCOME' ? '+' : '-'}{formatCurrency(selectedTransaction.amount)}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-stone-500 text-[10px] font-black uppercase tracking-[0.2em] mb-1">Tür</p>
+                    <p className="text-stone-100 font-bold">{selectedTransaction.type === 'INCOME' ? 'Gelir / Giriş' : 'Gider / Çıkış'}</p>
+                  </div>
+                  <div>
+                    <p className="text-stone-500 text-[10px] font-black uppercase tracking-[0.2em] mb-1">Kategori</p>
+                    <p className="text-stone-100 font-bold">{selectedTransaction.category || 'Genel'}</p>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-stone-500 text-[10px] font-black uppercase tracking-[0.2em] mb-1">Açıklama</p>
+                  <p className="text-stone-100 font-medium leading-relaxed">{selectedTransaction.description}</p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 pt-4 border-t border-white/5">
+                  <div>
+                    <p className="text-stone-500 text-[10px] font-black uppercase tracking-[0.2em] mb-1">Tarih</p>
+                    <p className="text-stone-300 text-xs font-bold">{new Date(selectedTransaction.date).toLocaleDateString('tr-TR')}</p>
+                  </div>
+                  <div>
+                    <p className="text-stone-500 text-[10px] font-black uppercase tracking-[0.2em] mb-1">Saat</p>
+                    <p className="text-stone-300 text-xs font-bold">{new Date(selectedTransaction.date).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</p>
+                  </div>
+                </div>
+
+                {accounts.find(a => a.id === selectedTransaction.accountId) && (
+                  <div className="bg-stone-950/50 p-4 rounded-2xl border border-white/5">
+                    <p className="text-stone-500 text-[10px] font-black uppercase tracking-[0.2em] mb-2">İlgili Hesap</p>
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-stone-800 flex items-center justify-center text-stone-400">
+                        <Wallet size={16} />
+                      </div>
+                      <p className="text-stone-200 font-bold text-sm">{accounts.find(a => a.id === selectedTransaction.accountId)?.name}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <button 
+                onClick={() => setSelectedTransaction(null)}
+                className="w-full mt-8 py-4 bg-stone-800 hover:bg-stone-700 text-stone-100 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all"
+              >
+                Kapat
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add/Edit Account Modal */}
       {showAddAccount && (

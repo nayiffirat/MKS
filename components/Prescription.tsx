@@ -10,6 +10,8 @@ import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { formatCurrency, getCurrencySymbol } from '../utils/currency';
 import { ConfirmationModal } from './ConfirmationModal';
+import { ListSkeleton } from './Skeleton';
+import { EmptyState } from './EmptyState';
 
 interface PrescriptionFormProps {
     onBack: () => void;
@@ -33,11 +35,10 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         teamMembers,
         t
     } = useAppViewModel();
-    const isCompany = userProfile.accountType === 'COMPANY';
     const isSales = activeTeamMember?.role === 'SALES';
-    const farmerLabel = isCompany ? 'Bayi' : 'Çiftçi';
-    const farmerPluralLabel = isCompany ? 'Bayiler' : 'Çiftçiler';
-    const prescriptionLabel = isCompany ? 'Sipariş' : 'Reçete';
+    const farmerLabel = 'Çiftçi';
+    const farmerPluralLabel = 'Çiftçiler';
+    const prescriptionLabel = 'Fatura';
 
     const canEditPrescription = !isSales;
     const canCreatePrescription = canEditPrescription;
@@ -71,7 +72,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         return () => window.removeEventListener('popstate', handlePop);
     }, [contextPrescriptions, initialFarmerId]);
 
-    const changeViewMode = (mode: 'LIST' | 'FORM' | 'DETAIL', detailId?: string) => {
+    const changeViewMode = (mode: 'LIST' | 'FORM' | 'DETAIL', detailId?: string, replace = false) => {
         if (mode === viewMode) return;
         
         if (mode === 'LIST') {
@@ -84,14 +85,18 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
             }
         } else {
             const initialStep = (mode === 'FORM' && initialFarmerId) ? 2 : 1;
-            window.history.pushState({ ...window.history.state, subView: mode, detailId, step: initialStep }, '');
+            const state = { ...window.history.state, subView: mode, detailId, step: initialStep };
+            if (replace) {
+                window.history.replaceState(state, '');
+            } else {
+                window.history.pushState(state, '');
+            }
             setViewMode(mode);
             setStep(initialStep);
         }
     };
 
     const handleScan = (barcode: string) => {
-        setIsScanning(false);
         // Search in inventory first
         const invItem = contextInventory.find(item => item.barcode === barcode);
         if (invItem) {
@@ -107,7 +112,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         if (pesticide) {
             addItem(pesticide);
         } else {
-            alert("Barkod bulunamadı: " + barcode);
+            showToast("Barkod bulunamadı: " + barcode, 'error');
         }
     };
 
@@ -140,6 +145,18 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     const [detailPrescription, setDetailPrescription] = useState<Prescription | null>(null);
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [prescriptionToDelete, setPrescriptionToDelete] = useState<string | null>(null);
+    const [confirmModal, setConfirmModal] = useState<{
+        isOpen: boolean;
+        title: string;
+        message: string;
+        onConfirm: () => void;
+        variant?: 'danger' | 'warning' | 'info';
+    }>({
+        isOpen: false,
+        title: '',
+        message: '',
+        onConfirm: () => {}
+    });
 
     // Edit Mode State
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -149,9 +166,8 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     const [filterMode, setFilterMode] = useState<'ALL' | 'PROCESSED' | 'UNPROCESSED'>('ALL');
     const [isProcessingPdf, setIsProcessingPdf] = useState(false);
     const [isSyncing, setIsSyncing] = useState(false);
+    const [isLoading, setIsLoading] = useState(true);
     const receiptRef = useRef<HTMLDivElement>(null);
-
-
 
     useEffect(() => {
         loadData();
@@ -183,17 +199,23 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     }, [initialPrescriptionId, contextPrescriptions, pesticides, hasInitializedEdit]);
 
     const loadData = async () => {
-        const [fList, pestList] = await Promise.all([
-            dbService.getFarmers(),
-            dbService.getPesticides()
-        ]);
+        setIsLoading(true);
+        try {
+            const [fListRaw, pestList] = await Promise.all([
+                dbService.getFarmers(),
+                dbService.getPesticides()
+            ]);
+            const fList = fListRaw.filter(f => !f.deletedAt);
 
-        setFarmers(fList);
-        setPesticides(pestList);
+            setFarmers(fList);
+            setPesticides(pestList);
 
-        const fMap: Record<string, Farmer> = {};
-        fList.forEach(f => { fMap[f.id] = f; });
-        setFarmerMap(fMap);
+            const fMap: Record<string, Farmer> = {};
+            fListRaw.forEach(f => { fMap[f.id] = f; });
+            setFarmerMap(fMap);
+        } finally {
+            setIsLoading(false);
+        }
     };
 
     const handleBackFromForm = () => {
@@ -224,34 +246,48 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     };
 
     const addItem = (pesticide: Pesticide) => {
-        if (!selectedItems.find(i => i.pesticide.id === pesticide.id)) {
-            // Find inventory item to get selling price
-            const inventoryItem = contextInventory.find(inv => inv.pesticideId === pesticide.id);
-            let sellingPrice = '';
-            let initialPrice = 0;
-            
-            if (inventoryItem) {
-                if (prescriptionPriceType === 'CASH' && inventoryItem.cashPrice) {
-                    sellingPrice = inventoryItem.cashPrice.toString();
-                    initialPrice = inventoryItem.cashPrice;
-                } else {
-                    sellingPrice = inventoryItem.sellingPrice.toString();
-                    initialPrice = inventoryItem.sellingPrice;
+        setSelectedItems(prevItems => {
+            const existingItem = prevItems.find(i => i.pesticide.id === pesticide.id);
+            if (existingItem) {
+                // Increment quantity if already exists
+                const currentQty = parseInt(existingItem.quantity) || 0;
+                const newQty = currentQty + 1;
+                const price = parseFloat(existingItem.unitPrice || '0') || 0;
+                
+                return prevItems.map(i => 
+                    i.pesticide.id === pesticide.id 
+                        ? { ...i, quantity: newQty.toString(), totalPrice: newQty * price }
+                        : i
+                );
+            } else {
+                // Find inventory item to get selling price
+                const inventoryItem = contextInventory.find(inv => inv.pesticideId === pesticide.id);
+                let sellingPrice = '';
+                let initialPrice = 0;
+                
+                if (inventoryItem) {
+                    if (prescriptionPriceType === 'CASH' && inventoryItem.cashPrice) {
+                        sellingPrice = inventoryItem.cashPrice.toString();
+                        initialPrice = inventoryItem.cashPrice;
+                    } else {
+                        sellingPrice = inventoryItem.sellingPrice.toString();
+                        initialPrice = inventoryItem.sellingPrice;
+                    }
                 }
-            }
 
-            // Initialize quantity as '1'
-            const initialQty = 1;
-            
-            setSelectedItems([...selectedItems, { 
-                pesticide, 
-                dosage: pesticide.defaultDosage, 
-                quantity: initialQty.toString(), 
-                unitPrice: sellingPrice, 
-                totalPrice: initialQty * initialPrice
-            }]);
-            setPesticideSearchTerm(''); // Seçimden sonra aramayı temizle
-        }
+                // Initialize quantity as '1'
+                const initialQty = 1;
+                
+                return [...prevItems, { 
+                    pesticide, 
+                    dosage: pesticide.defaultDosage, 
+                    quantity: initialQty.toString(), 
+                    unitPrice: sellingPrice, 
+                    totalPrice: initialQty * initialPrice
+                }];
+            }
+        });
+        setPesticideSearchTerm(''); // Seçimden sonra aramayı temizle
     };
 
     const removeItem = (id: string) => {
@@ -377,54 +413,54 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     const toggleProcessed = async (e: React.MouseEvent, p: Prescription) => {
         e.stopPropagation();
         
-        const message = p.isProcessed 
-            ? `Bu ${prescriptionLabel.toLowerCase()}yi 'İşlenmedi' durumuna geri almak istiyor musunuz?` 
-            : `Bu ${prescriptionLabel.toLowerCase()} işlensin mi? (Onaylanırsa İşlenenler bölümüne aktarılacaktır)`;
+        try {
+            const updated = await togglePrescriptionStatus(p.id);
+            showToast(p.isProcessed ? `${prescriptionLabel} işlenmedi olarak işaretlendi` : `${prescriptionLabel} işlendi olarak işaretlendi`, 'success');
+            hapticFeedback('success');
             
-        if (window.confirm(message)) {
-            try {
-                const updated = await togglePrescriptionStatus(p.id);
-                showToast(p.isProcessed ? `${prescriptionLabel} işlenmedi olarak işaretlendi` : `${prescriptionLabel} başarıyla işlendi`, 'success');
-                hapticFeedback('success');
-                
-                // If we are in detail view, update the detail state as well
-                if (detailPrescription && detailPrescription.id === p.id && updated) {
-                    setDetailPrescription(updated);
-                }
-            } catch (error) {
-                console.error("Toggle processed error:", error);
-                showToast("Durum güncellenirken bir hata oluştu.", 'error');
-                hapticFeedback('error');
+            // If we are in detail view, update the detail state as well
+            if (detailPrescription && detailPrescription.id === p.id && updated) {
+                setDetailPrescription(updated);
             }
+        } catch (error) {
+            console.error("Toggle processed error:", error);
+            showToast("Durum güncellenirken bir hata oluştu.", 'error');
+            hapticFeedback('error');
         }
     };
 
     const handleStatusChange = async (e: React.MouseEvent, p: Prescription, newStatus: 'PENDING' | 'APPROVED' | 'DELIVERED' | 'INVOICED') => {
         e.stopPropagation();
         
-        if (window.confirm(`Sipariş durumunu '${newStatus}' olarak değiştirmek istiyor musunuz?`)) {
-            try {
-                const updatedPrescription = { 
-                    ...p, 
-                    status: newStatus,
-                    deliveredById: newStatus === 'DELIVERED' ? (activeTeamMember?.id || p.deliveredById) : p.deliveredById
-                };
-                await dbService.updatePrescription(updatedPrescription);
-                await refreshStats();
-                
-                // Update context by triggering a refresh or manual state update
-                // For now, updating local detail state
-                if (detailPrescription && detailPrescription.id === p.id) {
-                    setDetailPrescription(updatedPrescription);
+        setConfirmModal({
+            isOpen: true,
+            title: 'Durum Değiştirilecek',
+            message: `Sipariş durumunu '${newStatus}' olarak değiştirmek istiyor musunuz?`,
+            variant: 'info',
+            onConfirm: async () => {
+                try {
+                    const updatedPrescription = { 
+                        ...p, 
+                        status: newStatus,
+                        deliveredById: newStatus === 'DELIVERED' ? (activeTeamMember?.id || p.deliveredById) : p.deliveredById
+                    };
+                    await dbService.updatePrescription(updatedPrescription);
+                    await refreshStats();
+                    
+                    // Update context by triggering a refresh or manual state update
+                    // For now, updating local detail state
+                    if (detailPrescription && detailPrescription.id === p.id) {
+                        setDetailPrescription(updatedPrescription);
+                    }
+                    showToast(`Sipariş durumu güncellendi`, 'success');
+                    hapticFeedback('success');
+                } catch (error) {
+                    console.error("Error updating status:", error);
+                    showToast("İşlem sırasında bir hata oluştu", 'error');
+                    hapticFeedback('error');
                 }
-                showToast(`Sipariş durumu güncellendi`, 'success');
-                hapticFeedback('success');
-            } catch (error) {
-                console.error("Error updating status:", error);
-                showToast("İşlem sırasında bir hata oluştu", 'error');
-                hapticFeedback('error');
             }
-        }
+        });
     };
 
     const handleSave = async () => {
@@ -460,7 +496,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                 items: items,
                 totalAmount: totalAmount > 0 ? totalAmount : undefined,
                 priceType: prescriptionPriceType,
-                isProcessed: true,
+                isProcessed: original.isProcessed,
                 isInventoryProcessed: false // Reset this so it can be re-processed
             };
 
@@ -484,11 +520,11 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                 engineerName: userProfile.fullName || 'Ziraat Mühendisi',
                 items: items,
                 isOfficial: true,
-                isProcessed: true,
+                isProcessed: false,
                 isInventoryProcessed: false,
                 totalAmount: totalAmount > 0 ? totalAmount : undefined,
                 priceType: prescriptionPriceType,
-                status: isCompany ? 'PENDING' : undefined,
+                status: undefined,
                 createdById: activeTeamMember?.id
             };
 
@@ -519,7 +555,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
             
             const finalNew = { ...newPrescription, isInventoryProcessed: true };
             setDetailPrescription(finalNew);
-            changeViewMode('DETAIL', finalNew.id);
+            changeViewMode('DETAIL', finalNew.id, true);
         }
 
         await loadData();
@@ -529,7 +565,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     };
 
     const handleWhatsAppText = (targetPrescription: Prescription, targetFarmer: Farmer) => {
-        let text = `*ZİRAİ REÇETE*\n`;
+        let text = `*ZİRAİ FATURA*\n`;
         text += `Sayın *${targetFarmer.fullName}*,\n\n`;
         text += `Tarih: ${new Date(targetPrescription.date).toLocaleDateString('tr-TR')}\n`;
         text += `${prescriptionLabel} No: ${targetPrescription.prescriptionNo}\n\n`;
@@ -745,14 +781,17 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                     </div>
 
                     <div className="space-y-3">
-                        {filteredPrescriptions.length === 0 ? (
-                            <div className="text-center py-24 text-stone-600 border-2 border-dashed border-stone-800/50 rounded-[2.5rem] mx-1">
-                                <div className="w-16 h-16 bg-stone-900/50 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-white/5">
-                                    <FileText size={32} className="text-stone-700" />
-                                </div>
-                                <p className="font-bold tracking-tight">{prescriptionSearchTerm ? t('prescription.empty_search', { label: prescriptionLabel.toLowerCase() }) : t('prescription.empty_list', { label: prescriptionLabel.toLowerCase() })}</p>
-                                {!prescriptionSearchTerm && <p className="text-xs mt-2 text-stone-500 font-medium">{t('prescription.empty_hint', { label: prescriptionLabel.toLowerCase() })}</p>}
-                            </div>
+                        {isLoading ? (
+                            <ListSkeleton count={5} />
+                        ) : filteredPrescriptions.length === 0 ? (
+                            <EmptyState
+                                icon={FileText}
+                                title={prescriptionSearchTerm ? t('prescription.empty_search', { label: prescriptionLabel.toLowerCase() }) : t('prescription.empty_list', { label: prescriptionLabel.toLowerCase() })}
+                                description={!prescriptionSearchTerm ? t('prescription.empty_hint', { label: prescriptionLabel.toLowerCase() }) : ''}
+                                actionLabel={canCreatePrescription && !prescriptionSearchTerm ? `Yeni ${prescriptionLabel} Oluştur` : undefined}
+                                onAction={canCreatePrescription && !prescriptionSearchTerm ? () => changeViewMode('FORM') : undefined}
+                                actionIcon={Plus}
+                            />
                         ) : (
                             filteredPrescriptions.map(p => {
                                 const farmer = farmerMap[p.farmerId];
@@ -792,20 +831,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                                         {dateObj.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })}
                                                     </span>
                                                 </div>
-                                                {isCompany ? (
-                                                    <div className={`px-2 py-1 rounded-lg text-[8px] font-black uppercase tracking-widest border ${
-                                                        p.status === 'APPROVED' ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' :
-                                                        p.status === 'DELIVERED' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
-                                                        p.status === 'INVOICED' ? 'bg-purple-500/10 border-purple-500/30 text-purple-400' :
-                                                        'bg-yellow-500/10 border-yellow-500/30 text-yellow-400'
-                                                    }`}>
-                                                        {p.status === 'APPROVED' ? t('prescription.status_approved') :
-                                                         p.status === 'DELIVERED' ? t('prescription.status_delivered') :
-                                                         p.status === 'INVOICED' ? t('prescription.status_invoiced') :
-                                                         t('prescription.status_pending')}
-                                                    </div>
-                                                ) : (
-                                                    <button 
+                                                <button 
                                                         type="button"
                                                         onClick={(e) => toggleProcessed(e, p)}
                                                         className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all border-2 active:scale-90 relative z-30 shadow-lg ${
@@ -816,7 +842,6 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                                     >
                                                         {p.isProcessed ? <Check size={14} strokeWidth={3} /> : <X size={14} strokeWidth={3} />}
                                                     </button>
-                                                )}
                                             </div>
                                         </div>
                                         <div className="pl-11 mt-1">
@@ -845,7 +870,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                         onClick={() => { resetForm(); changeViewMode('FORM'); }}
                         className="fixed bottom-32 right-6 md:bottom-10 md:right-10 bg-emerald-600 text-white px-6 py-4 rounded-full shadow-lg shadow-emerald-900/50 hover:bg-emerald-500 transition-all transform hover:scale-105 z-50 flex items-center justify-center gap-2 font-bold text-sm"
                     >
-                        <Plus size={24} /> Yeni Reçete
+                        <Plus size={24} /> Yeni Fatura
                     </button>
                 )}
             </div>
@@ -860,71 +885,20 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                         <ArrowLeft size={20} className="mr-1" /> Listeye Dön
                     </button>
                     <div className="flex space-x-2">
-                        {isCompany ? (
-                            <div className="flex items-center space-x-1 bg-stone-900 rounded-full border border-white/10 p-1">
-                                <button 
-                                    type="button"
-                                    onClick={(e) => handleStatusChange(e, detailPrescription, 'PENDING')}
-                                    disabled={activeTeamMember?.role !== 'MANAGER' && activeTeamMember?.role !== 'SALES'}
-                                    className={`px-3 py-1.5 rounded-full text-[10px] font-bold transition-all ${
-                                        detailPrescription.status === 'PENDING' || !detailPrescription.status
-                                        ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' 
-                                        : 'text-stone-500 hover:text-stone-300 disabled:opacity-50'
-                                    }`}
-                                >
-                                    BEKLİYOR
-                                </button>
-                                <button 
-                                    type="button"
-                                    onClick={(e) => handleStatusChange(e, detailPrescription, 'APPROVED')}
-                                    disabled={activeTeamMember?.role !== 'MANAGER'}
-                                    className={`px-3 py-1.5 rounded-full text-[10px] font-bold transition-all ${
-                                        detailPrescription.status === 'APPROVED' 
-                                        ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' 
-                                        : 'text-stone-500 hover:text-stone-300 disabled:opacity-50'
-                                    }`}
-                                >
-                                    ONAYLANDI
-                                </button>
-                                <button 
-                                    type="button"
-                                    onClick={(e) => handleStatusChange(e, detailPrescription, 'DELIVERED')}
-                                    disabled={activeTeamMember?.role !== 'MANAGER' && activeTeamMember?.role !== 'WAREHOUSE'}
-                                    className={`px-3 py-1.5 rounded-full text-[10px] font-bold transition-all ${
-                                        detailPrescription.status === 'DELIVERED' 
-                                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
-                                        : 'text-stone-500 hover:text-stone-300 disabled:opacity-50'
-                                    }`}
-                                >
-                                    TESLİM EDİLDİ
-                                </button>
-                                <button 
-                                    type="button"
-                                    onClick={(e) => handleStatusChange(e, detailPrescription, 'INVOICED')}
-                                    disabled={activeTeamMember?.role !== 'MANAGER' && activeTeamMember?.role !== 'ACCOUNTING'}
-                                    className={`px-3 py-1.5 rounded-full text-[10px] font-bold transition-all ${
-                                        detailPrescription.status === 'INVOICED' 
-                                        ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' 
-                                        : 'text-stone-500 hover:text-stone-300 disabled:opacity-50'
-                                    }`}
-                                >
-                                    FATURALANDI
-                                </button>
-                            </div>
-                        ) : (
+                        <div className="flex items-center space-x-1 bg-stone-900 rounded-full border border-white/10 p-1">
                             <button 
                                 type="button"
                                 onClick={(e) => toggleProcessed(e, detailPrescription)}
-                                className={`p-2.5 rounded-full border transition-all active:scale-90 ${
+                                className={`px-4 py-1.5 rounded-full text-[10px] font-bold transition-all flex items-center gap-2 ${
                                     detailPrescription.isProcessed 
-                                    ? 'bg-blue-500/10 border-blue-500/20 text-blue-400' 
-                                    : 'bg-red-500/10 border-red-500/20 text-red-400'
+                                    ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' 
+                                    : 'bg-rose-600/20 text-rose-400 border border-rose-500/30'
                                 }`}
-                                title={detailPrescription.isProcessed ? "İşlendi" : "İşlenmedi"}
                             >
-                                {detailPrescription.isProcessed ? <Check size={20} /> : <X size={20} />}
+                                {detailPrescription.isProcessed ? <Check size={14} /> : <X size={14} />}
+                                {detailPrescription.isProcessed ? t('prescription.processed') : t('prescription.unprocessed')}
                             </button>
-                        )}
+                        </div>
                         {canEditPrescription && (
                             <button 
                                 onClick={(e) => handleEdit(e, detailPrescription)} 
@@ -1322,7 +1296,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                     <div className="space-y-4 pb-40">
                         <div className="grid grid-cols-3 gap-2 mb-2">
                             <div className="flex items-center space-x-2 bg-stone-900 px-3 py-2 rounded-xl border border-stone-800">
-                                <span className="text-[9px] text-stone-500 font-bold uppercase tracking-tighter whitespace-nowrap">Reçete No:</span>
+                                <span className="text-[9px] text-stone-500 font-bold uppercase tracking-tighter whitespace-nowrap">Fatura No:</span>
                                 <input 
                                     type="text" 
                                     value={customPrescriptionNo}
@@ -1497,8 +1471,18 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                 <BarcodeScanner 
                     onScan={handleScan} 
                     onClose={() => setIsScanning(false)} 
+                    continuous={true}
                 />
             )}
+
+            <ConfirmationModal
+                isOpen={confirmModal.isOpen}
+                onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+                onConfirm={confirmModal.onConfirm}
+                title={confirmModal.title}
+                message={confirmModal.message}
+                variant={confirmModal.variant}
+            />
         </div>
     );
 };

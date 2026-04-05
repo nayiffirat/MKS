@@ -37,7 +37,6 @@ export const InventoryScreen: React.FC = () => {
         farmerLabel,
         farmerPluralLabel
     } = useAppViewModel();
-    const isCompany = userProfile.accountType === 'COMPANY';
     const isSales = activeTeamMember?.role === 'SALES';
     const canEditInventory = !isSales;
     
@@ -62,7 +61,7 @@ export const InventoryScreen: React.FC = () => {
     const [isScanning, setIsScanning] = useState(false);
     
     // Form States
-    const [searchPesticideTerm, setSearchPesticideTerm] = useState('');
+    const [productName, setProductName] = useState('');
     const [selectedPesticide, setSelectedPesticide] = useState<Pesticide | null>(null);
     const [formData, setFormData] = useState({
         quantity: '',
@@ -72,7 +71,8 @@ export const InventoryScreen: React.FC = () => {
         sellingPrice: '',
         cashPrice: '',
         lowStockThreshold: '',
-        barcode: ''
+        barcode: '',
+        category: PesticideCategory.OTHER
     });
 
     useEffect(() => {
@@ -101,30 +101,44 @@ export const InventoryScreen: React.FC = () => {
     }, [inventory, searchTerm, categoryFilter, stockFilter]);
 
     const filteredPesticides = useMemo(() => {
-        if (!searchPesticideTerm) return [];
+        if (!productName || selectedPesticide) return [];
         return pesticides.filter(p => 
-            p.name.toLowerCase().includes(searchPesticideTerm.toLowerCase()) || 
-            p.activeIngredient.toLowerCase().includes(searchPesticideTerm.toLowerCase()) ||
-            (p.barcode && p.barcode.includes(searchPesticideTerm))
-        ).slice(0, 10);
-    }, [pesticides, searchPesticideTerm]);
+            p.name.toLowerCase().includes(productName.toLowerCase()) || 
+            (p.barcode && p.barcode.includes(productName))
+        ).slice(0, 5);
+    }, [pesticides, productName, selectedPesticide]);
 
     const handleAddItem = async () => {
-        if (!selectedPesticide) return;
+        if (!productName.trim()) {
+            showToast('Lütfen ürün adı giriniz', 'error');
+            return;
+        }
         
-        let finalPesticideId = selectedPesticide.id;
+        let finalPesticideId = '';
+        let finalPesticideName = productName.trim();
+        let finalCategory = formData.category;
 
-        if (selectedPesticide.id.startsWith('new-')) {
+        // Check if we have a selected pesticide or if the name matches an existing one
+        const existingPest = selectedPesticide || pesticides.find(p => p.name.toLowerCase() === finalPesticideName.toLowerCase());
+        
+        if (existingPest) {
+            finalPesticideId = existingPest.id;
+            finalPesticideName = existingPest.name;
+            finalCategory = existingPest.category;
+        } else {
+            // Create new pesticide silently
             finalPesticideId = crypto.randomUUID();
             const newPest: Pesticide = {
                 id: finalPesticideId,
-                name: selectedPesticide.name,
+                name: finalPesticideName,
                 activeIngredient: 'Belirtilmedi',
                 defaultDosage: '100ml/100L',
-                category: selectedPesticide.category,
+                category: finalCategory,
                 description: 'Depo eklemesi ile otomatik eklendi.'
             };
             await dbService.addGlobalPesticide(newPest);
+            // Update local pesticides list so it's available for next time
+            setPesticides(prev => [...prev, newPest]);
         }
 
         const buyingPrice = Number(formData.buyingPrice) || 0;
@@ -133,8 +147,8 @@ export const InventoryScreen: React.FC = () => {
         const newItem: InventoryItem = {
             id: crypto.randomUUID(),
             pesticideId: finalPesticideId,
-            pesticideName: selectedPesticide.name,
-            category: selectedPesticide.category,
+            pesticideName: finalPesticideName,
+            category: finalCategory,
             quantity: Number(formData.quantity) || 0,
             unit: formData.unit,
             buyingPrice: buyingPrice,
@@ -195,9 +209,19 @@ export const InventoryScreen: React.FC = () => {
     };
 
     const openAddModal = () => {
-        setFormData({ quantity: '', unit: 'Adet', buyingPrice: '', cashBuyingPrice: '', sellingPrice: '', cashPrice: '', lowStockThreshold: '5', barcode: '' });
+        setFormData({ 
+            quantity: '', 
+            unit: 'Adet', 
+            buyingPrice: '', 
+            cashBuyingPrice: '', 
+            sellingPrice: '', 
+            cashPrice: '', 
+            lowStockThreshold: '5', 
+            barcode: '',
+            category: PesticideCategory.OTHER
+        });
         setSelectedPesticide(null);
-        setSearchPesticideTerm('');
+        setProductName('');
         setIsAddModalOpen(true);
     };
 
@@ -211,7 +235,8 @@ export const InventoryScreen: React.FC = () => {
             sellingPrice: item.sellingPrice.toString(),
             cashPrice: (item.cashPrice || 0).toString(),
             lowStockThreshold: (item.lowStockThreshold || 0).toString(),
-            barcode: item.barcode || ''
+            barcode: item.barcode || '',
+            category: item.category
         });
         setIsEditModalOpen(true);
     };
@@ -717,7 +742,11 @@ export const InventoryScreen: React.FC = () => {
                                 >
                                     {/* Stock Badge - High Visibility */}
                                     <div className={`absolute top-0 right-0 px-3 py-1.5 rounded-bl-2xl font-black font-mono text-xs flex items-center gap-1.5 shadow-lg z-10 ${
-                                        item.quantity <= 0 ? 'bg-red-500 text-white' : 'bg-emerald-500 text-stone-950'
+                                        item.quantity <= 0 
+                                        ? 'bg-red-500 text-white' 
+                                        : (item.lowStockThreshold && item.quantity <= item.lowStockThreshold)
+                                        ? 'bg-amber-500 text-stone-950 animate-pulse'
+                                        : 'bg-emerald-500 text-stone-950'
                                     }`}>
                                         <Package size={12} />
                                         {item.quantity} <span className="text-[8px] opacity-70 font-sans uppercase">{item.unit}</span>
@@ -725,10 +754,20 @@ export const InventoryScreen: React.FC = () => {
 
                                     <div className="flex justify-between items-start mb-4 pr-16">
                                         <div className="flex-1 min-w-0">
-                                            <h3 className="font-black text-stone-100 text-sm truncate tracking-tight group-hover:text-emerald-400 transition-colors uppercase">{item.pesticideName}</h3>
-                                            <span className="text-[8px] font-black text-stone-500 bg-stone-950/50 px-2 py-0.5 rounded-full border border-white/5 uppercase tracking-widest mt-1 inline-block">
-                                                {item.category}
-                                            </span>
+                                            <div className="flex items-center gap-2">
+                                                <h3 className="font-black text-stone-100 text-sm truncate tracking-tight group-hover:text-emerald-400 transition-colors uppercase">{item.pesticideName}</h3>
+                                                {(item.lowStockThreshold && item.quantity > 0 && item.quantity <= item.lowStockThreshold) && (
+                                                    <span className="flex h-2 w-2 rounded-full bg-amber-500"></span>
+                                                )}
+                                            </div>
+                                            <div className="flex items-center gap-2 mt-1">
+                                                <span className="text-[8px] font-black text-stone-500 bg-stone-950/50 px-2 py-0.5 rounded-full border border-white/5 uppercase tracking-widest inline-block">
+                                                    {item.category}
+                                                </span>
+                                                {(item.lowStockThreshold && item.quantity > 0 && item.quantity <= item.lowStockThreshold) && (
+                                                    <span className="text-[7px] font-black text-amber-500 uppercase tracking-tighter">AZALAN STOK</span>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
                                     
@@ -781,76 +820,92 @@ export const InventoryScreen: React.FC = () => {
             )}
 
             {activeTab === 'ANALYSIS' && (
-                <div className="space-y-6 animate-in slide-in-from-bottom-2 duration-300">
-                    {/* Summary Cards */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="bg-stone-900 p-5 rounded-2xl border border-white/5 relative overflow-hidden">
-                            <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/10 rounded-full blur-2xl -mr-10 -mt-10"></div>
-                            <h3 className="text-xs font-bold text-stone-500 uppercase tracking-widest mb-1">Toplam Stok Maliyeti</h3>
-                            <div className="space-y-2">
-                                <div>
-                                    <p className="text-[10px] text-stone-500 uppercase tracking-widest">Vadeli</p>
-                                    <p className="text-xl font-black text-stone-200 font-mono">
-                                        {formatCurrency(analysisData.totalCost, userProfile?.currency || 'TRY')}
-                                    </p>
+                <div className="space-y-4 animate-in slide-in-from-bottom-2 duration-300">
+                    {/* Compact Analysis Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Peşin Analiz */}
+                        <div className="bg-stone-900/40 backdrop-blur-sm rounded-[2rem] border border-white/5 p-5 relative overflow-hidden group">
+                            <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-3xl -mr-16 -mt-16 transition-all group-hover:bg-emerald-500/10"></div>
+                            
+                            <div className="flex items-center justify-between mb-4 relative z-10">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-8 h-8 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-500 border border-emerald-500/20">
+                                        <DollarSign size={16} />
+                                    </div>
+                                    <h3 className="text-xs font-black text-stone-200 uppercase tracking-widest">Peşin Analiz</h3>
                                 </div>
-                                <div>
-                                    <p className="text-[10px] text-stone-500 uppercase tracking-widest">Peşin</p>
-                                    <p className="text-lg font-black text-stone-400 font-mono">
+                                <div className={`px-2 py-1 rounded-lg text-[10px] font-black ${analysisData.cashProfitMargin >= 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+                                    %{analysisData.cashProfitMargin.toFixed(1)} MARJ
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3 relative z-10">
+                                <div className="bg-stone-950/40 p-3 rounded-2xl border border-white/5">
+                                    <p className="text-[9px] text-stone-500 font-black uppercase tracking-widest mb-1">Maliyet</p>
+                                    <p className="text-sm font-black text-stone-300 font-mono truncate" title={formatCurrency(analysisData.cashTotalCost, userProfile?.currency || 'TRY')}>
                                         {formatCurrency(analysisData.cashTotalCost, userProfile?.currency || 'TRY')}
                                     </p>
                                 </div>
-                            </div>
-                        </div>
-
-                        <div className="bg-stone-900 p-5 rounded-2xl border border-white/5 relative overflow-hidden">
-                            <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/10 rounded-full blur-2xl -mr-10 -mt-10"></div>
-                            <h3 className="text-xs font-bold text-stone-500 uppercase tracking-widest mb-1">Potansiyel Ciro</h3>
-                            <div className="space-y-2">
-                                <div>
-                                    <p className="text-[10px] text-stone-500 uppercase tracking-widest">Vadeli</p>
-                                    <p className="text-xl font-black text-emerald-400 font-mono">
-                                        {formatCurrency(analysisData.totalPotentialRevenue, userProfile?.currency || 'TRY')}
-                                    </p>
-                                </div>
-                                <div>
-                                    <p className="text-[10px] text-stone-500 uppercase tracking-widest">Peşin</p>
-                                    <p className="text-lg font-black text-emerald-500/70 font-mono">
+                                <div className="bg-stone-950/40 p-3 rounded-2xl border border-white/5">
+                                    <p className="text-[9px] text-stone-500 font-black uppercase tracking-widest mb-1">Potansiyel Ciro</p>
+                                    <p className="text-sm font-black text-emerald-400/90 font-mono truncate" title={formatCurrency(analysisData.cashTotalPotentialRevenue, userProfile?.currency || 'TRY')}>
                                         {formatCurrency(analysisData.cashTotalPotentialRevenue, userProfile?.currency || 'TRY')}
                                     </p>
                                 </div>
+                                <div className="col-span-2 bg-emerald-500/5 p-4 rounded-2xl border border-emerald-500/10 flex items-center justify-between">
+                                    <div>
+                                        <p className="text-[9px] text-emerald-500/60 font-black uppercase tracking-widest mb-0.5">Tahmini Peşin Kar</p>
+                                        <p className={`text-xl font-black font-mono ${analysisData.cashPotentialProfit >= 0 ? 'text-emerald-400' : 'text-red-400'} truncate`}>
+                                            {formatCurrency(analysisData.cashPotentialProfit, userProfile?.currency || 'TRY')}
+                                        </p>
+                                    </div>
+                                    <TrendingUp size={20} className="text-emerald-500/20" />
+                                </div>
                             </div>
                         </div>
 
-                        <div className="bg-stone-900 p-5 rounded-2xl border border-white/5 relative overflow-hidden">
-                            <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/10 rounded-full blur-2xl -mr-10 -mt-10"></div>
-                            <h3 className="text-xs font-bold text-stone-500 uppercase tracking-widest mb-1">Tahmini Kar</h3>
-                            <div className="space-y-2">
-                                <div>
-                                    <p className="text-[10px] text-stone-500 uppercase tracking-widest">Vadeli</p>
-                                    <div className="flex items-end gap-2">
-                                        <p className={`text-xl font-black font-mono ${analysisData.potentialProfit >= 0 ? 'text-amber-400' : 'text-red-400'}`}>
+                        {/* Vadeli Analiz */}
+                        <div className="bg-stone-900/40 backdrop-blur-sm rounded-[2rem] border border-white/5 p-5 relative overflow-hidden group">
+                            <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 rounded-full blur-3xl -mr-16 -mt-16 transition-all group-hover:bg-amber-500/10"></div>
+                            
+                            <div className="flex items-center justify-between mb-4 relative z-10">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-8 h-8 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-500 border border-amber-500/20">
+                                        <Calendar size={16} />
+                                    </div>
+                                    <h3 className="text-xs font-black text-stone-200 uppercase tracking-widest">Vadeli Analiz</h3>
+                                </div>
+                                <div className={`px-2 py-1 rounded-lg text-[10px] font-black ${analysisData.profitMargin >= 0 ? 'bg-amber-500/10 text-amber-400' : 'bg-red-500/10 text-red-400'}`}>
+                                    %{analysisData.profitMargin.toFixed(1)} MARJ
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3 relative z-10">
+                                <div className="bg-stone-950/40 p-3 rounded-2xl border border-white/5">
+                                    <p className="text-[9px] text-stone-500 font-black uppercase tracking-widest mb-1">Maliyet</p>
+                                    <p className="text-sm font-black text-stone-300 font-mono truncate" title={formatCurrency(analysisData.totalCost, userProfile?.currency || 'TRY')}>
+                                        {formatCurrency(analysisData.totalCost, userProfile?.currency || 'TRY')}
+                                    </p>
+                                </div>
+                                <div className="bg-stone-950/40 p-3 rounded-2xl border border-white/5">
+                                    <p className="text-[9px] text-stone-500 font-black uppercase tracking-widest mb-1">Potansiyel Ciro</p>
+                                    <p className="text-sm font-black text-amber-400/90 font-mono truncate" title={formatCurrency(analysisData.totalPotentialRevenue, userProfile?.currency || 'TRY')}>
+                                        {formatCurrency(analysisData.totalPotentialRevenue, userProfile?.currency || 'TRY')}
+                                    </p>
+                                </div>
+                                <div className="col-span-2 bg-amber-500/5 p-4 rounded-2xl border border-amber-500/10 flex items-center justify-between">
+                                    <div>
+                                        <p className="text-[9px] text-amber-500/60 font-black uppercase tracking-widest mb-0.5">Tahmini Vadeli Kar</p>
+                                        <p className={`text-xl font-black font-mono ${analysisData.potentialProfit >= 0 ? 'text-amber-400' : 'text-red-400'} truncate`}>
                                             {formatCurrency(analysisData.potentialProfit, userProfile?.currency || 'TRY')}
                                         </p>
-                                        <span className={`text-xs font-bold mb-1 ${analysisData.profitMargin >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                                            %{analysisData.profitMargin.toFixed(1)}
-                                        </span>
                                     </div>
-                                </div>
-                                <div>
-                                    <p className="text-[10px] text-stone-500 uppercase tracking-widest">Peşin</p>
-                                    <div className="flex items-end gap-2">
-                                        <p className={`text-lg font-black font-mono ${analysisData.cashPotentialProfit >= 0 ? 'text-amber-500/70' : 'text-red-500/70'}`}>
-                                            {formatCurrency(analysisData.cashPotentialProfit, userProfile?.currency || 'TRY')}
-                                        </p>
-                                        <span className={`text-[10px] font-bold mb-0.5 ${analysisData.cashProfitMargin >= 0 ? 'text-emerald-500/70' : 'text-red-500/70'}`}>
-                                            %{analysisData.cashProfitMargin.toFixed(1)}
-                                        </span>
-                                    </div>
+                                    <BarChart3 size={20} className="text-amber-500/20" />
                                 </div>
                             </div>
                         </div>
                     </div>
+
 
                     {/* Charts */}
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -945,7 +1000,7 @@ export const InventoryScreen: React.FC = () => {
                                 <span className="text-stone-500 text-[10px] font-bold uppercase tracking-wider">Satılan Ürün Maliyeti</span>
                             </div>
                             <div className="text-2xl font-black text-stone-100">{formatCurrency(profitLossData.totalSoldCost, userProfile?.currency || 'TRY')}</div>
-                            <p className="text-[10px] text-stone-600 mt-2 font-medium">{profitLossData.processedCount} adet işlenmiş reçete baz alınmıştır.</p>
+                            <p className="text-[10px] text-stone-600 mt-2 font-medium">{profitLossData.processedCount} adet işlenmiş fatura baz alınmıştır.</p>
                         </div>
 
                         <div className="bg-stone-900 border border-white/5 p-5 rounded-2xl shadow-sm">
@@ -1014,7 +1069,7 @@ export const InventoryScreen: React.FC = () => {
                         <div className="mt-10 p-4 bg-stone-950/50 rounded-2xl border border-white/5 flex items-start gap-3">
                             <AlertCircle className="text-amber-500 shrink-0" size={18} />
                             <p className="text-xs text-stone-500 leading-relaxed">
-                                Bu veriler, "İşlenmiş" olarak işaretlenen ve stoktan düşülen reçetelerdeki ürünlerin, deponuzdaki güncel alış fiyatları ile reçetedeki satış fiyatları karşılaştırılarak hesaplanmıştır.
+                                Bu veriler, "İşlenmiş" olarak işaretlenen ve stoktan düşülen faturalardaki ürünlerin, deponuzdaki güncel alış fiyatları ile faturadaki satış fiyatları karşılaştırılarak hesaplanmıştır.
                             </p>
                         </div>
                     </div>
@@ -1036,66 +1091,73 @@ export const InventoryScreen: React.FC = () => {
                         
                         <div className="p-6 space-y-4">
                             {isAddModalOpen && (
-                                <div className="space-y-2">
-                                    <label className="text-xs font-bold text-stone-500 uppercase tracking-widest">Ürün Seçimi</label>
-                                    {!selectedPesticide ? (
+                                <div className="space-y-4">
+                                    <div className="space-y-2">
+                                        <label className="text-xs font-bold text-stone-500 uppercase tracking-widest">Ürün Adı</label>
                                         <div className="relative">
-                                            <Search className="absolute left-3 top-3 text-stone-500" size={16} />
+                                            <Package className="absolute left-3 top-3 text-stone-500" size={16} />
                                             <input 
                                                 type="text" 
-                                                placeholder="İlaç adı ara..." 
-                                                className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 pl-10 text-stone-200 text-sm outline-none focus:border-emerald-500/50"
-                                                value={searchPesticideTerm}
-                                                onChange={(e) => setSearchPesticideTerm(e.target.value)}
+                                                placeholder="Ürün adını giriniz..." 
+                                                className={`w-full bg-stone-950 border rounded-xl p-3 pl-10 text-stone-200 text-sm outline-none transition-all ${selectedPesticide ? 'border-emerald-500/50' : 'border-stone-800 focus:border-emerald-500/50'}`}
+                                                value={productName}
+                                                onChange={(e) => {
+                                                    setProductName(e.target.value);
+                                                    if (selectedPesticide) setSelectedPesticide(null);
+                                                }}
                                             />
-                                            {searchPesticideTerm && (
-                                                <div className="absolute top-full left-0 right-0 mt-2 bg-stone-900 border border-stone-800 rounded-xl shadow-xl max-h-48 overflow-y-auto z-10">
+                                            {selectedPesticide && (
+                                                <button 
+                                                    onClick={() => {
+                                                        setSelectedPesticide(null);
+                                                        setProductName('');
+                                                    }}
+                                                    className="absolute right-3 top-3 text-stone-500 hover:text-stone-300"
+                                                >
+                                                    <X size={16} />
+                                                </button>
+                                            )}
+                                            
+                                            {/* Suggestions Dropdown */}
+                                            {filteredPesticides.length > 0 && (
+                                                <div className="absolute top-full left-0 right-0 mt-2 bg-stone-900 border border-stone-800 rounded-xl shadow-xl max-h-48 overflow-y-auto z-10 animate-in fade-in slide-in-from-top-2 duration-200">
+                                                    <div className="p-2 border-b border-white/5 bg-stone-950/30">
+                                                        <span className="text-[9px] font-black text-stone-500 uppercase tracking-widest px-1">Kayıtlı İlaçlardan Seç</span>
+                                                    </div>
                                                     {filteredPesticides.map(p => (
                                                         <button 
                                                             key={p.id}
                                                             onClick={() => {
                                                                 setSelectedPesticide(p);
-                                                                setSearchPesticideTerm('');
+                                                                setProductName(p.name);
+                                                                setFormData(prev => ({ ...prev, category: p.category }));
                                                             }}
-                                                            className="w-full text-left p-3 hover:bg-stone-800 border-b border-white/5 last:border-0"
+                                                            className="w-full text-left p-3 hover:bg-stone-800 border-b border-white/5 last:border-0 flex justify-between items-center group"
                                                         >
-                                                            <div className="font-bold text-stone-200 text-sm">{p.name}</div>
-                                                            <div className="text-[10px] text-stone-500">{p.category}</div>
+                                                            <div>
+                                                                <div className="font-bold text-stone-200 text-sm group-hover:text-emerald-400 transition-colors">{p.name}</div>
+                                                                <div className="text-[10px] text-stone-500">{p.category}</div>
+                                                            </div>
+                                                            <Plus size={14} className="text-stone-700 group-hover:text-emerald-500" />
                                                         </button>
                                                     ))}
-                                                    {filteredPesticides.length === 0 && (
-                                                        <div className="p-3 text-center text-xs text-stone-500">Sonuç bulunamadı</div>
-                                                    )}
-                                                    <button 
-                                                        onClick={() => {
-                                                            const newPest: Pesticide = {
-                                                                id: `new-${crypto.randomUUID()}`,
-                                                                name: searchPesticideTerm,
-                                                                activeIngredient: 'Belirtilmedi',
-                                                                defaultDosage: '100ml/100L',
-                                                                category: PesticideCategory.OTHER,
-                                                                description: 'Depo eklemesi ile otomatik eklendi.'
-                                                            };
-                                                            setSelectedPesticide(newPest);
-                                                            setSearchPesticideTerm('');
-                                                        }}
-                                                        className="w-full text-left p-3 hover:bg-stone-800 border-t border-white/10 text-emerald-400 font-bold text-sm flex items-center"
-                                                    >
-                                                        <Plus size={14} className="mr-2" />
-                                                        "{searchPesticideTerm}" olarak yeni ekle
-                                                    </button>
                                                 </div>
                                             )}
                                         </div>
-                                    ) : (
-                                        <div className="bg-emerald-900/20 border border-emerald-500/30 p-3 rounded-xl flex justify-between items-center">
-                                            <div>
-                                                <div className="font-bold text-emerald-400 text-sm">{selectedPesticide.name}</div>
-                                                <div className="text-[10px] text-emerald-600/70">{selectedPesticide.category}</div>
-                                            </div>
-                                            <button onClick={() => setSelectedPesticide(null)} className="text-emerald-500 hover:text-emerald-300">
-                                                <X size={16} />
-                                            </button>
+                                    </div>
+
+                                    {!selectedPesticide && (
+                                        <div className="space-y-2 animate-in fade-in duration-300">
+                                            <label className="text-xs font-bold text-stone-500 uppercase tracking-widest">Kategori</label>
+                                            <select 
+                                                className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 text-stone-200 text-sm outline-none focus:border-emerald-500/50"
+                                                value={formData.category}
+                                                onChange={(e) => setFormData({...formData, category: e.target.value as PesticideCategory})}
+                                            >
+                                                {Object.values(PesticideCategory).map(cat => (
+                                                    <option key={cat} value={cat}>{cat}</option>
+                                                ))}
+                                            </select>
                                         </div>
                                     )}
                                 </div>
@@ -1238,7 +1300,7 @@ export const InventoryScreen: React.FC = () => {
                             </button>
                             <button 
                                 onClick={isEditModalOpen ? handleUpdateItem : handleAddItem}
-                                disabled={isAddModalOpen && !selectedPesticide}
+                                disabled={isAddModalOpen && !productName.trim()}
                                 className="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-sm shadow-lg shadow-emerald-900/20 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 {isEditModalOpen ? 'Güncelle' : 'Kaydet'}
@@ -1393,7 +1455,7 @@ export const InventoryScreen: React.FC = () => {
                                         ))
                                     ) : (
                                         <div className="text-center py-10 bg-stone-950/30 rounded-2xl border border-dashed border-stone-800">
-                                            <p className="text-xs text-stone-600">Bu ürün henüz hiçbir reçetede satılmadı.</p>
+                                            <p className="text-xs text-stone-600">Bu ürün henüz hiçbir faturada satılmadı.</p>
                                         </div>
                                     )}
                                 </div>

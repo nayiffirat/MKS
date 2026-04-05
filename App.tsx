@@ -304,10 +304,6 @@ function MainApp() {
 
   if (!currentUser) return <LoginScreen />;
 
-  if (userProfile?.accountType === 'COMPANY' && !activeTeamMember) {
-      return <TeamLoginScreen />;
-  }
-
   const renderContent = () => {
     if (isPrescriptionMode) return <PrescriptionForm onBack={() => window.history.back()} initialFarmerId={prescriptionFarmerId} initialPrescriptionId={editPrescriptionId} />;
     if (currentView === 'VISITS' && isVisitMode) return <VisitLogForm onBack={() => window.history.back()} initialVisitId={editVisitId} />;

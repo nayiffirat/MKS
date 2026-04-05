@@ -9,6 +9,7 @@ import {
     TrendingDown, TrendingUp, CalendarClock
 } from 'lucide-react';
 import { formatCurrency } from '../utils/currency';
+import { ConfirmationModal } from './ConfirmationModal';
 
 interface PaymentsProps {
     onBack?: () => void;
@@ -19,6 +20,7 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [filter, setFilter] = useState<'ALL' | 'PENDING' | 'PAID'>('ALL');
     const [activeTab, setActiveTab] = useState<'RECEIVABLES' | 'PAYABLES'>('RECEIVABLES');
+    const [paymentToDelete, setPaymentToDelete] = useState<string | null>(null);
 
     const getLedColor = (payment: MyPayment) => {
         if (payment.status === 'PAID') return 'border-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.4)]';
@@ -49,10 +51,15 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
     };
 
     const handleDelete = async (id: string) => {
-        if (window.confirm('Bu ödeme kaydını silmek istediğinize emin misiniz?')) {
-            await deleteMyPayment(id);
+        setPaymentToDelete(id);
+    };
+
+    const confirmDelete = async () => {
+        if (paymentToDelete) {
+            await deleteMyPayment(paymentToDelete);
             showToast('Ödeme kaydı silindi', 'info');
             hapticFeedback('medium');
+            setPaymentToDelete(null);
         }
     };
 
@@ -236,6 +243,14 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
                     )}
                 </div>
             </div>
+
+            <ConfirmationModal
+                isOpen={!!paymentToDelete}
+                onClose={() => setPaymentToDelete(null)}
+                onConfirm={confirmDelete}
+                title="Ödeme Kaydı Silinecek"
+                message="Bu ödeme kaydını silmek istediğinize emin misiniz?"
+            />
         </div>
     );
 };

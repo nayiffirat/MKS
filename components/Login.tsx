@@ -30,7 +30,6 @@ export const LoginScreen: React.FC = () => {
     const [phoneNumber, setPhoneNumber] = useState('+90 ');
     const [companyName, setCompanyName] = useState('');
     const [title, setTitle] = useState('');
-    const [accountType, setAccountType] = useState<'DEALER' | 'COMPANY'>('DEALER');
 
     // States
     const [isLoading, setIsLoading] = useState(false);
@@ -57,7 +56,6 @@ export const LoginScreen: React.FC = () => {
                     role: additionalData?.role || 'user',
                     subscriptionStatus: additionalData?.subscriptionStatus || 'active',
                     subscriptionEndsAt: additionalData?.subscriptionEndsAt || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-                    accountType: additionalData?.accountType || 'DEALER',
                     createdAt: new Date().toISOString(),
                     lastLogin: new Date().toISOString(),
                     photoURL: user.photoURL || ''
@@ -97,8 +95,7 @@ export const LoginScreen: React.FC = () => {
                     title,
                     role: 'user',
                     subscriptionStatus: 'trial',
-                    subscriptionEndsAt: endDate.toISOString(),
-                    accountType
+                    subscriptionEndsAt: endDate.toISOString()
                 };
                 localStorage.setItem('mks_user_profile', safeStringify(tempProfile));
                 localStorage.setItem('mks_show_welcome', 'true');
@@ -205,22 +202,6 @@ export const LoginScreen: React.FC = () => {
                             <form onSubmit={handleEmailAuth} className="space-y-2.5">
                                 {viewMode === 'REGISTER' && (
                                     <>
-                                        <div className="flex gap-2 mb-4">
-                                            <button 
-                                                type="button" 
-                                                onClick={() => setAccountType('DEALER')}
-                                                className={`flex-1 py-3 rounded-2xl font-bold text-xs transition-all border ${accountType === 'DEALER' ? 'bg-emerald-600 text-white border-emerald-500 shadow-lg shadow-emerald-900/20' : 'bg-stone-900/50 text-stone-400 border-stone-800 hover:bg-stone-800'}`}
-                                            >
-                                                {t('login.dealer')}
-                                            </button>
-                                            <button 
-                                                type="button" 
-                                                onClick={() => setAccountType('COMPANY')}
-                                                className={`flex-1 py-3 rounded-2xl font-bold text-xs transition-all border ${accountType === 'COMPANY' ? 'bg-emerald-600 text-white border-emerald-500 shadow-lg shadow-emerald-900/20' : 'bg-stone-900/50 text-stone-400 border-stone-800 hover:bg-stone-800'}`}
-                                            >
-                                                {t('login.company')}
-                                            </button>
-                                        </div>
                                         <div className="relative group">
                                             <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-600 group-focus-within:text-emerald-500" size={14} />
                                             <input type="text" required value={fullName} onChange={e => setFullName(e.target.value)} placeholder={t('login.fullname')} className="w-full pl-11 pr-4 py-3 bg-stone-950/50 border border-stone-800 rounded-2xl text-stone-200 text-sm outline-none focus:border-emerald-500/50 transition-all" />

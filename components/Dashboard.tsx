@@ -16,14 +16,13 @@ interface DashboardProps {
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
-  const { addFarmer, userProfile, reminders, stats, prescriptions, inventory, suppliers, farmers, addSupplierPurchase, showToast, hapticFeedback, activeTeamMember, t, language } = useAppViewModel();
-  const isCompany = userProfile.accountType === 'COMPANY';
+  const { addFarmer, userProfile, reminders, stats, prescriptions, inventory, suppliers, farmers, addSupplierPurchase, showToast, hapticFeedback, activeTeamMember, t, language, unreadCount } = useAppViewModel();
   const isSales = activeTeamMember?.role === 'SALES';
   const canCreatePrescription = !isSales;
   const canCreateFarmer = !isSales;
-  const farmerLabel = t(isCompany ? 'label.customer' : 'label.farmer');
-  const farmerPluralLabel = t(isCompany ? 'label.customers' : 'label.farmers');
-  const prescriptionLabel = t(isCompany ? 'label.order' : 'label.prescription');
+  const farmerLabel = t('label.farmer');
+  const farmerPluralLabel = t('label.farmers');
+  const prescriptionLabel = t('label.prescription');
   const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
   const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
   const [purchaseItems, setPurchaseItems] = useState<{ pesticideId: string, pesticideName: string, quantity: number, unit: string, buyingPrice: number }[]>([]);
@@ -40,11 +39,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
       fetchPesticides();
   }, []);
   
-  // Low stock items
-  const lowStockItems = useMemo(() => {
-    return inventory.filter(item => item.quantity <= (item.lowStockThreshold || 0));
-  }, [inventory]);
-
   const totalSupplierDebt = useMemo(() => {
     return suppliers.reduce((acc, s) => acc + (s.balance < 0 ? Math.abs(s.balance) : 0), 0);
   }, [suppliers]);
@@ -148,13 +142,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                             {getFirstName(userProfile.fullName)}
                         </h1>
                     </div>
-                    <button 
-                        onClick={() => onNavigate('AI_ASSISTANT')}
-                        className="flex items-center gap-2 px-3 py-2 bg-emerald-600 text-white rounded-full shadow-lg shadow-emerald-900/20 active:scale-95 transition-all border border-emerald-500/20"
-                    >
-                        <Sparkles size={16} className="animate-pulse" />
-                        <span className="text-[10px] font-black uppercase tracking-widest">{t('dashboard.field_assistant')}</span>
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button 
+                            onClick={() => onNavigate('NOTIFICATIONS')}
+                            className="relative flex items-center gap-2 px-4 py-2.5 bg-stone-800/50 backdrop-blur-xl border border-white/10 rounded-full text-stone-300 shadow-lg active:scale-90 transition-all hover:bg-stone-700 hover:text-white group"
+                        >
+                            <div className="relative">
+                                <Bell size={18} className="group-hover:rotate-12 transition-transform" />
+                                {unreadCount > 0 && (
+                                    <span className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-rose-500 text-white text-[7px] flex items-center justify-center rounded-full border border-stone-950 font-black animate-in zoom-in duration-300">
+                                        {unreadCount > 9 ? '9+' : unreadCount}
+                                    </span>
+                                )}
+                            </div>
+                            <span className="text-[10px] font-black uppercase tracking-widest">Bildirimler</span>
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>

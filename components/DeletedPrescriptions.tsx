@@ -25,7 +25,7 @@ export const DeletedPrescriptions: React.FC<DeletedPrescriptionsProps> = ({ onBa
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [itemToDelete, setItemToDelete] = useState<string | null>(null);
 
-    const farmerMap = farmers.reduce((acc, f) => {
+    const farmerMap = [...farmers, ...trashedFarmers].reduce((acc, f) => {
         acc[f.id] = f;
         return acc;
     }, {} as Record<string, any>);
@@ -95,7 +95,7 @@ export const DeletedPrescriptions: React.FC<DeletedPrescriptionsProps> = ({ onBa
     const filtered = getFilteredItems();
 
     const tabs = [
-        { id: 'PRESCRIPTIONS', icon: FileText, label: t('nav.prescriptions') || 'Reçeteler', count: trashedPrescriptions.length },
+        { id: 'PRESCRIPTIONS', icon: FileText, label: t('nav.prescriptions') || 'Faturalar', count: trashedPrescriptions.length },
         { id: 'FARMERS', icon: Users, label: t('nav.farmers') || 'Çiftçiler', count: trashedFarmers.length },
         { id: 'VISITS', icon: ClipboardList, label: t('nav.visits') || 'Ziyaretler', count: trashedVisits.length },
         { id: 'PAYMENTS', icon: CreditCard, label: t('nav.payments') || 'Ödemeler', count: trashedPayments.length },
@@ -172,7 +172,7 @@ export const DeletedPrescriptions: React.FC<DeletedPrescriptionsProps> = ({ onBa
 
                             if (activeTab === 'PRESCRIPTIONS') {
                                 const farmer = farmerMap[item.farmerId];
-                                title = `Reçete #${item.prescriptionNo}`;
+                                title = `Fatura #${item.prescriptionNo}`;
                                 subtitle = farmer?.fullName || t('unknown');
                                 icon = <FileText size={14} />;
                             } else if (activeTab === 'FARMERS') {

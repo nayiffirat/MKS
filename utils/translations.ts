@@ -3,7 +3,7 @@ export type Language = 'tr' | 'en' | 'ar';
 export const translations: Record<Language, Record<string, string>> = {
   tr: {
     // Login
-    'login.title': 'Zirai Asistan',
+    'login.title': 'Mühendis Kayıt Sistemi',
     'login.subtitle': 'Akıllı Tarım Yönetim Sistemi',
     'login.email': 'E-posta Adresi',
     'login.password': 'Şifre',
@@ -51,7 +51,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'nav.inventory': 'Depom',
     'nav.suppliers': 'Tedarikçiler',
     'nav.payments': 'Çek, Senet, Tedye',
-    'nav.prescriptions': 'Reçete Defteri',
+    'nav.prescriptions': 'Fatura Defteri',
     'nav.orders': 'Siparişler',
     'nav.visits': 'Ziyaretler',
     'nav.team': 'Ekibim',
@@ -145,7 +145,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'quick.receivePayment.error': 'Tahsilat eklenirken hata oluştu',
     
     // Labels
-    'label.prescription': 'Reçete',
+    'label.prescription': 'Fatura',
     'label.order': 'Sipariş',
     'label.farmer': 'Üretici',
     'label.customer': 'Müşteri',
@@ -382,7 +382,7 @@ export const translations: Record<Language, Record<string, string>> = {
   },
   en: {
     // Login
-    'login.title': 'Agri Assistant',
+    'login.title': 'Engineer Registration System',
     'login.subtitle': 'Smart Farm Management System',
     'login.email': 'Email Address',
     'login.password': 'Password',
@@ -761,7 +761,7 @@ export const translations: Record<Language, Record<string, string>> = {
   },
   ar: {
     // Login
-    'login.title': 'المساعد الزراعي',
+    'login.title': 'نظام تسجيل المهندسين',
     'login.subtitle': 'نظام إدارة المزارع الذكي',
     'login.email': 'البريد الإلكتروني',
     'login.password': 'كلمة المرور',

@@ -38,7 +38,7 @@ export const ProducerPortal: React.FC<ProducerPortalProps> = ({ farmerId, engine
                 } else {
                     // 2. Yoksa yerel DB'den çek (Mühendis kendi telefonundan bakıyor)
                     const farmers = await dbService.getFarmers();
-                    const targetFarmer = farmers.find(f => f.id === farmerId);
+                    const targetFarmer = farmers.find(f => f.id === farmerId && !f.deletedAt);
                     
                     if (targetFarmer) {
                         setFarmer(targetFarmer);
@@ -191,7 +191,7 @@ export const ProducerPortal: React.FC<ProducerPortalProps> = ({ farmerId, engine
                             ))
                         ) : (
                             <div className="text-center py-10 bg-stone-900/20 rounded-3xl border border-dashed border-stone-800">
-                                <p className="text-stone-600 text-xs">Henüz reçete kaydınız bulunmuyor.</p>
+                                <p className="text-stone-600 text-xs">Henüz fatura kaydınız bulunmuyor.</p>
                             </div>
                         )}
                     </div>

@@ -19,31 +19,13 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
   const { unreadCount, userProfile, stats, isAdmin, subscriptionEndsAt, activeTeamMember, setActiveTeamMember, t, farmerLabel, farmerPluralLabel, prescriptionLabel } = useAppViewModel();
   const { logout } = useAuth();
   const isHighContrast = userProfile.highContrastMode;
-  const isCompany = userProfile.accountType === 'COMPANY';
-  
   const isSales = activeTeamMember?.role === 'SALES';
-  const isDealer = userProfile.accountType === 'DEALER';
   
   const navGroups = [
-    { title: t('nav.group.general') || "Genel", items: [{ id: 'DASHBOARD', icon: Home, label: t('nav.dashboard') }, { id: 'RECENT_TRANSACTIONS', icon: HistoryIcon, label: t('nav.recent') || 'Son İşlemler' }, { id: 'REPORTS', icon: Printer, label: t('nav.reports') }, { id: 'REMINDERS', icon: CalendarCheck, label: t('nav.reminders') || 'Hatırlatıcılar', badge: stats.activeReminders }, { id: 'KASA', icon: Wallet, label: t('nav.kasa') }, { id: 'EXPENSES', icon: Receipt, label: t('nav.expenses') || 'Giderler' }, { id: 'STATISTICS', icon: PieChart, label: t('nav.statistics') || 'İstatistikler' }] },
-    { title: t('nav.group.field') || "Saha & Kayıt", items: [{ id: 'FARMERS', icon: Users, label: isCompany ? (t('nav.dealers') || 'Bayiler') : t('nav.farmers') }, { id: 'PESTICIDES', icon: BookOpen, label: t('nav.pesticides') || 'İlaçlar' }, { id: 'INVENTORY', icon: Package, label: t('nav.inventory') }, { id: 'SUPPLIERS', icon: Truck, label: t('nav.suppliers') }, { id: 'PAYMENTS', icon: CreditCard, label: t('nav.payments') || 'Ödemelerim' }, { id: 'PRESCRIPTIONS', icon: FileText, label: isCompany ? (t('nav.orders') || 'Siparişler') : t('nav.prescriptions') }, { id: 'VISITS', icon: ClipboardList, label: t('nav.visits') }] },
+    { title: t('nav.group.general') || "Genel", items: [{ id: 'DASHBOARD', icon: Home, label: t('nav.dashboard') }, { id: 'NOTIFICATIONS', icon: Bell, label: t('nav.notifications') || 'Bildirimler', badge: unreadCount }, { id: 'RECENT_TRANSACTIONS', icon: HistoryIcon, label: t('nav.recent') || 'Son İşlemler' }, { id: 'REPORTS', icon: Printer, label: t('nav.reports') }, { id: 'REMINDERS', icon: CalendarCheck, label: t('nav.reminders') || 'Hatırlatıcılar', badge: stats.activeReminders }, { id: 'KASA', icon: Wallet, label: t('nav.kasa') }, { id: 'EXPENSES', icon: Receipt, label: t('nav.expenses') || 'Giderler' }, { id: 'STATISTICS', icon: PieChart, label: t('nav.statistics') || 'İstatistikler' }] },
+    { title: t('nav.group.field') || "Saha & Kayıt", items: [{ id: 'FARMERS', icon: Users, label: t('nav.farmers') }, { id: 'PESTICIDES', icon: BookOpen, label: t('nav.pesticides') || 'İlaçlar' }, { id: 'INVENTORY', icon: Package, label: t('nav.inventory') }, { id: 'SUPPLIERS', icon: Truck, label: t('nav.suppliers') }, { id: 'PAYMENTS', icon: CreditCard, label: t('nav.payments') || 'Ödemelerim' }, { id: 'PRESCRIPTIONS', icon: FileText, label: t('nav.prescriptions') }, { id: 'VISITS', icon: ClipboardList, label: t('nav.visits') }] },
     { title: t('nav.group.support') || "Destek", items: [{ id: 'TRASH', icon: Trash2, label: t('nav.trash') || 'Çöp Kutusu' }, { id: 'CONTACT', icon: Phone, label: t('nav.contact') || 'Bize Ulaşın' }, { id: 'SETTINGS', icon: Settings, label: t('nav.settings') }] }
   ];
-
-  if (isCompany) {
-      const companyItems = [];
-      if (activeTeamMember?.role === 'MANAGER') {
-          companyItems.push({ id: 'TEAM', icon: Users, label: t('nav.team') || 'Ekibim' });
-          companyItems.push({ id: 'PERFORMANCE', icon: PieChart, label: t('nav.performance') || 'Performans Takibi' });
-      }
-      // Sales reps can still see messages
-      companyItems.push({ id: 'MESSAGES', icon: MessageCircle, label: t('nav.messages') || 'Firma İçi Mesajlaşma' });
-
-      navGroups.splice(1, 0, {
-          title: t('nav.group.company') || "Firma Yönetimi",
-          items: companyItems
-      });
-  }
 
   if (isAdmin) {
     navGroups.push({
@@ -130,9 +112,9 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
       <nav className="fixed bottom-0 left-0 right-0 z-40 bg-stone-950/95 backdrop-blur-2xl border-t border-white/10 pt-1 px-1 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 4px)' }}>
            <div className="flex justify-around items-center max-w-lg mx-auto h-12">
                <NavButton active={currentView === 'DASHBOARD'} onClick={() => onNavigate('DASHBOARD')} icon={Home} label={t('nav.dashboard') || "Ana Sayfa"} />
-               <NavButton active={currentView === 'FARMERS'} onClick={() => onNavigate('FARMERS')} icon={Users} label={isCompany ? (t('nav.dealers') || 'Bayiler') : (t('nav.farmers') || 'Çiftçiler')} />
+               <NavButton active={currentView === 'FARMERS'} onClick={() => onNavigate('FARMERS')} icon={Users} label={t('nav.farmers') || 'Çiftçiler'} />
                <QuickActions />
-               <NavButton active={currentView === 'NOTIFICATIONS'} onClick={() => onNavigate('NOTIFICATIONS')} icon={Bell} label={t('nav.notifications') || "Bildirim"} badge={unreadCount} />
+               <NavButton active={currentView === 'PRESCRIPTIONS'} onClick={() => onNavigate('PRESCRIPTIONS')} icon={FileText} label="Faturalar" />
                <NavButton active={isMobileMenuOpen} onClick={() => setIsMobileMenuOpen(true)} icon={Menu} label={t('nav.menu') || "Menü"} />
            </div>
        </nav>

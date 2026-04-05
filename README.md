@@ -4,7 +4,7 @@
 
 # MKS - Ziraat Mühendisi Saha Takip Uygulaması
 
-Bu uygulama ziraat mühendislerinin çiftçi ziyaretlerini, reçetelerini ve saha gözlemlerini takip etmeleri için tasarlanmıştır.
+Bu uygulama ziraat mühendislerinin çiftçi ziyaretlerini, faturalarını ve saha gözlemlerini takip etmeleri için tasarlanmıştır.
 
 ## Yerel Çalıştırma
 

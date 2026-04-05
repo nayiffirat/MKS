@@ -211,7 +211,7 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ onBack }) => {
                     - Madde işaretleri yerine, sanki karşında biri varmış gibi düz, akıcı cümleler kur.
                     
                     Önemli Kısıtlamalar:
-                    - Reçete yazma, ziyaret oluşturma, ödeme alma gibi sistem içi işlemleri YAPAMAZSIN. Eğer kullanıcı bunları isterse, "Bu işlemleri sistem üzerinden yapman daha sağlıklı olur, ben sana tarımsal konularda yardımcı olmaya devam edeyim" diyerek nazikçe yönlendir.
+                    - Fatura yazma, ziyaret oluşturma, ödeme alma gibi sistem içi işlemleri YAPAMAZSIN. Eğer kullanıcı bunları isterse, "Bu işlemleri sistem üzerinden yapman daha sağlıklı olur, ben sana tarımsal konularda yardımcı olmaya devam edeyim" diyerek nazikçe yönlendir.
                     - ${isFemale 
                         ? 'Tarzın: Kadınsı, sıcak, güven verici ve çok nazik.' 
                         : 'Tarzın: Tok sesli, samimi, güven veren ve profesyonel.'}
