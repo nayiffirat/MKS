@@ -9,7 +9,6 @@ import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, 
   Tooltip, CartesianGrid, PieChart, Pie, Cell 
 } from 'recharts';
-import { GoogleGenAI, Type } from "@google/genai";
 import { Users, FileText, Sprout, Plus, X, Calendar, ChevronRight, Droplet, ArrowRight, Zap, MapPin, Send, Loader2, CalendarCheck, Clock, Mic, Bell, CalendarClock, TrendingUp, AlertCircle, Bug, Package, Route, FlaskConical, Star, Truck, Search, DollarSign, Trash2, Wallet, Sparkles, ScanSearch, Calculator, Map, Newspaper, Save, RefreshCw, Camera } from 'lucide-react';
 import { ViewState, Pesticide, PesticideCategory, SupplierPurchase } from '../types';
 import { dbService } from '../services/db';

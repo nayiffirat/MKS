@@ -1,6 +1,5 @@
 import express, { Request, Response } from 'express';
 import { createServer as createViteServer } from 'vite';
-import { GoogleGenAI } from '@google/genai';
 import cors from 'cors';
 import path from 'path';
 

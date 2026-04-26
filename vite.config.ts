@@ -11,7 +11,7 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     base: './', 
     define: {
-      'process.env.GEMINI_API_KEY': JSON.stringify(process.env.GEMINI_API_KEY)
+      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || '')
     },
     build: {
       outDir: 'dist',
@@ -19,8 +19,7 @@ export default defineConfig(({ mode }) => {
       rollupOptions: {
         output: {
           manualChunks: {
-            vendor: ['react', 'react-dom', 'firebase/app'],
-            genai: ['@google/genai']
+            vendor: ['react', 'react-dom', 'firebase/app']
           }
         }
       }

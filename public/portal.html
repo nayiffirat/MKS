@@ -119,6 +119,17 @@
             return result;
         }
 
+        function safeStringify(obj, indent = 2) {
+            const cache = new Set();
+            return JSON.stringify(obj, (key, value) => {
+                if (typeof value === 'object' && value !== null) {
+                    if (cache.has(value)) return '[Circular]';
+                    cache.add(value);
+                }
+                return value;
+            }, indent);
+        }
+
         async function fetchCollection(engineerId, collectionName, queryField, queryValue) {
             const url = `${BASE_URL}/${engineerId}:runQuery?key=${API_KEY}`;
             const body = {
@@ -138,7 +149,7 @@
                 const res = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body)
+                    body: safeStringify(body)
                 });
                 if (!res.ok) return [];
                 const data = await res.json();

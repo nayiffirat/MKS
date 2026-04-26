@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { dbService } from '../services/db';
 import { Farmer, Pesticide, Prescription, PesticideCategory, VisitLog, AppNotification } from '../types';
 import { useAppViewModel } from '../context/AppContext';
+import { safeStringify } from '../utils/json';
 import { Check, Plus, Trash2, FileOutput, Share2, FileText, Calendar, MapPin, X, User, Loader2, Search, FlaskConical, MessageCircle, Edit2, AlertCircle, ArrowLeft, Printer, Package, Download, MessageSquare, RefreshCw, AlertTriangle, Camera, Barcode, TrendingUp, Star, Lightbulb, ChevronRight } from 'lucide-react';
 import BarcodeScanner from './BarcodeScanner';
 import html2canvas from 'html2canvas';
@@ -159,7 +160,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     const [showRecommendations, setShowRecommendations] = useState(false);
 
     useEffect(() => {
-        localStorage.setItem('crm_recommended_pesticides', JSON.stringify(recommendedIds));
+        localStorage.setItem('crm_recommended_pesticides', safeStringify(recommendedIds));
     }, [recommendedIds]);
 
     const toggleRecommendation = (id: string, e?: React.MouseEvent) => {

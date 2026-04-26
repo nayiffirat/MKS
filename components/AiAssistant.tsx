@@ -1,5 +1,6 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
-import { GoogleGenAI } from "@google/genai";
+import { getGeminiModel, GENERATIVE_MODELS } from '../services/gemini';
+import { safeStringify } from '../utils/json';
 import { useAppViewModel } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { auth, googleProvider } from '../services/firebase';
@@ -155,75 +156,77 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ onBack }) => {
                 ? inventory.map(i => `- ${i.pesticideName} (${i.category}): ${i.quantity} ${i.unit}`).join('\n')
                 : 'Depoda kayıtlı ilaç bulunmuyor.';
 
-            // FRONTEND DIRECT GEMINI CALL
-            const apiKey = process.env.GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
+            // Determine mimeType and base64Data
+            const base64Data = imageBase64.split(',')[1];
+            const mimeType = imageBase64.split(';')[0].split(':')[1] || 'image/jpeg';
             
-            if (apiKey) {
-                // Determine mimeType and base64Data
-                const base64Data = imageBase64.split(',')[1];
-                const mimeType = imageBase64.split(';')[0].split(':')[1] || 'image/jpeg';
+            const systemInstruction = `Sen, 'Mühendis Kayıt Sistemi' bünyesinde çalışan, üst düzey bir bitki koruma uzmanı ve ziraat mühendisisin.
                 
-                const ai = new GoogleGenAI({ apiKey: apiKey.replace(/['"]+/g, '').trim() });
+            TEŞHİS VE ÇÖZÜM PROTOKOLÜ:
+            1. FOTOĞRAF ANALİZİ: Görüntüdeki belirtileri (leke, renk değişimi, şekil bozukluğu, böcek vb.) bilimsel olarak açıkla.
+            2. TEŞHİS: Sorun(lar)ın ismini ve şiddetini belirt.
+            3. TEDAVİ PLANI: Kimyasal, biyolojik ve kültürel mücadele yöntemlerini sıralar.
+            4. ÇİFTÇİ REÇETESİ: En altta kesinlikle "*** ÇİFTÇİ REÇETESİ ***" şeklinde bir başlık aç. Bu başlığın altına SADECE çiftçiye verilmesi/kullanması gereken ilaçların listesini, dozlarını ve uygulama şeklini madde madde yaz. Bu kısım kısa, net ve doğrudan raftan verilmeye hazır reçete formatında olmalıdır.
+            
+            DEPO ENVANTERİYLE TAM ENTEGRASYON:
+            Kullanıcının deposunda bulunan güncel ürün listesi aşağıdadır:
+            ${inventoryContext}
+            
+            KRİTİK TALİMAT:
+            - Reçete yazarken ÖNCELİKLE kullanıcının deposunda (listede) olan ilaçları öner. 
+            - Eğer depoda uygun ürün varsa: "**💡 Depondaki şu ürün(ler) bu sorun için tam çözümdür: [Ürün Adı]**" şeklinde vurgula.
+            - Depoda yoksa piyasadaki en etkili ve Türkiye'de Tarım ve Orman Bakanlığı tarafından RUHSATLI (yasal olarak izinli) olan etken maddeleri/ilaçları öner.
+            - KESİNLİKLE yasaklı, ruhsatı iptal edilmiş veya Türkiye'de onayı olmayan etken madde veya ilaç önerme! Sadece ve sadece yasal ve ruhsatlı çözümleri reçetelendir.
+            
+            FORMAT: 
+            - Yanıtlarını yapılandırılmış markdown (baslıklar, listeler) kullanarak ver.
+            - Gereksiz giriş-sonuç cümlelerinden kaçın, direkt bilgi odaklı ol.
+            - Mühendislik ciddiyetiyle ama kullanıcıya yardımcı olan bir tonda yaz.`;
 
-                const generateAiContent = async (modelName: string) => {
-                    return await ai.models.generateContent({
-                        model: modelName,
-                        contents: {
-                            parts: [
-                                { text: "Lütfen bu bitki fotoğrafını bir ziraat mühendisi uzmanlığıyla analiz et. Varsa hastalıkları, zararlıları veya besin noksanlıklarını teşhis et. Teşhisin ismini, nedenini ve detaylı çözüm önerilerini (ilaç, etken madde veya kültürel önlem) profesyonel bir dille açıkla. Mümkün olduğunca spesifik ol." },
-                                { inlineData: { mimeType, data: base64Data } }
-                            ]
-                        },
-                        config: {
-                            temperature: 0.1,
-                            systemInstruction: `Sen, 'Mühendis Kayıt Sistemi' bünyesinde çalışan, üst düzey bir bitki koruma uzmanı ve ziraat mühendisisin.
-                            
-                            TEŞHİS VE ÇÖZÜM PROTOKOLÜ:
-                            1. FOTOĞRAF ANALİZİ: Görüntüdeki belirtileri (leke, renk değişimi, şekil bozukluğu, böcek vb.) bilimsel olarak açıkla.
-                            2. TEŞHİS: Sorun(lar)ın ismini ve şiddetini belirt.
-                            3. TEDAVİ PLANI: Kimyasal, biyolojik ve kültürel mücadele yöntemlerini sıralar.
-                            4. ÇİFTÇİ REÇETESİ: En altta kesinlikle "*** ÇİFTÇİ REÇETESİ ***" şeklinde bir başlık aç. Bu başlığın altına SADECE çiftçiye verilmesi/kullanması gereken ilaçların listesini, dozlarını ve uygulama şeklini madde madde yaz. Bu kısım kısa, net ve doğrudan raftan verilmeye hazır reçete formatında olmalıdır.
-                            
-                            DEPO ENVANTERİYLE TAM ENTEGRASYON:
-                            Kullanıcının deposunda bulunan güncel ürün listesi aşağıdadır:
-                            ${inventoryContext}
-                            
-                            KRİTİK TALİMAT:
-                            - Reçete yazarken ÖNCELİKLE kullanıcının deposunda (listede) olan ilaçları öner. 
-                            - Eğer depoda uygun ürün varsa: "**💡 Depondaki şu ürün(ler) bu sorun için tam çözümdür: [Ürün Adı]**" şeklinde vurgula.
-                            - Depoda yoksa piyasadaki en etkili ve Türkiye'de Tarım ve Orman Bakanlığı tarafından RUHSATLI (yasal olarak izinli) olan etken maddeleri/ilaçları öner.
-                            - KESİNLİKLE yasaklı, ruhsatı iptal edilmiş veya Türkiye'de onayı olmayan etken madde veya ilaç önerme! Sadece ve sadece yasal ve ruhsatlı çözümleri reçetelendir.
-                            
-                            FORMAT: 
-                            - Yanıtlarını yapılandırılmış markdown (baslıklar, listeler) kullanarak ver.
-                            - Gereksiz giriş-sonuç cümlelerinden kaçın, direkt bilgi odaklı ol.
-                            - Mühendislik ciddiyetiyle ama kullanıcıya yardımcı olan bir tonda yaz.`
-                        }
-                    });
-                };
+            const prompt = "Lütfen bu bitki fotoğrafını bir ziraat mühendisi uzmanlığıyla analiz et. Varsa hastalıkları, zararlıları veya besin noksanlıklarını teşhis et. Teşhisin ismini, nedenini ve detaylı çözüm önerilerini (ilaç, etken madde veya kültürel önlem) profesyonel bir dille açıkla. Mümkün olduğunca spesifik ol.";
 
-                let response;
-                try {
-                    // Complexity of diagnosis requires a Pro model
-                    response = await generateAiContent("gemini-3.1-pro-preview");
-                } catch (e: any) {
-                    console.warn("Primary AI model failed, trying fallback...", e);
-                    response = await generateAiContent("gemini-3-flash-preview");
-                }
+            const generateWithModel = async (modelName: string) => {
+                const model = getGeminiModel(modelName);
+                return await model.generateContent({
+                    contents: [{
+                        role: "user",
+                        parts: [
+                            { text: prompt },
+                            { inlineData: { mimeType, data: base64Data } }
+                        ]
+                    }],
+                    generationConfig: {
+                        temperature: 0.1,
+                    },
+                    // System instructions are handled differently in some versions but here we follow common pattern
+                    systemInstruction: systemInstruction
+                });
+            };
 
-                if (response.text) {
-                    setAnalysis(response.text);
-                    hapticFeedback('success');
-                    setIsLoading(false);
-                    return;
-                }
+            let result;
+            try {
+                // Complexity of diagnosis requires a Pro model if possible
+                result = await generateWithModel(GENERATIVE_MODELS.PRO);
+            } catch (e: any) {
+                console.warn("Primary AI model (Pro) failed, trying fallback (Flash)...", e);
+                result = await generateWithModel(GENERATIVE_MODELS.FLASH);
             }
 
-            throw new Error('Yapay zeka anahtarı yapılandırılmamış veya analiz başarısız oldu.');
+            const response = await result.response;
+            const text = response.text();
+
+            if (text) {
+                setAnalysis(text);
+                hapticFeedback('success');
+                setIsLoading(false);
+                return;
+            }
+
+            throw new Error('Analiz başarısız oldu.');
 
         } catch (error: any) {
             console.error("AI Analysis Error:", error);
-            const errMsg = typeof error === 'string' ? error : (error?.message || JSON.stringify(error));
+            const errMsg = typeof error === 'string' ? error : (error?.message || safeStringify(error));
             
             dbService.addSystemError({
                 id: crypto.randomUUID(),

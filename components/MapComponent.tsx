@@ -4,6 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import { ArrowLeft, Ruler, Square, Trash2, Search, Navigation, Undo2, Map as MapIcon, Layers, Share2, Copy, MapPin, Save, X, Edit2 } from 'lucide-react';
 import { useAppViewModel } from '../context/AppContext';
+import { safeStringify } from '../utils/json';
 
 // Fix for icon issue
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -167,7 +168,7 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
   const mapRef = useRef<L.Map>(null);
 
   useEffect(() => {
-      localStorage.setItem('map_saved_features', JSON.stringify(savedFeatures));
+      localStorage.setItem('map_saved_features', safeStringify(savedFeatures));
   }, [savedFeatures]);
 
   useEffect(() => {

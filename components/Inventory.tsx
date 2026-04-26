@@ -12,7 +12,8 @@ import {
 } from 'recharts';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { GoogleGenAI, Type } from "@google/genai";
+import { getGeminiModel, GENERATIVE_MODELS } from '../services/gemini';
+import { safeStringify } from '../utils/json';
 import { dbService } from '../services/db';
 import { auth } from '../services/firebase';
 import { InventoryItem, Pesticide, PesticideCategory } from '../types';
@@ -738,77 +739,67 @@ export const InventoryScreen: React.FC<{
             reader.readAsDataURL(file);
             const base64Data = await base64Promise;
 
-            const apiKey = process.env.GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
-            const ai = new GoogleGenAI({ apiKey: apiKey?.replace(/['"]+/g, '').trim() });
-            
-            const generateContent = async (modelName: string) => {
-                return await ai.models.generateContent({
-                    model: modelName,
-                    contents: [
-                        {
-                            parts: [
-                                { inlineData: { data: base64Data, mimeType: file.type } },
-                                { text: "Bu bir zirai ilaç veya gübre etiketi. Lütfen etiketteki bilgileri oku ve şu formatta JSON olarak dön: Ürün Adı (productName), Kategori (category - HERBICIDE, INSECTICIDE, FUNGICIDE, FERTILIZER, ACARICIDE, OTHER seçeneklerinden biri), Birim (unit - Adet, Litre, Kg, Kutu, Çuval seçeneklerinden biri). Sadece JSON dön." }
-                            ]
-                        }
-                    ],
-                    config: {
+            const prompt = "Bu bir zirai ilaç veya gübre etiketi. Lütfen etiketteki bilgileri oku ve şu formatta JSON olarak dön: Ürün Adı (productName), Kategori (category - HERBICIDE, INSECTICIDE, FUNGICIDE, FERTILIZER, ACARICIDE, OTHER seçeneklerinden biri), Birim (unit - Adet, Litre, Kg, Kutu, Çuval seçeneklerinden biri). Sadece JSON dön.";
+
+            const generateAiContent = async (modelName: string) => {
+                const model = getGeminiModel(modelName);
+                return await model.generateContent({
+                    contents: [{
+                        role: "user",
+                        parts: [
+                            { text: prompt },
+                            { inlineData: { data: base64Data, mimeType: file.type } }
+                        ]
+                    }],
+                    generationConfig: {
+                        temperature: 0.1,
                         responseMimeType: "application/json",
-                        responseSchema: {
-                            type: Type.OBJECT,
-                            properties: {
-                                productName: { type: Type.STRING },
-                                category: { 
-                                    type: Type.STRING,
-                                    enum: Object.values(PesticideCategory)
-                                },
-                                unit: { 
-                                    type: Type.STRING,
-                                    enum: ['Adet', 'Litre', 'Kg', 'Kutu', 'Çuval']
-                                }
-                            },
-                            required: ["productName", "category", "unit"]
-                        }
                     }
                 });
             };
 
-            let response;
+            let result;
             try {
-                response = await generateContent("gemini-3-flash-preview");
-            } catch (e) {
-                console.warn("Falling back to gemini-2.5-flash", e);
-                response = await generateContent("gemini-2.5-flash");
+                result = await generateAiContent(GENERATIVE_MODELS.FLASH);
+            } catch (e: any) {
+                console.warn("Primary AI model failed, trying fallback...", e);
+                result = await generateAiContent(GENERATIVE_MODELS.FLASH);
             }
 
-            const result = JSON.parse(response.text || '{}');
-            
-            if (result.productName) {
-                setProductName(result.productName);
-                const matchedPest = pesticides.find(p => p.name.toLocaleLowerCase('tr-TR') === result.productName.toLocaleLowerCase('tr-TR'));
-                if (matchedPest) {
-                    setSelectedPesticide(matchedPest);
-                    setFormData(prev => ({ 
-                        ...prev, 
-                        category: matchedPest.category,
-                        unit: result.unit || prev.unit
-                    }));
-                } else {
-                    setFormData(prev => ({ 
-                        ...prev, 
-                        category: result.category as PesticideCategory || PesticideCategory.OTHER,
-                        unit: result.unit || 'Adet'
-                    }));
+            const response = await result.response;
+            const text = response.text();
+
+            if (text) {
+                const parsedResult = JSON.parse(text || '{}');
+                
+                if (parsedResult.productName) {
+                    setProductName(parsedResult.productName);
+                    const matchedPest = pesticides.find(p => p.name.toLocaleLowerCase('tr-TR') === parsedResult.productName.toLocaleLowerCase('tr-TR'));
+                    if (matchedPest) {
+                        setSelectedPesticide(matchedPest);
+                        setFormData(prev => ({ 
+                            ...prev, 
+                            category: matchedPest.category,
+                            unit: parsedResult.unit || prev.unit
+                        }));
+                    } else {
+                        setFormData(prev => ({ 
+                            ...prev, 
+                            category: (parsedResult.category as PesticideCategory) || PesticideCategory.OTHER,
+                            unit: parsedResult.unit || 'Adet'
+                        }));
+                    }
+                    showToast('Ürün başarıyla tanındı!', 'success');
+                    hapticFeedback('success');
+                    return;
                 }
-                showToast('Ürün başarıyla tanındı!', 'success');
-                hapticFeedback('success');
-            } else {
-                showToast('Ürün tanınamadı, lütfen bilgileri manuel girin.', 'error');
             }
+
+            throw new Error('Analiz başarısız oldu.');
 
         } catch (error: any) {
             console.error("AI Lens Error:", error);
-            const errMsg = typeof error === 'string' ? error : (error?.message || JSON.stringify(error));
+            const errMsg = typeof error === 'string' ? error : (error?.message || safeStringify(error));
             
             dbService.addSystemError({
                 id: crypto.randomUUID(),

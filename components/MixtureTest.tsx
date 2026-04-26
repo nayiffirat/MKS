@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { getGeminiModel, GENERATIVE_MODELS } from '../services/gemini';
+import { safeStringify } from '../utils/json';
 import { ChevronLeft, FlaskConical, Search, Check, X, Loader2, Info } from 'lucide-react';
-import { GoogleGenAI } from "@google/genai";
 import { useAppViewModel } from '../context/AppContext';
 import { Pesticide } from '../types';
 import { dbService } from '../services/db';
@@ -51,45 +52,41 @@ export const MixtureTest: React.FC<MixtureTestProps> = ({ onBack }) => {
         try {
             const pesticideNames = selectedPesticides.map(p => p.name).join(', ');
             
-            // FRONTEND DIRECT GEMINI CALL
-            const apiKey = process.env.GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
+            const prompt = `Şu tarım ilaçlarının (veya etken maddelerinin) karışım durumunu test et: ${pesticideNames}. 
+            Karışıp karışamayacağını, neden karışmadığını veya karışırken nelere dikkat edilmesi gerektiğini kısa bir özetle yaz. 
+            Eğer kesin bir bilgi yoksa, "Kavanoz testi yapılması önerilir" şeklinde belirt.`;
             
-            if (apiKey) {
-                const ai = new GoogleGenAI({ apiKey: apiKey.replace(/['"]+/g, '').trim() });
-                const prompt = `Şu tarım ilaçlarının (veya etken maddelerinin) karışım durumunu test et: ${pesticideNames}. 
-                Karışıp karışamayacağını, neden karışmadığını veya karışırken nelere dikkat edilmesi gerektiğini kısa bir özetle yaz. 
-                Eğer kesin bir bilgi yoksa, "Kavanoz testi yapılması önerilir" şeklinde belirt.`;
+            const generateAiContent = async (modelName: string) => {
+                const model = getGeminiModel(modelName);
+                const result = await model.generateContent({
+                    contents: [{ role: "user", parts: [{ text: prompt }] }],
+                    generationConfig: {
+                        temperature: 0.1
+                    }
+                });
+                return result.response;
+            };
 
-                const generateContent = async (modelName: string) => {
-                    return await ai.models.generateContent({
-                        model: modelName,
-                        contents: prompt,
-                        config: {
-                            temperature: 0.1
-                        }
-                    });
-                };
-
-                let response;
-                try {
-                    response = await generateContent('gemini-3-flash-preview');
-                } catch (e) {
-                    console.warn("Falling back to gemini-2.5-flash", e);
-                    response = await generateContent('gemini-2.5-flash');
-                }
-
-                if (response.text) {
-                    setResult(response.text);
-                    hapticFeedback('success');
-                    setIsTesting(false);
-                    return;
-                }
+            let response;
+            try {
+                response = await generateAiContent(GENERATIVE_MODELS.FLASH);
+            } catch (e: any) {
+                console.warn("Primary AI model failed, trying fallback...", e);
+                response = await generateAiContent(GENERATIVE_MODELS.FLASH);
             }
 
-            throw new Error('Yapay zeka anahtarı yapılandırılmamış veya test başarısız oldu.');
+            const text = response.text();
+            if (text) {
+                setResult(text);
+                hapticFeedback('success');
+                setIsTesting(false);
+                return;
+            }
+
+            throw new Error('Analiz başarısız oldu.');
         } catch (error: any) {
             console.error("Mixture Test Error:", error);
-            const errMsg = typeof error === 'string' ? error : (error?.message || JSON.stringify(error));
+            const errMsg = typeof error === 'string' ? error : (error?.message || safeStringify(error));
             
             dbService.addSystemError({
                 id: crypto.randomUUID(),

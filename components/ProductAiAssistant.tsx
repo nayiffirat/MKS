@@ -1,5 +1,6 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
-import { GoogleGenAI, Type } from "@google/genai";
+import { getGeminiModel, GENERATIVE_MODELS } from '../services/gemini';
+import { safeStringify } from '../utils/json';
 import { useAppViewModel } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { auth, googleProvider } from '../services/firebase';
@@ -102,51 +103,47 @@ export const ProductAiAssistant: React.FC<ProductAiAssistantProps> = ({ onBack }
             const base64Data = imageBase64.split(',')[1];
             const mimeType = imageBase64.split(';')[0].split(':')[1] || 'image/jpeg';
             
-            const apiKey = process.env.GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
-            
-            if (!apiKey) throw new Error('API anahtarı bulunamadı.');
+            const prompt = "Bu bir zirai ilaç veya gübre etiketi. Lütfen etiketteki bilgileri oku ve şu formatta JSON olarak detaylı bilgi ver: Ürün Adı (name), Kullanım Amacı (purpose), Dozaj ve Uygulama (dosage), Önemli Uyarılar (warnings). Profesyonel, detaylı ve yardımcı bir dil kullan.";
 
-            const ai = new GoogleGenAI({ apiKey: apiKey.replace(/['"]+/g, '').trim() });
-
-            const generateContent = async (modelName: string) => {
-                return await ai.models.generateContent({
-                    model: modelName,
-                    contents: {
+            const generateAiContent = async (modelName: string) => {
+                const model = getGeminiModel(modelName);
+                return await model.generateContent({
+                    contents: [{
+                        role: "user",
                         parts: [
-                            { inlineData: { data: base64Data, mimeType: mimeType } },
-                            { text: "Bu bir zirai ilaç veya gübre etiketi. Lütfen etiketteki bilgileri oku ve şu formatta JSON olarak detaylı bilgi ver: Ürün Adı (name), Kullanım Amacı (purpose), Dozaj ve Uygulama (dosage), Önemli Uyarılar (warnings). Profesyonel, detaylı ve yardımcı bir dil kullan." }
+                            { text: prompt },
+                            { inlineData: { data: base64Data, mimeType: mimeType } }
                         ]
-                    },
-                    config: {
+                    }],
+                    generationConfig: {
+                        temperature: 0.1,
                         responseMimeType: "application/json",
-                        responseSchema: {
-                            type: Type.OBJECT,
-                            properties: {
-                                name: { type: Type.STRING },
-                                purpose: { type: Type.STRING },
-                                dosage: { type: Type.STRING },
-                                warnings: { type: Type.STRING }
-                            },
-                            required: ["name", "purpose", "dosage", "warnings"]
-                        }
                     }
                 });
             };
 
-            let response;
+            let result;
             try {
-                response = await generateContent("gemini-3-flash-preview");
-            } catch (e) {
-                console.warn("Falling back to gemini-2.5-flash", e);
-                response = await generateContent("gemini-2.5-flash");
+                result = await generateAiContent(GENERATIVE_MODELS.FLASH);
+            } catch (e: any) {
+                console.warn("Primary AI model failed, trying fallback...", e);
+                result = await generateAiContent(GENERATIVE_MODELS.FLASH);
             }
 
-            const result = JSON.parse(response.text || '{}');
-            setAnalysis(result);
-            hapticFeedback('success');
+            const response = await result.response;
+            const text = response.text();
+
+            if (text) {
+                const parsedResult = JSON.parse(text || '{}');
+                setAnalysis(parsedResult);
+                hapticFeedback('success');
+                return;
+            }
+
+            throw new Error('Analiz başarısız oldu.');
         } catch (error: any) {
             console.error("AI Analysis Error:", error);
-            const errMsg = typeof error === 'string' ? error : (error?.message || JSON.stringify(error));
+            const errMsg = typeof error === 'string' ? error : (error?.message || safeStringify(error));
             
             dbService.addSystemError({
                 id: crypto.randomUUID(),
