@@ -202,11 +202,11 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ onBack }) => {
 
                 let response;
                 try {
-                    response = await generateAiContent("gemini-3-flash-preview");
+                    // Complexity of diagnosis requires a Pro model
+                    response = await generateAiContent("gemini-3.1-pro-preview");
                 } catch (e: any) {
-                    console.warn("Primary AI model failed (likely 503), trying fallback...", e);
-                    // Use Gemini Flash Latest as fallback
-                    response = await generateAiContent("gemini-flash-latest");
+                    console.warn("Primary AI model failed, trying fallback...", e);
+                    response = await generateAiContent("gemini-3-flash-preview");
                 }
 
                 if (response.text) {
@@ -217,29 +217,7 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ onBack }) => {
                 }
             }
 
-            // Fallback to Server if logic fails (e.g., frontend API key missing)
-            const res = await fetch('/api/ai/analyze', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    imageBase64,
-                    inventoryContext
-                })
-            });
-
-            if (!res.ok) {
-                const errorData = await res.json();
-                throw new Error(errorData.error || 'Sunucu hatası oluştu');
-            }
-
-            const data = await res.json();
-            
-            if (!data.analysis) {
-                throw new Error('Yapay zeka yanıt üretemedi.');
-            }
-            
-            setAnalysis(data.analysis);
-            hapticFeedback('success');
+            throw new Error('Yapay zeka anahtarı yapılandırılmamış veya analiz başarısız oldu.');
 
         } catch (error: any) {
             console.error("AI Analysis Error:", error);

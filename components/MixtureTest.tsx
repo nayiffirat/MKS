@@ -51,8 +51,7 @@ export const MixtureTest: React.FC<MixtureTestProps> = ({ onBack }) => {
             const pesticideNames = selectedPesticides.map(p => p.name).join(', ');
             
             // FRONTEND DIRECT GEMINI CALL
-            const userManualKey = localStorage.getItem('GEMINI_API_KEY_MANUAL');
-            const apiKey = userManualKey || import.meta.env.VITE_GEMINI_API_KEY || (process as any)?.env?.GEMINI_API_KEY;
+            const apiKey = process.env.GEMINI_API_KEY;
             
             if (apiKey) {
                 const ai = new GoogleGenAI({ apiKey: apiKey.replace(/['"]+/g, '').trim() });
@@ -61,7 +60,7 @@ export const MixtureTest: React.FC<MixtureTestProps> = ({ onBack }) => {
                 Eğer kesin bir bilgi yoksa, "Kavanoz testi yapılması önerilir" şeklinde belirt.`;
 
                 const response = await ai.models.generateContent({
-                    model: 'gemini-2.5-flash',
+                    model: 'gemini-3-flash-preview',
                     contents: prompt,
                     config: {
                         temperature: 0.1
@@ -76,25 +75,7 @@ export const MixtureTest: React.FC<MixtureTestProps> = ({ onBack }) => {
                 }
             }
 
-            const res = await fetch('/api/ai/mixture', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ pesticideNames })
-            });
-
-            if (!res.ok) {
-                const errorData = await res.json();
-                throw new Error(errorData.error || 'Sunucu hatası oluştu');
-            }
-
-            const data = await res.json();
-
-            if (!data.result) {
-                throw new Error('Test sonucu alınamadı.');
-            }
-
-            setResult(data.result);
-            hapticFeedback('success');
+            throw new Error('Yapay zeka anahtarı yapılandırılmamış veya test başarısız oldu.');
         } catch (error: any) {
             console.error("Mixture Test Error:", error);
             let userFriendlyMessage = 'Test sırasında bir hata oluştu: ' + error.message;

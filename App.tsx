@@ -37,6 +37,7 @@ import { AdminPanel } from './components/AdminPanel';
 import { News } from './components/News';
 import { Plants } from './components/Plants';
 import { SubscriptionLock } from './components/SubscriptionLock';
+import { MapComponent } from './components/MapComponent';
 import { AppProvider, useAppViewModel } from './context/AppContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { dbService } from './services/db';
@@ -377,6 +378,7 @@ function MainApp() {
             }}
         />;
         case 'DEBT_TRACKING': return <DebtTracking />;
+        case 'MAP': return <MapComponent onBack={() => window.history.back()} />;
         case 'KASA': return <Kasa onBack={() => window.history.back()} />;
         case 'EXPENSES': return <ExpensesScreen onBack={() => window.history.back()} />;
         case 'SUPPLIERS': return <Suppliers 

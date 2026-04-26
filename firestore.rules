@@ -2,82 +2,109 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // ===============================================================
-    // Assumed Data Model
-    // ===============================================================
-    //
-    // Path: /MKS/{orgId}/users/{userId}/{collection}/{docId}
-    //
-    // Collections:
-    //   - farmers: Farmer profiles
-    //   - prescriptions: Prescriptions issued
-    //   - inventory: Stock items
-    //   - payments: Farmer payments
-    //   - manualDebts: Farmer debts
-    //   - suppliers: Supplier profiles
-    //   - supplierPurchases: Purchases from suppliers
-    //   - supplierPayments: Payments to suppliers
-    //   - myPayments: Checks/Promissory notes tracking
-    //   - expenses: Business expenses
-    //   - accounts: Cash/Bank accounts
-    //   - transactions: Financial transactions
-    //   - teamMembers: Team members (sub-users)
-    //   - messages: Chat messages
-    //
-    // ===============================================================
+    // 0. GLOBAL SAFETY NET
+    match /{document=**} {
+      allow read, write: if false;
+    }
 
     // ===============================================================
-    // Helper Functions
+    // HELPERS (Phase 3)
     // ===============================================================
     
-    function isAuthenticated() {
+    function isSignedIn() {
       return request.auth != null;
     }
     
     function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
+      return isSignedIn() && request.auth.uid == userId;
     }
     
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Admin lookup - keep it simple first, check hardcoded root admin too
     function isAdmin(orgId) {
-      return isAuthenticated() && 
-        (get(/databases/$(database)/documents/MKS/$(orgId)/users/$(request.auth.uid)).data.role == 'admin' ||
-         (request.auth.token.email == "nayiffirat@gmail.com" && request.auth.token.email_verified == true));
+      return isSignedIn() && (
+        (request.auth.token.email == "nayiffirat@gmail.com" && request.auth.token.email_verified == true) ||
+        exists(/databases/$(database)/documents/MKS/$(orgId)/users/$(request.auth.uid)) && 
+        get(/databases/$(database)/documents/MKS/$(orgId)/users/$(request.auth.uid)).data.role == 'admin'
+      );
     }
 
-    function hasOnlyAllowedFields(fields) {
-      return request.resource.data.keys().hasOnly(fields);
+    // --- Validation Blueprints (Pillar 2) ---
+    
+    function isValidUser(data) {
+      return data.keys().hasAll(['fullName', 'role', 'subscriptionStatus']) &&
+             data.fullName is string && data.fullName.size() <= 100 &&
+             data.role in ['user', 'admin'] &&
+             data.subscriptionStatus in ['active', 'trial', 'expired'];
     }
 
-    function isValidDate(dateStr) {
-      return dateStr is string && dateStr.matches("^\\d{4}-\\d{2}-\\d{2}.*");
+    function isValidFarmer(data) {
+      return data.fullName is string && data.fullName.size() <= 100 &&
+             data.phoneNumber is string && data.phoneNumber.size() <= 20;
+    }
+
+    function isValidPrescription(data) {
+      return data.farmerId is string && data.farmerId.size() <= 128 &&
+             data.items is list && data.items.size() <= 50;
     }
 
     // ===============================================================
-    // Rules
+    // CORE RULES (Phase 4)
     // ===============================================================
 
+    // Path: /MKS/{orgId}/users/{userId}
     match /MKS/{orgId}/users/{userId} {
-      // User profile access
       allow read: if isOwner(userId) || isAdmin(orgId);
-      allow create: if isOwner(userId) && request.resource.data.role == 'user';
-      allow update: if (isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin(orgId);
+      
+      allow create: if isOwner(userId) && 
+                      isValidUser(incoming()) && 
+                      incoming().role == 'user'; // Users can't create themselves as admin
+      
+      allow update: if (isOwner(userId) && 
+                        incoming().role == existing().role && // Can't change own role
+                        incoming().subscriptionStatus == existing().subscriptionStatus // Can't change own sub status
+                       ) || isAdmin(orgId);
 
-      // Sub-collections
+      // Sub-collections (Farmers, Prescriptions, etc.)
       match /{collectionName}/{docId} {
-        allow read: if isOwner(userId) || isAdmin(orgId);
-        allow create, update: if (isOwner(userId) || isAdmin(orgId)) && request.resource.data.id == docId;
+        // Enforce secure list queries (Pillar 8)
+        allow list: if isOwner(userId) || isAdmin(orgId);
+        
+        allow get: if isOwner(userId) || isAdmin(orgId);
+        
+        allow create: if (isOwner(userId) || isAdmin(orgId)) && 
+                        isValidId(docId) &&
+                        (collectionName != 'farmers' || isValidFarmer(incoming())) &&
+                        (collectionName != 'prescriptions' || isValidPrescription(incoming()));
+                        
+        allow update: if (isOwner(userId) || isAdmin(orgId)) && 
+                        (collectionName != 'farmers' || isValidFarmer(incoming())) &&
+                        (collectionName != 'prescriptions' || isValidPrescription(incoming()));
+                        
         allow delete: if isOwner(userId) || isAdmin(orgId);
       }
     }
 
+    // Global Collections
     match /MKS/{orgId}/news/{newsId} {
-      allow read: if isAuthenticated();
+      allow read: if isSignedIn();
       allow write: if isAdmin(orgId);
     }
-
-    // Default deny
-    match /{document=**} {
-      allow read, write: if false;
+    
+    match /pesticides/{pesticideId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin("g892bEaJyGfEq1Fa67yb"); // Fixed org for global pesticides
     }
   }
 }

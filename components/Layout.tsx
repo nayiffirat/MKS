@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Home, Users, BookOpen, FileText, ClipboardList, Menu, X, LogOut, Settings, ChevronRight, User, Bell, Phone, UserCircle, Plus, PieChart, Sprout, CalendarCheck, ChevronLeft, Package, Truck, CreditCard, Receipt, Wallet, Bot, History as HistoryIcon, Printer, Shield, Clock, MessageCircle, Trash2, TrendingDown, ScanSearch } from 'lucide-react';
+import { Home, Users, BookOpen, FileText, ClipboardList, Menu, X, LogOut, Settings, ChevronRight, User, Bell, Phone, UserCircle, Plus, PieChart, Sprout, CalendarCheck, ChevronLeft, Package, Truck, CreditCard, Receipt, Wallet, Bot, History as HistoryIcon, Printer, Shield, Clock, MessageCircle, Trash2, TrendingDown, Map } from 'lucide-react';
 import { ViewState } from '../types';
 import { useAppViewModel } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
@@ -22,7 +22,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
   const isSales = activeTeamMember?.role === 'SALES';
   
   const navGroups = [
-    { title: t('nav.group.general') || "Genel", items: [{ id: 'DASHBOARD', icon: Home, label: t('nav.dashboard') }, { id: 'NOTIFICATIONS', icon: Bell, label: t('nav.notifications') || 'Bildirimler', badge: unreadCount }, { id: 'RECENT_TRANSACTIONS', icon: HistoryIcon, label: t('nav.recent') || 'Son İşlemler' }, { id: 'REPORTS', icon: Printer, label: t('nav.reports') }, { id: 'REMINDERS', icon: CalendarCheck, label: t('nav.reminders') || 'Hatırlatıcılar', badge: stats.activeReminders }, { id: 'FINDEKS', icon: ScanSearch, label: 'Findeks' }, { id: 'KASA', icon: Wallet, label: t('nav.kasa') }, { id: 'EXPENSES', icon: Receipt, label: t('nav.expenses') || 'Giderler' }, { id: 'STATISTICS', icon: PieChart, label: t('nav.statistics') || 'İstatistikler' }] },
+    { title: t('nav.group.general') || "Genel", items: [{ id: 'DASHBOARD', icon: Home, label: t('nav.dashboard') }, { id: 'NOTIFICATIONS', icon: Bell, label: t('nav.notifications') || 'Bildirimler', badge: unreadCount }, { id: 'RECENT_TRANSACTIONS', icon: HistoryIcon, label: t('nav.recent') || 'Son İşlemler' }, { id: 'REPORTS', icon: Printer, label: t('nav.reports') }, { id: 'REMINDERS', icon: CalendarCheck, label: t('nav.reminders') || 'Hatırlatıcılar', badge: stats.activeReminders }, { id: 'MAP', icon: Map, label: 'Harita' }, { id: 'KASA', icon: Wallet, label: t('nav.kasa') }, { id: 'EXPENSES', icon: Receipt, label: t('nav.expenses') || 'Giderler' }, { id: 'STATISTICS', icon: PieChart, label: t('nav.statistics') || 'İstatistikler' }] },
     { title: t('nav.group.field') || "Saha & Kayıt", items: [{ id: 'FARMERS', icon: Users, label: t('nav.farmers') }, { id: 'DEBT_TRACKING', icon: TrendingDown, label: 'Borç Takibi' }, { id: 'PESTICIDES', icon: BookOpen, label: t('nav.pesticides') || 'İlaçlar' }, { id: 'INVENTORY', icon: Package, label: t('nav.inventory') }, { id: 'SUPPLIERS', icon: Truck, label: t('nav.suppliers') }, { id: 'PAYMENTS', icon: CreditCard, label: t('nav.payments') || 'Ödemelerim' }, { id: 'PRESCRIPTIONS', icon: FileText, label: t('nav.prescriptions') }, { id: 'VISITS', icon: ClipboardList, label: t('nav.visits') }] },
     { title: t('nav.group.support') || "Destek", items: [{ id: 'TRASH', icon: Trash2, label: t('nav.trash') || 'Çöp Kutusu' }, { id: 'CONTACT', icon: Phone, label: t('nav.contact') || 'Bize Ulaşın' }, { id: 'SETTINGS', icon: Settings, label: t('nav.settings') }] }
   ];
@@ -114,7 +114,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
                <NavButton active={currentView === 'DASHBOARD'} onClick={() => onNavigate('DASHBOARD')} icon={Home} label={t('nav.dashboard') || "Ana Sayfa"} />
                <NavButton active={currentView === 'FARMERS'} onClick={() => onNavigate('FARMERS')} icon={Users} label={t('nav.farmers') || 'Çiftçiler'} />
                <QuickActions />
-               <NavButton active={currentView === 'FINDEKS'} onClick={() => onNavigate('FINDEKS')} icon={ScanSearch} label="Findeks" />
+               <NavButton active={currentView === 'MAP'} onClick={() => onNavigate('MAP')} icon={Map} label="Harita" />
                <NavButton active={isMobileMenuOpen} onClick={() => setIsMobileMenuOpen(true)} icon={Menu} label={t('nav.menu') || "Menü"} />
            </div>
        </nav>
