@@ -327,6 +327,15 @@ export interface News {
   deletedAt?: string;
 }
 
+export interface SystemError {
+  id: string;
+  timestamp: number;
+  source: string;
+  message: string;
+  stack?: string;
+  userEmail?: string;
+}
+
 export interface CollectionLog {
   id: string;
   farmerId: string;

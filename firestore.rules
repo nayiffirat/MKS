@@ -101,6 +101,11 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow write: if isAdmin(orgId);
     }
+
+    match /MKS/{orgId}/system_errors/{errorId} {
+      allow create: if isSignedIn();
+      allow read, delete: if isAdmin(orgId);
+    }
     
     match /pesticides/{pesticideId} {
       allow read: if isSignedIn();

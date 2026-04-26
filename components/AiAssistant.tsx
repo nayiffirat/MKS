@@ -56,7 +56,8 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ onBack }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [isSavingVisit, setIsSavingVisit] = useState(false);
     
-    const fileInputRef = useRef<HTMLInputElement>(null);
+    const cameraInputRef = useRef<HTMLInputElement>(null);
+    const galleryInputRef = useRef<HTMLInputElement>(null);
 
     // Load farmers for the picker
     React.useEffect(() => {
@@ -155,7 +156,7 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ onBack }) => {
                 : 'Depoda kayıtlı ilaç bulunmuyor.';
 
             // FRONTEND DIRECT GEMINI CALL
-            const apiKey = process.env.GEMINI_API_KEY;
+            const apiKey = process.env.GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
             
             if (apiKey) {
                 // Determine mimeType and base64Data
@@ -190,7 +191,8 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ onBack }) => {
                             KRİTİK TALİMAT:
                             - Reçete yazarken ÖNCELİKLE kullanıcının deposunda (listede) olan ilaçları öner. 
                             - Eğer depoda uygun ürün varsa: "**💡 Depondaki şu ürün(ler) bu sorun için tam çözümdür: [Ürün Adı]**" şeklinde vurgula.
-                            - Depoda yoksa piyasadaki en etkili etken maddeleri öner.
+                            - Depoda yoksa piyasadaki en etkili ve Türkiye'de Tarım ve Orman Bakanlığı tarafından RUHSATLI (yasal olarak izinli) olan etken maddeleri/ilaçları öner.
+                            - KESİNLİKLE yasaklı, ruhsatı iptal edilmiş veya Türkiye'de onayı olmayan etken madde veya ilaç önerme! Sadece ve sadece yasal ve ruhsatlı çözümleri reçetelendir.
                             
                             FORMAT: 
                             - Yanıtlarını yapılandırılmış markdown (baslıklar, listeler) kullanarak ver.
@@ -221,26 +223,17 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ onBack }) => {
 
         } catch (error: any) {
             console.error("AI Analysis Error:", error);
-            let userFriendlyMessage = 'Analiz başarısız oldu.';
-            
             const errMsg = typeof error === 'string' ? error : (error?.message || JSON.stringify(error));
-            if (errMsg.includes('API_KEY_INVALID') || errMsg.includes('key not valid')) {
-                userFriendlyMessage = 'Geçersiz API Anahtarı. Lütfen ayayrlardan güncelleyin.';
-            } else if (errMsg.includes('PERMISSION_DENIED') || errMsg.includes('denied access')) {
-                userFriendlyMessage = 'Kullandığınız API anahtarı engellenmiş (403). Lütfen yeni bir API anahtarı oluşturun.';
-            } else if (errMsg.includes('quota') || errMsg.includes('429')) {
-                userFriendlyMessage = 'Günlük kapasite doldu. Lütfen daha sonra tekrar deneyin.';
-            } else if (errMsg.includes('503') || errMsg.includes('high demand') || errMsg.includes('overloaded')) {
-                userFriendlyMessage = 'Şu an tüm veri merkezlerinde aşırı yoğunluk yaşanıyor (503). Lütfen 30 saniye bekleyip tekrar deneyin.';
-            } else if (errMsg.includes('safety')) {
-                userFriendlyMessage = 'Güvenlik filtreleri (hassas içerik vb.) nedeniyle analiz engellendi.';
-            } else if (errMsg.includes('Requested entity was not found')) {
-                userFriendlyMessage = 'Model bulunamadı veya yetkiniz yok. Lütfen anahtarınızı güncelleyin.';
-            } else {
-                userFriendlyMessage = `İşlem hatası: Lütfen tekrar deneyin.`;
-            }
+            
+            dbService.addSystemError({
+                id: crypto.randomUUID(),
+                timestamp: Date.now(),
+                source: 'AiAssistant (Bitki Analizi)',
+                message: errMsg,
+                userEmail: auth.currentUser?.email || 'Bilinmiyor'
+            });
 
-            showToast(userFriendlyMessage, 'error');
+            showToast('Şu anda sunucularımızda aşırı yoğunluk yaşanmaktadır. Lütfen biraz sonra tekrar deneyin.', 'error');
             setAnalysis(null);
         } finally {
             setIsLoading(false);
@@ -337,9 +330,8 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ onBack }) => {
                             <div className="grid grid-cols-1 gap-4 w-full max-w-[280px]">
                                 <button 
                                     onClick={() => {
-                                        if (fileInputRef.current) {
-                                            fileInputRef.current.setAttribute('capture', 'environment');
-                                            fileInputRef.current.click();
+                                        if (cameraInputRef.current) {
+                                            cameraInputRef.current.click();
                                         }
                                     }}
                                     className="flex items-center gap-4 p-5 bg-emerald-600 text-white rounded-3xl hover:bg-emerald-500 transition-all active:scale-95 shadow-[0_10px_30px_rgba(16,185,129,0.2)] group"
@@ -355,9 +347,8 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ onBack }) => {
 
                                 <button 
                                     onClick={() => {
-                                        if (fileInputRef.current) {
-                                            fileInputRef.current.removeAttribute('capture');
-                                            fileInputRef.current.click();
+                                        if (galleryInputRef.current) {
+                                            galleryInputRef.current.click();
                                         }
                                     }}
                                     className="flex items-center gap-4 p-5 bg-stone-900 border border-white/5 text-white rounded-3xl hover:bg-stone-800 transition-all active:scale-95 group"
@@ -567,9 +558,19 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ onBack }) => {
             <input 
                 type="file" 
                 accept="image/*" 
+                capture="environment"
                 className="hidden" 
-                ref={fileInputRef} 
+                ref={cameraInputRef} 
                 onChange={handleFileSelect}
+                onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+            />
+            <input 
+                type="file" 
+                accept="image/*" 
+                className="hidden" 
+                ref={galleryInputRef} 
+                onChange={handleFileSelect}
+                onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
             />
         </div>
     );

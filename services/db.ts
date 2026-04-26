@@ -1,7 +1,7 @@
 
 import { safeStringify } from '../utils/json';
 import { openDB, DBSchema } from 'idb';
-import { Farmer, Pesticide, VisitLog, Prescription, AppNotification, UserProfile, Reminder, InventoryItem, PesticideCategory, Payment, ManualDebt, Supplier, SupplierPurchase, SupplierPayment, MyPayment, TurnoverLog, Expense, Account, Transaction, TeamMember, Message, News, CollectionLog, Plant } from '../types';
+import { Farmer, Pesticide, VisitLog, Prescription, AppNotification, UserProfile, Reminder, InventoryItem, PesticideCategory, Payment, ManualDebt, Supplier, SupplierPurchase, SupplierPayment, MyPayment, TurnoverLog, Expense, Account, Transaction, TeamMember, Message, News, CollectionLog, Plant, SystemError } from '../types';
 import { MOCK_PESTICIDES } from '../constants';
 import { db as firestore, auth, storage } from './firebase';
 import { doc, setDoc, deleteDoc, collection, getDocs, writeBatch, query, where, getDoc, onSnapshot, getDocFromServer } from 'firebase/firestore';
@@ -35,16 +35,46 @@ interface FirestoreErrorInfo {
   }
 }
 
+const backgroundSyncGlobal = async (collectionName: string, data: any) => {
+  const user = auth.currentUser;
+  if (!user) return;
+
+  const cleanData = sanitizeForFirestore(data);
+  const docRef = doc(firestore, FS_ROOT, FS_ORG, collectionName, data.id);
+  
+  return setDoc(docRef, cleanData, { merge: true })
+    .catch((error) => {
+        console.error(`Global sync failed for ${collectionName}:`, error);
+    });
+};
+
+const backgroundDeleteGlobal = async (collectionName: string, id: string) => {
+  return deleteDoc(doc(firestore, FS_ROOT, FS_ORG, collectionName, id))
+    .catch((error) => {
+        console.error(`Global delete failed for ${collectionName}:`, error);
+    });
+};
+
+const addSystemErrorInternal = async (error: SystemError) => {
+  const db = await initDB();
+  await db.put('systemErrors', error);
+  // User's own path
+  backgroundSync('systemErrors', error);
+  // Global path for admin
+  backgroundSyncGlobal('system_errors', error);
+};
+
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const user = auth.currentUser;
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData.map(provider => ({
+      userId: user?.uid,
+      email: user?.email,
+      emailVerified: user?.emailVerified,
+      isAnonymous: user?.isAnonymous,
+      tenantId: user?.tenantId,
+      providerInfo: user?.providerData.map(provider => ({
         providerId: provider.providerId,
         displayName: provider.displayName,
         email: provider.email,
@@ -54,7 +84,22 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
     operationType,
     path
   }
+  
+  const errorMessage = error instanceof Error ? error.message : String(error);
   console.error('Firestore Error: ', safeStringify(errInfo));
+
+  // Log to central errors if not already logging an error (to prevent infinite loops)
+  const isInternalError = path && (path.includes('system_errors') || path.includes('systemErrors'));
+  if (!isInternalError) {
+    addSystemErrorInternal({
+      id: crypto.randomUUID(),
+      timestamp: Date.now(),
+      source: `Firestore:${operationType}${path ? `:${path}` : ''}`,
+      message: errorMessage,
+      userEmail: user?.email || 'Bilinmiyor'
+    }).catch(() => {});
+  }
+
   // Don't throw if it's a background sync, just log
   if (operationType === OperationType.WRITE || operationType === OperationType.DELETE) {
     console.warn(`Background operation failed: ${operationType} on ${path}`);
@@ -168,10 +213,14 @@ interface AgriDB extends DBSchema {
     key: string;
     value: Plant;
   };
+  systemErrors: {
+    key: string;
+    value: SystemError;
+  };
 }
 
 const DB_NAME = 'agri-engineer-db';
-const DB_VERSION = 23;
+const DB_VERSION = 24;
 
 const FS_ROOT = "MKS";
 const FS_ORG = "g892bEaJyGfEq1Fa67yb";
@@ -298,6 +347,9 @@ export const initDB = async () => {
       }
       if (!db.objectStoreNames.contains('plants')) {
         db.createObjectStore('plants', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('systemErrors')) {
+        db.createObjectStore('systemErrors', { keyPath: 'id' });
       }
     },
   });
@@ -541,9 +593,41 @@ const dbServiceObj = {
 
   async clearLocalUserData() {
     const db = await initDB();
-    const stores = ['farmers', 'visits', 'prescriptions', 'notifications', 'reminders', 'inventory', 'payments', 'manualDebts', 'suppliers', 'supplierPurchases', 'supplierPayments', 'myPayments', 'expenses', 'accounts', 'transactions', 'teamMembers', 'messages', 'collectionLogs', 'plants'] as const;
+    const stores = ['farmers', 'visits', 'prescriptions', 'notifications', 'reminders', 'inventory', 'payments', 'manualDebts', 'suppliers', 'supplierPurchases', 'supplierPayments', 'myPayments', 'expenses', 'accounts', 'transactions', 'teamMembers', 'messages', 'collectionLogs', 'plants', 'systemErrors'] as const;
     for (const store of stores) await db.clear(store);
     localStorage.removeItem('mks_user_profile');
+  },
+
+  async addSystemError(error: SystemError) {
+    await addSystemErrorInternal(error);
+  },
+
+  async getSystemErrors() {
+    const db = await initDB();
+    const errors = await db.getAll('systemErrors');
+    return errors.sort((a, b) => b.timestamp - a.timestamp);
+  },
+
+  async getGlobalSystemErrors() {
+    if (!navigator.onLine) return [];
+    try {
+      await requireAdmin();
+      const path = [FS_ROOT, FS_ORG, "system_errors"].join("/");
+      const snap = await getDocs(collection(firestore, path));
+      return snap.docs.map(d => ({ ...d.data() as SystemError, id: d.id }))
+        .sort((a, b) => b.timestamp - a.timestamp);
+    } catch (error) {
+      console.error("Error fetching global system errors:", error);
+      return [];
+    }
+  },
+
+  async deleteSystemError(id: string) {
+    const db = await initDB();
+    await db.delete('systemErrors', id);
+    backgroundDelete('systemErrors', id);
+    // Also try to delete from global if exists
+    backgroundDeleteGlobal('system_errors', id);
   },
 
   async getFarmers() {
@@ -632,6 +716,20 @@ const dbServiceObj = {
           setDoc(doc(firestore, 'pesticides', pesticide.id), cleanPesticide).catch(() => {});
       }
       return pesticide.id;
+  },
+
+  async updateGlobalPesticide(pesticide: Pesticide) {
+    const db = await initDB();
+    await db.put('pesticides', pesticide);
+    if (navigator.onLine) {
+        const cleanPesticide = sanitizeForFirestore(pesticide);
+        try {
+            await setDoc(doc(firestore, 'pesticides', pesticide.id), cleanPesticide, { merge: true });
+        } catch (error) {
+            handleFirestoreError(error, OperationType.WRITE, `pesticides/${pesticide.id}`);
+        }
+    }
+    return pesticide.id;
   },
   
   async addVisit(visit: VisitLog) {

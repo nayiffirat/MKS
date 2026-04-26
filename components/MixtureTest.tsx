@@ -4,6 +4,7 @@ import { GoogleGenAI } from "@google/genai";
 import { useAppViewModel } from '../context/AppContext';
 import { Pesticide } from '../types';
 import { dbService } from '../services/db';
+import { auth } from '../services/firebase';
 import { motion } from 'motion/react';
 
 interface MixtureTestProps {
@@ -51,7 +52,7 @@ export const MixtureTest: React.FC<MixtureTestProps> = ({ onBack }) => {
             const pesticideNames = selectedPesticides.map(p => p.name).join(', ');
             
             // FRONTEND DIRECT GEMINI CALL
-            const apiKey = process.env.GEMINI_API_KEY;
+            const apiKey = process.env.GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
             
             if (apiKey) {
                 const ai = new GoogleGenAI({ apiKey: apiKey.replace(/['"]+/g, '').trim() });
@@ -59,13 +60,23 @@ export const MixtureTest: React.FC<MixtureTestProps> = ({ onBack }) => {
                 Karışıp karışamayacağını, neden karışmadığını veya karışırken nelere dikkat edilmesi gerektiğini kısa bir özetle yaz. 
                 Eğer kesin bir bilgi yoksa, "Kavanoz testi yapılması önerilir" şeklinde belirt.`;
 
-                const response = await ai.models.generateContent({
-                    model: 'gemini-3-flash-preview',
-                    contents: prompt,
-                    config: {
-                        temperature: 0.1
-                    }
-                });
+                const generateContent = async (modelName: string) => {
+                    return await ai.models.generateContent({
+                        model: modelName,
+                        contents: prompt,
+                        config: {
+                            temperature: 0.1
+                        }
+                    });
+                };
+
+                let response;
+                try {
+                    response = await generateContent('gemini-3-flash-preview');
+                } catch (e) {
+                    console.warn("Falling back to gemini-2.5-flash", e);
+                    response = await generateContent('gemini-2.5-flash');
+                }
 
                 if (response.text) {
                     setResult(response.text);
@@ -78,8 +89,17 @@ export const MixtureTest: React.FC<MixtureTestProps> = ({ onBack }) => {
             throw new Error('Yapay zeka anahtarı yapılandırılmamış veya test başarısız oldu.');
         } catch (error: any) {
             console.error("Mixture Test Error:", error);
-            let userFriendlyMessage = 'Test sırasında bir hata oluştu: ' + error.message;
-            showToast(userFriendlyMessage, 'error');
+            const errMsg = typeof error === 'string' ? error : (error?.message || JSON.stringify(error));
+            
+            dbService.addSystemError({
+                id: crypto.randomUUID(),
+                timestamp: Date.now(),
+                source: 'MixtureTest (Karışım Analizi)',
+                message: errMsg,
+                userEmail: auth.currentUser?.email || 'Bilinmiyor'
+            });
+
+            showToast('Şu anda sunucularımızda aşırı yoğunluk yaşanmaktadır. Lütfen biraz sonra tekrar deneyin.', 'error');
             hapticFeedback('error');
         } finally {
             setIsTesting(false);

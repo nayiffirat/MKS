@@ -1,5 +1,6 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle, RefreshCcw } from 'lucide-react';
+import { dbService } from '../services/db';
 
 interface Props {
   children: ReactNode;
@@ -22,6 +23,15 @@ export class ErrorBoundary extends Component<Props, State> {
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('Uncaught error:', error, errorInfo);
+    
+    dbService.addSystemError({
+      id: crypto.randomUUID(),
+      timestamp: Date.now(),
+      source: 'ErrorBoundary',
+      message: error.message,
+      stack: error.stack,
+      userEmail: localStorage.getItem('mks_user_email') || 'Bilinmiyor'
+    }).catch(() => {});
   }
 
   private handleReset = () => {

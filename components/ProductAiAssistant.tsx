@@ -20,7 +20,8 @@ export const ProductAiAssistant: React.FC<ProductAiAssistantProps> = ({ onBack }
     const [imageBase64, setImageBase64] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [analysis, setAnalysis] = useState<any>(null);
-    const fileInputRef = useRef<HTMLInputElement>(null);
+    const cameraInputRef = useRef<HTMLInputElement>(null);
+    const galleryInputRef = useRef<HTMLInputElement>(null);
 
     const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
@@ -101,41 +102,61 @@ export const ProductAiAssistant: React.FC<ProductAiAssistantProps> = ({ onBack }
             const base64Data = imageBase64.split(',')[1];
             const mimeType = imageBase64.split(';')[0].split(':')[1] || 'image/jpeg';
             
-            const apiKey = process.env.GEMINI_API_KEY;
+            const apiKey = process.env.GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
             
             if (!apiKey) throw new Error('API anahtarı bulunamadı.');
 
             const ai = new GoogleGenAI({ apiKey: apiKey.replace(/['"]+/g, '').trim() });
 
-            const response = await ai.models.generateContent({
-                model: "gemini-3-flash-preview",
-                contents: {
-                    parts: [
-                        { inlineData: { data: base64Data, mimeType: mimeType } },
-                        { text: "Bu bir zirai ilaç veya gübre etiketi. Lütfen etiketteki bilgileri oku ve şu formatta JSON olarak detaylı bilgi ver: Ürün Adı (name), Kullanım Amacı (purpose), Dozaj ve Uygulama (dosage), Önemli Uyarılar (warnings). Profesyonel, detaylı ve yardımcı bir dil kullan." }
-                    ]
-                },
-                config: {
-                    responseMimeType: "application/json",
-                    responseSchema: {
-                        type: Type.OBJECT,
-                        properties: {
-                            name: { type: Type.STRING },
-                            purpose: { type: Type.STRING },
-                            dosage: { type: Type.STRING },
-                            warnings: { type: Type.STRING }
-                        },
-                        required: ["name", "purpose", "dosage", "warnings"]
+            const generateContent = async (modelName: string) => {
+                return await ai.models.generateContent({
+                    model: modelName,
+                    contents: {
+                        parts: [
+                            { inlineData: { data: base64Data, mimeType: mimeType } },
+                            { text: "Bu bir zirai ilaç veya gübre etiketi. Lütfen etiketteki bilgileri oku ve şu formatta JSON olarak detaylı bilgi ver: Ürün Adı (name), Kullanım Amacı (purpose), Dozaj ve Uygulama (dosage), Önemli Uyarılar (warnings). Profesyonel, detaylı ve yardımcı bir dil kullan." }
+                        ]
+                    },
+                    config: {
+                        responseMimeType: "application/json",
+                        responseSchema: {
+                            type: Type.OBJECT,
+                            properties: {
+                                name: { type: Type.STRING },
+                                purpose: { type: Type.STRING },
+                                dosage: { type: Type.STRING },
+                                warnings: { type: Type.STRING }
+                            },
+                            required: ["name", "purpose", "dosage", "warnings"]
+                        }
                     }
-                }
-            });
+                });
+            };
+
+            let response;
+            try {
+                response = await generateContent("gemini-3-flash-preview");
+            } catch (e) {
+                console.warn("Falling back to gemini-2.5-flash", e);
+                response = await generateContent("gemini-2.5-flash");
+            }
 
             const result = JSON.parse(response.text || '{}');
             setAnalysis(result);
             hapticFeedback('success');
         } catch (error: any) {
             console.error("AI Analysis Error:", error);
-            showToast('Analiz başarısız oldu. Lütfen tekrar deneyin.', 'error');
+            const errMsg = typeof error === 'string' ? error : (error?.message || JSON.stringify(error));
+            
+            dbService.addSystemError({
+                id: crypto.randomUUID(),
+                timestamp: Date.now(),
+                source: 'ProductAiAssistant (Etiket Analizi)',
+                message: errMsg,
+                userEmail: auth.currentUser?.email || 'Bilinmiyor'
+            });
+
+            showToast('Şu anda sunucularımızda aşırı yoğunluk yaşanmaktadır. Lütfen biraz sonra tekrar deneyin.', 'error');
         } finally {
             setIsLoading(false);
         }
@@ -192,9 +213,8 @@ export const ProductAiAssistant: React.FC<ProductAiAssistantProps> = ({ onBack }
                             <div className="grid grid-cols-1 gap-4 w-full max-w-[280px]">
                                 <button 
                                     onClick={() => {
-                                        if (fileInputRef.current) {
-                                            fileInputRef.current.setAttribute('capture', 'environment');
-                                            fileInputRef.current.click();
+                                        if (cameraInputRef.current) {
+                                            cameraInputRef.current.click();
                                         }
                                     }}
                                     className="flex items-center gap-4 p-5 bg-amber-600 text-stone-950 rounded-3xl hover:bg-amber-500 transition-all active:scale-95 shadow-[0_10px_30px_rgba(245,158,11,0.2)] group"
@@ -210,9 +230,8 @@ export const ProductAiAssistant: React.FC<ProductAiAssistantProps> = ({ onBack }
 
                                 <button 
                                     onClick={() => {
-                                        if (fileInputRef.current) {
-                                            fileInputRef.current.removeAttribute('capture');
-                                            fileInputRef.current.click();
+                                        if (galleryInputRef.current) {
+                                            galleryInputRef.current.click();
                                         }
                                     }}
                                     className="flex items-center gap-4 p-5 bg-stone-900 border border-white/5 text-white rounded-3xl hover:bg-stone-800 transition-all active:scale-95 group"
@@ -351,9 +370,19 @@ export const ProductAiAssistant: React.FC<ProductAiAssistantProps> = ({ onBack }
             <input 
                 type="file" 
                 accept="image/*" 
+                capture="environment"
                 className="hidden" 
-                ref={fileInputRef} 
+                ref={cameraInputRef} 
                 onChange={handleFileSelect}
+                onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+            />
+            <input 
+                type="file" 
+                accept="image/*" 
+                className="hidden" 
+                ref={galleryInputRef} 
+                onChange={handleFileSelect}
+                onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
             />
         </div>
     );

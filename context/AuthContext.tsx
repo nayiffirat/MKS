@@ -64,6 +64,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         checkAuthResults();
 
         const unsubscribe = onAuthStateChanged(auth, (user) => {
+            if (user && user.email) {
+                localStorage.setItem('mks_user_email', user.email);
+            }
             setCurrentUser(user);
             setLoading(false);
         });

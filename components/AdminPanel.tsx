@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, Users, Shield, Calendar, Search, Save, Loader2, Edit3, X, Trash2, KeyRound, ChevronRight, Mail, Clock, LogIn, Newspaper, Plus, Image as ImageIcon, FileText, Link as LinkIcon, RefreshCw } from 'lucide-react';
+import { ChevronLeft, Users, Shield, Calendar, Search, Save, Loader2, Edit3, X, Trash2, KeyRound, ChevronRight, Mail, Clock, LogIn, Newspaper, Plus, Image as ImageIcon, FileText, Link as LinkIcon, RefreshCw, AlertCircle } from 'lucide-react';
 import { useAppViewModel } from '../context/AppContext';
 import { UserProfile, News } from '../types';
 import { ConfirmationModal } from './ConfirmationModal';
 import { ListSkeleton } from './Skeleton';
 import { EmptyState } from './EmptyState';
+import { dbService } from '../services/db';
 
 interface AdminPanelProps {
     onBack: () => void;
@@ -12,8 +13,9 @@ interface AdminPanelProps {
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     const { getAllUsers, updateUserSubscription, deleteUser, sendPasswordReset, showToast, hapticFeedback, news, addNews, updateNews, deleteNews, refreshNews } = useAppViewModel();
-    const [activeTab, setActiveTab] = useState<'USERS' | 'NEWS'>('USERS');
+    const [activeTab, setActiveTab] = useState<'USERS' | 'ERRORS' | 'NEWS'>('USERS');
     const [users, setUsers] = useState<(UserProfile & { uid: string, email?: string })[]>([]);
+    const [systemErrors, setSystemErrors] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [editingUser, setEditingUser] = useState<(UserProfile & { uid: string, email?: string }) | null>(null);
@@ -68,6 +70,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
 
     useEffect(() => {
         loadUsers();
+        loadErrors();
     }, []);
 
     const loadUsers = async () => {
@@ -79,6 +82,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
             showToast('Kullanıcılar yüklenirken hata oluştu.', 'error');
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    const loadErrors = async () => {
+        try {
+            const errors = await dbService.getGlobalSystemErrors();
+            setSystemErrors(errors || []);
+        } catch (error) {
+            console.error("Error loading system errors", error);
+        }
+    };
+
+    const handleDeleteError = async (id: string) => {
+        try {
+            await dbService.deleteSystemError(id);
+            setSystemErrors(prev => prev.filter(e => e.id !== id));
+            showToast('Hata kaydı silindi.', 'success');
+        } catch (error) {
+            showToast('Hata silinirken hata oluştu.', 'error');
         }
     };
 
@@ -240,6 +262,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                     <Users size={14} /> Kullanıcılar
                 </button>
                 <button 
+                    onClick={() => { setActiveTab('ERRORS'); loadErrors(); }}
+                    className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${activeTab === 'ERRORS' ? 'bg-stone-800 text-white shadow-lg' : 'text-stone-500 hover:text-stone-300'}`}
+                >
+                    <AlertCircle size={14} /> Hatalar
+                </button>
+                <button 
                     onClick={() => setActiveTab('NEWS')}
                     className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${activeTab === 'NEWS' ? 'bg-stone-800 text-white shadow-lg' : 'text-stone-500 hover:text-stone-300'}`}
                 >
@@ -331,6 +359,42 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                         })}
                     </div>
                 )
+            ) : activeTab === 'ERRORS' ? (
+                <div className="space-y-3">
+                    {systemErrors.length === 0 ? (
+                        <EmptyState
+                            icon={AlertCircle}
+                            title="Hata bulunamadı"
+                            description="Sistemde kaydedilmiş herhangi bir hata kaydı bulunmuyor."
+                        />
+                    ) : (
+                        systemErrors.map(error => (
+                            <div key={error.id} className="bg-stone-900/50 hover:bg-stone-800/80 border border-white/5 hover:border-white/10 rounded-2xl p-4 flex flex-col gap-2 transition-all">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <AlertCircle size={16} className="text-red-400" />
+                                        <h3 className="font-bold text-white text-sm">{error.source}</h3>
+                                        <span className="text-[9px] font-bold text-stone-500">
+                                            {new Date(error.timestamp).toLocaleString('tr-TR')}
+                                        </span>
+                                    </div>
+                                    <button 
+                                        onClick={() => handleDeleteError(error.id)}
+                                        className="p-2 -mr-2 text-stone-500 hover:text-red-400 transition-colors"
+                                    >
+                                        <Trash2 size={16} />
+                                    </button>
+                                </div>
+                                <div className="p-3 bg-stone-950 border border-white/5 rounded-xl">
+                                    <p className="text-xs text-red-300 font-mono break-all">{error.message}</p>
+                                    {error.userEmail && (
+                                        <p className="text-[10px] text-stone-500 mt-2">Kullanıcı: {error.userEmail}</p>
+                                    )}
+                                </div>
+                            </div>
+                        ))
+                    )}
+                </div>
             ) : (
                 <div className="space-y-3">
                     {filteredNews.length === 0 ? (

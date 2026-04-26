@@ -14,6 +14,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { GoogleGenAI, Type } from "@google/genai";
 import { dbService } from '../services/db';
+import { auth } from '../services/firebase';
 import { InventoryItem, Pesticide, PesticideCategory } from '../types';
 import { useAppViewModel } from '../context/AppContext';
 import { formatCurrency, getCurrencySuffix } from '../utils/currency';
@@ -60,6 +61,7 @@ export const InventoryScreen: React.FC<{
 
     // Modal States
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
     const [isAiProcessing, setIsAiProcessing] = useState(false);
     const fileInputRef = React.useRef<HTMLInputElement>(null);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -342,144 +344,178 @@ export const InventoryScreen: React.FC<{
             return;
         }
         
-        let finalPesticideId = '';
-        let finalPesticideName = productName.trim();
-        let finalCategory = formData.category;
+        setIsSaving(true);
+        try {
+            let finalPesticideId = '';
+            let finalPesticideName = productName.trim();
+            let finalCategory = formData.category;
 
-        const existingPest = selectedPesticide || pesticides.find(p => p.name.toLocaleLowerCase('tr-TR') === finalPesticideName.toLocaleLowerCase('tr-TR'));
-        
-        if (existingPest) {
-            finalPesticideId = existingPest.id;
-            finalPesticideName = existingPest.name;
-            finalCategory = existingPest.category;
-        } else {
-            finalPesticideId = crypto.randomUUID();
-            const newPest: Pesticide = {
-                id: finalPesticideId,
-                name: finalPesticideName,
-                activeIngredient: 'Belirtilmedi',
-                defaultDosage: '100ml/100L',
+            const existingPest = selectedPesticide || pesticides.find(p => p.name.toLocaleLowerCase('tr-TR') === finalPesticideName.toLocaleLowerCase('tr-TR'));
+            
+            if (existingPest) {
+                finalPesticideId = existingPest.id;
+                finalPesticideName = existingPest.name;
+                finalCategory = existingPest.category;
+            } else {
+                finalPesticideId = crypto.randomUUID();
+                const newPest: Pesticide = {
+                    id: finalPesticideId,
+                    name: finalPesticideName,
+                    activeIngredient: 'Belirtilmedi',
+                    defaultDosage: '100ml/100L',
+                    category: finalCategory,
+                    description: 'Depo eklemesi ile otomatik eklendi.'
+                };
+                await dbService.addGlobalPesticide(newPest);
+                setPesticides(prev => [...prev, newPest]);
+            }
+
+            const parseFloatSafe = (val: string | number) => parseFloat(String(val).replace(',', '.')) || 0;
+            
+            const addQty = parseFloatSafe(formData.quantity);
+            const buyingPrice = parseFloatSafe(formData.buyingPrice);
+            const cashBuyingPrice = parseFloatSafe(formData.cashBuyingPrice) || buyingPrice;
+            const sellingPrice = parseFloatSafe(formData.sellingPrice);
+            const cashPrice = parseFloatSafe(formData.cashPrice) || sellingPrice;
+
+            const inventoryExisting = inventory.find(i => i.pesticideId === finalPesticideId);
+            
+            if (inventoryExisting) {
+                const newTotalQty = inventoryExisting.quantity + addQty;
+                const updatedItem: InventoryItem = {
+                    ...inventoryExisting,
+                    quantity: newTotalQty,
+                    unit: formData.unit || inventoryExisting.unit,
+                    buyingPrice: buyingPrice !== 0 ? buyingPrice : inventoryExisting.buyingPrice,
+                    cashBuyingPrice: cashBuyingPrice !== 0 ? cashBuyingPrice : inventoryExisting.cashBuyingPrice,
+                    sellingPrice: sellingPrice !== 0 ? sellingPrice : inventoryExisting.sellingPrice,
+                    cashPrice: cashPrice !== 0 ? cashPrice : inventoryExisting.cashPrice,
+                    barcode: formData.barcode || inventoryExisting.barcode,
+                    lastUpdated: new Date().toISOString(),
+                    lowStockThreshold: parseFloatSafe(formData.lowStockThreshold) !== 0 ? parseFloatSafe(formData.lowStockThreshold) : inventoryExisting.lowStockThreshold
+                };
+
+                if (addQty !== 0) {
+                    updatedItem.adjustments = [
+                        ...(updatedItem.adjustments || []),
+                        {
+                            date: new Date().toISOString(),
+                            amount: addQty,
+                            note: 'Depomdan Eklenen'
+                        }
+                    ];
+                }
+
+                await updateInventoryItem(updatedItem);
+                showToast('Ürün depoda mevcuttu. Var olan ürünün üzerine miktar başarıyla eklendi.', 'success');
+                hapticFeedback('success');
+                closeModal();
+                return;
+            }
+
+            const newItem: InventoryItem = {
+                id: crypto.randomUUID(),
+                pesticideId: finalPesticideId,
+                pesticideName: finalPesticideName,
                 category: finalCategory,
-                description: 'Depo eklemesi ile otomatik eklendi.'
-            };
-            await dbService.addGlobalPesticide(newPest);
-            setPesticides(prev => [...prev, newPest]);
-        }
-
-        const parseFloatSafe = (val: string | number) => parseFloat(String(val).replace(',', '.')) || 0;
-        
-        const addQty = parseFloatSafe(formData.quantity);
-        const buyingPrice = parseFloatSafe(formData.buyingPrice);
-        const cashPrice = parseFloatSafe(formData.cashPrice);
-
-        const inventoryExisting = inventory.find(i => i.pesticideId === finalPesticideId);
-        
-        if (inventoryExisting) {
-            // Depoda var ise üzerine ekle (update inventory item)
-            const newTotalQty = inventoryExisting.quantity + addQty;
-            const updatedItem: InventoryItem = {
-                ...inventoryExisting,
-                quantity: newTotalQty,
-                unit: formData.unit || inventoryExisting.unit,
-                // Kullanıcı yeni fiyat girdiyse onları baz alabiliriz. Boş veya 0 bırakılmışsa mevcutları koru.
-                buyingPrice: buyingPrice !== 0 ? buyingPrice : inventoryExisting.buyingPrice,
-                cashBuyingPrice: parseFloatSafe(formData.cashBuyingPrice) !== 0 ? parseFloatSafe(formData.cashBuyingPrice) : inventoryExisting.cashBuyingPrice,
-                sellingPrice: parseFloatSafe(formData.sellingPrice) !== 0 ? parseFloatSafe(formData.sellingPrice) : inventoryExisting.sellingPrice,
-                cashPrice: cashPrice !== 0 ? cashPrice : inventoryExisting.cashPrice,
-                barcode: formData.barcode || inventoryExisting.barcode,
+                quantity: addQty,
+                unit: formData.unit,
+                buyingPrice: buyingPrice,
+                cashBuyingPrice: cashBuyingPrice,
+                sellingPrice: sellingPrice,
+                cashPrice: cashPrice,
+                barcode: formData.barcode,
                 lastUpdated: new Date().toISOString(),
-                lowStockThreshold: parseFloatSafe(formData.lowStockThreshold) !== 0 ? parseFloatSafe(formData.lowStockThreshold) : inventoryExisting.lowStockThreshold
+                lowStockThreshold: parseFloatSafe(formData.lowStockThreshold)
             };
 
             if (addQty !== 0) {
-                updatedItem.adjustments = [
-                    ...(updatedItem.adjustments || []),
-                    {
-                        date: new Date().toISOString(),
-                        amount: addQty,
-                        note: 'Depomdan Eklenen'
-                    }
-                ];
+                newItem.adjustments = [{
+                    date: new Date().toISOString(),
+                    amount: addQty,
+                    note: 'Depomdan'
+                }];
             }
+            await addInventoryItem(newItem);
 
-            await updateInventoryItem(updatedItem);
-            showToast('Ürün depoda mevcuttu. Var olan ürünün üzerine miktar başarıyla eklendi.', 'success');
+            showToast('Ürün depoya eklendi', 'success');
             hapticFeedback('success');
             closeModal();
-            return;
+        } catch (error) {
+            console.error("Add item error:", error);
+            showToast('Ürün eklenirken bir hata oluştu', 'error');
+            hapticFeedback('error');
+        } finally {
+            setIsSaving(false);
         }
-
-        const newItem: InventoryItem = {
-            id: crypto.randomUUID(),
-            pesticideId: finalPesticideId,
-            pesticideName: finalPesticideName,
-            category: finalCategory,
-            quantity: addQty,
-            unit: formData.unit,
-            buyingPrice: buyingPrice,
-            cashBuyingPrice: parseFloatSafe(formData.cashBuyingPrice),
-            sellingPrice: parseFloatSafe(formData.sellingPrice),
-            cashPrice: cashPrice === 0 ? buyingPrice : cashPrice,
-            barcode: formData.barcode,
-            lastUpdated: new Date().toISOString(),
-            lowStockThreshold: parseFloatSafe(formData.lowStockThreshold)
-        };
-
-        // Manual adjustment for initial quantity
-        if (addQty !== 0) {
-            newItem.adjustments = [{
-                date: new Date().toISOString(),
-                amount: addQty,
-                note: 'Depomdan'
-            }];
-        }
-        await addInventoryItem(newItem);
-
-        showToast('Ürün depoya eklendi', 'success');
-        hapticFeedback('success');
-        closeModal();
     };
 
     const handleUpdateItem = async () => {
         if (!selectedItem) return;
 
-        const parseFloatSafe = (val: string | number) => parseFloat(String(val).replace(',', '.')) || 0;
-        const newTotalQty = parseFloatSafe(formData.quantity);
-        const qtyDiff = newTotalQty - selectedItem.quantity;
+        setIsSaving(true);
+        try {
+            const parseFloatSafe = (val: string | number) => parseFloat(String(val).replace(',', '.')) || 0;
+            const newTotalQty = parseFloatSafe(formData.quantity);
+            const qtyDiff = newTotalQty - selectedItem.quantity;
 
-        const buyingPrice = parseFloatSafe(formData.buyingPrice);
-        const cashPrice = parseFloatSafe(formData.cashPrice);
+            const buyingPrice = parseFloatSafe(formData.buyingPrice);
+            const cashBuyingPrice = parseFloatSafe(formData.cashBuyingPrice) || buyingPrice;
+            const sellingPrice = parseFloatSafe(formData.sellingPrice);
+            const cashPrice = parseFloatSafe(formData.cashPrice) || sellingPrice;
 
-        const updatedItem: InventoryItem = {
-            ...selectedItem,
-            quantity: newTotalQty,
-            unit: formData.unit,
-            buyingPrice: buyingPrice,
-            cashBuyingPrice: parseFloatSafe(formData.cashBuyingPrice),
-            sellingPrice: parseFloatSafe(formData.sellingPrice),
-            cashPrice: cashPrice === 0 ? buyingPrice : cashPrice,
-            barcode: formData.barcode,
-            lastUpdated: new Date().toISOString(),
-            lowStockThreshold: parseFloatSafe(formData.lowStockThreshold)
-        };
+            const updatedItem: InventoryItem = {
+                ...selectedItem,
+                pesticideName: productName.trim() || selectedItem.pesticideName,
+                category: formData.category || selectedItem.category,
+                quantity: newTotalQty,
+                unit: formData.unit,
+                buyingPrice: buyingPrice,
+                cashBuyingPrice: cashBuyingPrice,
+                sellingPrice: sellingPrice,
+                cashPrice: cashPrice,
+                barcode: formData.barcode,
+                lastUpdated: new Date().toISOString(),
+                lowStockThreshold: parseFloatSafe(formData.lowStockThreshold)
+            };
 
-        // Log manual adjustment
-        if (qtyDiff !== 0) {
-            updatedItem.adjustments = [
-                ...(updatedItem.adjustments || []),
-                {
-                    date: new Date().toISOString(),
-                    amount: qtyDiff,
-                    note: 'Depomdan'
-                }
-            ];
+            // Log manual adjustment
+            if (qtyDiff !== 0) {
+                updatedItem.adjustments = [
+                    ...(updatedItem.adjustments || []),
+                    {
+                        date: new Date().toISOString(),
+                        amount: qtyDiff,
+                        note: 'Manuel Stok Düzeltmesi'
+                    }
+                ];
+            }
+            
+            await updateInventoryItem(updatedItem);
+
+            // Sync with global pesticides if possible
+            const currentPest = pesticides.find(p => p.id === updatedItem.pesticideId);
+            if (currentPest && (currentPest.name !== updatedItem.pesticideName || currentPest.category !== updatedItem.category || currentPest.barcode !== updatedItem.barcode)) {
+                await dbService.updateGlobalPesticide({
+                    ...currentPest,
+                    name: updatedItem.pesticideName,
+                    category: updatedItem.category,
+                    barcode: updatedItem.barcode
+                });
+                // Update local state
+                setPesticides(prev => prev.map(p => p.id === currentPest.id ? { ...p, name: updatedItem.pesticideName, category: updatedItem.category, barcode: updatedItem.barcode } : p));
+            }
+            
+            showToast('Ürün bilgileri güncellendi', 'success');
+            hapticFeedback('success');
+            closeModal();
+        } catch (error) {
+            console.error("Update item error:", error);
+            showToast('Güncelleme sırasında bir hata oluştu', 'error');
+            hapticFeedback('error');
+        } finally {
+            setIsSaving(false);
         }
-        
-        await updateInventoryItem(updatedItem);
-
-        showToast('Ürün bilgileri güncellendi', 'success');
-        hapticFeedback('success');
-        closeModal();
     };
 
     const handleAuditItem = async () => {
@@ -490,10 +526,17 @@ export const InventoryScreen: React.FC<{
             lastAuditDate: new Date().toISOString()
         };
         
-        await updateInventoryItem(updated);
-        setSelectedDetailItem(updated);
-        showToast('Stok sayımı onaylandı ve denetlendi olarak işaretlendi.', 'success');
-        hapticFeedback('success');
+        setIsSaving(true);
+        try {
+            await updateInventoryItem(updated);
+            setSelectedDetailItem(updated);
+            showToast('Stok sayımı onaylandı ve denetlendi olarak işaretlendi.', 'success');
+            hapticFeedback('success');
+        } catch (error) {
+            showToast('Hata oluştu', 'error');
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     const handleDeleteItem = async (id: string) => {
@@ -565,78 +608,99 @@ export const InventoryScreen: React.FC<{
             return;
         }
 
-        const updatedItem: InventoryItem = {
-            ...selectedDetailItem,
-            quantity: selectedDetailItem.quantity + addQty,
-            lastUpdated: new Date().toISOString(),
-            adjustments: [
-                ...(selectedDetailItem.adjustments || []),
-                {
-                    date: new Date().toISOString(),
-                    amount: addQty,
-                    note: 'Depomdan Eklenen'
-                }
-            ]
-        };
+        setIsSaving(true);
+        try {
+            const updatedItem: InventoryItem = {
+                ...selectedDetailItem,
+                quantity: selectedDetailItem.quantity + addQty,
+                lastUpdated: new Date().toISOString(),
+                adjustments: [
+                    ...(selectedDetailItem.adjustments || []),
+                    {
+                        date: new Date().toISOString(),
+                        amount: addQty,
+                        note: 'Hızlı Stok Girişi'
+                    }
+                ]
+            };
 
-        await updateInventoryItem(updatedItem);
-        showToast('Stok başarıyla eklendi', 'success');
-        hapticFeedback('success');
-        setIsQuickStockModalOpen(false);
-        setQuickStockQuantity('');
-        setSelectedDetailItem(updatedItem);
+            await updateInventoryItem(updatedItem);
+            showToast('Stok başarıyla eklendi', 'success');
+            hapticFeedback('success');
+            setIsQuickStockModalOpen(false);
+            setQuickStockQuantity('');
+            setSelectedDetailItem(updatedItem);
+        } catch (error) {
+            showToast('Stok eklenirken hata oluştu', 'error');
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     const handleUpdateAdjustment = async () => {
         if (!selectedDetailItem || editingAdjustmentIdx === null) return;
         const newAmount = parseFloat(editingAdjustmentAmount.replace(',', '.')) || 0;
         
-        const adjustments = [...(selectedDetailItem.adjustments || [])];
-        const oldAmount = adjustments[editingAdjustmentIdx].amount;
-        
-        adjustments[editingAdjustmentIdx] = {
-            ...adjustments[editingAdjustmentIdx],
-            amount: newAmount,
-            date: new Date().toISOString() // Optional: update date to now, or keep old? User said "editable", maybe just amount is enough.
-        };
+        setIsSaving(true);
+        try {
+            const adjustments = [...(selectedDetailItem.adjustments || [])];
+            const oldAmount = adjustments[editingAdjustmentIdx].amount;
+            
+            adjustments[editingAdjustmentIdx] = {
+                ...adjustments[editingAdjustmentIdx],
+                amount: newAmount,
+                date: new Date().toISOString()
+            };
 
-        const quantityDiff = newAmount - oldAmount;
-        const updatedItem: InventoryItem = {
-            ...selectedDetailItem,
-            quantity: selectedDetailItem.quantity + quantityDiff,
-            adjustments,
-            lastUpdated: new Date().toISOString()
-        };
+            const quantityDiff = newAmount - oldAmount;
+            const updatedItem: InventoryItem = {
+                ...selectedDetailItem,
+                quantity: selectedDetailItem.quantity + quantityDiff,
+                adjustments,
+                lastUpdated: new Date().toISOString()
+            };
 
-        await updateInventoryItem(updatedItem);
-        showToast('Hareket güncellendi', 'success');
-        hapticFeedback('success');
-        setIsEditAdjustmentModalOpen(false);
-        setEditingAdjustmentIdx(null);
-        setSelectedDetailItem(updatedItem);
+            await updateInventoryItem(updatedItem);
+            showToast('Hareket güncellendi', 'success');
+            hapticFeedback('success');
+            setIsEditAdjustmentModalOpen(false);
+            setEditingAdjustmentIdx(null);
+            setSelectedDetailItem(updatedItem);
+        } catch (error) {
+            showToast('Hata oluştu', 'error');
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     const handleDeleteAdjustment = async () => {
         if (!selectedDetailItem || editingAdjustmentIdx === null) return;
         
-        const adjustments = [...(selectedDetailItem.adjustments || [])];
-        const removedAmount = adjustments[editingAdjustmentIdx].amount;
-        
-        adjustments.splice(editingAdjustmentIdx, 1);
+        setIsSaving(true);
+        try {
+            const adjustments = [...(selectedDetailItem.adjustments || [])];
+            const removedAmount = adjustments[editingAdjustmentIdx].amount;
+            
+            adjustments.splice(editingAdjustmentIdx, 1);
 
-        const updatedItem: InventoryItem = {
-            ...selectedDetailItem,
-            quantity: selectedDetailItem.quantity - removedAmount,
-            adjustments,
-            lastUpdated: new Date().toISOString()
-        };
+            const updatedItem: InventoryItem = {
+                ...selectedDetailItem,
+                quantity: selectedDetailItem.quantity - removedAmount,
+                adjustments,
+                lastUpdated: new Date().toISOString()
+            };
 
-        await updateInventoryItem(updatedItem);
-        showToast('Hareket silindi', 'success');
-        hapticFeedback('medium');
-        setIsEditAdjustmentModalOpen(false);
-        setEditingAdjustmentIdx(null);
-        setSelectedDetailItem(updatedItem);
+            await updateInventoryItem(updatedItem);
+            showToast('Hareket silindi', 'success');
+            hapticFeedback('medium');
+            setIsEditAdjustmentModalOpen(false);
+            setEditingAdjustmentIdx(null);
+            setSelectedDetailItem(updatedItem);
+        } catch (error) {
+            showToast('Silme sırasında hata oluştu', 'error');
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     const closeModal = () => {
@@ -674,37 +738,48 @@ export const InventoryScreen: React.FC<{
             reader.readAsDataURL(file);
             const base64Data = await base64Promise;
 
-            const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+            const apiKey = process.env.GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
+            const ai = new GoogleGenAI({ apiKey: apiKey?.replace(/['"]+/g, '').trim() });
             
-            const response = await ai.models.generateContent({
-                model: "gemini-3-flash-preview",
-                contents: [
-                    {
-                        parts: [
-                            { inlineData: { data: base64Data, mimeType: file.type } },
-                            { text: "Bu bir zirai ilaç veya gübre etiketi. Lütfen etiketteki bilgileri oku ve şu formatta JSON olarak dön: Ürün Adı (productName), Kategori (category - HERBICIDE, INSECTICIDE, FUNGICIDE, FERTILIZER, ACARICIDE, OTHER seçeneklerinden biri), Birim (unit - Adet, Litre, Kg, Kutu, Çuval seçeneklerinden biri). Sadece JSON dön." }
-                        ]
-                    }
-                ],
-                config: {
-                    responseMimeType: "application/json",
-                    responseSchema: {
-                        type: Type.OBJECT,
-                        properties: {
-                            productName: { type: Type.STRING },
-                            category: { 
-                                type: Type.STRING,
-                                enum: Object.values(PesticideCategory)
+            const generateContent = async (modelName: string) => {
+                return await ai.models.generateContent({
+                    model: modelName,
+                    contents: [
+                        {
+                            parts: [
+                                { inlineData: { data: base64Data, mimeType: file.type } },
+                                { text: "Bu bir zirai ilaç veya gübre etiketi. Lütfen etiketteki bilgileri oku ve şu formatta JSON olarak dön: Ürün Adı (productName), Kategori (category - HERBICIDE, INSECTICIDE, FUNGICIDE, FERTILIZER, ACARICIDE, OTHER seçeneklerinden biri), Birim (unit - Adet, Litre, Kg, Kutu, Çuval seçeneklerinden biri). Sadece JSON dön." }
+                            ]
+                        }
+                    ],
+                    config: {
+                        responseMimeType: "application/json",
+                        responseSchema: {
+                            type: Type.OBJECT,
+                            properties: {
+                                productName: { type: Type.STRING },
+                                category: { 
+                                    type: Type.STRING,
+                                    enum: Object.values(PesticideCategory)
+                                },
+                                unit: { 
+                                    type: Type.STRING,
+                                    enum: ['Adet', 'Litre', 'Kg', 'Kutu', 'Çuval']
+                                }
                             },
-                            unit: { 
-                                type: Type.STRING,
-                                enum: ['Adet', 'Litre', 'Kg', 'Kutu', 'Çuval']
-                            }
-                        },
-                        required: ["productName", "category", "unit"]
+                            required: ["productName", "category", "unit"]
+                        }
                     }
-                }
-            });
+                });
+            };
+
+            let response;
+            try {
+                response = await generateContent("gemini-3-flash-preview");
+            } catch (e) {
+                console.warn("Falling back to gemini-2.5-flash", e);
+                response = await generateContent("gemini-2.5-flash");
+            }
 
             const result = JSON.parse(response.text || '{}');
             
@@ -731,9 +806,19 @@ export const InventoryScreen: React.FC<{
                 showToast('Ürün tanınamadı, lütfen bilgileri manuel girin.', 'error');
             }
 
-        } catch (error) {
+        } catch (error: any) {
             console.error("AI Lens Error:", error);
-            showToast('Yapay zeka analizinde bir hata oluştu.', 'error');
+            const errMsg = typeof error === 'string' ? error : (error?.message || JSON.stringify(error));
+            
+            dbService.addSystemError({
+                id: crypto.randomUUID(),
+                timestamp: Date.now(),
+                source: 'Inventory (AI Lens)',
+                message: errMsg,
+                userEmail: auth.currentUser?.email || 'Bilinmiyor'
+            });
+
+            showToast('Şu anda sunucularımızda aşırı yoğunluk yaşanmaktadır. Lütfen biraz sonra tekrar deneyin.', 'error');
         } finally {
             setIsAiProcessing(false);
             if (e.target) e.target.value = '';
@@ -1725,11 +1810,11 @@ export const InventoryScreen: React.FC<{
                         </div>
                         
                         <div className="p-6 space-y-4">
-                            {isAddModalOpen && (
-                                <div className="space-y-4">
-                                    <div className="space-y-2">
-                                        <div className="flex justify-between items-center">
-                                            <label className="text-xs font-bold text-stone-500 uppercase tracking-widest">Ürün Adı</label>
+                            <div className="space-y-4">
+                                <div className="space-y-2">
+                                    <div className="flex justify-between items-center">
+                                        <label className="text-xs font-bold text-stone-500 uppercase tracking-widest">Ürün Adı</label>
+                                        {isAddModalOpen && (
                                             <button 
                                                 onClick={handleAiLens}
                                                 disabled={isAiProcessing}
@@ -1747,75 +1832,73 @@ export const InventoryScreen: React.FC<{
                                                     </>
                                                 )}
                                             </button>
-                                        </div>
-                                        <div className="relative">
-                                            <Package className="absolute left-3 top-3 text-stone-500" size={16} />
-                                            <input 
-                                                type="text" 
-                                                placeholder="Ürün adını giriniz..." 
-                                                className={`w-full bg-stone-950 border rounded-xl p-3 pl-10 text-stone-200 text-sm outline-none transition-all ${selectedPesticide ? 'border-emerald-500/50' : 'border-stone-800 focus:border-emerald-500/50'}`}
-                                                value={productName}
-                                                onChange={(e) => {
-                                                    setProductName(e.target.value);
-                                                    if (selectedPesticide) setSelectedPesticide(null);
-                                                }}
-                                            />
-                                            {selectedPesticide && (
-                                                <button 
-                                                    onClick={() => {
-                                                        setSelectedPesticide(null);
-                                                        setProductName('');
-                                                    }}
-                                                    className="absolute right-3 top-3 text-stone-500 hover:text-stone-300"
-                                                >
-                                                    <X size={16} />
-                                                </button>
-                                            )}
-                                            
-                                            {/* Suggestions Dropdown */}
-                                            {filteredPesticides.length > 0 && (
-                                                <div className="absolute top-full left-0 right-0 mt-2 bg-stone-900 border border-stone-800 rounded-xl shadow-xl max-h-48 overflow-y-auto z-10 animate-in fade-in slide-in-from-top-2 duration-200">
-                                                    <div className="p-2 border-b border-white/5 bg-stone-950/30">
-                                                        <span className="text-[9px] font-black text-stone-500 uppercase tracking-widest px-1">Kayıtlı İlaçlardan Seç</span>
-                                                    </div>
-                                                    {filteredPesticides.map(p => (
-                                                        <button 
-                                                            key={p.id}
-                                                            onClick={() => {
-                                                                setSelectedPesticide(p);
-                                                                setProductName(p.name);
-                                                                setFormData(prev => ({ ...prev, category: p.category }));
-                                                            }}
-                                                            className="w-full text-left p-3 hover:bg-stone-800 border-b border-white/5 last:border-0 flex justify-between items-center group"
-                                                        >
-                                                            <div>
-                                                                <div className="font-bold text-stone-200 text-sm group-hover:text-emerald-400 transition-colors">{p.name}</div>
-                                                                <div className="text-[10px] text-stone-500">{p.category}</div>
-                                                            </div>
-                                                            <Plus size={14} className="text-stone-700 group-hover:text-emerald-500" />
-                                                        </button>
-                                                    ))}
-                                                </div>
-                                            )}
-                                        </div>
+                                        )}
                                     </div>
-
-                                    {!selectedPesticide && (
-                                        <div className="space-y-2 animate-in fade-in duration-300">
-                                            <label className="text-xs font-bold text-stone-500 uppercase tracking-widest">Kategori</label>
-                                            <select 
-                                                className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 text-stone-200 text-sm outline-none focus:border-emerald-500/50"
-                                                value={formData.category}
-                                                onChange={(e) => setFormData({...formData, category: e.target.value as PesticideCategory})}
+                                    <div className="relative">
+                                        <Package className="absolute left-3 top-3 text-stone-500" size={16} />
+                                        <input 
+                                            type="text" 
+                                            placeholder="Ürün adını giriniz..." 
+                                            className={`w-full bg-stone-950 border rounded-xl p-3 pl-10 text-stone-200 text-sm outline-none transition-all ${selectedPesticide ? 'border-emerald-500/50' : 'border-stone-800 focus:border-emerald-500/50'}`}
+                                            value={productName}
+                                            onChange={(e) => {
+                                                setProductName(e.target.value);
+                                                if (selectedPesticide) setSelectedPesticide(null);
+                                            }}
+                                        />
+                                        {(isAddModalOpen && selectedPesticide) && (
+                                            <button 
+                                                onClick={() => {
+                                                    setSelectedPesticide(null);
+                                                    setProductName('');
+                                                }}
+                                                className="absolute right-3 top-3 text-stone-500 hover:text-stone-300"
                                             >
-                                                {Object.values(PesticideCategory).map(cat => (
-                                                    <option key={cat} value={cat}>{cat}</option>
+                                                <X size={16} />
+                                            </button>
+                                        )}
+                                        
+                                        {/* Suggestions Dropdown */}
+                                        {isAddModalOpen && filteredPesticides.length > 0 && (
+                                            <div className="absolute top-full left-0 right-0 mt-2 bg-stone-900 border border-stone-800 rounded-xl shadow-xl max-h-48 overflow-y-auto z-10 animate-in fade-in slide-in-from-top-2 duration-200">
+                                                <div className="p-2 border-b border-white/5 bg-stone-950/30">
+                                                    <span className="text-[9px] font-black text-stone-500 uppercase tracking-widest px-1">Kayıtlı İlaçlardan Seç</span>
+                                                </div>
+                                                {filteredPesticides.map(p => (
+                                                    <button 
+                                                        key={p.id}
+                                                        onClick={() => {
+                                                            setSelectedPesticide(p);
+                                                            setProductName(p.name);
+                                                            setFormData(prev => ({ ...prev, category: p.category }));
+                                                        }}
+                                                        className="w-full text-left p-3 hover:bg-stone-800 border-b border-white/5 last:border-0 flex justify-between items-center group"
+                                                    >
+                                                        <div>
+                                                            <div className="font-bold text-stone-200 text-sm group-hover:text-emerald-400 transition-colors">{p.name}</div>
+                                                            <div className="text-[10px] text-stone-500">{p.category}</div>
+                                                        </div>
+                                                        <Plus size={14} className="text-stone-700 group-hover:text-emerald-500" />
+                                                    </button>
                                                 ))}
-                                            </select>
-                                        </div>
-                                    )}
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
-                            )}
+
+                                <div className="space-y-2 animate-in fade-in duration-300">
+                                    <label className="text-xs font-bold text-stone-500 uppercase tracking-widest">Kategori</label>
+                                    <select 
+                                        className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 text-stone-200 text-sm outline-none focus:border-emerald-500/50"
+                                        value={formData.category}
+                                        onChange={(e) => setFormData({...formData, category: e.target.value as PesticideCategory})}
+                                    >
+                                        {Object.values(PesticideCategory).map(cat => (
+                                            <option key={cat} value={cat}>{cat}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
 
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-2">
@@ -1954,10 +2037,17 @@ export const InventoryScreen: React.FC<{
                             </button>
                             <button 
                                 onClick={isEditModalOpen ? handleUpdateItem : handleAddItem}
-                                disabled={isAddModalOpen && !productName.trim()}
-                                className="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-sm shadow-lg shadow-emerald-900/20 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled={(isAddModalOpen && !productName.trim()) || isSaving}
+                                className="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-sm shadow-lg shadow-emerald-900/20 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                             >
-                                {isEditModalOpen ? 'Güncelle' : 'Kaydet'}
+                                {isSaving ? (
+                                    <>
+                                        <RefreshCw size={14} className="animate-spin" />
+                                        {isEditModalOpen ? 'Güncelleniyor...' : 'Kaydediliyor...'}
+                                    </>
+                                ) : (
+                                    isEditModalOpen ? 'Güncelle' : 'Kaydet'
+                                )}
                             </button>
                         </div>
                     </div>
@@ -2386,6 +2476,7 @@ export const InventoryScreen: React.FC<{
                 accept="image/*" 
                 capture="environment"
                 onChange={processImageWithAI} 
+                onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
             />
         </div>
     );
