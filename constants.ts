@@ -74,3 +74,40 @@ export const COMMON_CROPS = [
   "Patates", "Soğan", "Sarımsak", "Fasulye", "Nohut", "Mercimek",
   "Yonca", "Fiğ", "Silajlık Mısır", "Kanola", "Soya"
 ].sort((a, b) => a.localeCompare(b, 'tr'));
+
+export const CROP_AGRONOMY_INTEL: Record<string, {
+    soilType: string;
+    irrigationNeeds: string;
+    pestRisk: string[];
+    criticalPeriod: string;
+    yieldPotential: string;
+}> = {
+    "Buğday": { soilType: "Tınlı / Killi-Tınlı", irrigationNeeds: "Sınırlı (Kardeşlenme/Sapa Kalkma)", pestRisk: ["Pas Hastalığı", "Süne", "Külleme"], criticalPeriod: "Mart - Nisan", yieldPotential: "Yüksek (Bakım Şart)" },
+    "Pamuk": { soilType: "Derin / Alüviyal", irrigationNeeds: "Yüksek (Çiçeklenme/Koza Oluşumu)", pestRisk: ["Yeşil Kurt", "Yaprak Biti", "Kırmızı Örümcek"], criticalPeriod: "Haziran - Ağustos", yieldPotential: "Maksimum (Sık Kontrol)" },
+    "Arpa": { soilType: "Kıraç / Orta Derin", irrigationNeeds: "Düşük (Su Stresine Dayanıklı)", pestRisk: ["Yaprak Lekesi", "Arpa Yaprak Pası"], criticalPeriod: "Şubat - Mart", yieldPotential: "Stabil" },
+    "Mısır": { soilType: "Gevşek / Humuslu", irrigationNeeds: "Çok Yüksek (Tepe Püskülü/Tane Bağlama)", pestRisk: ["Koza Kurdu", "Mısır Kurdu", "Yaprak Yanıklığı"], criticalPeriod: "Temmuz - Ağustos", yieldPotential: "Çok Yüksek" },
+    "Ayçiçeği": { soilType: "Her Türlü (Derin Köklü)", irrigationNeeds: "Orta (Tabla Oluşumu)", pestRisk: ["Orobanş", "Ayçiçeği Mildiyösü"], criticalPeriod: "Mayıs - Haziran", yieldPotential: "Orta-Yüksek" },
+    "Domates": { soilType: "Geçirgen / Mineralli", irrigationNeeds: "Sabit Nem (Damlama Önerilir)", pestRisk: ["Tuta Absoluta", "Mildiyö", "Beyaz Sinek"], criticalPeriod: "Tüm Sezon", yieldPotential: "Maksimum Verim" },
+    "Zeytin": { soilType: "Kireçli / Süzek", irrigationNeeds: "Tamamlayıcı (Dane İrileşme)", pestRisk: ["Zeytin Sineği", "Halkalı Leke", "Zeytin Güvesi"], criticalPeriod: "Eylül - Ekim", yieldPotential: "Periyodisite Riski" },
+    "Üzüm": { soilType: "Taşlı / Kumlu-Tınlı", irrigationNeeds: "Kontrollü (Ben Düşme Öncesi)", pestRisk: ["Salkım Güvesi", "Külleme", "Mildiyö"], criticalPeriod: "Mayıs - Temmuz", yieldPotential: "Yüksek Kalite" },
+};
+
+export const DEFAULT_AGRONOMY = { soilType: "Karma / Tınlı", irrigationNeeds: "Ürün Bazlı Değişken", pestRisk: ["Genel Zararlılar"], criticalPeriod: "Bilinmiyor", yieldPotential: "Standart" };
+
+export const CROP_PESTICIDE_COSTS: Record<string, number> = {
+    "Buğday": 500,
+    "Pamuk": 1500,
+    "Arpa": 200,
+    "Mısır": 850,
+    "Ayçiçeği": 450,
+    "Şeker Pancarı": 1100,
+    "Domates": 6500,
+    "Patates": 3000,
+    "Zeytin": 1000,
+    "Üzüm": 3500,
+    "Narenciye": 2500,
+    "Mısırlık (Silajlık)": 600,
+    "Yonca": 300,
+};
+
+export const DEFAULT_PESTICIDE_COST = 600;

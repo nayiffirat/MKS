@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Camera, Save, X, Plus, Calendar, User, MapPin, ChevronRight, Image as ImageIcon, CheckCircle2, Phone, MessageSquare, ArrowLeft, Loader2, Navigation, Clock, ImagePlus, Edit2, Trash2, Share2, Upload, Check, ChevronDown, Copy, FileText, RefreshCw, Bug, AlertCircle } from 'lucide-react';
+import { Camera, Save, X, Plus, Calendar, User, MapPin, ChevronRight, Image as ImageIcon, CheckCircle2, Phone, MessageSquare, MessageCircle, ArrowLeft, Loader2, Navigation, Clock, ImagePlus, Edit2, Trash2, Share2, Upload, Check, ChevronDown, Copy, FileText, RefreshCw, Bug, AlertCircle } from 'lucide-react';
 import { dbService } from '../services/db';
 import { Farmer, VisitLog } from '../types';
 import { useAppViewModel } from '../context/AppContext';
@@ -43,30 +43,12 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
                     setSelectedVisit(null);
                     setEditingId(null);
                 }
-
-                if (state.modal === 'CAMERA') {
-                    startCamera();
-                } else {
-                    stopCamera();
-                }
             }
         };
         window.addEventListener('popstate', handlePop);
         return () => window.removeEventListener('popstate', handlePop);
     }, [visits]);
 
-    const toggleCamera = (open: boolean) => {
-        if (open === isCameraOpen) return;
-        if (open) {
-            window.history.pushState({ ...window.history.state, modal: 'CAMERA' }, '');
-            startCamera();
-        } else if (window.history.state?.modal === 'CAMERA') {
-            window.history.back();
-            return;
-        } else {
-            stopCamera();
-        }
-    };
     const changeViewMode = (mode: 'LIST' | 'FORM' | 'SUCCESS' | 'DETAIL' | 'QUICK_VISIT', detailId?: string) => {
         if (mode === viewMode) return;
         
@@ -94,21 +76,17 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
     // GPS State
     const [coords, setCoords] = useState<{ lat: number, lng: number } | null>(null);
 
-    // Camera & Analysis State
-    const videoRef = useRef<HTMLVideoElement>(null);
-    const streamRef = useRef<MediaStream | null>(null);
+    // Camera & External Input Refs
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const wizardFileInputRef = useRef<HTMLInputElement>(null);
+    const cameraInputRef = useRef<HTMLInputElement>(null);
     
     const [photo, setPhoto] = useState<string | null>(null);
-    const [isCameraOpen, setIsCameraOpen] = useState(false);
     const [isSyncing, setIsSyncing] = useState(false);
 
     const [lastVisitedFarmer, setLastVisitedFarmer] = useState<Farmer | null>(null);
 
     useEffect(() => {
         loadData();
-        return () => stopCamera();
     }, []);
 
     useEffect(() => {
@@ -119,13 +97,6 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
             }
         }
     }, [initialVisitId, visits]);
-
-    // Effect to handle video stream attachment when camera opens
-    useEffect(() => {
-        if (isCameraOpen && streamRef.current && videoRef.current) {
-            videoRef.current.srcObject = streamRef.current;
-        }
-    }, [isCameraOpen]);
 
     useEffect(() => {
         if (viewMode === 'FORM' && !editingId) {
@@ -146,61 +117,6 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
         const fMap: Record<string, Farmer> = {};
         fListRaw.forEach(f => { fMap[f.id] = f; });
         setFarmerMap(fMap);
-    };
-
-    const stopCamera = () => {
-        if (streamRef.current) {
-            streamRef.current.getTracks().forEach(track => {
-                track.stop();
-                track.enabled = false;
-            });
-            streamRef.current = null;
-        }
-        if (videoRef.current) {
-            videoRef.current.srcObject = null;
-            try { videoRef.current.load(); } catch(e) {}
-        }
-        setIsCameraOpen(false);
-    };
-
-    const startCamera = async () => {
-        const constraintsList = [
-            { video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } },
-            { video: { facingMode: 'environment' } },
-            { video: true }
-        ];
-
-        let stream: MediaStream | null = null;
-
-        for (const constraints of constraintsList) {
-            try {
-                stream = await navigator.mediaDevices.getUserMedia(constraints);
-                if (stream) break;
-            } catch (e) {
-                console.warn("Kamera kısıtlaması başarısız, bir sonraki deneniyor...", e);
-            }
-        }
-
-        if (stream) {
-            streamRef.current = stream;
-            setIsCameraOpen(true);
-        } else {
-            console.error("Hiçbir kamera başlatılamadı.");
-            alert("Cihazınızda kamera başlatılamadı. Lütfen 'Galeri / Yükle' seçeneğini kullanarak fotoğraf ekleyin.");
-            setIsCameraOpen(false);
-        }
-    };
-
-    const capturePhoto = async () => {
-        if (!videoRef.current) return;
-        const canvas = document.createElement('canvas');
-        canvas.width = videoRef.current.videoWidth; 
-        canvas.height = videoRef.current.videoHeight;
-        canvas.getContext('2d')?.drawImage(videoRef.current, 0, 0);
-        
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-        setPhoto(dataUrl);
-        stopCamera();
     };
 
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -234,13 +150,13 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
         
         if (editingId) { 
             await updateVisit({ id: editingId, ...visitData }); 
-            showToast('Ziyaret kaydı güncellendi', 'success');
+            showToast('Reçete güncellendi', 'success');
             hapticFeedback('success');
             changeViewMode('LIST'); 
         } else { 
             await dbService.addVisit({ id: crypto.randomUUID(), ...visitData }); 
             setLastVisitedFarmer(currentFarmer || null); 
-            showToast('Ziyaret kaydı başarıyla oluşturuldu', 'success');
+            showToast('Reçete başarıyla oluşturuldu', 'success');
             hapticFeedback('success');
             changeViewMode('SUCCESS'); 
         }
@@ -252,6 +168,7 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
         setEditingId(null); setSelectedFarmerId(''); setSelectedFieldId(''); setNote(''); setPhoto(null); setCoords(null);
         setPestFound(''); setDiseaseFound(''); setSeverity('LOW');
         if (fileInputRef.current) fileInputRef.current.value = '';
+        if (cameraInputRef.current) cameraInputRef.current.value = '';
     };
 
     const handleEdit = (visit: VisitLog) => {
@@ -262,9 +179,9 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
     };
 
     const handleDelete = async (id: string) => {
-        if (confirm("Bu ziyaret kaydını silmek istediğinize emin misiniz?")) { 
+        if (confirm("Bu reçeteyi silmek istediğinize emin misiniz?")) { 
             await softDeleteVisit(id); 
-            showToast('Ziyaret kaydı silindi', 'success');
+            showToast('Reçete silindi', 'success');
             hapticFeedback('medium');
             await loadData();
             if (viewMode === 'DETAIL') {
@@ -299,6 +216,42 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
         }
     };
 
+    const handleWhatsAppShare = () => {
+        if (!selectedVisit) return;
+        const farmer = farmerMap[selectedVisit.farmerId];
+        const field = farmer?.fields?.find(f => f.id === selectedVisit.fieldId);
+
+        let text = `🌱 *ZİRAİ DANIŞMANLIK SAHA RAPORU* 🌱\n`;
+        text += `━━━━━━━━━━━━━━━━━━━━━━\n`;
+        text += `👤 *Üretici:* ${farmer?.fullName || 'Bilinmiyor'}\n`;
+        if (farmer?.village || field) {
+            text += `📍 *Konum:* ${farmer?.village || ''} ${field ? `- ${field.name} (${field.crop})` : ''}\n`.trim() + '\n';
+        }
+        text += `📅 *Tarih:* ${new Date(selectedVisit.date).toLocaleDateString('tr-TR')} - ${new Date(selectedVisit.date).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}\n\n`;
+
+        if (selectedVisit.pestFound || selectedVisit.diseaseFound || selectedVisit.severity) {
+            text += `🔍 *SAHA BULGULARI:*\n`;
+            if (selectedVisit.pestFound) text += `• Zararlı: ${selectedVisit.pestFound}\n`;
+            if (selectedVisit.diseaseFound) text += `• Hastalık: ${selectedVisit.diseaseFound}\n`;
+            if (selectedVisit.severity) {
+                const sevTR = selectedVisit.severity === 'HIGH' ? 'Yüksek' : selectedVisit.severity === 'MEDIUM' ? 'Orta' : 'Düşük';
+                text += `• Şiddet: ${sevTR}\n`;
+            }
+            text += `\n`;
+        }
+
+        if (selectedVisit.note) {
+            text += `📝 *MÜHENDİS NOTU & ÇÖZÜM:*\n${selectedVisit.note}\n\n`;
+        }
+
+        text += `━━━━━━━━━━━━━━━━━━━━━━\n`;
+        text += `Bu rapor Zirai Danışman uygulamasından oluşturulmuştur.`;
+
+        const encoded = encodeURIComponent(text);
+        window.open(`https://wa.me/?text=${encoded}`, '_blank');
+        hapticFeedback('medium');
+    };
+
     // --- RENDERERS ---
 
     // 1. SUCCESS SCREEN
@@ -308,7 +261,7 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
                 <div className="w-16 h-16 bg-emerald-900/30 rounded-full flex items-center justify-center mb-4 border border-emerald-500/30">
                     <CheckCircle2 size={32} className="text-emerald-500" />
                 </div>
-                <h2 className="text-lg font-bold text-stone-100 mb-1">Ziyaret Kaydedildi!</h2>
+                <h2 className="text-lg font-bold text-stone-100 mb-1">Reçete Kaydedildi!</h2>
                 <p className="text-stone-400 text-center text-xs mb-6"><span className="text-emerald-400 font-bold">{lastVisitedFarmer.fullName}</span> için rapor oluşturuldu.</p>
                 <div className="w-full max-sm space-y-2.5">
                     <a href={`tel:${lastVisitedFarmer.phoneNumber}`} className="flex items-center justify-center w-full py-3 bg-stone-800 text-stone-200 border border-white/5 rounded-2xl font-bold hover:bg-stone-700 transition-all text-xs"><Phone size={16} className="mr-2 text-emerald-500"/> Üreticiyi Ara</a>
@@ -400,7 +353,7 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
                     {/* Photo */}
                     {selectedVisit.photoUri && (
                         <div className="rounded-3xl overflow-hidden shadow-2xl border border-white/10 relative group">
-                            <img src={selectedVisit.photoUri} alt="Ziyaret Fotoğrafı" className="w-full h-auto object-cover" />
+                            <img src={selectedVisit.photoUri} alt="Fotoğraf" className="w-full h-auto object-cover" />
                             <div className="absolute bottom-0 left-0 w-full p-4 bg-gradient-to-t from-black/80 to-transparent">
                                 <span className="text-white text-xs font-bold flex items-center"><ImageIcon size={14} className="mr-2"/> Saha Fotoğrafı</span>
                             </div>
@@ -413,15 +366,24 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
                         <p className="text-stone-300 text-sm leading-7 whitespace-pre-wrap">{selectedVisit.note || 'Not girilmemiş.'}</p>
                     </div>
 
-                    {/* Location Action */}
-                    {selectedVisit.latitude && (
+                    {/* Actions */}
+                    <div className="grid grid-cols-1 gap-3">
                         <button 
-                            onClick={() => openMap(selectedVisit.latitude!, selectedVisit.longitude!)}
-                            className="w-full py-4 bg-stone-800 text-stone-300 rounded-2xl font-bold flex items-center justify-center border border-white/5 hover:bg-stone-700 transition-all shadow-lg active:scale-95"
+                            onClick={handleWhatsAppShare}
+                            className="w-full py-4 bg-[#25D366] text-white rounded-2xl font-bold flex items-center justify-center hover:bg-[#20bd5a] transition-all shadow-lg shadow-[#25D366]/20 active:scale-95"
                         >
-                            <Navigation size={18} className="mr-2 text-emerald-500" /> Konumu Haritada Aç
+                            <MessageCircle size={18} className="mr-2" /> Raporu WhatsApp ile Gönder
                         </button>
-                    )}
+                        
+                        {selectedVisit.latitude && (
+                            <button 
+                                onClick={() => openMap(selectedVisit.latitude!, selectedVisit.longitude!)}
+                                className="w-full py-4 bg-stone-800 text-stone-300 rounded-2xl font-bold flex items-center justify-center border border-white/5 hover:bg-stone-700 transition-all active:scale-95"
+                            >
+                                <Navigation size={18} className="mr-2 text-emerald-500" /> Konumu Haritada Aç
+                            </button>
+                        )}
+                    </div>
                 </div>
             </div>
         );
@@ -434,7 +396,7 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
                 <div className="p-4 max-w-3xl mx-auto pb-24">
                     <header className="mb-4 sticky top-0 bg-stone-950/80 backdrop-blur z-10 py-2 border-b border-white/5 flex justify-between items-center">
                         <div>
-                            <h2 className="text-lg font-bold text-stone-100">Ziyaret Defteri</h2>
+                            <h2 className="text-lg font-bold text-stone-100">Reçeteler</h2>
                             <p className="text-[10px] text-stone-500">Saha gözlemleri ve kontroller</p>
                             {userProfile.lastSyncTime && (
                                 <p className="text-[9px] text-emerald-500/80 mt-0.5 flex items-center">
@@ -456,7 +418,7 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
                             onClick={() => changeViewMode('QUICK_VISIT')}
                             className="px-3 py-1.5 bg-emerald-600 text-white rounded-xl border border-emerald-500/20 hover:bg-emerald-500 transition-all active:scale-95 flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider"
                         >
-                            <Plus size={14} /> Hızlı Ziyaret
+                            <Plus size={14} /> Hızlı Reçete
                         </button>
                     </header>
 
@@ -523,7 +485,7 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
             <div className="p-4 max-w-md mx-auto">
                 <header className="mb-6 flex items-center justify-between">
                     <button onClick={() => changeViewMode('LIST')} className="p-2 text-stone-400"><ArrowLeft /></button>
-                    <h2 className="text-lg font-bold text-stone-100">Hızlı Ziyaret</h2>
+                    <h2 className="text-lg font-bold text-stone-100">Hızlı Reçete</h2>
                     <div className="w-10"></div>
                 </header>
                 
@@ -545,16 +507,16 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
                                     id: crypto.randomUUID(),
                                     farmerId: selectedFarmerId,
                                     date: new Date().toISOString(),
-                                    note: 'Hızlı ziyaret',
+                                    note: 'Hızlı reçete',
                                     severity: 'LOW',
                                     createdById: userProfile.id
                                 });
-                                showToast('Ziyaret kaydedildi', 'success');
+                                showToast('Reçete kaydedildi', 'success');
                                 changeViewMode('LIST');
                             }}
                             className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-bold flex items-center justify-center hover:bg-emerald-500 transition-all active:scale-95"
                         >
-                            <CheckCircle2 size={20} className="mr-2" /> Ziyaret Edildi
+                            <CheckCircle2 size={20} className="mr-2" /> Reçete Eklendi
                         </button>
                     )}
                 </div>
@@ -567,7 +529,7 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
         <div className="p-4 max-w-2xl mx-auto pb-24 animate-in slide-in-from-right duration-200">
             <div className="flex items-center justify-between mb-4">
                 <button onClick={() => { resetForm(); changeViewMode('LIST'); }} className="text-stone-400 font-medium flex items-center hover:text-stone-200 text-xs"><X size={16} className="mr-1"/> İptal</button>
-                <h2 className="text-base font-bold text-emerald-400">{editingId ? 'Ziyareti Düzenle' : 'Yeni Kayıt'}</h2>
+                <h2 className="text-base font-bold text-emerald-400">{editingId ? 'Reçeteyi Düzenle' : 'Yeni Kayıt'}</h2>
                 <div className="w-8"></div>
             </div>
 
@@ -612,25 +574,40 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
                                 </h4>
                             </div>
                             <button 
-                                onClick={() => { setPhoto(null); startCamera(); }} 
+                                onClick={() => { setPhoto(null); }} 
                                 className="p-2 bg-stone-800 text-stone-400 rounded-lg hover:text-white mr-1"
-                                title="Yeniden Çek"
+                                title="Fotorafı Kaldır"
                             >
-                                <RefreshCw size={16}/>
+                                <X size={16}/>
                             </button>
                         </div>
                     ) : (
-                        <button 
-                            onClick={startCamera}
-                            className="w-full py-6 bg-gradient-to-br from-stone-900 to-stone-950 border border-dashed border-stone-700 rounded-2xl flex flex-col items-center justify-center hover:border-emerald-500/50 hover:bg-stone-900/80 transition-all group"
-                        >
-                            <div className="w-12 h-12 rounded-full bg-stone-800 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform shadow-lg group-hover:bg-stone-700">
-                                <Camera size={20} className="text-emerald-400" />
-                            </div>
-                            <span className="text-stone-300 font-bold text-xs">Fotoğraf Ekle</span>
-                            <span className="text-[9px] text-stone-500 mt-1">Saha gözlemi için fotoğraf çekin</span>
-                        </button>
+                        <div className="grid grid-cols-2 gap-3 w-full">
+                            <button 
+                                onClick={() => { cameraInputRef.current?.click(); }}
+                                className="w-full py-4 bg-emerald-600/10 border border-emerald-500/20 rounded-2xl flex flex-col items-center justify-center hover:bg-emerald-600/20 hover:border-emerald-500/40 transition-all group"
+                            >
+                                <div className="w-10 h-10 rounded-full bg-emerald-900/40 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform text-emerald-400">
+                                    <Camera size={18} />
+                                </div>
+                                <span className="text-emerald-300 font-bold text-xs">Kamera</span>
+                            </button>
+                            
+                            <button 
+                                onClick={() => { fileInputRef.current?.click(); }}
+                                className="w-full py-4 bg-stone-800/40 border border-white/5 rounded-2xl flex flex-col items-center justify-center hover:bg-stone-800 hover:border-white/10 transition-all group"
+                            >
+                                <div className="w-10 h-10 rounded-full bg-stone-800 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform text-stone-400 group-hover:text-stone-300">
+                                    <ImageIcon size={18} />
+                                </div>
+                                <span className="text-stone-300 font-bold text-xs">Galeri</span>
+                            </button>
+                        </div>
                     )}
+                    
+                    {/* Hidden Inputs for Native OS Integration */}
+                    <input type="file" accept="image/*" capture="environment" className="hidden" ref={cameraInputRef} onChange={handleFileUpload} />
+                    <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
                 </div>
 
                 {/* PEST & DISEASE SELECTION */}

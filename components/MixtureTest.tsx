@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { ChevronLeft, FlaskConical, Search, Check, X, Loader2, AlertTriangle, Info } from 'lucide-react';
+import { ChevronLeft, FlaskConical, Search, Check, X, Loader2, Info } from 'lucide-react';
+import { GoogleGenAI } from "@google/genai";
 import { useAppViewModel } from '../context/AppContext';
-import { GoogleGenAI } from '@google/genai';
 import { Pesticide } from '../types';
 import { dbService } from '../services/db';
 import { motion } from 'motion/react';
@@ -27,7 +27,7 @@ export const MixtureTest: React.FC<MixtureTestProps> = ({ onBack }) => {
     }, []);
 
     const filteredLibrary = useMemo(() => {
-        return library.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()));
+        return library.filter(p => p.name.toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR')));
     }, [library, searchTerm]);
 
     const togglePesticide = (pesticide: Pesticide) => {
@@ -48,24 +48,57 @@ export const MixtureTest: React.FC<MixtureTestProps> = ({ onBack }) => {
         hapticFeedback('medium');
 
         try {
-            const apiKey = process.env.GEMINI_API_KEY;
-            const ai = new GoogleGenAI({ apiKey });
-            
             const pesticideNames = selectedPesticides.map(p => p.name).join(', ');
-            const prompt = `Şu tarım ilaçlarının (veya etken maddelerinin) karışım durumunu test et: ${pesticideNames}. 
-            Karışıp karışamayacağını, neden karışmadığını veya karışırken nelere dikkat edilmesi gerektiğini kısa bir özetle yaz. 
-            Eğer kesin bir bilgi yoksa, "Kavanoz testi yapılması önerilir" şeklinde belirt.`;
+            
+            // FRONTEND DIRECT GEMINI CALL
+            const userManualKey = localStorage.getItem('GEMINI_API_KEY_MANUAL');
+            const apiKey = userManualKey || import.meta.env.VITE_GEMINI_API_KEY || (process as any)?.env?.GEMINI_API_KEY;
+            
+            if (apiKey) {
+                const ai = new GoogleGenAI({ apiKey: apiKey.replace(/['"]+/g, '').trim() });
+                const prompt = `Şu tarım ilaçlarının (veya etken maddelerinin) karışım durumunu test et: ${pesticideNames}. 
+                Karışıp karışamayacağını, neden karışmadığını veya karışırken nelere dikkat edilmesi gerektiğini kısa bir özetle yaz. 
+                Eğer kesin bir bilgi yoksa, "Kavanoz testi yapılması önerilir" şeklinde belirt.`;
 
-            const response = await ai.models.generateContent({
-                model: 'gemini-3-flash-preview',
-                contents: prompt
+                const response = await ai.models.generateContent({
+                    model: 'gemini-2.5-flash',
+                    contents: prompt,
+                    config: {
+                        temperature: 0.1
+                    }
+                });
+
+                if (response.text) {
+                    setResult(response.text);
+                    hapticFeedback('success');
+                    setIsTesting(false);
+                    return;
+                }
+            }
+
+            const res = await fetch('/api/ai/mixture', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pesticideNames })
             });
 
-            setResult(response.text || 'Test sonucu alınamadı.');
+            if (!res.ok) {
+                const errorData = await res.json();
+                throw new Error(errorData.error || 'Sunucu hatası oluştu');
+            }
+
+            const data = await res.json();
+
+            if (!data.result) {
+                throw new Error('Test sonucu alınamadı.');
+            }
+
+            setResult(data.result);
             hapticFeedback('success');
-        } catch (error) {
+        } catch (error: any) {
             console.error("Mixture Test Error:", error);
-            showToast('Test sırasında bir hata oluştu.', 'error');
+            let userFriendlyMessage = 'Test sırasında bir hata oluştu: ' + error.message;
+            showToast(userFriendlyMessage, 'error');
             hapticFeedback('error');
         } finally {
             setIsTesting(false);
@@ -86,8 +119,8 @@ export const MixtureTest: React.FC<MixtureTestProps> = ({ onBack }) => {
                     <p className="text-[10px] font-bold text-purple-500 uppercase tracking-widest">Yapay Zeka Destekli</p>
                 </div>
             </div>
-
-            <div className="bg-stone-900 border border-white/10 rounded-2xl p-4">
+ 
+                <div className="bg-stone-900 border border-white/10 rounded-2xl p-4">
                 <div className="relative mb-4">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-500" size={16} />
                     <input 

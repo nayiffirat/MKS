@@ -3,7 +3,7 @@ import {
     Search, Plus, Package, DollarSign, TrendingUp, 
     Trash2, Edit2, Save, X, AlertCircle, Filter,
     ArrowUpRight, ArrowDownRight, BarChart3, PieChart, FlaskConical,
-    History, User, Calendar, List, Download, Eye, EyeOff, Camera, Barcode
+    History, User, Calendar, List, Download, Eye, EyeOff, Camera, Barcode, Truck, RefreshCw, ChevronRight, ClipboardCheck
 } from 'lucide-react';
 import BarcodeScanner from './BarcodeScanner';
 import { 
@@ -12,30 +12,40 @@ import {
 } from 'recharts';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { GoogleGenAI, Type } from "@google/genai";
 import { dbService } from '../services/db';
 import { InventoryItem, Pesticide, PesticideCategory } from '../types';
 import { useAppViewModel } from '../context/AppContext';
 import { formatCurrency, getCurrencySuffix } from '../utils/currency';
+import { ConfirmationModal } from './ConfirmationModal';
 
-export const InventoryScreen: React.FC = () => {
+export const InventoryScreen: React.FC<{ 
+    onNavigateToPrescription?: (id: string) => void;
+    onNavigateToSupplier?: (id: string) => void;
+}> = ({ onNavigateToPrescription, onNavigateToSupplier }) => {
     const { 
         inventory, 
         addInventoryItem, 
         updateInventoryItem, 
-        deleteInventoryItem, 
+        deleteInventoryItem, softDeleteInventoryItem, restoreInventoryItem, permanentlyDeleteInventoryItem,
         refreshInventory,
         refreshStats,
         showToast,
         hapticFeedback,
         farmers,
         prescriptions,
+        suppliers,
+        supplierPurchases,
+        addSupplierPurchase,
+        updateSupplier,
         stats,
         userProfile,
         updateUserProfile,
         activeTeamMember,
         prescriptionLabel,
         farmerLabel,
-        farmerPluralLabel
+        farmerPluralLabel,
+        accounts
     } = useAppViewModel();
     const isSales = activeTeamMember?.role === 'SALES';
     const canEditInventory = !isSales;
@@ -50,19 +60,76 @@ export const InventoryScreen: React.FC = () => {
 
     // Modal States
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+    const [isAiProcessing, setIsAiProcessing] = useState(false);
+    const fileInputRef = React.useRef<HTMLInputElement>(null);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+    const [isQuickStockModalOpen, setIsQuickStockModalOpen] = useState(false);
+    const [quickStockQuantity, setQuickStockQuantity] = useState('');
+    const [isEditAdjustmentModalOpen, setIsEditAdjustmentModalOpen] = useState(false);
+    const [editingAdjustmentIdx, setEditingAdjustmentIdx] = useState<number | null>(null);
+    const [editingAdjustmentAmount, setEditingAdjustmentAmount] = useState('');
     const [showProfitability, setShowProfitability] = useState(false);
     const [isListMenuOpen, setIsListMenuOpen] = useState(false);
     const [stockFilter, setStockFilter] = useState<'ALL' | 'OUT_OF_STOCK' | 'IN_STOCK'>('ALL');
     const [isStockMenuOpen, setIsStockMenuOpen] = useState(false);
     const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
     const [selectedDetailItem, setSelectedDetailItem] = useState<InventoryItem | null>(null);
+    const [purchaseHistory, setPurchaseHistory] = useState<{ id: string; targetId: string; name: string; date: string; price: number; quantity: string; isReturn: boolean; type: 'SALE' | 'PURCHASE' }[]>([]);
+
+    useEffect(() => {
+        const fetchPurchaseHistory = async () => {
+            if (!selectedDetailItem) {
+                setPurchaseHistory([]);
+                return;
+            }
+            
+            const history: { id: string; targetId: string; name: string; date: string; price: number; quantity: string; isReturn: boolean; type: 'SALE' | 'PURCHASE' }[] = [];
+            
+            for (const supplier of suppliers) {
+                const purchases = await dbService.getSupplierPurchases(supplier.id);
+                purchases.filter(p => !p.deletedAt).forEach(p => {
+                    const item = p.items.find(i => i.pesticideId === selectedDetailItem.pesticideId);
+                    if (item) {
+                        const qty = parseFloat(item.quantity?.toString().replace(',', '.') || '0') || 0;
+                        history.push({
+                            id: p.id,
+                            targetId: supplier.id,
+                            name: supplier.name,
+                            date: p.date,
+                            price: item.buyingPrice || 0,
+                            quantity: Math.abs(qty).toString(),
+                            isReturn: qty < 0,
+                            type: 'PURCHASE'
+                        });
+                    }
+                });
+            }
+            
+            setPurchaseHistory(history);
+        };
+        
+        fetchPurchaseHistory();
+    }, [selectedDetailItem, suppliers]);
+
     const [isScanning, setIsScanning] = useState(false);
+    
+    const [confirmModal, setConfirmModal] = useState<{
+        isOpen: boolean;
+        title: string;
+        message: string;
+        onConfirm: () => void;
+    }>({
+        isOpen: false,
+        title: '',
+        message: '',
+        onConfirm: () => {}
+    });
     
     // Form States
     const [productName, setProductName] = useState('');
     const [selectedPesticide, setSelectedPesticide] = useState<Pesticide | null>(null);
+    const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
     const [formData, setFormData] = useState({
         quantity: '',
         unit: 'Adet',
@@ -86,9 +153,154 @@ export const InventoryScreen: React.FC = () => {
         init();
     }, []);
 
+    // One-time auto-fix for corrupted inventory data (e.g. duplicates, NaN)
+    useEffect(() => {
+        const fixAnomalies = async () => {
+            if (inventory.length === 0) return;
+            
+            let needsRefresh = false;
+            const seenMap = new Map<string, InventoryItem>();
+            
+            for (const item of inventory) {
+                let isCorrupted = false;
+                
+                // 1. Fix NaN or null in numbers
+                const fixedItem = { ...item };
+                if (isNaN(Number(fixedItem.quantity)) || fixedItem.quantity === null) { fixedItem.quantity = 0; isCorrupted = true; }
+                if (isNaN(Number(fixedItem.buyingPrice)) || fixedItem.buyingPrice === null) { fixedItem.buyingPrice = 0; isCorrupted = true; }
+                if (isNaN(Number(fixedItem.sellingPrice)) || fixedItem.sellingPrice === null) { fixedItem.sellingPrice = 0; isCorrupted = true; }
+                if (isNaN(Number(fixedItem.cashBuyingPrice)) || fixedItem.cashBuyingPrice === null) { fixedItem.cashBuyingPrice = fixedItem.buyingPrice; isCorrupted = true; }
+                if (isNaN(Number(fixedItem.cashPrice)) || fixedItem.cashPrice === null) { fixedItem.cashPrice = fixedItem.sellingPrice; isCorrupted = true; }
+
+                // Force numeric types
+                fixedItem.quantity = Number(fixedItem.quantity);
+                fixedItem.buyingPrice = Number(fixedItem.buyingPrice);
+                fixedItem.sellingPrice = Number(fixedItem.sellingPrice);
+                fixedItem.cashBuyingPrice = Number(fixedItem.cashBuyingPrice);
+                fixedItem.cashPrice = Number(fixedItem.cashPrice);
+
+                // Sync name and category from global pesticides
+                const pest = pesticides.find(p => p.id === fixedItem.pesticideId);
+                if (pest) {
+                    if (pest.name !== fixedItem.pesticideName) {
+                        fixedItem.pesticideName = pest.name;
+                        isCorrupted = true;
+                    }
+                    if (pest.category !== fixedItem.category) {
+                        fixedItem.category = pest.category;
+                        isCorrupted = true;
+                    }
+                }
+
+                // 2. Deduplicate
+                if (seenMap.has(fixedItem.pesticideId)) {
+                    // It's a duplicate. Merge quantity into the first one, delete this one.
+                    const existing = seenMap.get(fixedItem.pesticideId)!;
+                    existing.quantity += fixedItem.quantity;
+                    
+                    // Update existing
+                    await updateInventoryItem(existing);
+                    
+                    // Permanent delete the duplicate
+                    await permanentlyDeleteInventoryItem(fixedItem.id);
+                    needsRefresh = true;
+                } else {
+                    seenMap.set(fixedItem.pesticideId, fixedItem);
+                    
+                    // 3. Sync Prices & Quantity from Official Records
+                    
+                    // Calculate expected total purchases for this specific item
+                    let expectedQuantity = 0;
+                    supplierPurchases.filter(p => !p.deletedAt).forEach(purchase => {
+                        purchase.items.forEach(pi => {
+                            if (pi.pesticideId === fixedItem.pesticideId) {
+                                const q = parseFloat(String(pi.quantity).replace(',', '.')) || 0;
+                                if (purchase.type === 'RETURN') expectedQuantity -= q;
+                                else expectedQuantity += q;
+                            }
+                        });
+                    });
+
+                    // Subtract sales
+                    prescriptions.filter(p => !p.deletedAt).forEach(pres => {
+                        pres.items.forEach(pi => {
+                            if (pi.pesticideId === fixedItem.pesticideId) {
+                                const q = parseFloat(String(pi.quantity).replace(',', '.')) || 0;
+                                if (pres.type === 'RETURN') {
+                                    // Returned by farmer -> comes back to inventory
+                                    expectedQuantity += q;
+                                } else {
+                                    expectedQuantity -= q;
+                                }
+                            }
+                        });
+                    });
+
+                    // Add manual adjustments
+                    if (fixedItem.adjustments && fixedItem.adjustments.length > 0) {
+                        fixedItem.adjustments.forEach(adj => {
+                            expectedQuantity += (parseFloat(String(adj.amount).replace(',', '.')) || 0);
+                        });
+                    }
+
+                    // Force the actual quantity to perfectly match history (supplier, sales, adjustments)
+                    // We check if it has ANY history at all
+                    const hasHistory = supplierPurchases.some(p => !p.deletedAt && p.items.some(pi => pi.pesticideId === fixedItem.pesticideId)) ||
+                                       prescriptions.some(p => !p.deletedAt && p.items.some(pi => pi.pesticideId === fixedItem.pesticideId)) ||
+                                       (fixedItem.adjustments && fixedItem.adjustments.length > 0);
+                    
+                    if (hasHistory && fixedItem.quantity !== expectedQuantity) {
+                        fixedItem.quantity = expectedQuantity;
+                        isCorrupted = true;
+                    }
+
+                    // Sync Prices from Latest Purchase
+                    const relatedPurchases = supplierPurchases.filter(p => 
+                        !p.deletedAt && p.items.some(pi => pi.pesticideId === fixedItem.pesticideId) && p.type === 'PURCHASE'
+                    ).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+                    if (relatedPurchases.length > 0) {
+                        const latestPurchase = relatedPurchases[0];
+                        const purchasedItem = latestPurchase.items.find(pi => pi.pesticideId === fixedItem.pesticideId);
+                        if (purchasedItem && purchasedItem.buyingPrice) {
+                            const newBuyingPrice = parseFloat(String(purchasedItem.buyingPrice).replace(',', '.')) || 0;
+                            // Update price if it was 0 or corrupted (or forcefully sync to match supplier)
+                            // We will forcefully sync it to ensure "alış satış sorunlu" problem is gone.
+                            if (newBuyingPrice > 0) {
+                                fixedItem.buyingPrice = newBuyingPrice;
+                                fixedItem.cashBuyingPrice = newBuyingPrice; // Usually same
+                                
+                                // Optional: Update selling price based on logic if it's 0
+                                if (fixedItem.sellingPrice <= 0) {
+                                    fixedItem.sellingPrice = newBuyingPrice * 1.2;
+                                    fixedItem.cashPrice = newBuyingPrice * 1.2;
+                                }
+                                isCorrupted = true; // Flag for update
+                            }
+                        }
+                    }
+
+                    if (isCorrupted || 
+                        typeof item.quantity !== 'number' || 
+                        typeof item.buyingPrice !== 'number' || 
+                        typeof item.sellingPrice !== 'number') {
+                        await updateInventoryItem(fixedItem);
+                        needsRefresh = true;
+                    }
+                }
+            }
+            
+            if (needsRefresh) {
+                await refreshInventory();
+            }
+        };
+        
+        fixAnomalies();
+    }, [inventory, supplierPurchases, prescriptions]); 
+
     const filteredInventory = useMemo(() => {
         return inventory.filter(item => {
-            const matchesSearch = item.pesticideName.toLowerCase().includes(searchTerm.toLowerCase()) || 
+            const matchesSearch = item.pesticideName.toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR')) || 
                                 (item.barcode && item.barcode.includes(searchTerm));
             const matchesCategory = categoryFilter === 'ALL' || item.category === categoryFilter;
             
@@ -100,12 +312,28 @@ export const InventoryScreen: React.FC = () => {
         });
     }, [inventory, searchTerm, categoryFilter, stockFilter]);
 
+    const purchasedQuantityMap = useMemo(() => {
+        const map = new Map<string, number>();
+        supplierPurchases.filter(p => !p.deletedAt).forEach(purchase => {
+            purchase.items.forEach(item => {
+                const qty = parseFloat(item.quantity.toString().replace(',', '.')) || 0;
+                const current = map.get(item.pesticideId) || 0;
+                if (purchase.type === 'RETURN') {
+                    map.set(item.pesticideId, current - qty);
+                } else {
+                    map.set(item.pesticideId, current + qty);
+                }
+            });
+        });
+        return map;
+    }, [supplierPurchases]);
+
     const filteredPesticides = useMemo(() => {
         if (!productName || selectedPesticide) return [];
         return pesticides.filter(p => 
-            p.name.toLowerCase().includes(productName.toLowerCase()) || 
+            p.name.toLocaleLowerCase('tr-TR').includes(productName.toLocaleLowerCase('tr-TR')) || 
             (p.barcode && p.barcode.includes(productName))
-        ).slice(0, 5);
+        ).slice(0, 20);
     }, [pesticides, productName, selectedPesticide]);
 
     const handleAddItem = async () => {
@@ -118,15 +346,13 @@ export const InventoryScreen: React.FC = () => {
         let finalPesticideName = productName.trim();
         let finalCategory = formData.category;
 
-        // Check if we have a selected pesticide or if the name matches an existing one
-        const existingPest = selectedPesticide || pesticides.find(p => p.name.toLowerCase() === finalPesticideName.toLowerCase());
+        const existingPest = selectedPesticide || pesticides.find(p => p.name.toLocaleLowerCase('tr-TR') === finalPesticideName.toLocaleLowerCase('tr-TR'));
         
         if (existingPest) {
             finalPesticideId = existingPest.id;
             finalPesticideName = existingPest.name;
             finalCategory = existingPest.category;
         } else {
-            // Create new pesticide silently
             finalPesticideId = crypto.randomUUID();
             const newPest: Pesticide = {
                 id: finalPesticideId,
@@ -137,30 +363,78 @@ export const InventoryScreen: React.FC = () => {
                 description: 'Depo eklemesi ile otomatik eklendi.'
             };
             await dbService.addGlobalPesticide(newPest);
-            // Update local pesticides list so it's available for next time
             setPesticides(prev => [...prev, newPest]);
         }
 
-        const buyingPrice = Number(formData.buyingPrice) || 0;
-        const cashPrice = Number(formData.cashPrice) || 0;
+        const parseFloatSafe = (val: string | number) => parseFloat(String(val).replace(',', '.')) || 0;
+        
+        const addQty = parseFloatSafe(formData.quantity);
+        const buyingPrice = parseFloatSafe(formData.buyingPrice);
+        const cashPrice = parseFloatSafe(formData.cashPrice);
+
+        const inventoryExisting = inventory.find(i => i.pesticideId === finalPesticideId);
+        
+        if (inventoryExisting) {
+            // Depoda var ise üzerine ekle (update inventory item)
+            const newTotalQty = inventoryExisting.quantity + addQty;
+            const updatedItem: InventoryItem = {
+                ...inventoryExisting,
+                quantity: newTotalQty,
+                unit: formData.unit || inventoryExisting.unit,
+                // Kullanıcı yeni fiyat girdiyse onları baz alabiliriz. Boş veya 0 bırakılmışsa mevcutları koru.
+                buyingPrice: buyingPrice !== 0 ? buyingPrice : inventoryExisting.buyingPrice,
+                cashBuyingPrice: parseFloatSafe(formData.cashBuyingPrice) !== 0 ? parseFloatSafe(formData.cashBuyingPrice) : inventoryExisting.cashBuyingPrice,
+                sellingPrice: parseFloatSafe(formData.sellingPrice) !== 0 ? parseFloatSafe(formData.sellingPrice) : inventoryExisting.sellingPrice,
+                cashPrice: cashPrice !== 0 ? cashPrice : inventoryExisting.cashPrice,
+                barcode: formData.barcode || inventoryExisting.barcode,
+                lastUpdated: new Date().toISOString(),
+                lowStockThreshold: parseFloatSafe(formData.lowStockThreshold) !== 0 ? parseFloatSafe(formData.lowStockThreshold) : inventoryExisting.lowStockThreshold
+            };
+
+            if (addQty !== 0) {
+                updatedItem.adjustments = [
+                    ...(updatedItem.adjustments || []),
+                    {
+                        date: new Date().toISOString(),
+                        amount: addQty,
+                        note: 'Depomdan Eklenen'
+                    }
+                ];
+            }
+
+            await updateInventoryItem(updatedItem);
+            showToast('Ürün depoda mevcuttu. Var olan ürünün üzerine miktar başarıyla eklendi.', 'success');
+            hapticFeedback('success');
+            closeModal();
+            return;
+        }
 
         const newItem: InventoryItem = {
             id: crypto.randomUUID(),
             pesticideId: finalPesticideId,
             pesticideName: finalPesticideName,
             category: finalCategory,
-            quantity: Number(formData.quantity) || 0,
+            quantity: addQty,
             unit: formData.unit,
             buyingPrice: buyingPrice,
-            cashBuyingPrice: Number(formData.cashBuyingPrice) || 0,
-            sellingPrice: Number(formData.sellingPrice) || 0,
+            cashBuyingPrice: parseFloatSafe(formData.cashBuyingPrice),
+            sellingPrice: parseFloatSafe(formData.sellingPrice),
             cashPrice: cashPrice === 0 ? buyingPrice : cashPrice,
             barcode: formData.barcode,
             lastUpdated: new Date().toISOString(),
-            lowStockThreshold: Number(formData.lowStockThreshold) || 0
+            lowStockThreshold: parseFloatSafe(formData.lowStockThreshold)
         };
 
+        // Manual adjustment for initial quantity
+        if (addQty !== 0) {
+            newItem.adjustments = [{
+                date: new Date().toISOString(),
+                amount: addQty,
+                note: 'Depomdan'
+            }];
+        }
         await addInventoryItem(newItem);
+
         showToast('Ürün depoya eklendi', 'success');
         hapticFeedback('success');
         closeModal();
@@ -169,46 +443,79 @@ export const InventoryScreen: React.FC = () => {
     const handleUpdateItem = async () => {
         if (!selectedItem) return;
 
-        const buyingPrice = Number(formData.buyingPrice) || 0;
-        const cashPrice = Number(formData.cashPrice) || 0;
+        const parseFloatSafe = (val: string | number) => parseFloat(String(val).replace(',', '.')) || 0;
+        const newTotalQty = parseFloatSafe(formData.quantity);
+        const qtyDiff = newTotalQty - selectedItem.quantity;
+
+        const buyingPrice = parseFloatSafe(formData.buyingPrice);
+        const cashPrice = parseFloatSafe(formData.cashPrice);
 
         const updatedItem: InventoryItem = {
             ...selectedItem,
-            quantity: Number(formData.quantity) || 0,
+            quantity: newTotalQty,
             unit: formData.unit,
             buyingPrice: buyingPrice,
-            cashBuyingPrice: Number(formData.cashBuyingPrice) || 0,
-            sellingPrice: Number(formData.sellingPrice) || 0,
+            cashBuyingPrice: parseFloatSafe(formData.cashBuyingPrice),
+            sellingPrice: parseFloatSafe(formData.sellingPrice),
             cashPrice: cashPrice === 0 ? buyingPrice : cashPrice,
             barcode: formData.barcode,
             lastUpdated: new Date().toISOString(),
-            lowStockThreshold: Number(formData.lowStockThreshold) || 0
+            lowStockThreshold: parseFloatSafe(formData.lowStockThreshold)
         };
 
+        // Log manual adjustment
+        if (qtyDiff !== 0) {
+            updatedItem.adjustments = [
+                ...(updatedItem.adjustments || []),
+                {
+                    date: new Date().toISOString(),
+                    amount: qtyDiff,
+                    note: 'Depomdan'
+                }
+            ];
+        }
+        
         await updateInventoryItem(updatedItem);
+
         showToast('Ürün bilgileri güncellendi', 'success');
         hapticFeedback('success');
         closeModal();
     };
 
-    const handleDeleteItem = async (id: string) => {
-        if (confirm('Bu ürünü depodan silmek istediğinize emin misiniz?')) {
-            try {
-                await deleteInventoryItem(id);
-                showToast('Ürün depodan silindi', 'success');
-                hapticFeedback('medium');
-                return true;
-            } catch (error) {
-                console.error("Delete error:", error);
-                showToast("Ürün silinirken bir hata oluştu.", 'error');
-                hapticFeedback('error');
-                return false;
-            }
-        }
-        return false;
+    const handleAuditItem = async () => {
+        if (!selectedDetailItem) return;
+        
+        const updated = {
+            ...selectedDetailItem,
+            lastAuditDate: new Date().toISOString()
+        };
+        
+        await updateInventoryItem(updated);
+        setSelectedDetailItem(updated);
+        showToast('Stok sayımı onaylandı ve denetlendi olarak işaretlendi.', 'success');
+        hapticFeedback('success');
     };
 
-    const openAddModal = () => {
+    const handleDeleteItem = async (id: string) => {
+        setConfirmModal({
+            isOpen: true,
+            title: 'Ürün Silinecek',
+            message: 'Bu ürünü depodan silmek istediğinize emin misiniz? (Çöp kutusuna taşınacaktır)',
+            onConfirm: async () => {
+                try {
+                    await softDeleteInventoryItem(id);
+                    showToast('Ürün çöp kutusuna taşındı', 'success');
+                    hapticFeedback('medium');
+                } catch (error) {
+                    console.error("Delete error:", error);
+                    showToast("Ürün silinirken bir hata oluştu.", 'error');
+                    hapticFeedback('error');
+                }
+            }
+        });
+    };
+
+    const openAddModal = (presetProductName?: string) => {
         setFormData({ 
             quantity: '', 
             unit: 'Adet', 
@@ -221,12 +528,15 @@ export const InventoryScreen: React.FC = () => {
             category: PesticideCategory.OTHER
         });
         setSelectedPesticide(null);
-        setProductName('');
+        setProductName(presetProductName || '');
+        setSelectedSupplierId('');
         setIsAddModalOpen(true);
     };
 
     const openEditModal = (item: InventoryItem) => {
         setSelectedItem(item);
+        setProductName(item.pesticideName);
+        setSelectedSupplierId('');
         setFormData({
             quantity: item.quantity.toString(),
             unit: item.unit,
@@ -247,14 +557,199 @@ export const InventoryScreen: React.FC = () => {
         hapticFeedback('light');
     };
 
+    const handleQuickStockAdd = async () => {
+        if (!selectedDetailItem) return;
+        const addQty = parseFloat(quickStockQuantity.replace(',', '.')) || 0;
+        if (addQty <= 0) {
+            showToast('Lütfen geçerli bir miktar giriniz', 'error');
+            return;
+        }
+
+        const updatedItem: InventoryItem = {
+            ...selectedDetailItem,
+            quantity: selectedDetailItem.quantity + addQty,
+            lastUpdated: new Date().toISOString(),
+            adjustments: [
+                ...(selectedDetailItem.adjustments || []),
+                {
+                    date: new Date().toISOString(),
+                    amount: addQty,
+                    note: 'Depomdan Eklenen'
+                }
+            ]
+        };
+
+        await updateInventoryItem(updatedItem);
+        showToast('Stok başarıyla eklendi', 'success');
+        hapticFeedback('success');
+        setIsQuickStockModalOpen(false);
+        setQuickStockQuantity('');
+        setSelectedDetailItem(updatedItem);
+    };
+
+    const handleUpdateAdjustment = async () => {
+        if (!selectedDetailItem || editingAdjustmentIdx === null) return;
+        const newAmount = parseFloat(editingAdjustmentAmount.replace(',', '.')) || 0;
+        
+        const adjustments = [...(selectedDetailItem.adjustments || [])];
+        const oldAmount = adjustments[editingAdjustmentIdx].amount;
+        
+        adjustments[editingAdjustmentIdx] = {
+            ...adjustments[editingAdjustmentIdx],
+            amount: newAmount,
+            date: new Date().toISOString() // Optional: update date to now, or keep old? User said "editable", maybe just amount is enough.
+        };
+
+        const quantityDiff = newAmount - oldAmount;
+        const updatedItem: InventoryItem = {
+            ...selectedDetailItem,
+            quantity: selectedDetailItem.quantity + quantityDiff,
+            adjustments,
+            lastUpdated: new Date().toISOString()
+        };
+
+        await updateInventoryItem(updatedItem);
+        showToast('Hareket güncellendi', 'success');
+        hapticFeedback('success');
+        setIsEditAdjustmentModalOpen(false);
+        setEditingAdjustmentIdx(null);
+        setSelectedDetailItem(updatedItem);
+    };
+
+    const handleDeleteAdjustment = async () => {
+        if (!selectedDetailItem || editingAdjustmentIdx === null) return;
+        
+        const adjustments = [...(selectedDetailItem.adjustments || [])];
+        const removedAmount = adjustments[editingAdjustmentIdx].amount;
+        
+        adjustments.splice(editingAdjustmentIdx, 1);
+
+        const updatedItem: InventoryItem = {
+            ...selectedDetailItem,
+            quantity: selectedDetailItem.quantity - removedAmount,
+            adjustments,
+            lastUpdated: new Date().toISOString()
+        };
+
+        await updateInventoryItem(updatedItem);
+        showToast('Hareket silindi', 'success');
+        hapticFeedback('medium');
+        setIsEditAdjustmentModalOpen(false);
+        setEditingAdjustmentIdx(null);
+        setSelectedDetailItem(updatedItem);
+    };
+
     const closeModal = () => {
         setIsAddModalOpen(false);
         setIsEditModalOpen(false);
         setIsDetailModalOpen(false);
+        setIsQuickStockModalOpen(false);
+        setIsEditAdjustmentModalOpen(false);
         setShowProfitability(false);
         setIsListMenuOpen(false);
         setSelectedItem(null);
         setSelectedDetailItem(null);
+        setSelectedSupplierId('');
+    };
+
+    const handleAiLens = () => {
+        fileInputRef.current?.click();
+    };
+
+    const processImageWithAI = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        try {
+            setIsAiProcessing(true);
+            showToast('Yapay zeka ürünü inceliyor...', 'info');
+
+            const reader = new FileReader();
+            const base64Promise = new Promise<string>((resolve) => {
+                reader.onload = () => {
+                    const base64 = (reader.result as string).split(',')[1];
+                    resolve(base64);
+                };
+            });
+            reader.readAsDataURL(file);
+            const base64Data = await base64Promise;
+
+            const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+            
+            const response = await ai.models.generateContent({
+                model: "gemini-3-flash-preview",
+                contents: [
+                    {
+                        parts: [
+                            { inlineData: { data: base64Data, mimeType: file.type } },
+                            { text: "Bu bir zirai ilaç veya gübre etiketi. Lütfen etiketteki bilgileri oku ve şu formatta JSON olarak dön: Ürün Adı (productName), Kategori (category - HERBICIDE, INSECTICIDE, FUNGICIDE, FERTILIZER, ACARICIDE, OTHER seçeneklerinden biri), Birim (unit - Adet, Litre, Kg, Kutu, Çuval seçeneklerinden biri). Sadece JSON dön." }
+                        ]
+                    }
+                ],
+                config: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: Type.OBJECT,
+                        properties: {
+                            productName: { type: Type.STRING },
+                            category: { 
+                                type: Type.STRING,
+                                enum: Object.values(PesticideCategory)
+                            },
+                            unit: { 
+                                type: Type.STRING,
+                                enum: ['Adet', 'Litre', 'Kg', 'Kutu', 'Çuval']
+                            }
+                        },
+                        required: ["productName", "category", "unit"]
+                    }
+                }
+            });
+
+            const result = JSON.parse(response.text || '{}');
+            
+            if (result.productName) {
+                setProductName(result.productName);
+                const matchedPest = pesticides.find(p => p.name.toLocaleLowerCase('tr-TR') === result.productName.toLocaleLowerCase('tr-TR'));
+                if (matchedPest) {
+                    setSelectedPesticide(matchedPest);
+                    setFormData(prev => ({ 
+                        ...prev, 
+                        category: matchedPest.category,
+                        unit: result.unit || prev.unit
+                    }));
+                } else {
+                    setFormData(prev => ({ 
+                        ...prev, 
+                        category: result.category as PesticideCategory || PesticideCategory.OTHER,
+                        unit: result.unit || 'Adet'
+                    }));
+                }
+                showToast('Ürün başarıyla tanındı!', 'success');
+                hapticFeedback('success');
+            } else {
+                showToast('Ürün tanınamadı, lütfen bilgileri manuel girin.', 'error');
+            }
+
+        } catch (error) {
+            console.error("AI Lens Error:", error);
+            showToast('Yapay zeka analizinde bir hata oluştu.', 'error');
+        } finally {
+            setIsAiProcessing(false);
+            if (e.target) e.target.value = '';
+        }
+    };
+
+    // Helper for Turkish characters (jsPDF default fonts don't support them well without custom fonts)
+    const tr = (text: string | undefined | null) => {
+        if (!text) return '';
+        return String(text)
+            .replace(/ğ/g, 'g').replace(/Ğ/g, 'G')
+            .replace(/ü/g, 'u').replace(/Ü/g, 'U')
+            .replace(/ş/g, 's').replace(/Ş/g, 'S')
+            .replace(/ı/g, 'i').replace(/İ/g, 'I')
+            .replace(/ö/g, 'o').replace(/Ö/g, 'O')
+            .replace(/ç/g, 'c').replace(/Ç/g, 'C');
     };
 
     const generateInventoryPDF = (type: 'CUSTOMER' | 'INTERNAL' | 'FULL') => {
@@ -263,18 +758,6 @@ export const InventoryScreen: React.FC = () => {
         const timeStr = new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
         const engineerName = userProfile.fullName || 'Ziraat Mühendisi';
         
-        // Helper for Turkish characters (jsPDF default fonts don't support them well without custom fonts)
-        const tr = (text: string) => {
-            if (!text) return '';
-            return text
-                .replace(/ğ/g, 'g').replace(/Ğ/g, 'G')
-                .replace(/ü/g, 'u').replace(/Ü/g, 'U')
-                .replace(/ş/g, 's').replace(/Ş/g, 'S')
-                .replace(/ı/g, 'i').replace(/İ/g, 'I')
-                .replace(/ö/g, 'o').replace(/Ö/g, 'O')
-                .replace(/ç/g, 'c').replace(/Ç/g, 'C');
-        };
-
         // --- CORPORATE HEADER ---
         // Emerald Header Bar
         doc.setFillColor(16, 185, 129);
@@ -321,7 +804,7 @@ export const InventoryScreen: React.FC = () => {
             body = sortedInventory.map(item => [
                 tr(item.pesticideName),
                 tr(item.category),
-                item.quantity,
+                Number(item.quantity).toString(),
                 tr(item.unit),
                 `${formatCurrency(item.buyingPrice, userProfile?.currency || 'TRY')}`,
                 `${formatCurrency(item.cashBuyingPrice || 0, userProfile?.currency || 'TRY')}`
@@ -434,6 +917,111 @@ export const InventoryScreen: React.FC = () => {
         showToast('Kurumsal PDF Raporu oluşturuldu', 'success');
     };
 
+    const generateItemReport = (item: InventoryItem) => {
+        const doc = new jsPDF();
+        
+        // --- HEADER ---
+        doc.setFillColor(16, 185, 129);
+        doc.rect(0, 0, 210, 40, 'F');
+        
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(24);
+        doc.setFont('helvetica', 'bold');
+        doc.text(tr('URUN DETAY RAPORU'), 14, 25);
+        
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'normal');
+        const dateStr = new Date().toLocaleDateString('tr-TR');
+        doc.text(tr(`Tarih: ${dateStr}`), 196, 25, { align: 'right' });
+
+        // --- ITEM DETAILS ---
+        doc.setTextColor(40, 40, 40);
+        doc.setFontSize(14);
+        doc.setFont('helvetica', 'bold');
+        doc.text(tr(item.pesticideName), 14, 55);
+        
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'normal');
+        doc.text(tr(`Kategori: ${item.category}`), 14, 62);
+        doc.text(tr(`Mevcut Stok: ${Number(item.quantity).toString()} ${item.unit}`), 14, 68);
+        
+        doc.text(tr(`Vadeli Alış: ${formatCurrency(item.buyingPrice, userProfile?.currency || 'TRY')}`), 105, 62);
+        doc.text(tr(`Peşin Alış: ${formatCurrency(item.cashBuyingPrice || 0, userProfile?.currency || 'TRY')}`), 105, 68);
+        
+        doc.text(tr(`Vadeli Satış: ${formatCurrency(item.sellingPrice, userProfile?.currency || 'TRY')}`), 150, 62);
+        doc.text(tr(`Peşin Satış: ${formatCurrency(item.cashPrice || 0, userProfile?.currency || 'TRY')}`), 150, 68);
+
+        // Horizontal line
+        doc.setDrawColor(200, 200, 200);
+        doc.line(14, 75, 196, 75);
+
+        // --- HISTORY TABLE ---
+        doc.setFontSize(12);
+        doc.setFont('helvetica', 'bold');
+        doc.text(tr('ISLEM GECMISI'), 14, 85);
+
+        const head = [[tr('Tarih'), tr('İşlem Tipi'), tr('Kişi / Kurum'), tr('Miktar'), tr('Birim Fiyat'), tr('Toplam')]];
+        const body = combinedHistory.map(h => {
+            const isReturn = h.isReturn;
+            let typeStr = h.type === 'SALE' ? (isReturn ? 'Satış İadesi' : 'Satış') : (isReturn ? 'Alış İadesi' : 'Alış');
+            const total = Number(h.quantity) * h.price;
+            
+            return [
+                new Date(h.date).toLocaleDateString('tr-TR'),
+                tr(typeStr),
+                tr(h.name),
+                `${isReturn ? '-' : ''}${h.quantity} ${tr(item.unit)}`,
+                formatCurrency(h.price, userProfile?.currency || 'TRY'),
+                formatCurrency(total, userProfile?.currency || 'TRY')
+            ];
+        });
+
+        autoTable(doc, {
+            startY: 90,
+            head: head,
+            body: body,
+            theme: 'grid',
+            headStyles: { 
+                fillColor: [16, 185, 129], 
+                textColor: 255,
+                fontSize: 9,
+                fontStyle: 'bold',
+                halign: 'center'
+            },
+            styles: { 
+                fontSize: 8, 
+                cellPadding: 4,
+                font: 'helvetica',
+                textColor: [60, 60, 60]
+            },
+            columnStyles: {
+                1: { fontStyle: 'bold' },
+                3: { halign: 'right' },
+                4: { halign: 'right' },
+                5: { halign: 'right', fontStyle: 'bold' }
+            },
+            alternateRowStyles: { fillColor: [250, 252, 251] },
+            margin: { left: 14, right: 14 }
+        });
+
+        // --- FOOTER ---
+        const pageCount = (doc as any).internal.getNumberOfPages();
+        for (let i = 1; i <= pageCount; i++) {
+            doc.setPage(i);
+            doc.setFontSize(8);
+            doc.setTextColor(150, 150, 150);
+            doc.text(
+                tr(`Mühendis Kayıt Sistemi - Ürün Detay Raporu | Sayfa ${i} / ${pageCount}`),
+                105,
+                285,
+                { align: 'center' }
+            );
+        }
+
+        doc.save(`MKS_Urun_Raporu_${tr(item.pesticideName).replace(/\s+/g, '_')}_${dateStr.replace(/\./g, '_')}.pdf`);
+        showToast('Ürün detay raporu oluşturuldu', 'success');
+    };
+
     // Sales History for Detail View
     const farmerMap = useMemo(() => {
         return farmers.reduce((acc, f) => {
@@ -445,22 +1033,43 @@ export const InventoryScreen: React.FC = () => {
     const salesHistory = useMemo(() => {
         if (!selectedDetailItem) return [];
         
-        const history: { farmerName: string; date: string; price: number; quantity: string }[] = [];
+        const history: { id: string; targetId: string; name: string; date: string; price: number; quantity: string; isReturn: boolean; type: 'SALE' | 'PURCHASE' }[] = [];
         
-        prescriptions.forEach(p => {
+        prescriptions.filter(p => !p.deletedAt).forEach(p => {
             const item = p.items.find(i => i.pesticideId === selectedDetailItem.pesticideId);
             if (item) {
+                const qty = parseFloat(item.quantity?.toString().replace(',', '.') || '0') || 0;
                 history.push({
-                    farmerName: farmerMap[p.farmerId] || `Bilinmeyen ${farmerLabel}`,
+                    id: p.id,
+                    targetId: p.farmerId,
+                    name: farmerMap[p.farmerId] || `Bilinmeyen ${farmerLabel}`,
                     date: p.date,
                     price: item.unitPrice || 0,
-                    quantity: item.quantity || '0'
+                    quantity: Math.abs(qty).toString(),
+                    isReturn: qty < 0,
+                    type: 'SALE'
                 });
             }
         });
         
-        return history.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        return history;
     }, [selectedDetailItem, prescriptions, farmerMap]);
+
+    const combinedHistory = useMemo(() => {
+        const adjustmentsHistory = (selectedDetailItem?.adjustments || []).map((adj, idx) => ({
+            id: `adj-${idx}`,
+            index: idx,
+            targetId: 'manual',
+            name: adj.note || 'Depomdan',
+            date: adj.date,
+            price: 0,
+            quantity: Math.abs(adj.amount).toString(),
+            isReturn: adj.amount < 0,
+            type: 'ADJUSTMENT' as 'SALE'|'PURCHASE'|'ADJUSTMENT'
+        }));
+        
+        return [...salesHistory, ...purchaseHistory, ...adjustmentsHistory].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    }, [salesHistory, purchaseHistory, selectedDetailItem]);
 
     const profitabilityMetrics = useMemo(() => {
         if (!selectedDetailItem) return null;
@@ -479,11 +1088,11 @@ export const InventoryScreen: React.FC = () => {
         let totalRealizedProfit = 0;
         let totalSoldQuantity = 0;
 
-        prescriptions.forEach(p => {
+        prescriptions.filter(p => !p.deletedAt).forEach(p => {
             const item = p.items.find(i => i.pesticideId === selectedDetailItem.pesticideId);
             if (item && item.unitPrice) {
-                const qtyStr = item.quantity || '0';
-                const parsedQty = parseFloat(qtyStr);
+                const qtyStr = item.quantity?.toString() || '0';
+                const parsedQty = parseFloat(qtyStr.replace(',', '.')) || 0;
                 if (!isNaN(parsedQty) && parsedQty !== 0) {
                     const profitPerUnit = item.unitPrice - buyingPrice;
                     totalRealizedProfit += (profitPerUnit * parsedQty);
@@ -534,7 +1143,7 @@ export const InventoryScreen: React.FC = () => {
     const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
     const profitLossData = useMemo(() => {
-        const processed = prescriptions.filter(p => p.isInventoryProcessed);
+        const processed = prescriptions.filter(p => p.isInventoryProcessed && !p.deletedAt);
         
         let totalSoldCost = 0;
         let totalSoldRevenue = 0;
@@ -546,7 +1155,7 @@ export const InventoryScreen: React.FC = () => {
 
         processed.forEach(p => {
             p.items.forEach(item => {
-                const qty = parseInt(item.quantity || '0');
+                const qty = parseFloat(String(item.quantity || '0').replace(',', '.'));
                 if (qty > 0) {
                     const cost = buyingPriceMap[item.pesticideId] || 0;
                     const revenue = item.unitPrice || 0;
@@ -557,18 +1166,24 @@ export const InventoryScreen: React.FC = () => {
             });
         });
 
+        const cashBalance = accounts.filter(a => a.type === 'CASH').reduce((acc, a) => acc + a.balance, 0);
+        const bankBalance = accounts.filter(a => a.type === 'BANK').reduce((acc, a) => acc + a.balance, 0);
         const totalProfit = totalSoldRevenue - totalSoldCost - stats.totalExpenses;
+        const netProfit = totalProfit + cashBalance + bankBalance;
         const margin = totalSoldCost > 0 ? (totalProfit / (totalSoldCost + stats.totalExpenses)) * 100 : 0;
 
         return {
             totalSoldCost,
             totalSoldRevenue,
             totalProfit,
+            netProfit,
+            cashBalance,
+            bankBalance,
             margin,
             processedCount: processed.length,
             totalExpenses: stats.totalExpenses
         };
-    }, [inventory, prescriptions, stats.totalExpenses]);
+    }, [inventory, prescriptions, stats.totalExpenses, accounts]);
 
     return (
         <div className="p-4 pb-32 max-w-5xl mx-auto animate-in fade-in duration-500">
@@ -580,7 +1195,13 @@ export const InventoryScreen: React.FC = () => {
                     </div>
                     <div className="flex items-baseline gap-2">
                         <h1 className="text-2xl font-black text-stone-100 tracking-tight">DEPOM</h1>
-                        <span className="text-stone-500 text-[8px] font-black uppercase tracking-widest opacity-50">Stok & Maliyet Yönetimi</span>
+                        <div className="flex flex-col">
+                            <span className="text-stone-500 text-[8px] font-black uppercase tracking-widest opacity-50">Stok & Maliyet Yönetimi</span>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                                <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
+                                <span className="text-[7px] font-black text-emerald-500 uppercase tracking-[0.2em] animate-in fade-in slide-in-from-left-2 duration-700">Denetimli Stok Sistemi Aktif</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 
@@ -665,7 +1286,7 @@ export const InventoryScreen: React.FC = () => {
 
                     {canEditInventory && (
                         <button 
-                            onClick={openAddModal}
+                            onClick={() => openAddModal()}
                             className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-xl font-black text-[11px] shadow-lg shadow-emerald-900/20 active:scale-95 transition-all flex items-center gap-1.5 uppercase tracking-wider"
                         >
                             <Plus size={16} />
@@ -741,15 +1362,21 @@ export const InventoryScreen: React.FC = () => {
                                     }`}
                                 >
                                     {/* Stock Badge - High Visibility */}
-                                    <div className={`absolute top-0 right-0 px-3 py-1.5 rounded-bl-2xl font-black font-mono text-xs flex items-center gap-1.5 shadow-lg z-10 ${
-                                        item.quantity <= 0 
-                                        ? 'bg-red-500 text-white' 
-                                        : (item.lowStockThreshold && item.quantity <= item.lowStockThreshold)
-                                        ? 'bg-amber-500 text-stone-950 animate-pulse'
-                                        : 'bg-emerald-500 text-stone-950'
-                                    }`}>
-                                        <Package size={12} />
-                                        {item.quantity} <span className="text-[8px] opacity-70 font-sans uppercase">{item.unit}</span>
+                                    <div className="absolute top-0 right-0 flex shadow-lg z-10 rounded-bl-2xl overflow-hidden border-b border-l border-white/5">
+                                        <div className="px-2 py-1.5 bg-stone-800/90 backdrop-blur-sm text-stone-300 font-black font-mono text-[10px] flex items-center gap-1 border-r border-white/5">
+                                            <Truck size={10} />
+                                            {purchasedQuantityMap.get(item.pesticideId) || 0} <span className="text-[7px] opacity-70 font-sans uppercase">ALINAN</span>
+                                        </div>
+                                        <div className={`px-3 py-1.5 font-black font-mono text-xs flex items-center gap-1.5 ${
+                                            item.quantity <= 0 
+                                            ? 'bg-red-500 text-white' 
+                                            : (item.lowStockThreshold && item.quantity <= item.lowStockThreshold)
+                                            ? 'bg-amber-500 text-stone-950 animate-pulse'
+                                            : 'bg-emerald-500 text-stone-950'
+                                        }`}>
+                                            <Package size={12} />
+                                            {Number(item.quantity).toString()} <span className="text-[8px] opacity-70 font-sans uppercase">KALAN</span>
+                                        </div>
                                     </div>
 
                                     <div className="flex justify-between items-start mb-4 pr-16">
@@ -812,7 +1439,7 @@ export const InventoryScreen: React.FC = () => {
                             <div className="col-span-full text-center py-12 border-2 border-dashed border-stone-800 rounded-2xl text-stone-600">
                                 <Package size={48} className="mx-auto mb-4 opacity-20" />
                                 <p>Deponuzda ürün bulunamadı.</p>
-                                <button onClick={openAddModal} className="text-emerald-500 font-bold mt-2 hover:underline">Yeni Ürün Ekle</button>
+                                <button onClick={() => openAddModal()} className="text-emerald-500 font-bold mt-2 hover:underline">Yeni Ürün Ekle</button>
                             </div>
                         )}
                     </div>
@@ -1015,18 +1642,18 @@ export const InventoryScreen: React.FC = () => {
                         </div>
 
                         <div className="bg-stone-900 border border-white/5 p-5 rounded-2xl shadow-sm relative overflow-hidden">
-                            <div className={`absolute top-0 right-0 w-24 h-24 -mr-8 -mt-8 rounded-full blur-3xl opacity-20 ${profitLossData.totalProfit >= 0 ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
+                            <div className={`absolute top-0 right-0 w-24 h-24 -mr-8 -mt-8 rounded-full blur-3xl opacity-20 ${profitLossData.netProfit >= 0 ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
                             <div className="flex items-center gap-3 mb-3">
-                                <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${profitLossData.totalProfit >= 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+                                <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${profitLossData.netProfit >= 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
                                     <DollarSign size={20} />
                                 </div>
                                 <span className="text-stone-500 text-[10px] font-bold uppercase tracking-wider">Net Kar / Zarar</span>
                             </div>
-                            <div className={`text-2xl font-black ${profitLossData.totalProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                {formatCurrency(profitLossData.totalProfit, userProfile?.currency || 'TRY')}
+                            <div className={`text-2xl font-black ${profitLossData.netProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                {formatCurrency(profitLossData.netProfit, userProfile?.currency || 'TRY')}
                             </div>
                             <div className="flex items-center gap-2 mt-2">
-                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${profitLossData.totalProfit >= 0 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
+                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${profitLossData.netProfit >= 0 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
                                     %{profitLossData.margin.toFixed(1)} Marj
                                 </span>
                             </div>
@@ -1058,10 +1685,18 @@ export const InventoryScreen: React.FC = () => {
                                 <span className="text-stone-400 font-medium">İşletme Giderleri</span>
                                 <span className="text-stone-100 font-black text-red-400">-{formatCurrency(profitLossData.totalExpenses, userProfile?.currency || 'TRY')}</span>
                             </div>
+                            <div className="flex justify-between items-center pb-4 border-b border-white/5">
+                                <span className="text-stone-400 font-medium">Kasadaki Para</span>
+                                <span className="text-stone-100 font-black text-emerald-400">{formatCurrency(profitLossData.cashBalance, userProfile?.currency || 'TRY')}</span>
+                            </div>
+                            <div className="flex justify-between items-center pb-4 border-b border-white/5">
+                                <span className="text-stone-400 font-medium">Hesaptaki Para</span>
+                                <span className="text-stone-100 font-black text-emerald-400">{formatCurrency(profitLossData.bankBalance, userProfile?.currency || 'TRY')}</span>
+                            </div>
                             <div className="flex justify-between items-center pt-2">
-                                <span className="text-stone-100 font-black text-lg">Toplam Kar</span>
-                                <span className={`text-2xl font-black ${profitLossData.totalProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                    {formatCurrency(profitLossData.totalProfit, userProfile?.currency || 'TRY')}
+                                <span className="text-stone-100 font-black text-lg">Toplam Net Kar</span>
+                                <span className={`text-2xl font-black ${profitLossData.netProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                    {formatCurrency(profitLossData.netProfit, userProfile?.currency || 'TRY')}
                                 </span>
                             </div>
                         </div>
@@ -1093,7 +1728,26 @@ export const InventoryScreen: React.FC = () => {
                             {isAddModalOpen && (
                                 <div className="space-y-4">
                                     <div className="space-y-2">
-                                        <label className="text-xs font-bold text-stone-500 uppercase tracking-widest">Ürün Adı</label>
+                                        <div className="flex justify-between items-center">
+                                            <label className="text-xs font-bold text-stone-500 uppercase tracking-widest">Ürün Adı</label>
+                                            <button 
+                                                onClick={handleAiLens}
+                                                disabled={isAiProcessing}
+                                                className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${isAiProcessing ? 'bg-amber-500/20 text-amber-500' : 'bg-blue-500/10 text-blue-400 hover:bg-blue-500/20'}`}
+                                            >
+                                                {isAiProcessing ? (
+                                                    <>
+                                                        <RefreshCw size={12} className="animate-spin" />
+                                                        İşleniyor...
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <Camera size={12} />
+                                                        AI Lens
+                                                    </>
+                                                )}
+                                            </button>
+                                        </div>
                                         <div className="relative">
                                             <Package className="absolute left-3 top-3 text-stone-500" size={16} />
                                             <input 
@@ -1333,9 +1987,8 @@ export const InventoryScreen: React.FC = () => {
                                             <Edit2 size={16} />
                                         </button>
                                         <button 
-                                            onClick={async () => {
-                                                const success = await handleDeleteItem(selectedDetailItem.id);
-                                                if (success) closeModal();
+                                            onClick={() => {
+                                                handleDeleteItem(selectedDetailItem.id);
                                             }} 
                                             className="p-2 bg-stone-800 text-stone-400 rounded-xl hover:text-red-400 transition-colors"
                                             title="Sil"
@@ -1388,11 +2041,39 @@ export const InventoryScreen: React.FC = () => {
 
                             {/* Stock Info */}
                             <div className="grid grid-cols-2 gap-3">
-                                <div className="bg-stone-950/50 p-4 rounded-2xl border border-white/5">
-                                    <span className="text-[10px] text-stone-500 font-bold uppercase block mb-1">Mevcut Stok</span>
-                                    <span className={`${selectedDetailItem.quantity <= 0 ? 'text-red-400' : 'text-emerald-400'} font-black text-xl`}>
-                                        {selectedDetailItem.quantity} <span className="text-xs text-stone-600 font-sans">{selectedDetailItem.unit}</span>
-                                    </span>
+                                <div className="bg-stone-950/50 p-4 rounded-2xl border border-white/5 space-y-2">
+                                    <div>
+                                        <span className="text-[10px] text-stone-500 font-bold uppercase block mb-1">Mevcut Stok (Kalan)</span>
+                                        <span className={`${selectedDetailItem.quantity <= 0 ? 'text-red-400' : 'text-emerald-400'} font-black text-xl`}>
+                                            {selectedDetailItem.quantity} <span className="text-xs text-stone-600 font-sans">{selectedDetailItem.unit}</span>
+                                        </span>
+                                    </div>
+                                    <div className="pt-2 border-t border-white/5">
+                                        <span className="text-[10px] text-stone-500 font-bold uppercase block mb-0.5">Toplam Alınan (Tedarikçiden)</span>
+                                        <span className="text-stone-300 font-black text-lg flex items-center gap-1.5">
+                                            <Truck size={12} className="text-stone-500" />
+                                            {purchasedQuantityMap.get(selectedDetailItem.pesticideId) || 0} <span className="text-[10px] text-stone-600 font-sans">{selectedDetailItem.unit}</span>
+                                        </span>
+                                    </div>
+                                </div>
+                                <div className="grid grid-rows-2 gap-2">
+                                    <button 
+                                        onClick={() => generateItemReport(selectedDetailItem)} 
+                                        className="bg-stone-950/50 rounded-2xl border border-white/5 flex flex-col items-center justify-center text-stone-400 hover:text-blue-400 hover:bg-stone-900 transition-all group p-2 min-h-[60px]"
+                                    >
+                                        <Download size={16} className="mb-1 group-hover:scale-110 transition-transform" />
+                                        <span className="text-[9px] font-bold uppercase tracking-wider">Detaylı Rapor</span>
+                                    </button>
+                                    <button 
+                                        onClick={() => {
+                                            setQuickStockQuantity('');
+                                            setIsQuickStockModalOpen(true);
+                                        }} 
+                                        className="bg-emerald-600/10 rounded-2xl border border-emerald-500/20 flex flex-col items-center justify-center text-emerald-500 hover:text-emerald-400 hover:bg-emerald-600/20 transition-all group p-2 min-h-[60px]"
+                                    >
+                                        <Plus size={16} className="mb-1 group-hover:scale-110 transition-transform" />
+                                        <span className="text-[9px] font-bold uppercase tracking-wider">Stok Ekle</span>
+                                    </button>
                                 </div>
                                 <div className="bg-stone-950/50 p-4 rounded-2xl border border-white/5">
                                     <span className="text-[10px] text-stone-500 font-bold uppercase block mb-1">Vadeli Alış</span>
@@ -1401,15 +2082,15 @@ export const InventoryScreen: React.FC = () => {
                                     </span>
                                 </div>
                                 <div className="bg-stone-950/50 p-4 rounded-2xl border border-white/5">
-                                    <span className="text-[10px] text-stone-500 font-bold uppercase block mb-1">Peşin Alış</span>
-                                    <span className="text-stone-300 font-bold text-lg">
-                                        {formatCurrency(selectedDetailItem.cashBuyingPrice || 0, userProfile?.currency || 'TRY')}
-                                    </span>
-                                </div>
-                                <div className="bg-stone-950/50 p-4 rounded-2xl border border-white/5">
                                     <span className="text-[10px] text-stone-500 font-bold uppercase block mb-1">Vadeli Satış</span>
                                     <span className="text-amber-400 font-bold text-lg">
                                         {formatCurrency(selectedDetailItem.sellingPrice, userProfile?.currency || 'TRY')}
+                                    </span>
+                                </div>
+                                <div className="bg-stone-950/50 p-4 rounded-2xl border border-white/5">
+                                    <span className="text-[10px] text-stone-500 font-bold uppercase block mb-1">Peşin Alış</span>
+                                    <span className="text-stone-300 font-bold text-lg">
+                                        {formatCurrency(selectedDetailItem.cashBuyingPrice || 0, userProfile?.currency || 'TRY')}
                                     </span>
                                 </div>
                                 <div className="bg-stone-950/50 p-4 rounded-2xl border border-white/5">
@@ -1420,42 +2101,146 @@ export const InventoryScreen: React.FC = () => {
                                 </div>
                             </div>
 
-                            {/* Sales History */}
+                            {/* Stock Ledger Summary System */}
+                            <div className="bg-stone-900/40 p-5 rounded-[2rem] border border-white/5 space-y-4">
+                                <div className="flex items-center justify-between">
+                                    <h4 className="text-[10px] font-black text-stone-400 uppercase tracking-widest flex items-center gap-2">
+                                        <List size={14} className="text-emerald-500" /> Stok Defteri Özeti
+                                    </h4>
+                                    <span className="text-[9px] font-bold text-emerald-500/60 italic flex items-center gap-1">
+                                        <RefreshCw size={10} className="animate-spin-slow" /> Denetimli Sistem
+                                    </span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-y-3 gap-x-6">
+                                    <div className="flex justify-between items-center text-[11px]">
+                                        <span className="text-stone-500">Toplam Alımlar (+)</span>
+                                        <span className="text-emerald-400 font-bold">+{purchasedQuantityMap.get(selectedDetailItem.pesticideId) || 0}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-[11px]">
+                                        <span className="text-stone-500">Toplam Satışlar (-)</span>
+                                        <span className="text-blue-400 font-bold">-{
+                                            prescriptions.filter(p => !p.deletedAt && p.type !== 'RETURN').reduce((acc, p) => {
+                                                const item = p.items.find(i => i.pesticideId === selectedDetailItem.pesticideId);
+                                                return acc + (item?.quantity ? (parseFloat(item.quantity.toString()) || 0) : 0);
+                                            }, 0)
+                                        }</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-[11px]">
+                                        <span className="text-stone-500">Müşteri İadeleri (+)</span>
+                                        <span className="text-stone-300 font-bold">+{
+                                            prescriptions.filter(p => !p.deletedAt && p.type === 'RETURN').reduce((acc, p) => {
+                                                const item = p.items.find(i => i.pesticideId === selectedDetailItem.pesticideId);
+                                                return acc + (item?.quantity ? (parseFloat(item.quantity.toString()) || 0) : 0);
+                                            }, 0)
+                                        }</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-[11px]">
+                                        <span className="text-stone-500">Manuel Düzeltmeler (±)</span>
+                                        <span className={`${(selectedDetailItem.adjustments?.reduce((a: number, b: any) => a + b.amount, 0) || 0) < 0 ? 'text-rose-400' : 'text-amber-400'} font-bold`}>
+                                            {(selectedDetailItem.adjustments?.reduce((a: number, b: any) => a + (b.amount || 0), 0) || 0).toFixed(2)}
+                                        </span>
+                                    </div>
+                                </div>
+                                <div className="pt-3 border-t border-white/5 flex justify-between items-center">
+                                    <span className="text-xs font-black text-stone-200">KAYITLI NET STOK</span>
+                                    <span className="text-lg font-black text-emerald-400 font-mono tracking-tighter">
+                                        {selectedDetailItem.quantity} <span className="text-xs font-sans text-stone-600">{selectedDetailItem.unit}</span>
+                                    </span>
+                                </div>
+                                <div className="pt-2 border-t border-white/5 flex justify-between items-center">
+                                    <span className="text-[9px] font-bold text-stone-500 uppercase">Son Denetim</span>
+                                    <span className="text-[10px] font-bold text-stone-400">
+                                        {selectedDetailItem.lastAuditDate 
+                                            ? new Date(selectedDetailItem.lastAuditDate).toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                                            : 'Henüz Yapılmadı'}
+                                    </span>
+                                </div>
+                                <button 
+                                    onClick={handleAuditItem}
+                                    className="w-full mt-2 py-2.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 group"
+                                >
+                                    <ClipboardCheck size={14} className="group-hover:scale-110 transition-transform" />
+                                    Stok Sayımını Onayla
+                                </button>
+                            </div>
+
+                            {/* Combined History */}
                             <div>
                                 <h4 className="text-xs font-black text-stone-500 uppercase tracking-widest mb-4 flex items-center gap-2">
                                     <History size={14} className="text-blue-500" />
-                                    Satış Geçmişi ({prescriptionLabel}ler)
+                                    Hareket Geçmişi
                                 </h4>
                                 
                                 <div className="space-y-2">
-                                    {salesHistory.length > 0 ? (
-                                        salesHistory.map((sale, idx) => (
-                                            <div key={idx} className="bg-stone-950/50 p-4 rounded-2xl border border-white/5 flex items-center justify-between group">
+                                    {combinedHistory.length > 0 ? (
+                                        combinedHistory.map((record, idx) => (
+                                            <div 
+                                                key={idx} 
+                                                onClick={() => {
+                                                    if (record.type === 'SALE' && onNavigateToPrescription) {
+                                                        closeModal();
+                                                        onNavigateToPrescription(record.id);
+                                                    } else if (record.type === 'PURCHASE' && onNavigateToSupplier) {
+                                                        closeModal();
+                                                        onNavigateToSupplier(record.targetId);
+                                                    } else if (record.type === 'ADJUSTMENT') {
+                                                        setEditingAdjustmentIdx((record as any).index);
+                                                        setEditingAdjustmentAmount(record.isReturn ? `-${record.quantity}` : record.quantity);
+                                                        setIsEditAdjustmentModalOpen(true);
+                                                    }
+                                                }}
+                                                className="bg-stone-950/50 p-4 rounded-2xl border border-white/5 flex items-center justify-between group cursor-pointer hover:bg-stone-800 transition-colors"
+                                            >
                                                 <div className="flex items-center gap-4">
-                                                    <div className="w-10 h-10 rounded-xl bg-stone-900 flex items-center justify-center text-stone-500">
-                                                        <User size={18} />
+                                                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                                                        record.type === 'SALE' ? 'bg-stone-900 text-blue-500' : 
+                                                        record.type === 'PURCHASE' ? 'bg-stone-900 text-emerald-500' :
+                                                        'bg-stone-900 text-amber-500'
+                                                    }`}>
+                                                        {record.type === 'SALE' ? <User size={18} /> : 
+                                                         record.type === 'PURCHASE' ? <Truck size={18} /> : 
+                                                         <AlertCircle size={18} />}
                                                     </div>
                                                     <div>
-                                                        <div className="text-sm font-bold text-stone-200">{sale.farmerName}</div>
+                                                        <div className="text-sm font-bold text-stone-200">
+                                                            {record.name}
+                                                            <span className={`ml-2 text-[9px] px-1.5 py-0.5 rounded-md ${
+                                                                record.type === 'SALE' ? 'bg-blue-500/10 text-blue-400' : 
+                                                                record.type === 'PURCHASE' ? 'bg-emerald-500/10 text-emerald-400' :
+                                                                'bg-amber-500/10 text-amber-400'
+                                                            }`}>
+                                                                {record.type === 'SALE' ? 'SATIŞ' : 
+                                                                 record.type === 'PURCHASE' ? 'ALIM' : 
+                                                                 'DEPOMDAN'}
+                                                            </span>
+                                                        </div>
                                                         <div className="flex items-center gap-2 text-[10px] text-stone-500 mt-0.5">
                                                             <Calendar size={10} />
-                                                            {new Date(sale.date).toLocaleDateString('tr-TR')}
+                                                            {new Date(record.date).toLocaleDateString('tr-TR')}
                                                         </div>
                                                     </div>
                                                 </div>
-                                                <div className="text-right">
-                                                    <div className="text-sm font-black text-emerald-400 font-mono">
-                                                        {formatCurrency(sale.price, userProfile?.currency || 'TRY')}
+                                                <div className="flex items-center gap-3">
+                                                    <div className="text-right">
+                                                        <div className={`text-sm font-black font-mono ${
+                                                            record.type === 'ADJUSTMENT' ? (record.isReturn ? 'text-rose-400' : 'text-amber-400') :
+                                                            (record.isReturn ? 'text-rose-400' : (record.type === 'SALE' ? 'text-blue-400' : 'text-emerald-400'))
+                                                        }`}>
+                                                            {record.type === 'ADJUSTMENT' ? (Number(record.quantity) > 0 ? '+' : '') : (record.isReturn ? '-' : '')}
+                                                            {record.type === 'ADJUSTMENT' ? record.quantity : formatCurrency(record.price, userProfile?.currency || 'TRY')}
+                                                            {record.type === 'ADJUSTMENT' && ` ${selectedDetailItem.unit}`}
+                                                        </div>
+                                                        <div className={`text-[10px] font-bold ${record.isReturn ? 'text-rose-500/80' : 'text-stone-600'}`}>
+                                                            {record.type === 'ADJUSTMENT' ? 'Fark' : (record.isReturn ? 'İADE: ' : 'Miktar: ') + record.quantity + ' ' + selectedDetailItem.unit}
+                                                        </div>
                                                     </div>
-                                                    <div className="text-[10px] text-stone-600 font-bold">
-                                                        Miktar: {sale.quantity}
-                                                    </div>
+                                                    <ChevronRight size={16} className="text-stone-700 group-hover:text-stone-400 transition-colors" />
                                                 </div>
                                             </div>
                                         ))
                                     ) : (
                                         <div className="text-center py-10 bg-stone-950/30 rounded-2xl border border-dashed border-stone-800">
-                                            <p className="text-xs text-stone-600">Bu ürün henüz hiçbir faturada satılmadı.</p>
+                                            <p className="text-xs text-stone-600">Bu ürün için henüz hiçbir hareket bulunmuyor.</p>
                                         </div>
                                     )}
                                 </div>
@@ -1479,6 +2264,100 @@ export const InventoryScreen: React.FC = () => {
                     </div>
                 </div>
             )}
+
+            {/* Quick Stock Add Modal */}
+            {isQuickStockModalOpen && selectedDetailItem && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+                    <div className="bg-stone-900 w-full max-w-[280px] rounded-3xl border border-white/10 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+                        <div className="p-4 border-b border-white/10 flex justify-between items-center bg-stone-950/50">
+                            <h3 className="text-xs font-black text-stone-100 uppercase tracking-widest">Hızlı Stok Ekle</h3>
+                            <button onClick={() => setIsQuickStockModalOpen(false)} className="text-stone-500 hover:text-stone-300 p-1">
+                                <X size={16} />
+                            </button>
+                        </div>
+                        <div className="p-5 space-y-4">
+                            <div className="text-center">
+                                <p className="text-[10px] font-bold text-stone-500 uppercase tracking-widest mb-1">Ürün</p>
+                                <p className="text-sm font-black text-emerald-400">{selectedDetailItem.pesticideName}</p>
+                            </div>
+                            
+                            <div className="space-y-2">
+                                <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest block text-center">Eklenecek Miktar ({selectedDetailItem.unit})</label>
+                                <input 
+                                    autoFocus
+                                    type="number" 
+                                    placeholder="0"
+                                    className="w-full bg-stone-950 border border-emerald-500/30 rounded-2xl p-4 text-center text-2xl font-black text-emerald-400 outline-none focus:border-emerald-500 shadow-inner"
+                                    value={quickStockQuantity}
+                                    onChange={(e) => setQuickStockQuantity(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && handleQuickStockAdd()}
+                                />
+                            </div>
+
+                            <button 
+                                onClick={handleQuickStockAdd}
+                                className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-stone-950 rounded-2xl font-black text-sm shadow-lg shadow-emerald-600/20 active:scale-95 transition-all flex items-center justify-center gap-2"
+                            >
+                                <Save size={18} />
+                                DEPOYA EKLE
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Edit Adjustment Modal */}
+            {isEditAdjustmentModalOpen && selectedDetailItem && editingAdjustmentIdx !== null && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+                    <div className="bg-stone-900 w-full max-w-[280px] rounded-3xl border border-white/10 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+                        <div className="p-4 border-b border-white/10 flex justify-between items-center bg-stone-950/50">
+                            <h3 className="text-xs font-black text-stone-100 uppercase tracking-widest">Hareketi Düzenle</h3>
+                            <button onClick={() => setIsEditAdjustmentModalOpen(false)} className="text-stone-500 hover:text-stone-300 p-1">
+                                <X size={16} />
+                            </button>
+                        </div>
+                        <div className="p-5 space-y-4">
+                            <div className="text-center">
+                                <p className="text-[10px] font-bold text-stone-500 uppercase tracking-widest mb-1">Ürün / Hareket</p>
+                                <p className="text-sm font-black text-amber-400">{selectedDetailItem.pesticideName}</p>
+                                <p className="text-[10px] text-stone-500 mt-1 uppercase">{selectedDetailItem.adjustments?.[editingAdjustmentIdx]?.note || 'Depomdan'}</p>
+                            </div>
+                            
+                            <div className="space-y-2">
+                                <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest block text-center">Miktar ({selectedDetailItem.unit})</label>
+                                <input 
+                                    autoFocus
+                                    type="number" 
+                                    placeholder="0"
+                                    className="w-full bg-stone-950 border border-amber-500/30 rounded-2xl p-4 text-center text-2xl font-black text-amber-400 outline-none focus:border-amber-500 shadow-inner"
+                                    value={editingAdjustmentAmount}
+                                    onChange={(e) => setEditingAdjustmentAmount(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && handleUpdateAdjustment()}
+                                />
+                                <p className="text-[9px] text-stone-600 text-center italic">Eksi (-) değerler stoktan düşer.</p>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                                <button 
+                                    onClick={handleDeleteAdjustment}
+                                    className="py-3 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 rounded-2xl font-bold text-xs transition-all flex items-center justify-center gap-2"
+                                >
+                                    <Trash2 size={14} />
+                                    SİL
+                                </button>
+                                <button 
+                                    onClick={handleUpdateAdjustment}
+                                    className="py-3 bg-amber-600 hover:bg-amber-500 text-stone-950 rounded-2xl font-bold text-xs shadow-lg shadow-amber-600/20 transition-all flex items-center justify-center gap-2"
+                                >
+                                    <Save size={14} />
+                                    GÜNCELLE
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Barcode Scanner Modal */}
             {isScanning && (
                 <BarcodeScanner 
@@ -1490,6 +2369,24 @@ export const InventoryScreen: React.FC = () => {
                     onClose={() => setIsScanning(false)}
                 />
             )}
+
+            <ConfirmationModal 
+                isOpen={confirmModal.isOpen}
+                onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+                onConfirm={confirmModal.onConfirm}
+                title={confirmModal.title}
+                message={confirmModal.message}
+                variant="danger"
+            />
+
+            <input 
+                type="file" 
+                ref={fileInputRef} 
+                className="hidden" 
+                accept="image/*" 
+                capture="environment"
+                onChange={processImageWithAI} 
+            />
         </div>
     );
 };

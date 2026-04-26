@@ -20,17 +20,22 @@ import { PerformanceScreen } from './components/PerformanceScreen';
 import { StatisticsScreen } from './components/Statistics';
 import { RemindersScreen } from './components/Reminders';
 import { InventoryScreen } from './components/Inventory';
+import { DebtTracking } from './components/DebtTracking';
 import { ExpensesScreen } from './components/Expenses';
 import { Kasa } from './components/Kasa';
 import { Suppliers } from './components/Suppliers';
 import { Payments } from './components/Payments';
 import { ProducerPortal } from './components/ProducerPortal';
 import { AiAssistant } from './components/AiAssistant';
+import { ProductAiAssistant } from './components/ProductAiAssistant';
+import { Findeks } from './components/Findeks';
 import { Calculator } from './components/Calculator';
 import { MixtureTest } from './components/MixtureTest';
 import { RecentTransactions } from './components/RecentTransactions';
 import { Reports } from './components/Reports';
 import { AdminPanel } from './components/AdminPanel';
+import { News } from './components/News';
+import { Plants } from './components/Plants';
 import { SubscriptionLock } from './components/SubscriptionLock';
 import { AppProvider, useAppViewModel } from './context/AppContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -41,12 +46,15 @@ import { StatusBar, Style } from '@capacitor/status-bar';
 import { Capacitor } from '@capacitor/core';
 import { AdMob } from '@capacitor-community/admob';
 
+import { ErrorBoundary } from './components/ErrorBoundary';
+
 function MainApp() {
   const { currentUser, loading } = useAuth();
-  const { userProfile, updateUserProfile, syncUserProfile, refreshStats, isAdmin, subscriptionEndsAt, activeTeamMember } = useAppViewModel();
+  const { userProfile, updateUserProfile, syncUserProfile, refreshStats, refreshNews, isAdmin, subscriptionEndsAt, activeTeamMember } = useAppViewModel();
   
   const [currentView, setCurrentView] = useState<ViewState>('DASHBOARD');
   const [selectedFarmerId, setSelectedFarmerId] = useState<string | null>(null);
+  const [selectedSupplierId, setSelectedSupplierId] = useState<string | null>(null);
   const [prescriptionFarmerId, setPrescriptionFarmerId] = useState<string | undefined>(undefined);
   const [editPrescriptionId, setEditPrescriptionId] = useState<string | undefined>(undefined);
   const [editVisitId, setEditVisitId] = useState<string | undefined>(undefined);
@@ -60,6 +68,12 @@ function MainApp() {
   const [hasSetAdminInitialView, setHasSetAdminInitialView] = useState(false);
   const [showWelcomeModal, setShowWelcomeModal] = useState(false);
   
+  useEffect(() => {
+    if (currentUser) {
+      dbService.testConnection();
+    }
+  }, [currentUser]);
+
   useEffect(() => {
     if (!currentUser) {
       setInitialDataLoaded(false);
@@ -82,12 +96,27 @@ function MainApp() {
 
   // Native Features Initialization (StatusBar & AdMob)
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const portalId = params.get('portalId');
-    const engineerId = params.get('engineerId');
+    // Check both search and hash for parameters
+    const searchParams = new URLSearchParams(window.location.search);
+    let portalId = searchParams.get('portalId');
+    let engineerId = searchParams.get('engineerId');
+
+    if (!portalId || !engineerId) {
+      const hash = window.location.hash;
+      if (hash.includes('?')) {
+        const hashParams = new URLSearchParams(hash.split('?')[1]);
+        portalId = portalId || hashParams.get('portalId');
+        engineerId = engineerId || hashParams.get('engineerId');
+      }
+    }
+
     if (portalId) {
-      setPortalFarmerId(portalId);
-      setPortalEngineerId(engineerId);
+      // Clean up potential trailing slashes and whitespace added by some Android browsers/apps
+      const cleanPortalId = portalId.replace(/\/$/, '').trim();
+      const cleanEngineerId = engineerId ? engineerId.replace(/\/$/, '').trim() : null;
+      
+      setPortalFarmerId(cleanPortalId);
+      setPortalEngineerId(cleanEngineerId);
       setCurrentView('PRODUCER_PORTAL');
     }
 
@@ -134,6 +163,7 @@ function MainApp() {
                     // 3. ADIM: Gerçek zamanlı senkronizasyonu başlat (Çoklu cihaz desteği)
                     cleanupSync = dbService.setupRealtimeSync(currentUser.uid, () => {
                         refreshStats();
+                        refreshNews();
                     }, (updatedProfile) => {
                         syncUserProfile(updatedProfile);
                     });
@@ -222,6 +252,11 @@ function MainApp() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
+  // Global Navigation Helper for AI Screens to jump to Settings
+  useEffect(() => {
+    (window as any).mks_navigate_settings = () => setCurrentView('SETTINGS');
+  }, []);
+
   const handleNavigate = (view: string) => {
     let nextView = view as ViewState;
     let mode: string | undefined = undefined;
@@ -281,15 +316,6 @@ function MainApp() {
       setCurrentView('VISITS');
   };
 
-  if (loading || (currentUser && !initialDataLoaded && currentView !== 'PRODUCER_PORTAL')) {
-      return (
-          <div className="min-h-screen bg-stone-950 flex flex-col items-center justify-center">
-              <Loader2 size={32} className="animate-spin text-emerald-500 mb-4" />
-              <p className="text-stone-500 text-xs">Veriler Yükleniyor...</p>
-          </div>
-      );
-  }
-
   if (currentView === 'PRODUCER_PORTAL' && portalFarmerId) {
     return <ProducerPortal 
       farmerId={portalFarmerId} 
@@ -300,6 +326,15 @@ function MainApp() {
         setCurrentView('DASHBOARD');
         window.history.replaceState({}, '', window.location.pathname);
     }} />;
+  }
+
+  if (loading || (currentUser && !initialDataLoaded && currentView !== 'PRODUCER_PORTAL')) {
+      return (
+          <div className="min-h-screen bg-stone-950 flex flex-col items-center justify-center">
+              <Loader2 size={32} className="animate-spin text-emerald-500 mb-4" />
+              <p className="text-stone-500 text-xs">Veriler Yükleniyor...</p>
+          </div>
+      );
   }
 
   if (!currentUser) return <LoginScreen />;
@@ -331,12 +366,26 @@ function MainApp() {
         case 'SETTINGS': return <SettingsScreen onNavigate={handleNavigate} />;
         case 'NOTIFICATIONS': return <NotificationsScreen onBack={() => window.history.back()} />;
         case 'PROFILE': return <ProfileScreen onBack={() => window.history.back()} />;
-        case 'STATISTICS': return <StatisticsScreen />;
+        case 'STATISTICS': return <StatisticsScreen onNavigate={handleNavigate} />;
+        case 'LAND_DETAIL': return <StatisticsScreen onNavigate={handleNavigate} initialTab="LAND" />;
         case 'REMINDERS': return <RemindersScreen onBack={() => window.history.back()} />;
-        case 'INVENTORY': return <InventoryScreen />;
+        case 'INVENTORY': return <InventoryScreen 
+            onNavigateToPrescription={handleEditPrescription}
+            onNavigateToSupplier={(suppId) => {
+                setSelectedSupplierId(suppId);
+                setCurrentView('SUPPLIERS');
+            }}
+        />;
+        case 'DEBT_TRACKING': return <DebtTracking />;
         case 'KASA': return <Kasa onBack={() => window.history.back()} />;
         case 'EXPENSES': return <ExpensesScreen onBack={() => window.history.back()} />;
-        case 'SUPPLIERS': return <Suppliers onBack={() => window.history.back()} />;
+        case 'SUPPLIERS': return <Suppliers 
+            onBack={() => {
+                if (selectedSupplierId) setSelectedSupplierId(null);
+                else window.history.back();
+            }} 
+            initialSupplierId={selectedSupplierId} 
+        />;
         case 'PAYMENTS': return <Payments onBack={() => window.history.back()} />;
         case 'CALCULATOR': return <Calculator onBack={() => window.history.back()} />;
         case 'MIXTURE_TEST': return <MixtureTest onBack={() => window.history.back()} />;
@@ -344,7 +393,12 @@ function MainApp() {
         case 'TEAM': return <TeamScreen onBack={() => window.history.back()} />;
         case 'MESSAGES': return <MessagesScreen onBack={() => window.history.back()} />;
         case 'PERFORMANCE': return <PerformanceScreen onBack={() => window.history.back()} />;
+        case 'NEWS': return <News onBack={() => window.history.back()} />;
         case 'ADMIN_PANEL': return isAdmin ? <AdminPanel onBack={() => window.history.back()} /> : <Dashboard onNavigate={handleNavigate} />;
+        case 'AI_ASSISTANT': return <AiAssistant onBack={() => window.history.back()} />;
+        case 'PRODUCT_AI_ASSISTANT': return <ProductAiAssistant onBack={() => window.history.back()} />;
+        case 'PLANTS': return <Plants onNavigate={handleNavigate} />;
+        case 'FINDEKS': return <Findeks onBack={() => window.history.back()} />;
         default: return <Dashboard onNavigate={handleNavigate} />;
     }
   };
@@ -387,10 +441,12 @@ function MainApp() {
 
 export default function App() {
   return (
-    <AuthProvider>
-        <AppProvider>
-             <MainApp />
-        </AppProvider>
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+          <AppProvider>
+               <MainApp />
+          </AppProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   )
 }

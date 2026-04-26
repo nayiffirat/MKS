@@ -127,11 +127,11 @@ export const RecentTransactions: React.FC<RecentTransactionsProps> = ({ onSelect
   const filteredActivities = useMemo(() => {
     return allActivities.filter(activity => {
       const matchesType = filterType === 'ALL' || activity.type === filterType;
-      const searchLower = searchQuery.toLowerCase();
+      const searchLower = searchQuery.toLocaleLowerCase('tr-TR');
       const matchesSearch = 
-        activity.title.toLowerCase().includes(searchLower) || 
-        activity.subtitle.toLowerCase().includes(searchLower) ||
-        (activity.details && activity.details.toLowerCase().includes(searchLower));
+        activity.title.toLocaleLowerCase('tr-TR').includes(searchLower) || 
+        activity.subtitle.toLocaleLowerCase('tr-TR').includes(searchLower) ||
+        (activity.details && activity.details.toLocaleLowerCase('tr-TR').includes(searchLower));
       
       return matchesType && matchesSearch;
     });

@@ -123,8 +123,8 @@ export const Kasa: React.FC<KasaProps> = ({ onBack }) => {
 
   const filteredTransactions = useMemo(() => {
     return transactions.filter(tx => {
-      const matchesSearch = tx.description.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                           tx.category?.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesSearch = tx.description.toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR')) || 
+                           tx.category?.toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR'));
       const matchesFilter = filterType === 'ALL' || tx.type === filterType;
       return matchesSearch && matchesFilter;
     });
@@ -192,7 +192,7 @@ export const Kasa: React.FC<KasaProps> = ({ onBack }) => {
     }
 
     try {
-      const amount = parseFloat(moneyAmount);
+      const amount = parseFloat(moneyAmount.replace(',', '.')) || 0;
       if (isNaN(amount) || amount <= 0) {
         showToast('Geçerli bir tutar giriniz', 'error');
         return;

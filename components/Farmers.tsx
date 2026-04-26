@@ -5,8 +5,8 @@ import { useAppViewModel } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { ContactService, ContactInfo } from '../services/contact';
 import { Farmer, VisitLog, Prescription, ManualDebt, Payment, Pesticide } from '../types';
-import { COMMON_CROPS } from '../constants';
-import { Search, Phone, MessageCircle, MapPin, Wheat, ChevronLeft, ChevronRight, Contact, Loader2, User, Ruler, FileText, Calendar, Navigation, Plus, X, ArrowLeft, Edit2, Trash2, CheckSquare, Square, Check, FlaskConical, Clock, ImageIcon, Upload, AlertCircle, MessageSquare, Share2, Save, Download, FileJson, RefreshCw, RefreshCcw, Wallet, History, CreditCard, TrendingDown, TrendingUp as TrendingUpIcon, Send, Copy, ClipboardList, AlertTriangle } from 'lucide-react';
+import { COMMON_CROPS, CROP_PESTICIDE_COSTS, DEFAULT_PESTICIDE_COST, CROP_AGRONOMY_INTEL, DEFAULT_AGRONOMY } from '../constants';
+import { Search, Phone, MessageCircle, MapPin, Wheat, ChevronLeft, ChevronRight, Contact, Loader2, User, Ruler, FileText, Calendar, Navigation, Plus, X, ArrowLeft, Edit2, Trash2, CheckSquare, Square, Check, FlaskConical, Clock, ImageIcon, Upload, AlertCircle, MessageSquare, Share2, Save, Download, FileJson, RefreshCw, RefreshCcw, Wallet, History, CreditCard, TrendingDown, TrendingUp as TrendingUpIcon, Send, Copy, ClipboardList, AlertTriangle, Zap, Sprout, Bot, Info, Scale, ShieldAlert, ShieldCheck } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
@@ -14,6 +14,7 @@ import { formatCurrency, getCurrencySymbol } from '../utils/currency';
 import { ConfirmationModal } from './ConfirmationModal';
 import { ListSkeleton } from './Skeleton';
 import { EmptyState } from './EmptyState';
+import { DebtReminderModal } from './DebtReminderModal';
 
 interface FarmersProps {
   onBack: () => void;
@@ -211,6 +212,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
     payments, 
     prescriptions, 
     manualDebts, 
+    myPayments,
     bulkAddFarmers, 
     addFarmer, 
     updateFarmer, 
@@ -252,6 +254,8 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       message: '',
       onConfirm: () => {}
   });
+
+  const [isDebtReminderModalOpen, setIsDebtReminderModalOpen] = useState(false);
 
   // Sync with prop
   useEffect(() => {
@@ -375,21 +379,19 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   });
   
   // Detail View Tab State
-  const [activeTab, setActiveTab] = useState<'GENERAL' | 'VISITS' | 'PRESCRIPTIONS' | 'DEBT'>('DEBT');
+  const [activeTab, setActiveTab] = useState<'GENERAL' | 'VISITS' | 'PRESCRIPTIONS' | 'DEBT' | 'ANALYSIS'>('DEBT');
 
   const tabs = useMemo(() => {
     const allTabs = [
         { id: 'GENERAL', label: 'Genel Bilgiler', icon: User },
-        { id: 'VISITS', label: 'Ziyaretler', icon: ClipboardList },
+        { id: 'ANALYSIS', label: 'AI Analiz', icon: Zap },
+        { id: 'VISITS', label: 'Reçeteler', icon: ClipboardList },
         { id: 'PRESCRIPTIONS', label: prescriptionLabel, icon: FileText },
         { id: 'DEBT', label: 'Borç / Tahsilat', icon: Wallet }
     ];
     
     if (isSales) {
-        // Only show: carileri (list), borçlarını (DEBT), reçetelerini (PRESCRIPTIONS)
-        // We also keep GENERAL for basic info if needed, but the request says "sadece..."
-        // Let's stick to the request: carileri, borçlarını, reçetelerini.
-        return allTabs.filter(t => t.id === 'DEBT' || t.id === 'PRESCRIPTIONS');
+        return allTabs.filter(t => t.id === 'DEBT' || t.id === 'PRESCRIPTIONS' || t.id === 'ANALYSIS');
     }
     return allTabs;
   }, [isSales, prescriptionLabel]);
@@ -423,6 +425,9 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const [reportStartDate, setReportStartDate] = useState('');
   const [reportEndDate, setReportEndDate] = useState('');
   const [isViewingReport, setIsViewingReport] = useState(false);
+  const [reportType, setReportType] = useState<'SUMMARY' | 'DETAILED'>('SUMMARY');
+  const [reportFieldId, setReportFieldId] = useState<string>('ALL');
+  const [reportCrop, setReportCrop] = useState<string>('ALL');
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const reportRef = useRef<HTMLDivElement>(null);
@@ -449,7 +454,10 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   }, [selectedFarmer]);
 
   // Set default selected year to the latest available year
-  const farmerPayments = useMemo(() => payments.filter(p => p.farmerId === selectedFarmer?.id), [payments, selectedFarmer]);
+  const farmerPayments = useMemo(() => 
+    payments.filter(p => p.farmerId === selectedFarmer?.id)
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()), 
+  [payments, selectedFarmer]);
   
   // Calculate available years for filtering
   const availableYears = useMemo(() => {
@@ -463,14 +471,86 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       return Array.from(years).sort((a, b) => b - a);
   }, [farmerPrescriptions, farmerPayments, farmerManualDebts]);
 
+  const availableCrops = useMemo(() => {
+    if (!selectedFarmer?.fields) return [];
+    const crops = new Set(selectedFarmer.fields.map(f => f.crop).filter(Boolean));
+    return Array.from(crops).sort();
+  }, [selectedFarmer]);
+
+  const reportItems = useMemo(() => {
+    if (!selectedFarmer) return [];
+    // Only include checks/notes that do not have a relatedId (i.e. not generated by a normal Payment record) to prevent duplication
+    const farmerMyPayments = myPayments.filter(p => p.farmerId === selectedFarmer.id && !p.deletedAt && p.status !== 'CANCELLED' && !p.relatedId);
+    return [
+        ...farmerPrescriptions.map(p => ({ 
+            ...p, 
+            type: p.priceType === 'CASH' ? 'CASH' : 'DEBT', 
+            label: p.priceType === 'CASH' ? 'Peşin Satış' : ((p.totalAmount || 0) < 0 ? 'İade Makbuzu' : `${prescriptionLabel} Satışı`),
+            note: p.prescriptionNo ? `Fatura No: ${p.prescriptionNo}` : ''
+        })),
+        ...farmerPayments.map(p => ({ 
+            ...p, 
+            type: 'PAYMENT', 
+            label: 'Tahsilat' 
+        })),
+        ...farmerMyPayments.map(p => ({ 
+            ...p, 
+            type: 'PAYMENT', 
+            label: p.type === 'CHECK' ? 'Çek Tahsilatı' : (p.type === 'PROMISSORY_NOTE' ? 'Senet Tahsilatı' : 'Tahsilat'), 
+            date: p.issueDate,
+            note: p.note
+        })),
+        ...farmerManualDebts.map(d => ({ 
+            ...d, 
+            type: 'DEBT', 
+            label: 'Manuel Borç' 
+        }))
+    ]
+    .filter(item => {
+        const itemDate = new Date((item as any).date);
+        if (reportStartDate && itemDate < new Date(reportStartDate)) return false;
+        if (reportEndDate && itemDate > new Date(reportEndDate)) return false;
+        
+        // Tarla Filtresi - Sadece reçeteler tarlaya bağlıdır. Ödemeler ve manuel borçlar her zaman gösterilir.
+        if (reportFieldId !== 'ALL' && (item as any).type !== 'PAYMENT' && (item as any).label !== 'Manuel Borç') {
+            const fIds = (item as any).fieldIds || ((item as any).fieldId ? [(item as any).fieldId] : []);
+            if (!fIds.includes(reportFieldId)) return false;
+        }
+
+        // Ürün Filtresi
+        if (reportCrop !== 'ALL' && (item as any).type !== 'PAYMENT' && (item as any).label !== 'Manuel Borç') {
+            const fIds = (item as any).fieldIds || ((item as any).fieldId ? [(item as any).fieldId] : []);
+            const farmerFields = selectedFarmer.fields || [];
+            const matchesCrop = fIds.some((fid: string) => {
+                const field = farmerFields.find(f => f.id === fid);
+                return field?.crop === reportCrop;
+            });
+            if (!matchesCrop) return false;
+        }
+        
+        return true;
+    })
+    .sort((a, b) => new Date((a as any).date).getTime() - new Date((b as any).date).getTime());
+  }, [farmerPrescriptions, farmerPayments, farmerManualDebts, myPayments, reportStartDate, reportEndDate, reportFieldId, reportCrop, selectedFarmer, prescriptionLabel]);
+
+  const reportTotalDebt = useMemo(() => reportItems.filter(item => item.type === 'DEBT' && ((item as any).totalAmount >= 0 || (item as any).amount >= 0)).reduce((acc, item) => acc + ((item as any).amount || (item as any).totalAmount || 0), 0), [reportItems]);
+  const reportTotalPaid = useMemo(() => {
+      const payments = reportItems.filter(item => item.type === 'PAYMENT').reduce((acc, item) => acc + (item as any).amount, 0);
+      const returns = reportItems.filter(item => item.type === 'DEBT' && (item as any).totalAmount < 0).reduce((acc, item) => acc + Math.abs((item as any).totalAmount), 0);
+      return payments + returns;
+  }, [reportItems]);
+  const reportBalance = reportTotalPaid - reportTotalDebt;
+
   // Filter transactions by selected year
   const filteredPrescriptions = useMemo(() => 
       farmerPrescriptions.filter(p => new Date(p.date).getFullYear() === selectedYear),
   [farmerPrescriptions, selectedYear]);
 
-  const filteredPayments = useMemo(() => 
-      farmerPayments.filter(p => new Date(p.date).getFullYear() === selectedYear),
-  [farmerPayments, selectedYear]);
+  const filteredPayments = useMemo(() => {
+      const regularPayments = farmerPayments.filter(p => new Date(p.date).getFullYear() === selectedYear);
+      const checkPayments = myPayments.filter(p => p.farmerId === selectedFarmer?.id && !p.deletedAt && p.status !== 'CANCELLED' && !p.relatedId && new Date(p.issueDate).getFullYear() === selectedYear);
+      return [...regularPayments, ...checkPayments.map(p => ({ ...p, date: p.issueDate }))];
+  }, [farmerPayments, myPayments, selectedFarmer, selectedYear]);
 
   const filteredManualDebts = useMemo(() => 
       farmerManualDebts.filter(d => new Date(d.date).getFullYear() === selectedYear),
@@ -497,9 +577,15 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
               balance += p.amount;
           }
       });
+
+      myPayments.forEach(p => {
+          if (p.farmerId === selectedFarmer?.id && !p.deletedAt && p.status !== 'CANCELLED' && new Date(p.issueDate).getFullYear() < selectedYear) {
+              balance += p.amount;
+          }
+      });
       
       return balance;
-  }, [farmerPrescriptions, farmerManualDebts, farmerPayments, selectedYear]);
+  }, [farmerPrescriptions, farmerManualDebts, farmerPayments, myPayments, selectedYear, selectedFarmer]);
 
   const yearTotalPaid = useMemo(() => filteredPayments.reduce((acc, p) => acc + p.amount, 0), [filteredPayments]);
   const yearTotalDebt = useMemo(() => 
@@ -510,7 +596,12 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const yearBalance = openingBalance + yearTotalPaid - yearTotalDebt;
 
   // Overall totals for report or general info if needed
-  const totalPaid = farmerPayments.reduce((acc, p) => acc + p.amount, 0);
+  const totalPaid = useMemo(() => {
+      const cashPayments = farmerPayments.reduce((acc, p) => acc + p.amount, 0);
+      const checkPayments = myPayments.filter(p => p.farmerId === selectedFarmer?.id && !p.deletedAt && p.status !== 'CANCELLED' && !p.relatedId).reduce((acc, p) => acc + p.amount, 0);
+      return cashPayments + checkPayments;
+  }, [farmerPayments, myPayments, selectedFarmer]);
+
   const totalDebt = farmerPrescriptions.filter(p => p.priceType !== 'CASH').reduce((acc, p) => acc + (p.totalAmount || 0), 0) + farmerManualDebts.filter(d => !d.id.startsWith('turnover-')).reduce((acc, d) => acc + d.amount, 0);
   const overallBalance = totalPaid - totalDebt;
 
@@ -538,11 +629,11 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const handleDeleteVisit = async (visitId: string) => {
       setConfirmModal({
           isOpen: true,
-          title: 'Ziyaret Kaydı Silinecek',
-          message: 'Bu ziyaret kaydını silmek istediğinize emin misiniz?',
+          title: 'Reçete Silinecek',
+          message: 'Bu reçeteyi silmek istediğinize emin misiniz?',
           onConfirm: async () => {
               await softDeleteVisit(visitId);
-              showToast('Ziyaret kaydı silindi', 'success');
+              showToast('Reçete silindi', 'success');
               hapticFeedback('medium');
               await loadFarmerDetails(); // Listeyi yenile
           }
@@ -560,7 +651,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       
       selectedPrescription.items.forEach(item => {
           text += `- ${item.pesticideName}: *${item.dosage}*`;
-          if (item.quantity) text += ` (${item.quantity} Adet)`;
+          if (item.quantity) text += ` (${item.quantity.toString().replace(/^-/, '')} Adet)`;
           text += `\n`;
       });
       
@@ -573,7 +664,12 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const handleCopyPortalLink = async () => {
       if (!selectedFarmer || !currentUser) return;
       
-      const portalUrl = `${window.location.origin}${window.location.pathname}?portalId=${selectedFarmer.id}&engineerId=${currentUser.uid}`;
+      const baseUrl = window.location.origin + window.location.pathname;
+      const portalPath = baseUrl.endsWith('/') ? baseUrl + 'portal.html' : baseUrl.replace(/\/[^\/]*$/, '/portal.html');
+      const url = new URL(portalPath);
+      url.searchParams.set('portalId', selectedFarmer.id);
+      url.searchParams.set('engineerId', currentUser.uid);
+      const portalUrl = url.toString();
       
       let text = `Sayın *${selectedFarmer.fullName}*,\n\n`;
       text += `Size özel hazırladığımız *${farmerLabel} Portalı*'na aşağıdaki linkten ulaşabilirsiniz. Bu portal üzerinden güncel borç durumunuzu, aldığınız ilaçları ve ${prescriptionLabel.toLowerCase()}lerinizi takip edebilirsiniz.\n\n`;
@@ -614,9 +710,14 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
         
         pdf.addImage(imgData, 'JPEG', 0, 0, imgWidth * ratio, imgHeight * ratio);
         
-        // Türkçe karakterleri temizle
-        const safeName = selectedFarmer.fullName.replace(/[^a-zA-Z0-9]/g, '_');
-        const fileName = `Recete_${safeName}.pdf`;
+        // Türkçe karakterleri temizle ve ASCII'ye çevir
+        const charMap: {[key: string]: string} = {'Ğ':'G','ğ':'g','Ü':'U','ü':'u','Ş':'S','ş':'s','İ':'I','ı':'i','Ö':'O','ö':'o','Ç':'C','ç':'c'};
+        const safeName = selectedFarmer.fullName
+            .replace(/[ĞğÜüŞşİıÖöÇç]/g, match => charMap[match])
+            .replace(/[^a-zA-Z0-9]/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_|_$/g, '');
+        const fileName = `${safeName}_Receti.pdf`;
 
         if (action === 'DOWNLOAD') {
             pdf.save(fileName);
@@ -626,7 +727,6 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
             const shareData = {
                 files: [file],
                 title: `Zirai ${prescriptionLabel}`
-                // text alanı Android'de dosya paylaşımını bozabiliyor, bu yüzden boş bırakıyoruz.
             };
 
             try {
@@ -637,7 +737,6 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                 }
             } catch (shareError) {
                 console.warn("Share failed, trying fallback.", shareError);
-                // Fallback olarak indirmeyi dene
                 pdf.save(fileName);
             }
         }
@@ -775,14 +874,17 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       setModalMode('EDIT'); toggleModal(true);
   };
 
+  const parseFloatSafe = (val: string | number) => parseFloat(String(val).replace(',', '.')) || 0;
+
   const handleSavePayment = async () => {
       if (!selectedFarmer || !paymentAmount) return;
       setIsSavingPayment(true);
       try {
+          const parsedAmount = parseFloatSafe(paymentAmount);
           if (editingPayment) {
               await updatePayment({
                   ...editingPayment,
-                  amount: Number(paymentAmount),
+                  amount: parsedAmount,
                   note: paymentNote,
                   method: paymentMethod,
                   dueDate: (paymentMethod === 'CHECK' || paymentMethod === 'TEDYE') ? paymentDate : undefined,
@@ -792,7 +894,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           } else {
               await addPayment({
                   farmerId: selectedFarmer.id,
-                  amount: Number(paymentAmount),
+                  amount: parsedAmount,
                   date: new Date().toISOString(),
                   method: paymentMethod,
                   dueDate: (paymentMethod === 'CHECK' || paymentMethod === 'TEDYE') ? paymentDate : undefined,
@@ -853,11 +955,12 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
               farmerId: selectedFarmer.id,
               date: new Date().toISOString(),
               engineerName: userProfile.fullName,
+              type: 'RETURN' as const,
               items: returnItems.map(item => ({
                   pesticideId: item.pesticideId,
                   pesticideName: item.pesticideName,
                   dosage: 'İade',
-                  quantity: (-item.quantity).toString(),
+                  quantity: item.quantity.toString(),
                   unitPrice: item.unitPrice,
                   totalPrice: -(item.quantity * item.unitPrice),
                   priceType: 'CASH' as const
@@ -894,10 +997,11 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       if (!selectedFarmer || !debtAmount) return;
       setIsSavingDebt(true);
       try {
+          const parsedAmount = parseFloatSafe(debtAmount);
           if (editingManualDebt) {
               await updateManualDebt({
                   ...editingManualDebt,
-                  amount: Number(debtAmount),
+                  amount: parsedAmount,
                   date: new Date(debtDate).toISOString(),
                   note: debtNote
               });
@@ -905,7 +1009,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           } else {
               await addManualDebt({
                   farmerId: selectedFarmer.id,
-                  amount: Number(debtAmount),
+                  amount: parsedAmount,
                   date: new Date(debtDate).toISOString(),
                   note: debtNote,
                   createdById: activeTeamMember?.id
@@ -957,29 +1061,17 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       text += `Sayın *${selectedFarmer.fullName}*,\n\n`;
       text += `Dönem: ${reportStartDate ? new Date(reportStartDate).toLocaleDateString('tr-TR') : 'Başlangıç'} - ${reportEndDate ? new Date(reportEndDate).toLocaleDateString('tr-TR') : 'Güncel'}\n\n`;
       
-      const filteredItems = [
-          ...farmerPrescriptions.map(p => ({ ...p, type: p.priceType === 'CASH' ? 'CASH' : 'DEBT', label: p.priceType === 'CASH' ? 'Peşin Satış' : `${prescriptionLabel} Satışı` })),
-          ...farmerPayments.map(p => ({ ...p, type: 'PAYMENT', label: 'Tahsilat' })),
-          ...farmerManualDebts.map(d => ({ ...d, type: 'DEBT', label: 'Manuel Borç' }))
-      ]
-      .filter(item => {
-          const itemDate = new Date(item.date);
-          if (reportStartDate && itemDate < new Date(reportStartDate)) return false;
-          if (reportEndDate && itemDate > new Date(reportEndDate)) return false;
-          return true;
-      })
-      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-      filteredItems.forEach(item => {
+      reportItems.forEach(item => {
           const date = new Date(item.date).toLocaleDateString('tr-TR');
           const amount = (item as any).amount || (item as any).totalAmount;
-          text += `${date} | ${item.label}: *${item.type === 'DEBT' ? '-' : item.type === 'CASH' ? '' : '+'}${formatCurrency(amount, userProfile?.currency || 'TRY')}*\n`;
+          const desc = (item as any).note ? ` - ${(item as any).note}` : '';
+          text += `${date} | ${item.label}${desc}: *${item.type === 'DEBT' ? '-' : item.type === 'CASH' ? '' : '+'}${formatCurrency(amount, userProfile?.currency || 'TRY')}*\n`;
       });
 
       text += `\n*TOPLAM DURUM:*\n`;
-      text += `Toplam Alış: *${formatCurrency(totalDebt, userProfile?.currency || 'TRY')}*\n`;
-      text += `Toplam Ödeme: *${formatCurrency(totalPaid, userProfile?.currency || 'TRY')}*\n`;
-      text += `*KALAN BAKİYE: ${formatCurrency(Math.abs(overallBalance), userProfile?.currency || 'TRY')} ${overallBalance >= 0 ? 'ALACAK' : 'BORÇ'}*\n`;
+      text += `Toplam Alış: *${formatCurrency(reportTotalDebt, userProfile?.currency || 'TRY')}*\n`;
+      text += `Toplam Ödeme: *${formatCurrency(reportTotalPaid, userProfile?.currency || 'TRY')}*\n`;
+      text += `*KALAN BAKİYE: ${formatCurrency(Math.abs(reportBalance), userProfile?.currency || 'TRY')} ${reportBalance >= 0 ? 'ALACAK' : 'BORÇ'}*\n`;
       
       const url = `https://wa.me/${selectedFarmer.phoneNumber.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`;
       window.open(url, '_blank');
@@ -1006,7 +1098,13 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           
           pdf.addImage(imgData, 'JPEG', 0, 0, imgWidth * ratio, imgHeight * ratio);
           
-          const safeName = selectedFarmer.fullName.replace(/[^a-zA-Z0-9]/g, '_');
+          // Türkçe karakterleri temizle ve ASCII'ye çevir
+          const charMap: {[key: string]: string} = {'Ğ':'G','ğ':'g','Ü':'U','ü':'u','Ş':'S','ş':'s','İ':'I','ı':'i','Ö':'O','ö':'o','Ç':'C','ç':'c'};
+          const safeName = selectedFarmer.fullName
+            .replace(/[ĞğÜüŞşİıÖöÇç]/g, match => charMap[match])
+            .replace(/[^a-zA-Z0-9]/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_|_$/g, '');
           const fileName = `${safeName}_Cari_Rapor.pdf`;
 
           if (action === 'DOWNLOAD') {
@@ -1036,6 +1134,29 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       } finally {
           setIsGeneratingReport(false);
       }
+  };
+
+  const handleSendDebtReminder = () => {
+      if (!selectedFarmer) return;
+      
+      const debtAmount = Math.abs(overallBalance);
+      const formattedDebt = formatCurrency(debtAmount, (userProfile?.currency as any) || 'TRY');
+      
+      const baseUrl = window.location.origin + window.location.pathname;
+      const portalPath = baseUrl.endsWith('/') ? baseUrl + 'portal.html' : baseUrl.replace(/\/[^\/]*$/, '/portal.html');
+      const url = new URL(portalPath);
+      url.searchParams.set('portalId', selectedFarmer.id);
+      url.searchParams.set('engineerId', currentUser?.uid || '');
+      const portalUrl = url.toString();
+      
+      let text = `Sayın *${selectedFarmer.fullName}*,\n\n`;
+      text += `Güncel hesap bakiyeniz *${formattedDebt}* borç bakiyesi vermektedir.\n\n`;
+      text += `Detaylı hesap ekstrenizi, aldığınız ürünleri ve ödemelerinizi size özel ${farmerLabel.toLowerCase()} portalınızdan inceleyebilirsiniz:\n\n`;
+      text += `🔗 *Portal Linkiniz:*\n${portalUrl}\n\n`;
+      text += `İyi çalışmalar dileriz.`;
+      
+      const waUrl = `https://wa.me/${selectedFarmer.phoneNumber.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`;
+      window.open(waUrl, '_blank');
   };
 
   const getDueDate = (item: any) => {
@@ -1087,7 +1208,8 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       let warningMessage = `Bu ${farmerLabel.toLowerCase()}yi ve tüm kayıtlarını silmek istediğinize emin misiniz?`;
       
       if (Math.abs(balance) > 0.01) {
-          warningMessage = `DİKKAT: Bu ${farmerLabel.toLowerCase()}nin ${formatCurrency(Math.abs(balance), userProfile?.currency || 'TRY')} tutarında ${balance < 0 ? 'BORCU' : 'ALACAĞI'} bulunmaktadır. Silme işlemi geri alınamaz. Devam etmek istiyor musunuz?`;
+          showToast(`Bakiyesi olan ${farmerLabel.toLowerCase()} silinemez. Lütfen önce bakiyeyi sıfırlayın.`, 'error');
+          return;
       } else if (hasRecords) {
           warningMessage = `Bu ${farmerLabel.toLowerCase()}ye ait geçmiş işlem kayıtları bulunmaktadır. Silme işlemi tüm bu kayıtları da silecektir. Devam etmek istiyor musunuz?`;
       }
@@ -1111,19 +1233,28 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const farmersWithDebt = useMemo(() => {
     return farmers.map(farmer => {
       const fPayments = payments.filter(p => p.farmerId === farmer.id);
+      const fMyPayments = myPayments.filter(p => p.farmerId === farmer.id && !p.deletedAt && p.status !== 'CANCELLED' && !p.relatedId);
       const fPrescriptions = prescriptions.filter(p => p.farmerId === farmer.id);
       const fManualDebts = manualDebts.filter(d => d.farmerId === farmer.id);
       
-      const totalPaid = fPayments.reduce((acc, p) => acc + p.amount, 0);
-      const totalDebt = fPrescriptions.filter(p => p.priceType !== 'CASH').reduce((acc, p) => acc + (p.totalAmount || 0), 0) + 
-                        fManualDebts.filter(d => !d.id.startsWith('turnover-')).reduce((acc, d) => acc + d.amount, 0);
+      const totalPaid = fPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0) + 
+                       fMyPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+      const totalDebt = fPrescriptions.filter(p => p.priceType !== 'CASH').reduce((acc, p) => {
+        const amt = Number(p.totalAmount) || 0;
+        const isReturn = p.type === 'RETURN';
+        // If it's a return, it should decrease the debt. 
+        // We assume totalAmount for returns is already negative or we handle the sign.
+        // To be safe, for returns we subtract the absolute amount or just use the raw amount if the system stores it negative.
+        return acc + (isReturn ? -Math.abs(amt) : Math.abs(amt));
+      }, 0) + 
+      fManualDebts.reduce((acc, d) => acc + (Number(d.amount) || 0), 0);
       
       const overallBalance = totalPaid - totalDebt;
       return { ...farmer, overallBalance };
     }).sort((a, b) => a.fullName.localeCompare(b.fullName, 'tr-TR'));
-  }, [farmers, payments, prescriptions, manualDebts]);
+  }, [farmers, payments, myPayments, prescriptions, manualDebts]);
 
-  const filteredFarmers = farmersWithDebt.filter(f => f.fullName.toLowerCase().includes(searchTerm.toLowerCase()) || f.village.toLowerCase().includes(searchTerm.toLowerCase()));
+  const filteredFarmers = farmersWithDebt.filter(f => f.fullName.toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR')) || f.village.toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR')));
 
   const downloadFarmersPdf = () => {
       const doc = new jsPDF();
@@ -1204,11 +1335,17 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                 {selectedPrescription.totalAmount && selectedPrescription.totalAmount < 0 ? 'İADE MAKBUZU' : 'ZİRAİ FATURA'}
                             </h3>
                             <p className="text-[9px] text-stone-500 font-bold uppercase tracking-widest mt-1">No: {selectedPrescription.prescriptionNo}</p>
-                            {selectedPrescription.fieldId && (
-                                <p className="text-[10px] text-emerald-600 font-bold mt-1">
-                                    Tarla: {selectedFarmer?.fields?.find(f => f.id === selectedPrescription.fieldId)?.name || 'Bilinmiyor'}
-                                </p>
-                            )}
+                            {(() => {
+                                const fIds = selectedPrescription.fieldIds || (selectedPrescription.fieldId ? [selectedPrescription.fieldId] : []);
+                                if (fIds.length === 0) return null;
+                                const fieldNames = fIds.map(id => selectedFarmer?.fields?.find(f => f.id === id)?.name).filter(Boolean);
+                                if (fieldNames.length === 0) return null;
+                                return (
+                                    <p className="text-[10px] text-emerald-600 font-bold mt-1">
+                                        {fieldNames.length > 1 ? 'Araziler: ' : 'Arazi: '}{fieldNames.join(', ')}
+                                    </p>
+                                );
+                            })()}
                         </div>
                         <div className="text-right">
                             <p className="font-bold text-emerald-700 text-sm">{selectedFarmer.fullName}</p>
@@ -1235,7 +1372,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                                 <div className="text-[9px] text-stone-500 font-mono mt-0.5">Doz: {item.dosage}</div>
                                             </td>
                                             <td className="p-2 text-center font-bold text-stone-700">
-                                                {item.quantity ? Math.abs(Number(item.quantity)) : '-'}
+                                                {item.quantity ? item.quantity.toString().replace(/^-/, '') : '-'}
                                             </td>
                                             <td className="p-2 text-right font-mono text-stone-600">
                                                 {item.unitPrice ? formatCurrency(item.unitPrice, userProfile?.currency || 'TRY') : '-'}
@@ -1249,12 +1386,32 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                 <tfoot>
                                     <tr className="bg-stone-50/50 border-t border-stone-200">
                                         <td colSpan={3} className="p-2 text-right font-bold text-stone-500 uppercase text-[9px] tracking-widest pt-3">
-                                            {selectedPrescription.totalAmount < 0 ? 'İade Toplamı' : `${prescriptionLabel} Toplamı`}
+                                            {selectedPrescription.discountAmount && selectedPrescription.discountAmount > 0 ? 'Ara Toplam' : (selectedPrescription.totalAmount < 0 ? 'İade Toplamı' : `${prescriptionLabel} Toplamı`)}
                                         </td>
-                                        <td className="p-2 text-right font-black text-emerald-600 font-mono text-sm pt-3">
-                                            {formatCurrency(Math.abs(selectedPrescription.totalAmount), userProfile?.currency || 'TRY')}
+                                        <td className={`p-2 text-right font-black font-mono text-sm pt-3 ${selectedPrescription.discountAmount && selectedPrescription.discountAmount > 0 ? 'text-stone-500 line-through' : 'text-emerald-600'}`}>
+                                            {formatCurrency(Math.abs((selectedPrescription.totalAmount || 0) + (selectedPrescription.discountAmount || 0)), userProfile?.currency || 'TRY')}
                                         </td>
                                     </tr>
+                                    {selectedPrescription.discountAmount && selectedPrescription.discountAmount > 0 && (
+                                        <>
+                                            <tr className="bg-stone-50/50">
+                                                <td colSpan={3} className="p-2 text-right font-bold text-rose-500 uppercase text-[9px] tracking-widest pt-1">
+                                                    İskonto (İndirim)
+                                                </td>
+                                                <td className="p-2 text-right font-black text-rose-500 font-mono text-sm pt-1">
+                                                    -{formatCurrency(selectedPrescription.discountAmount, userProfile?.currency || 'TRY')}
+                                                </td>
+                                            </tr>
+                                            <tr className="bg-stone-100 border-t border-stone-200">
+                                                <td colSpan={3} className="p-2 text-right font-bold text-emerald-700 uppercase text-[10px] tracking-widest pt-2 pb-2">
+                                                    İndirimli Tutar
+                                                </td>
+                                                <td className="p-2 text-right font-black text-emerald-700 font-mono text-lg pt-2 pb-2">
+                                                    {formatCurrency(Math.abs(selectedPrescription.totalAmount || 0), userProfile?.currency || 'TRY')}
+                                                </td>
+                                            </tr>
+                                        </>
+                                    )}
                                 </tfoot>
                             </table>
                         ) : (
@@ -1272,7 +1429,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                                 {item.pesticideName}
                                                 {item.quantity && (
                                                     <span className="ml-1 text-stone-500 font-bold text-[9px] bg-stone-100 px-1.5 py-0.5 rounded-full">
-                                                        {item.quantity} Adet
+                                                        {item.quantity.toString().replace(/^-/, '')} Adet
                                                     </span>
                                                 )}
                                             </td>
@@ -1305,7 +1462,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                         className="flex-1 py-3 rounded-xl bg-emerald-600 text-white font-bold shadow-xl shadow-emerald-900/30 hover:bg-emerald-500 active:scale-95 transition-all flex items-center justify-center disabled:opacity-70 text-xs"
                     >
                         {isProcessingPdf ? <Loader2 size={16} className="animate-spin mr-2"/> : <Share2 size={16} className="mr-2"/>} 
-                        PDF Paylaş
+                        WhatsApp PDF
                     </button>
                     
                     <button 
@@ -1354,87 +1511,134 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                 </div>
                 
                 <div className="overflow-x-auto pb-4">
-                    <div ref={reportRef} className="bg-white p-8 rounded-2xl shadow-xl w-[210mm] mx-auto text-stone-900 border border-stone-300 mt-2">
-                        <div className="flex justify-between items-start border-b-2 border-stone-900 pb-6 mb-8">
-                            <div>
-                                <h1 className="text-3xl font-black uppercase tracking-tighter mb-1">Cari Hesap Ekstresi</h1>
-                                <p className="text-stone-500 font-bold uppercase tracking-widest text-xs">Ziraat Mühendisi Otomasyon Sistemi</p>
-                            </div>
-                            <div className="text-right">
-                                <p className="text-sm font-bold">{new Date().toLocaleDateString('tr-TR')}</p>
-                                <p className="text-[10px] text-stone-500">Rapor No: {Math.random().toString(36).substring(7).toUpperCase()}</p>
-                            </div>
-                        </div>
+                    <div className="relative mt-4 mb-4 drop-shadow-[0_10px_20px_rgba(0,0,0,0.1)] w-[210mm] mx-auto min-w-[210mm]">
+                        <div ref={reportRef} className="bg-[#fdfdfc] px-8 pt-10 pb-6 rounded-t-xl text-left relative overflow-hidden text-stone-800">
+                            {/* Subtle noise/texture overlay for paper effect */}
+                            <div className="absolute inset-0 opacity-[0.03] pointer-events-none mix-blend-multiply" style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.85%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22/%3E%3C/svg%3E")' }}></div>
 
-                        <div className="grid grid-cols-2 gap-10 mb-10">
-                            <div className="bg-stone-50 p-6 rounded-2xl border border-stone-200">
-                                <h2 className="text-[10px] font-black uppercase tracking-widest text-stone-400 mb-3">Müşteri Bilgileri</h2>
-                                <p className="text-xl font-black mb-1">{selectedFarmer.fullName}</p>
-                                <p className="text-sm text-stone-600 mb-1">{selectedFarmer.village}</p>
-                                <p className="text-sm font-mono text-stone-500">{selectedFarmer.phoneNumber}</p>
-                            </div>
-                            <div className="bg-stone-50 p-6 rounded-2xl border border-stone-200">
-                                <h2 className="text-[10px] font-black uppercase tracking-widest text-stone-400 mb-3">Rapor Dönemi</h2>
-                                <p className="text-lg font-bold">
-                                    {reportStartDate ? new Date(reportStartDate).toLocaleDateString('tr-TR') : 'Başlangıç'} - {reportEndDate ? new Date(reportEndDate).toLocaleDateString('tr-TR') : 'Güncel'}
-                                </p>
-                            </div>
-                        </div>
+                            {/* Top Edge Band */}
+                            <div className="absolute top-0 left-0 w-full h-1.5 bg-blue-600"></div>
 
-                        <table className="w-full mb-10">
-                            <thead>
-                                <tr className="border-b-2 border-stone-900 text-left">
-                                    <th className="py-4 text-[10px] font-black uppercase tracking-widest">Tarih</th>
-                                    <th className="py-4 text-[10px] font-black uppercase tracking-widest">İşlem</th>
-                                    <th className="py-4 text-[10px] font-black uppercase tracking-widest">Açıklama</th>
-                                    <th className="py-4 text-[10px] font-black uppercase tracking-widest text-right">Borç</th>
-                                    <th className="py-4 text-[10px] font-black uppercase tracking-widest text-right">Alacak</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {[
-                                    ...farmerPrescriptions.map(p => ({ ...p, type: p.priceType === 'CASH' ? 'CASH' : 'DEBT', label: p.priceType === 'CASH' ? 'Peşin Satış' : ((p.totalAmount || 0) < 0 ? 'İade Makbuzu' : `${prescriptionLabel} Satışı`) })),
-                                    ...farmerPayments.map(p => ({ ...p, type: 'PAYMENT', label: 'Tahsilat' })),
-                                    ...farmerManualDebts.map(d => ({ ...d, type: 'DEBT', label: 'Manuel Borç' }))
-                                ]
-                                .filter(item => {
-                                    const itemDate = new Date(item.date);
-                                    if (reportStartDate && itemDate < new Date(reportStartDate)) return false;
-                                    if (reportEndDate && itemDate > new Date(reportEndDate)) return false;
-                                    return true;
-                                })
-                                .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-                                .map((item, idx) => (
-                                    <tr key={idx} className="border-b border-stone-100">
-                                        <td className="py-4 text-sm">{new Date(item.date).toLocaleDateString('tr-TR')}</td>
-                                        <td className="py-4 text-sm font-bold">{item.label}</td>
-                                        <td className="py-4 text-sm text-stone-500">{(item as any).note || (item.type === 'CASH' ? `Tutar: ${formatCurrency(Math.abs((item as any).amount || (item as any).totalAmount), userProfile?.currency || 'TRY')}` : '-')}</td>
-                                        <td className="py-4 text-sm text-right font-bold text-rose-600">{item.type === 'DEBT' ? formatCurrency(Math.abs((item as any).amount || (item as any).totalAmount), userProfile?.currency || 'TRY') : '-'}</td>
-                                        <td className="py-4 text-sm text-right font-bold text-emerald-600">{item.type === 'PAYMENT' ? formatCurrency(Math.abs((item as any).amount), userProfile?.currency || 'TRY') : '-'}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-
-                        <div className="flex justify-end">
-                            <div className="w-80 space-y-3">
-                                <div className="flex justify-between items-center py-2 border-b border-stone-100">
-                                    <span className="text-xs font-bold text-stone-500 uppercase">Toplam Alışlar</span>
-                                    <span className="text-lg font-bold text-rose-600">{formatCurrency(totalDebt, userProfile?.currency || 'TRY')}</span>
+                            <div className="flex justify-between items-start mb-8 relative z-10">
+                                <div>
+                                    <h1 className="text-3xl font-black uppercase tracking-tight mb-1">Cari Hesap Raporu</h1>
+                                    <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">{selectedFarmer.fullName}</p>
                                 </div>
-                                <div className="flex justify-between items-center py-2 border-b border-stone-100">
-                                    <span className="text-xs font-bold text-stone-500 uppercase">Toplam Ödemeler</span>
-                                    <span className="text-lg font-bold text-emerald-600">{formatCurrency(totalPaid, userProfile?.currency || 'TRY')}</span>
-                                </div>
-                                <div className="flex justify-between items-center py-4 bg-stone-900 text-white px-6 rounded-2xl shadow-xl">
-                                    <span className="text-sm font-black uppercase tracking-widest">Kalan Bakiye</span>
-                                    <span className="text-2xl font-black">{formatCurrency(Math.round(Math.abs(overallBalance)), userProfile?.currency || 'TRY')} {overallBalance >= 0 ? 'ALACAK' : 'BORÇ'}</span>
+                                <div className="text-right">
+                                    <p className="text-sm font-bold mb-1 text-stone-600">
+                                        Dönem: {reportStartDate ? new Date(reportStartDate).toLocaleDateString('tr-TR') : 'Başlangıç'} - {reportEndDate ? new Date(reportEndDate).toLocaleDateString('tr-TR') : 'Güncel'}
+                                    </p>
+                                    <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">
+                                        Tür: {reportType === 'DETAILED' ? 'Detaylı (Ürün İçerikli)' : 'Özet (Fatura Bilgileri)'}
+                                    </p>
+                                    {reportFieldId !== 'ALL' && (
+                                        <p className="text-xs font-bold text-blue-600 mt-2 bg-blue-50 px-2 py-0.5 rounded-full inline-block">
+                                            Filtre: {selectedFarmer.fields.find(f => f.id === reportFieldId)?.name} Tarlası
+                                        </p>
+                                    )}
+                                    {reportCrop !== 'ALL' && (
+                                        <p className="text-xs font-bold text-emerald-600 mt-2 bg-emerald-50 px-2 py-0.5 rounded-full inline-block">
+                                            Filtre: {reportCrop} Ürünü
+                                        </p>
+                                    )}
                                 </div>
                             </div>
-                        </div>
 
-                        <div className="mt-20 pt-10 border-t border-stone-100 text-center">
-                            <p className="text-[10px] text-stone-400 font-bold uppercase tracking-[0.2em]">Bu belge dijital olarak oluşturulmuştur.</p>
+                            <div className="relative z-10">
+                                <table className="w-full mb-10">
+                                    <thead className="text-stone-400 uppercase text-[9px] font-black tracking-widest border-b-2 border-stone-200">
+                                        <tr className="text-left">
+                                            <th className="pb-3 w-[15%]">Tarih</th>
+                                            <th className="pb-3 w-[20%]">İşlem</th>
+                                            <th className="pb-3 w-[25%]">Açıklama</th>
+                                            <th className="pb-3 text-right w-[20%]">Borç</th>
+                                            <th className="pb-3 text-right w-[20%]">Alacak</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {reportItems.map((item, idx) => (
+                                            <React.Fragment key={idx}>
+                                                <tr className="border-b border-stone-100/60">
+                                                    <td className="py-3 text-xs font-mono text-stone-500">{new Date(item.date).toLocaleDateString('tr-TR')}</td>
+                                                    <td className="py-3 text-[11px] font-bold uppercase tracking-wide text-stone-700">{item.label}</td>
+                                                    <td className="py-3 text-xs text-stone-500">{(item as any).note || (item.type === 'CASH' ? `Tutar: ${formatCurrency(Math.abs((item as any).amount || (item as any).totalAmount), userProfile?.currency || 'TRY')}` : '-')}</td>
+                                                    <td className="py-3 text-sm text-right font-bold font-mono text-rose-600">
+                                                        {item.type === 'DEBT' && ((item as any).totalAmount >= 0 || (item as any).amount >= 0) ? formatCurrency((item as any).amount || (item as any).totalAmount, userProfile?.currency || 'TRY') : '-'}
+                                                    </td>
+                                                    <td className="py-3 text-sm text-right font-bold font-mono text-emerald-600">
+                                                        {item.type === 'PAYMENT' ? formatCurrency((item as any).amount, userProfile?.currency || 'TRY') : (item.type === 'DEBT' && (item as any).totalAmount < 0 ? formatCurrency(Math.abs((item as any).totalAmount), userProfile?.currency || 'TRY') : '-')}
+                                                    </td>
+                                                </tr>
+                                                {reportType === 'DETAILED' && (item as any).items && (
+                                                    <tr>
+                                                        <td colSpan={5} className="bg-stone-50/50 p-0 border-b border-stone-200">
+                                                            <div className="px-6 py-3 ml-8 border-l-2 border-stone-200/50">
+                                                                <table className="w-full text-[10px]">
+                                                                    <thead className="text-stone-400 uppercase font-bold tracking-widest text-[8px] border-b border-stone-200/50">
+                                                                        <tr>
+                                                                            <th className="text-left pb-1 w-[45%]">Ürün Adı</th>
+                                                                            <th className="text-center pb-1 w-[20%]">Miktar</th>
+                                                                            <th className="text-right pb-1 w-[15%]">B. Fiyat</th>
+                                                                            <th className="text-right pb-1 w-[20%]">Toplam</th>
+                                                                        </tr>
+                                                                    </thead>
+                                                                    <tbody className="divide-y divide-stone-100/50">
+                                                                        {(item as any).items.map((subItem: any, sIdx: number) => (
+                                                                            <tr key={sIdx}>
+                                                                                <td className="py-1.5 font-bold text-stone-700">{subItem.pesticideName}</td>
+                                                                                <td className="py-1.5 text-center font-mono text-stone-500">{subItem.quantity} <span className="text-[8px]">{subItem.unit}</span></td>
+                                                                                <td className="py-1.5 text-right font-mono text-stone-500">{formatCurrency(subItem.unitPrice || 0, userProfile?.currency || 'TRY')}</td>
+                                                                                <td className="py-1.5 text-right font-bold font-mono text-stone-800">{formatCurrency((subItem.quantity || 0) * (subItem.unitPrice || 0), userProfile?.currency || 'TRY')}</td>
+                                                                            </tr>
+                                                                        ))}
+                                                                    </tbody>
+                                                                </table>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                            </React.Fragment>
+                                        ))}
+                                    </tbody>
+                                </table>
+
+                                <div className="flex justify-end pt-4 border-t-2 border-dashed border-stone-300">
+                                    <div className="w-80 space-y-2">
+                                        <div className="flex justify-between items-center py-1">
+                                            <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">Dönem Toplam Alış</span>
+                                            <span className="text-sm font-bold font-mono text-rose-600">{formatCurrency(reportTotalDebt, userProfile?.currency || 'TRY')}</span>
+                                        </div>
+                                        <div className="flex justify-between items-center py-1 border-b border-stone-100/50 pb-2">
+                                            <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">Dönem Toplam Ödeme</span>
+                                            <span className="text-sm font-bold font-mono text-emerald-600">{formatCurrency(reportTotalPaid, userProfile?.currency || 'TRY')}</span>
+                                        </div>
+                                        <div className="flex justify-between items-center pt-2">
+                                            <span className="text-xs font-black text-stone-800 uppercase tracking-wider">Devreden Bakiye</span>
+                                            <span className={`text-xl font-black font-mono tracking-tight ${reportBalance > 0 ? 'text-rose-600' : reportBalance < 0 ? 'text-emerald-600' : 'text-stone-800'}`}>
+                                                {formatCurrency(Math.abs(reportBalance), userProfile?.currency || 'TRY')} {reportBalance > 0 ? '(B)' : reportBalance < 0 ? '(A)' : ''}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="mt-12 pt-6 flex justify-between items-end">
+                                    <div className="text-[9px] text-stone-400/80 font-mono leading-relaxed">
+                                        Bu belge Mühendis Kayıt Sistemi<br/>
+                                        tarafından oluşturulmuştur.<br/>
+                                        <strong>v3.1.2</strong>
+                                    </div>
+                                    <div className="text-center">
+                                        <div className="font-serif italic text-lg text-blue-900/80 mb-1">{userProfile?.fullName || 'Yönetici'}</div>
+                                        <div className="text-[8px] text-stone-400 uppercase tracking-widest border-t border-stone-200 pt-1.5 font-bold">Dijital Onay / Kaşe</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {/* Jagged / Perforated Bottom Edge */}
+                        <div className="w-full h-3 overflow-hidden block z-10 relative -mt-[1px]">
+                            <svg viewBox="0 0 1200 30" preserveAspectRatio="none" className="w-full h-full block" style={{ fill: '#fdfdfc' }}>
+                                <path d="M0,0 L0,15 L15,30 L30,15 L45,30 L60,15 L75,30 L90,15 L105,30 L120,15 L135,30 L150,15 L165,30 L180,15 L195,30 L210,15 L225,30 L240,15 L255,30 L270,15 L285,30 L300,15 L315,30 L330,15 L345,30 L360,15 L375,30 L390,15 L405,30 L420,15 L435,30 L450,15 L465,30 L480,15 L495,30 L510,15 L525,30 L540,15 L555,30 L570,15 L585,30 L600,15 L615,30 L630,15 L645,30 L660,15 L675,30 L690,15 L705,30 L720,15 L735,30 L750,15 L765,30 L780,15 L795,30 L810,15 L825,30 L840,15 L855,30 L870,15 L885,30 L900,15 L915,30 L930,15 L945,30 L960,15 L975,30 L990,15 L1005,30 L1020,15 L1035,30 L1050,15 L1065,30 L1080,15 L1095,30 L1110,15 L1125,30 L1140,15 L1155,30 L1170,15 L1185,30 L1200,15 L1200,0 Z"></path>
+                            </svg>
                         </div>
                     </div>
                 </div>
@@ -1447,7 +1651,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                         className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-bold shadow-xl shadow-blue-900/30 hover:bg-blue-500 active:scale-95 transition-all flex items-center justify-center disabled:opacity-70 text-xs"
                     >
                         {isGeneratingReport ? <Loader2 size={16} className="animate-spin mr-2"/> : <Share2 size={16} className="mr-2"/>} 
-                        PDF Paylaş
+                        WhatsApp PDF
                     </button>
                     
                     <button 
@@ -1510,7 +1714,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                     {[
                         { icon: Phone, label: 'Ara', href: `tel:${selectedFarmer.phoneNumber}` },
                         { icon: MessageCircle, label: 'WP', href: `https://wa.me/${selectedFarmer.phoneNumber.replace(/[^0-9]/g, '')}`, target: '_blank' },
-                        { icon: MessageSquare, label: 'SMS', href: `sms:${selectedFarmer.phoneNumber}` },
+                        { icon: Wallet, label: 'Borç Hatırlat', action: handleSendDebtReminder },
                         { icon: Navigation, label: 'Yol', action: () => window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedFarmer.village)}`, '_blank') }
                     ].map((btn, i) => (
                         btn.href ? (
@@ -1701,7 +1905,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                         return (
                                             <div 
                                                 key={idx} 
-                                                className={`p-3 bg-stone-950/50 rounded-xl border border-white/5 flex items-center justify-between group relative cursor-pointer hover:bg-stone-900/80 active:scale-[0.98] transition-all`}
+                                                className={`p-3 ${item.label === 'İade Makbuzu' ? 'bg-emerald-900/10 border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.05)]' : 'bg-stone-950/50 border-white/5'} rounded-xl border flex items-center justify-between group relative cursor-pointer hover:bg-stone-900/80 active:scale-[0.98] transition-all`}
                                                 onClick={() => {
                                                     if (item.label === `${prescriptionLabel} Satışı` || item.label === 'İade Makbuzu') {
                                                         const prescription = farmerPrescriptions.find(p => p.id === item.id);
@@ -1716,8 +1920,8 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                                 }}
                                             >
                                                 <div className="flex items-center gap-3">
-                                                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${item.type === 'DEBT' ? 'bg-rose-900/20 text-rose-500' : item.type === 'CASH' ? 'bg-blue-900/20 text-blue-500' : 'bg-emerald-900/20 text-emerald-500'}`}>
-                                                        {item.type === 'DEBT' || item.type === 'CASH' ? <FileText size={14} /> : <CreditCard size={14} />}
+                                                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${item.type === 'DEBT' ? ((item as any).totalAmount < 0 ? 'bg-emerald-900/40 text-emerald-400 border border-emerald-500/30' : 'bg-rose-900/20 text-rose-500') : item.type === 'CASH' ? 'bg-blue-900/20 text-blue-500' : 'bg-emerald-900/20 text-emerald-500'}`}>
+                                                        {item.label === 'İade Makbuzu' ? <RefreshCcw size={14} /> : (item.type === 'DEBT' || item.type === 'CASH' ? <FileText size={14} /> : <CreditCard size={14} />)}
                                                     </div>
                                                     <div>
                                                         <p className="text-[10px] font-bold text-stone-200">{item.label}</p>
@@ -1772,6 +1976,172 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                     </div>
                 )}
 
+                {activeTab === 'ANALYSIS' && selectedFarmer && (
+                    <div className="space-y-4 animate-in fade-in zoom-in-95 duration-300">
+                        {/* Summary Metrics */}
+                        {(() => {
+                            const currentDebt = yearBalance; // Adjusted to yearBalance
+
+                            let totalProfit = 0;
+                            farmerPrescriptions.forEach(pres => {
+                                if (pres.deletedAt) return;
+                                pres.items.forEach(item => {
+                                    const quantityNum = parseFloat(item.quantity?.split(' ')[0] || '0');
+                                    const sellingPrice = item.totalPrice || ((item.unitPrice || 0) * quantityNum);
+                                    const invItem = inventory.find(inv => inv.pesticideId === item.pesticideId);
+                                    const baseBuyingPrice = invItem?.buyingPrice || 0;
+                                    const actualBuyingPrice = (item.buyingPrice || baseBuyingPrice) * quantityNum;
+                                    if (actualBuyingPrice > 0) totalProfit += (sellingPrice - actualBuyingPrice);
+                                    else totalProfit += sellingPrice * 0.30;
+                                });
+                            });
+
+                            let totalExpectedPesticideCapacity = 0;
+                            const fieldBreakdown = (selectedFarmer.fields || []).map(field => {
+                                const costPerDa = CROP_PESTICIDE_COSTS[field.crop] || DEFAULT_PESTICIDE_COST;
+                                const estimatedCost = field.size * costPerDa;
+                                totalExpectedPesticideCapacity += estimatedCost;
+                                return { ...field, estimatedCost, costPerDa };
+                            });
+
+                            let riskScore = 0;
+                            if (currentDebt < 0 && totalExpectedPesticideCapacity > 0) {
+                                // currentDebt is negative when farmer owes money in some contexts, 
+                                // but here let's assume currentDebt is absolute balance if they owe
+                                const absoluteDebt = Math.abs(Math.min(0, yearBalance)); // Example logic
+                                riskScore = Math.min((absoluteDebt / totalExpectedPesticideCapacity) * 100, 100);
+                            }
+
+                            // Let's just use the logic from Findeks for consistency
+                            const totalPrescriptionAmount = farmerPrescriptions.filter(p => !p.deletedAt).reduce((acc, p) => acc + (p.totalAmount || 0), 0);
+                            const totalManualDebtAmount = farmerManualDebts.filter(d => !d.deletedAt).reduce((acc, d) => acc + (d.amount || 0), 0);
+                            const totalPaid = farmerPayments.filter(p => !p.deletedAt).reduce((acc, p) => acc + (p.amount || 0), 0);
+                            const realCurrentDebt = (totalPrescriptionAmount + totalManualDebtAmount) - totalPaid;
+
+                            riskScore = totalExpectedPesticideCapacity > 0 ? Math.min((Math.max(0, realCurrentDebt) / totalExpectedPesticideCapacity) * 100, 100) : (realCurrentDebt > 0 ? 100 : 0);
+
+                            let loyaltyScore = 85;
+                            const now = new Date();
+                            let maxOverdueDays = 0;
+                            farmerPrescriptions.filter(p => !p.deletedAt).forEach(p => {
+                                if (p.priceType === 'TERM' && p.dueDate) {
+                                    const dueDate = new Date(p.dueDate);
+                                    if (now > dueDate && realCurrentDebt > 0) {
+                                        const diff = (now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24);
+                                        if (diff > maxOverdueDays) maxOverdueDays = diff;
+                                    }
+                                } else if (realCurrentDebt > 100) {
+                                    const pDate = new Date(p.date);
+                                    const diff = (now.getTime() - pDate.getTime()) / (1000 * 60 * 60 * 24);
+                                    if (diff > 60) {
+                                        const overdue = diff - 60;
+                                        if (overdue > maxOverdueDays) maxOverdueDays = overdue;
+                                    }
+                                }
+                            });
+                            loyaltyScore -= (maxOverdueDays * 2.5);
+                            loyaltyScore += (farmerPrescriptions.length * 1.5);
+                            loyaltyScore = Math.min(Math.max(loyaltyScore, 5), 100);
+
+                            return (
+                                <div className="space-y-4 pb-4">
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div className="bg-stone-900 shadow-xl border border-white/5 p-4 rounded-[28px]">
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <div className="w-6 h-6 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-500">
+                                                    <TrendingUpIcon size={12} />
+                                                </div>
+                                                <span className="text-[10px] font-black text-stone-500 uppercase tracking-widest">Tahmini Net Kar</span>
+                                            </div>
+                                            <div className="text-xl font-black text-white font-mono">{formatCurrency(totalProfit, userProfile?.currency || 'TRY')}</div>
+                                            <div className="text-[8px] font-bold text-stone-600 mt-1 uppercase">Satışlardan Elde Edilen Kazanç</div>
+                                        </div>
+                                        <div className="bg-stone-900 shadow-xl border border-white/5 p-4 rounded-[28px]">
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <div className="w-6 h-6 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-500">
+                                                    <Scale size={12} />
+                                                </div>
+                                                <span className="text-[10px] font-black text-stone-500 uppercase tracking-widest">Risk Kapasitesi</span>
+                                            </div>
+                                            <div className="text-xl font-black text-amber-400 font-mono">{formatCurrency(totalExpectedPesticideCapacity, userProfile?.currency || 'TRY')}</div>
+                                            <div className="text-[8px] font-bold text-stone-600 mt-1 uppercase">Arazi İlaçlama Limiti</div>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div className="bg-stone-900 shadow-xl border border-white/5 p-4 rounded-[28px]">
+                                            <div className="flex items-center justify-between mb-2">
+                                                <span className="text-[10px] font-black text-stone-500 uppercase tracking-widest">Risk Skoru</span>
+                                                <ShieldAlert size={14} className={riskScore > 60 ? 'text-rose-500' : 'text-emerald-500'} />
+                                            </div>
+                                            <div className={`text-2xl font-black ${riskScore > 60 ? 'text-rose-500' : 'text-emerald-500'}`}>%{Math.round(riskScore)}</div>
+                                            <div className="w-full h-1 bg-stone-950 rounded-full mt-2 overflow-hidden">
+                                                <div className={`h-full ${riskScore > 60 ? 'bg-rose-500' : 'bg-emerald-500'}`} style={{ width: `${riskScore}%` }}></div>
+                                            </div>
+                                        </div>
+                                        <div className="bg-stone-900 shadow-xl border border-white/5 p-4 rounded-[28px]">
+                                            <div className="flex items-center justify-between mb-2">
+                                                <span className="text-[10px] font-black text-stone-500 uppercase tracking-widest">Ödeme Gücü</span>
+                                                <ShieldCheck size={14} className={loyaltyScore > 50 ? 'text-emerald-500' : 'text-rose-500'} />
+                                            </div>
+                                            <div className={`text-2xl font-black ${loyaltyScore > 50 ? 'text-emerald-400' : 'text-rose-400'}`}>%{Math.round(loyaltyScore)}</div>
+                                            <div className="w-full h-1 bg-stone-950 rounded-full mt-2 overflow-hidden">
+                                                <div className={`h-full ${loyaltyScore > 50 ? 'bg-emerald-500' : 'bg-rose-500'}`} style={{ width: `${loyaltyScore}%` }}></div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-stone-900/60 p-5 rounded-[32px] border border-white/5">
+                                        <h3 className="text-xs font-black text-white uppercase tracking-widest mb-4 flex items-center gap-2">
+                                            <Bot size={16} className="text-amber-500" />
+                                            AI Saha Verileri & Arazi Haritası
+                                        </h3>
+                                        <div className="space-y-3">
+                                            {fieldBreakdown.map((field, i) => {
+                                                const agronomy = CROP_AGRONOMY_INTEL[field.crop] || DEFAULT_AGRONOMY;
+                                                return (
+                                                    <div key={i} className="p-4 bg-stone-950/40 border border-white/5 rounded-2xl">
+                                                        <div className="flex justify-between items-start mb-3">
+                                                            <div>
+                                                                <div className="text-xs font-black text-white">{field.crop}</div>
+                                                                <div className="text-[9px] font-bold text-stone-500 uppercase">Mevkii {i+1} · {field.size} da</div>
+                                                            </div>
+                                                            <div className="text-right">
+                                                                <div className="text-[10px] font-black text-stone-300 font-mono">{formatCurrency(field.estimatedCost, userProfile?.currency || 'TRY')}</div>
+                                                                <div className="text-[7px] font-bold text-stone-600 uppercase">İlaç Limiti</div>
+                                                            </div>
+                                                        </div>
+                                                        <div className="grid grid-cols-2 gap-2">
+                                                            <div className="p-2 bg-stone-900/50 rounded-xl">
+                                                                <span className="text-[6px] font-black text-stone-500 uppercase block mb-1">Toprak</span>
+                                                                <span className="text-[9px] font-bold text-stone-400 line-clamp-1">{agronomy.soilType}</span>
+                                                            </div>
+                                                            <div className="p-2 bg-stone-900/50 rounded-xl">
+                                                                <span className="text-[6px] font-black text-stone-500 uppercase block mb-1">Sulama</span>
+                                                                <span className="text-[9px] font-bold text-blue-400 line-clamp-1">{agronomy.irrigationNeeds}</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                    
+                                    {maxOverdueDays > 0 && (
+                                        <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl flex items-center gap-3">
+                                            <AlertTriangle size={18} className="text-rose-500" />
+                                            <div>
+                                                <p className="text-[10px] font-black text-rose-500 uppercase">Kritik Vade Aşımı</p>
+                                                <p className="text-[11px] text-rose-200/70 font-medium">Bu cari hesaba ait {Math.round(maxOverdueDays)} günlük vade aşımı tespit edildi.</p>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })()}
+                    </div>
+                )}
+
                 {activeTab === 'VISITS' && (
                     <div className="space-y-2">
                         {isDataLoading ? <Loader2 size={20} className="animate-spin text-emerald-500 mx-auto"/> : farmerVisits.length > 0 ? farmerVisits.map(visit => (
@@ -1795,8 +2165,13 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                          {isDataLoading ? <Loader2 size={20} className="animate-spin text-amber-500 mx-auto"/> : filteredPrescriptions.length > 0 ? filteredPrescriptions.map(p => (
                             <div key={p.id} onClick={() => setSelectedPrescription(p)} className="bg-stone-900/80 p-3 rounded-xl border border-white/5 hover:bg-stone-800 transition-colors cursor-pointer active:scale-98">
                                 <div className="flex justify-between items-start mb-1.5">
-                                    <div><span className="text-[8px] font-mono text-stone-500 block uppercase">No: {p.prescriptionNo}</span></div>
-                                    <span className="text-[9px] font-bold text-amber-400 bg-amber-900/20 px-1.5 py-0.5 rounded border border-amber-800/30">{new Date(p.date).toLocaleDateString('tr-TR')}</span>
+                                    <div className="flex flex-col gap-0.5">
+                                        <span className="text-[8px] font-mono text-stone-500 block uppercase">No: {p.prescriptionNo}</span>
+                                        {(p.totalAmount || 0) < 0 && (
+                                            <span className="text-[7px] font-black text-emerald-500 bg-emerald-900/30 px-1 border border-emerald-500/30 rounded uppercase tracking-tighter w-fit">İADE</span>
+                                        )}
+                                    </div>
+                                    <span className={`text-[9px] font-bold ${(p.totalAmount || 0) < 0 ? 'text-emerald-400 bg-emerald-900/20 border-emerald-800/30' : 'text-amber-400 bg-amber-900/20 border-amber-800/30'} px-1.5 py-0.5 rounded border`}>{new Date(p.date).toLocaleDateString('tr-TR')}</span>
                                 </div>
                                 <div className="flex flex-wrap gap-1">{p.items.map((item, idx) => (<span key={idx} className="text-[8px] bg-stone-800 text-stone-400 px-1.5 py-0.5 rounded flex items-center"><FlaskConical size={8} className="mr-1 text-stone-500"/>{item.pesticideName}</span>))}</div>
                             </div>
@@ -1937,7 +2312,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                 </div>
                                 {returnSearchTerm.length > 1 && (
                                     <div className="mt-2 bg-stone-950 border border-stone-800 rounded-xl overflow-hidden max-h-40 overflow-y-auto">
-                                        {inventory.filter(p => p.pesticideName.toLowerCase().includes(returnSearchTerm.toLowerCase())).map(p => (
+                                        {inventory.filter(p => p.pesticideName.toLocaleLowerCase('tr-TR').includes(returnSearchTerm.toLocaleLowerCase('tr-TR'))).map(p => (
                                             <button 
                                                 key={p.pesticideId} 
                                                 onClick={() => handleAddReturnItem({ id: p.pesticideId, name: p.pesticideName, activeIngredient: '', defaultDosage: '', category: p.category })}
@@ -1962,10 +2337,20 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                                     <div className="flex items-center bg-stone-900 rounded-lg overflow-hidden border border-stone-800">
                                                         <button onClick={() => {
                                                             const newItems = [...returnItems];
-                                                            newItems[index].quantity = Math.max(1, newItems[index].quantity - 1);
+                                                            newItems[index].quantity = Math.max(0, newItems[index].quantity - 1);
                                                             setReturnItems(newItems);
                                                         }} className="px-2 py-1 text-stone-400 hover:text-white">-</button>
-                                                        <span className="px-2 text-xs font-bold text-stone-200 min-w-[2rem] text-center">{item.quantity}</span>
+                                                        <input 
+                                                            type="number"
+                                                            step="any"
+                                                            value={item.quantity}
+                                                            onChange={e => {
+                                                                const newItems = [...returnItems];
+                                                                newItems[index].quantity = parseFloat(e.target.value.replace(',', '.')) || 0;
+                                                                setReturnItems(newItems);
+                                                            }}
+                                                            className="w-12 bg-transparent text-xs font-bold text-stone-200 text-center outline-none"
+                                                        />
                                                         <button onClick={() => {
                                                             const newItems = [...returnItems];
                                                             newItems[index].quantity += 1;
@@ -1978,7 +2363,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                                         value={item.unitPrice}
                                                         onChange={e => {
                                                             const newItems = [...returnItems];
-                                                            newItems[index].unitPrice = Number(e.target.value);
+                                                            newItems[index].unitPrice = parseFloat(e.target.value.replace(',', '.')) || 0;
                                                             setReturnItems(newItems);
                                                         }}
                                                         className="w-20 bg-stone-900 border border-stone-800 rounded-lg px-2 py-1 text-xs text-stone-200 outline-none focus:border-amber-500/50"
@@ -2088,6 +2473,53 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                     <input type="date" value={reportEndDate} onChange={(e) => setReportEndDate(e.target.value)} className="w-full bg-stone-950 border border-white/10 rounded-xl px-3 py-2 text-stone-100 text-xs outline-none focus:border-blue-500" />
                                 </div>
                             </div>
+                             <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Rapor Türü</label>
+                                    <select 
+                                        value={reportType} 
+                                        onChange={(e) => setReportType(e.target.value as any)}
+                                        className="w-full bg-stone-950 border border-white/10 rounded-xl px-3 py-2 text-stone-100 text-xs outline-none focus:border-blue-500"
+                                    >
+                                        <option value="SUMMARY">Özet (Sadece Fatura)</option>
+                                        <option value="DETAILED">Detaylı (Ürün İçerikli)</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Ürün Filtresi</label>
+                                    <select 
+                                        value={reportCrop} 
+                                        onChange={(e) => {
+                                            setReportCrop(e.target.value);
+                                            if (e.target.value !== 'ALL') setReportFieldId('ALL');
+                                        }}
+                                        className="w-full bg-stone-950 border border-white/10 rounded-xl px-3 py-2 text-stone-100 text-xs outline-none focus:border-blue-500"
+                                    >
+                                        <option value="ALL">Tüm Ürünler</option>
+                                        {availableCrops.map(crop => (
+                                            <option key={crop} value={crop}>{crop}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-1 gap-3">
+                                <div>
+                                    <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Tarla Filtresi</label>
+                                    <select 
+                                        value={reportFieldId} 
+                                        onChange={(e) => {
+                                            setReportFieldId(e.target.value);
+                                            if (e.target.value !== 'ALL') setReportCrop('ALL');
+                                        }}
+                                        className="w-full bg-stone-950 border border-white/10 rounded-xl px-3 py-2 text-stone-100 text-xs outline-none focus:border-blue-500"
+                                    >
+                                        <option value="ALL">Tüm Tarlalar</option>
+                                        {selectedFarmer?.fields.map(field => (
+                                            <option key={field.id} value={field.id}>{field.name} ({field.crop})</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
                             <p className="text-[9px] text-stone-500 italic">Tarih seçmezseniz tüm zamanların raporu oluşturulur.</p>
                             <button onClick={() => { setIsViewingReport(true); setIsReportModalOpen(false); }} className="w-full bg-blue-700 text-white py-3.5 rounded-xl font-bold text-xs shadow-lg flex items-center justify-center">
                                 <FileText className="mr-2" size={16}/> Raporu Görüntüle
@@ -2126,16 +2558,6 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
          <div className="bg-stone-900 rounded-xl shadow-sm border border-white/5 flex items-center p-0.5">
              <Search className="text-stone-500 ml-2" size={14} />
              <input type="text" placeholder={`${farmerLabel} adı veya köy ara...`} className="w-full p-2 bg-transparent outline-none font-medium text-stone-200 placeholder-stone-600 text-[11px]" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-             <button onClick={downloadFarmersPdf} className="p-1.5 bg-stone-800 hover:bg-stone-700 text-rose-400 rounded-lg transition-all m-0.5 flex items-center justify-center" title="PDF İndir">
-                 <FileText size={14}/>
-             </button>
-             <button onClick={handleSync} disabled={isSyncing} className={`px-2 py-1.5 rounded-lg transition-all m-0.5 flex items-center justify-center gap-1 text-[9px] font-bold uppercase tracking-wider ${isSyncing ? 'bg-emerald-900/30 text-emerald-500' : 'bg-stone-800 hover:bg-stone-700 text-stone-400 hover:text-emerald-400'}`}>
-                 {isSyncing ? <Loader2 size={10} className="animate-spin"/> : <RefreshCw size={10}/>}
-                 {isSyncing ? '...' : 'Senk'}
-             </button>
-             {canCreateFarmer && (
-                <button onClick={handleContactImport} disabled={isImporting} className={`p-1.5 rounded-lg transition-all m-0.5 flex items-center justify-center ${isImporting ? 'bg-emerald-900/30 text-emerald-500' : 'bg-stone-800 hover:bg-stone-700 text-emerald-500'}`}>{isImporting ? <Loader2 size={14} className="animate-spin"/> : <Contact size={14}/>}</button>
-             )}
          </div>
       </div>
 
@@ -2220,6 +2642,15 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
         onSave={handleSaveFarmer}
         onDelete={handleDeleteFarmer}
         farmerLabel={farmerLabel}
+      />
+
+      <DebtReminderModal
+        isOpen={isDebtReminderModalOpen}
+        onClose={() => setIsDebtReminderModalOpen(false)}
+        farmersWithDebt={farmersWithDebt}
+        currency={(userProfile?.currency as 'TRY' | 'USD' | 'EUR') || 'TRY'}
+        farmerLabel={farmerLabel}
+        engineerId={currentUser?.uid || ''}
       />
 
       <ConfirmationModal

@@ -54,9 +54,13 @@ export const ProducerPortal: React.FC<ProducerPortalProps> = ({ farmerId, engine
                         setManualDebts(debtList.filter(d => d.farmerId === farmerId));
                         
                         // Try to get engineer profile
-                        const profileStr = localStorage.getItem('mks_user_profile');
-                        if (profileStr) {
-                            setEngineerProfile(JSON.parse(profileStr));
+                        try {
+                            const profileStr = localStorage.getItem('mks_user_profile');
+                            if (profileStr) {
+                                setEngineerProfile(JSON.parse(profileStr));
+                            }
+                        } catch (e) {
+                            console.warn("localStorage access denied", e);
                         }
                     }
                 }
@@ -93,7 +97,11 @@ export const ProducerPortal: React.FC<ProducerPortalProps> = ({ farmerId, engine
                     <User size={40} className="text-stone-600" />
                 </div>
                 <h2 className="text-xl font-bold text-stone-100 mb-2">Üretici Bulunamadı</h2>
-                <p className="text-stone-500 text-sm mb-4">Lütfen bağlantıyı kontrol edin veya mühendisinizle iletişime geçin.</p>
+                <p className="text-stone-500 text-sm mb-4">
+                    {!engineerId 
+                        ? "Portal linki eksik veya hatalı kopyalanmış olabilir. Lütfen linkin tamamına tıkladığınızdan emin olun."
+                        : "Lütfen bağlantıyı kontrol edin veya mühendisinizle iletişime geçin."}
+                </p>
                 <div className="bg-stone-900/50 p-4 rounded-2xl border border-white/5 max-w-xs mb-8">
                     <p className="text-[10px] text-stone-600 italic">
                         iOS/Safari kullanıyorsanız ve "security cookie" hatası alıyorsanız, lütfen Ayarlar &gt; Safari &gt; "Siteler Arası Takibi Engelle" seçeneğini kapatıp sayfayı yenileyin.
@@ -207,7 +215,7 @@ export const ProducerPortal: React.FC<ProducerPortalProps> = ({ farmerId, engine
                             <div className="space-y-4">
                                 <div className="flex items-center gap-2 text-emerald-400 mb-2">
                                     <MessageCircle size={16} />
-                                    <span className="text-xs font-bold">Son Ziyaret Notu</span>
+                                    <span className="text-xs font-bold">Son Reçete Notu</span>
                                 </div>
                                 <p className="text-stone-300 text-sm leading-relaxed italic">"{visits[0].note}"</p>
                                 <div className="text-[10px] text-stone-600 font-bold text-right">

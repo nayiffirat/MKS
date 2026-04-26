@@ -5,7 +5,7 @@ import {
     CartesianGrid, LineChart, Line, AreaChart, Area, PieChart, Pie, Cell 
 } from 'recharts';
 import { 
-    Download, Users, Ruler, Sprout, MapPin, Loader2, ArrowUpRight, 
+    Download, Users, Ruler, Sprout, MapPin, Loader2, ArrowUpRight, ArrowDownRight,
     FileText, X, Calendar, Activity, Zap, ClipboardCheck, 
     AlertTriangle, TrendingUp, History, Scale, BookOpen, 
     ChevronRight, PieChart as PieIcon, BarChart3, LineChart as LineIcon, Truck, DollarSign, Package
@@ -17,9 +17,14 @@ import { useAppViewModel } from '../context/AppContext';
 import { Prescription } from '../types';
 import { formatCurrency } from '../utils/currency';
 
-    type StatTab = 'OVERVIEW' | 'LAND' | 'PESTICIDES' | 'VISITS' | 'CONSUMPTION' | 'SALES' | 'DEBTS' | 'RECEIVABLES' | 'INVENTORY';
+    type StatTab = 'OVERVIEW' | 'PROFIT_LOSS' | 'PESTICIDES' | 'VISITS' | 'CONSUMPTION' | 'SALES' | 'DEBTS' | 'RECEIVABLES' | 'INVENTORY' | 'LAND';
 
-    export const StatisticsScreen: React.FC = () => {
+    interface StatisticsProps {
+        onNavigate?: (view: any) => void;
+        initialTab?: StatTab;
+    }
+
+    export const StatisticsScreen: React.FC<StatisticsProps> = ({ onNavigate, initialTab }) => {
     const { 
         stats, 
         farmers, 
@@ -30,20 +35,29 @@ import { formatCurrency } from '../utils/currency';
         userProfile,
         farmerLabel,
         farmerPluralLabel,
-        prescriptionLabel
+        prescriptionLabel,
+        plants
     } = useAppViewModel();
-    const [activeTab, setActiveTab] = useState<StatTab>('OVERVIEW');
+    const [activeTab, setActiveTab] = useState<StatTab>(initialTab || 'OVERVIEW');
     const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
     const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
     const [visitLogs, setVisitLogs] = useState<any[]>([]);
     const reportRef = useRef<HTMLDivElement>(null);
 
-    const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#f43f5e', '#06b6d4'];
+    const COLORS = [
+        '#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#f43f5e', '#06b6d4',
+        '#14b8a6', '#f97316', '#a855f7', '#6366f1', '#2dd4bf', '#fbbf24', '#f87171', '#c084fc'
+    ];
 
     React.useEffect(() => {
         const loadData = async () => {
-            const pData = await dbService.getAllPrescriptions();
-            const vData = await dbService.getAllVisits();
+            const pDataRaw = await dbService.getAllPrescriptions();
+            const vDataRaw = await dbService.getAllVisits();
+            
+            // Filter out deleted items
+            const pData = pDataRaw.filter(p => !p.deletedAt);
+            const vData = vDataRaw.filter(v => !v.deletedAt);
+            
             setPrescriptions(pData);
             setVisitLogs(vData);
         };
@@ -105,7 +119,7 @@ import { formatCurrency } from '../utils/currency';
 
             // Ürün bazlı satışlar ve maliyet
             p.items.forEach(item => {
-                const qty = parseInt(item.quantity || '0');
+                const qty = parseFloat(item.quantity?.replace(',', '.') || '0');
                 if (qty > 0) {
                     const cost = buyingPriceMap[item.pesticideId] || 0;
                     totalCost += qty * cost;
@@ -138,6 +152,27 @@ import { formatCurrency } from '../utils/currency';
             productChartData
         };
     }, [prescriptions, inventory]);
+
+    const plantReceivableData = React.useMemo(() => {
+        const plantDebts: Record<string, number> = {};
+        
+        prescriptions.forEach(p => {
+            if (p.priceType === 'TERM' && p.type === 'SALE') {
+                const farmer = farmers.find(f => f.id === p.farmerId);
+                // We only count if farmer still has balance (this is a simplification)
+                // But a better way is to see which plants have more "pending" (non-paid) invoices
+                if (farmer && (farmer.balance || 0) < 0) {
+                   const plant = plants.find(pl => pl.id === p.plantId);
+                   const name = plant?.name || 'Diğer / Belirsiz';
+                   plantDebts[name] = (plantDebts[name] || 0) + (p.totalAmount || 0);
+                }
+            }
+        });
+
+        return Object.entries(plantDebts)
+            .map(([name, value]) => ({ name, value }))
+            .sort((a, b) => b.value - a.value);
+    }, [prescriptions, farmers, plants]);
 
     const supplierDebtData = React.useMemo(() => {
         const debts = suppliers
@@ -273,8 +308,8 @@ import { formatCurrency } from '../utils/currency';
                 // Eğer quantity varsa onu sayıya çevirip ekle, yoksa 1 say
                 let qty = 1;
                 if (item.quantity) {
-                    const match = item.quantity.match(/\d+/);
-                    if (match) qty = parseInt(match[0]);
+                    const match = String(item.quantity).replace(',', '.').match(/[\d.]+/);
+                    if (match) qty = parseFloat(match[0]);
                 }
                 counts[name] = (counts[name] || 0) + qty;
             });
@@ -284,6 +319,44 @@ import { formatCurrency } from '../utils/currency';
             .map(([name, value]) => ({ name, value }))
             .sort((a, b) => b.value - a.value);
     }, [prescriptions]);
+
+    // Calculate Profit/Loss Data (Realized)
+    const profitLossData = React.useMemo(() => {
+        const processed = prescriptions.filter(p => p.isInventoryProcessed);
+        
+        let totalSoldCost = 0;
+        let totalSoldRevenue = 0;
+
+        const buyingPriceMap = inventory.reduce((acc, item) => {
+            acc[item.pesticideId] = item.buyingPrice;
+            return acc;
+        }, {} as Record<string, number>);
+
+        processed.forEach(p => {
+            p.items.forEach(item => {
+                const qty = parseFloat(item.quantity?.replace(',', '.') || '0');
+                if (qty > 0) {
+                    const cost = buyingPriceMap[item.pesticideId] || 0;
+                    const revenue = item.unitPrice || 0;
+                    
+                    totalSoldCost += qty * cost;
+                    totalSoldRevenue += qty * revenue;
+                }
+            });
+        });
+
+        const totalProfit = totalSoldRevenue - totalSoldCost - stats.totalExpenses;
+        const margin = totalSoldCost > 0 ? (totalProfit / (totalSoldCost + stats.totalExpenses)) * 100 : 0;
+
+        return {
+            totalSoldCost,
+            totalSoldRevenue,
+            totalProfit,
+            margin,
+            processedCount: processed.length,
+            totalExpenses: stats.totalExpenses
+        };
+    }, [inventory, prescriptions, stats.totalExpenses]);
 
     const renderTabContent = () => {
         switch (activeTab) {
@@ -300,11 +373,11 @@ import { formatCurrency } from '../utils/currency';
                                 trend="+12%"
                             />
                             <QuickStatCard 
-                                title="Toplam Arazi" 
-                                value={`${stats.totalArea} da`} 
-                                icon={Ruler} 
-                                color="emerald" 
-                                trend="+5.4%"
+                                title="Depo Kar/Zarar" 
+                                value={formatCurrency(profitLossData.totalProfit, userProfile?.currency || 'TRY')} 
+                                icon={TrendingUp} 
+                                color={profitLossData.totalProfit >= 0 ? "emerald" : "rose"} 
+                                trend={profitLossData.margin ? `%${profitLossData.margin.toFixed(1)} Marj` : undefined}
                             />
                             <QuickStatCard 
                                 title="Aktif Görevler" 
@@ -399,6 +472,102 @@ import { formatCurrency } from '../utils/currency';
                                         Tümünü Gör
                                     </button>
                                 )}
+                            </div>
+                        </div>
+                    </div>
+                );
+            case 'PROFIT_LOSS':
+                return (
+                    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        {/* Stats Grid */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="bg-stone-900 border border-white/5 p-5 rounded-2xl shadow-sm">
+                                <div className="flex items-center gap-3 mb-3">
+                                    <div className="w-10 h-10 rounded-xl bg-red-500/10 flex items-center justify-center text-red-400">
+                                        <ArrowDownRight size={20} />
+                                    </div>
+                                    <span className="text-stone-500 text-[10px] font-bold uppercase tracking-wider">Satılan Ürün Maliyeti</span>
+                                </div>
+                                <div className="text-2xl font-black text-stone-100">{formatCurrency(profitLossData.totalSoldCost, userProfile?.currency || 'TRY')}</div>
+                                <p className="text-[10px] text-stone-600 mt-2 font-medium">{profitLossData.processedCount} adet işlenmiş fatura baz alınmıştır.</p>
+                            </div>
+
+                            <div className="bg-stone-900 border border-white/5 p-5 rounded-2xl shadow-sm">
+                                <div className="flex items-center gap-3 mb-3">
+                                    <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-400">
+                                        <ArrowUpRight size={20} />
+                                    </div>
+                                    <span className="text-stone-500 text-[10px] font-bold uppercase tracking-wider">Satış Geliri</span>
+                                </div>
+                                <div className="text-2xl font-black text-stone-100">{formatCurrency(profitLossData.totalSoldRevenue, userProfile?.currency || 'TRY')}</div>
+                                <p className="text-[10px] text-stone-600 mt-2 font-medium">{prescriptionLabel}lerdeki birim fiyatlar üzerinden hesaplanmıştır.</p>
+                            </div>
+
+                            <div className="bg-stone-900 border border-white/5 p-5 rounded-2xl shadow-sm relative overflow-hidden">
+                                <div className={`absolute top-0 right-0 w-24 h-24 -mr-8 -mt-8 rounded-full blur-3xl opacity-20 ${profitLossData.totalProfit >= 0 ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
+                                <div className="flex items-center gap-3 mb-3">
+                                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${profitLossData.totalProfit >= 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+                                        <DollarSign size={20} />
+                                    </div>
+                                    <span className="text-stone-500 text-[10px] font-bold uppercase tracking-wider">Net Kar / Zarar</span>
+                                </div>
+                                <div className={`text-2xl font-black ${profitLossData.totalProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                    {formatCurrency(profitLossData.totalProfit, userProfile?.currency || 'TRY')}
+                                </div>
+                                <div className="flex items-center gap-2 mt-2">
+                                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${profitLossData.totalProfit >= 0 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
+                                        %{profitLossData.margin.toFixed(1)} Marj
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Detailed Info Card */}
+                        <div className="bg-stone-900 border border-white/5 p-8 rounded-3xl shadow-sm">
+                            <div className="flex items-center gap-4 mb-8">
+                                <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-500">
+                                    <TrendingUp size={24} />
+                                </div>
+                                <div>
+                                    <h3 className="text-xl font-black text-stone-100 tracking-tight">Finansal Özet</h3>
+                                    <p className="text-stone-500 text-xs font-bold uppercase tracking-widest">Gerçekleşen Satış Analizi</p>
+                                </div>
+                            </div>
+
+                            <div className="space-y-6">
+                                <div className="flex justify-between items-center pb-4 border-b border-white/5">
+                                    <span className="text-stone-400 font-medium">Kasadaki Para</span>
+                                    <span className="text-stone-100 font-black">{formatCurrency(stats.cashBalance || 0, userProfile?.currency || 'TRY')}</span>
+                                </div>
+                                <div className="flex justify-between items-center pb-4 border-b border-white/5">
+                                    <span className="text-stone-400 font-medium">Hesaptaki Para</span>
+                                    <span className="text-stone-100 font-black">{formatCurrency(stats.bankBalance || 0, userProfile?.currency || 'TRY')}</span>
+                                </div>
+                                <div className="flex justify-between items-center pb-4 border-b border-white/5">
+                                    <span className="text-stone-400 font-medium">Toplam Satış Geliri</span>
+                                    <span className="text-stone-100 font-black">{formatCurrency(profitLossData.totalSoldRevenue, userProfile?.currency || 'TRY')}</span>
+                                </div>
+                                <div className="flex justify-between items-center pb-4 border-b border-white/5">
+                                    <span className="text-stone-400 font-medium">Toplam Ürün Maliyeti</span>
+                                    <span className="text-stone-100 font-black text-red-400">-{formatCurrency(profitLossData.totalSoldCost, userProfile?.currency || 'TRY')}</span>
+                                </div>
+                                <div className="flex justify-between items-center pb-4 border-b border-white/5">
+                                    <span className="text-stone-400 font-medium">İşletme Giderleri</span>
+                                    <span className="text-stone-100 font-black text-red-400">-{formatCurrency(profitLossData.totalExpenses, userProfile?.currency || 'TRY')}</span>
+                                </div>
+                                <div className="flex justify-between items-center pt-2">
+                                    <span className="text-stone-100 font-black text-lg">Toplam Net Kar</span>
+                                    <span className={`text-2xl font-black ${profitLossData.totalProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                        {formatCurrency(profitLossData.totalProfit + (stats.cashBalance || 0) + (stats.bankBalance || 0), userProfile?.currency || 'TRY')}
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div className="mt-10 p-4 bg-stone-950/50 rounded-2xl border border-white/5 flex items-start gap-3">
+                                <AlertTriangle className="text-amber-500 shrink-0" size={18} />
+                                <p className="text-xs text-stone-500 leading-relaxed">
+                                    Bu veriler, "İşlenmiş" olarak işaretlenen ve stoktan düşülen faturalardaki ürünlerin, deponuzdaki güncel alış fiyatları ile faturadaki satış fiyatları karşılaştırılarak hesaplanmıştır.
+                                </p>
                             </div>
                         </div>
                     </div>
@@ -681,6 +850,59 @@ import { formatCurrency } from '../utils/currency';
 
                         <div className="bg-stone-900 rounded-2xl border border-white/5 overflow-hidden">
                             <div className="p-4 border-b border-white/5 bg-stone-950/30">
+                                <h3 className="text-xs font-black text-stone-300 uppercase tracking-widest">Bitki Bazlı Alacak Dağılımı</h3>
+                            </div>
+                            <div className="p-6">
+                                {plantReceivableData.length === 0 ? (
+                                    <div className="h-64 flex items-center justify-center text-center">
+                                        <p className="text-stone-500 text-xs font-medium px-10">Bitki bazlı alacak verisi bulunamadı. Vadeli satışları kontrol edin.</p>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="h-64 w-full">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <PieChart>
+                                                    <Pie
+                                                        data={plantReceivableData}
+                                                        cx="50%"
+                                                        cy="50%"
+                                                        innerRadius={60}
+                                                        outerRadius={80}
+                                                        paddingAngle={5}
+                                                        dataKey="value"
+                                                        nameKey="name"
+                                                    >
+                                                        {plantReceivableData.map((entry, index) => (
+                                                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                                        ))}
+                                                    </Pie>
+                                                    <Tooltip 
+                                                        contentStyle={{ backgroundColor: '#1c1917', border: 'none', borderRadius: '12px', fontSize: '10px' }}
+                                                        formatter={(value: number) => formatCurrency(value, userProfile?.currency || 'TRY')}
+                                                    />
+                                                </PieChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2 mt-4">
+                                            {plantReceivableData.slice(0, 8).map((item, idx) => (
+                                                <div key={idx} className="flex items-center justify-between p-3 bg-stone-950/50 rounded-xl border border-white/5">
+                                                    <div className="flex items-center gap-2 min-w-0">
+                                                        <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: COLORS[idx % COLORS.length] }}></div>
+                                                        <span className="text-[10px] font-bold text-stone-300 truncate">{item.name}</span>
+                                                    </div>
+                                                    <span className="text-[10px] font-black text-emerald-500 font-mono ml-2">
+                                                        {formatCurrency(item.value, userProfile?.currency || 'TRY')}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="bg-stone-900 rounded-2xl border border-white/5 overflow-hidden">
+                            <div className="p-4 border-b border-white/5 bg-stone-950/30">
                                 <h3 className="text-xs font-black text-stone-300 uppercase tracking-widest">Üretici Bazlı Alacak Dağılımı</h3>
                             </div>
                             <div className="divide-y divide-white/5">
@@ -831,10 +1053,10 @@ import { formatCurrency } from '../utils/currency';
                     label="Genel" 
                 />
                 <TabButton 
-                    active={activeTab === 'LAND'} 
-                    onClick={() => setActiveTab('LAND')} 
-                    icon={Sprout} 
-                    label="Arazi" 
+                    active={activeTab === 'PROFIT_LOSS'} 
+                    onClick={() => setActiveTab('PROFIT_LOSS')} 
+                    icon={TrendingUp} 
+                    label="Kar / Zarar" 
                 />
                 <TabButton 
                     active={activeTab === 'CONSUMPTION'} 
@@ -1039,7 +1261,7 @@ import { formatCurrency } from '../utils/currency';
                     </section>
 
                     <section>
-                        <h3 className="text-emerald-500 font-black text-xs uppercase tracking-widest mb-4 border-l-2 border-emerald-500 pl-3">Son Ziyaretler ve Notlar</h3>
+                        <h3 className="text-emerald-500 font-black text-xs uppercase tracking-widest mb-4 border-l-2 border-emerald-500 pl-3">Son Reçeteler ve Notlar</h3>
                         <div className="space-y-4">
                             {visitLogsWithNames.slice(0, 10).map((v, i) => (
                                 <div key={i} className="p-3 bg-white/5 rounded-xl border border-white/5">

@@ -30,6 +30,11 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/logo.svg" />
     <link rel="apple-touch-icon" sizes="167x167" href="/logo.svg" />
     
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
     <!-- Apple PWA Meta Tags -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -84,6 +89,188 @@
       ::-webkit-scrollbar { display: none; }
       html, body { -ms-overflow-style: none; scrollbar-width: none; }
 
+      /* Markdown Stilleri */
+      .markdown-body { color: inherit; }
+      .markdown-body p { margin-bottom: 0.75em; }
+      .markdown-body p:last-child { margin-bottom: 0; }
+      .markdown-body strong { font-weight: 700; color: #fff; }
+      .markdown-body ul { list-style-type: disc; margin-left: 1.5em; margin-bottom: 0.75em; }
+      .markdown-body ol { list-style-type: decimal; margin-left: 1.5em; margin-bottom: 0.75em; }
+      .markdown-body li { margin-bottom: 0.25em; }
+      .markdown-body a { color: #34d399; text-decoration: underline; }
+      .markdown-body h1, .markdown-body h2, .markdown-body h3 { font-weight: 700; color: #fff; margin-top: 1em; margin-bottom: 0.5em; }
+      
+      @keyframes spin-slow {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+      .animate-spin-slow {
+        animation: spin-slow 8s linear infinite;
+      }
+      
+      /* ==================== THEMES ==================== */
+      /* 1. TECHNICAL (Mühendis Defteri) - Terminal Style */
+      [data-theme="TECHNICAL"] {
+        font-family: 'JetBrains Mono', monospace !important;
+        background-color: #030303 !important;
+        background-image: linear-gradient(#080808 1px, transparent 1px), linear-gradient(90deg, #080808 1px, transparent 1px) !important;
+        background-size: 20px 20px !important;
+      }
+      [data-theme="TECHNICAL"] .bg-stone-900\/60,
+      [data-theme="TECHNICAL"] .bg-stone-950\/40,
+      [data-theme="TECHNICAL"] .bg-stone-900 {
+        background-color: #000 !important;
+        border: 1px solid #00ff6633 !important;
+        border-radius: 2px !important;
+        box-shadow: 0 0 10px #00ff660a !important;
+      }
+      [data-theme="TECHNICAL"] .rounded-2xl,
+      [data-theme="TECHNICAL"] .rounded-3xl,
+      [data-theme="TECHNICAL"] .rounded-xl {
+        border-radius: 2px !important;
+      }
+      [data-theme="TECHNICAL"] .text-emerald-400,
+      [data-theme="TECHNICAL"] .text-emerald-500 {
+        color: #00ff66 !important;
+        text-shadow: 0 0 5px #00ff6666 !important;
+      }
+      [data-theme="TECHNICAL"] .bg-emerald-500,
+      [data-theme="TECHNICAL"] .bg-emerald-600 {
+        background-color: #00ff66 !important;
+        color: #000 !important;
+        font-weight: 900 !important;
+      }
+
+      /* 2. ORGANIC (Toprak ve Canlılık) - Light/Rustic Theme */
+      [data-theme="ORGANIC"] {
+        font-family: 'Inter', sans-serif !important;
+        background-color: #fcfaf7 !important;
+        color: #4a3728 !important;
+      }
+      [data-theme="ORGANIC"] h1, [data-theme="ORGANIC"] h2, [data-theme="ORGANIC"] h3, [data-theme="ORGANIC"] h4 {
+        font-family: 'Playfair Display', serif !important;
+        color: #2d1e14 !important;
+      }
+      [data-theme="ORGANIC"] .bg-stone-900,
+      [data-theme="ORGANIC"] .bg-stone-900\/60,
+      [data-theme="ORGANIC"] .bg-stone-950\/40 {
+        background-color: #ffffff !important;
+        border: 1px solid #e5ddd3 !important;
+        box-shadow: 0 4px 20px -5px rgba(0,0,0,0.05) !important;
+      }
+      [data-theme="ORGANIC"] .text-stone-100,
+       [data-theme="ORGANIC"] .text-stone-200,
+       [data-theme="ORGANIC"] .text-stone-300 {
+        color: #2d1e14 !important;
+      }
+      [data-theme="ORGANIC"] .text-stone-400,
+      [data-theme="ORGANIC"] .text-stone-500,
+      [data-theme="ORGANIC"] .text-stone-600 {
+        color: #8d6d53 !important;
+      }
+      [data-theme="ORGANIC"] .border-white\/5,
+      [data-theme="ORGANIC"] .border-stone-800 {
+        border-color: #e5ddd3 !important;
+      }
+      [data-theme="ORGANIC"] .text-emerald-400,
+      [data-theme="ORGANIC"] .text-emerald-500 {
+        color: #268a57 !important;
+      }
+      [data-theme="ORGANIC"] .bg-emerald-600,
+      [data-theme="ORGANIC"] .bg-emerald-500 {
+        background-color: #34ab6f !important;
+        color: #fff !important;
+      }
+
+      /* 3. MINIMAL (Stark Theme) */
+      [data-theme="MINIMAL"] {
+        font-family: 'Inter', sans-serif !important;
+        background-color: #000 !important;
+        color: #fff !important;
+      }
+      [data-theme="MINIMAL"] .bg-stone-900\/60,
+      [data-theme="MINIMAL"] .bg-stone-950\/40,
+      [data-theme="MINIMAL"] .bg-stone-900 {
+        background-color: #000 !important;
+        border: 1px solid #333 !important;
+        border-radius: 0px !important;
+      }
+      [data-theme="MINIMAL"] .rounded-2xl,
+      [data-theme="MINIMAL"] .rounded-3xl,
+      [data-theme="MINIMAL"] .rounded-xl {
+        border-radius: 0px !important;
+      }
+      [data-theme="MINIMAL"] .text-emerald-400,
+      [data-theme="MINIMAL"] .text-emerald-500 {
+        color: #fff !important;
+        text-decoration: underline !important;
+      }
+      [data-theme="MINIMAL"] .bg-emerald-500,
+      [data-theme="MINIMAL"] .bg-emerald-600 {
+        background-color: #fff !important;
+        color: #000 !important;
+      }
+
+      /* 4. BARBIE (Feminine & Playful) */
+      [data-theme="BARBIE"] {
+        font-family: 'Inter', sans-serif !important;
+        background-color: #ff85c0 !important;
+        background-image: radial-gradient(#ffadd2 1px, transparent 1px) !important;
+        background-size: 30px 30px !important;
+        color: #ffffff !important;
+      }
+      [data-theme="BARBIE"] .bg-stone-900,
+      [data-theme="BARBIE"] .bg-stone-900\/60,
+      [data-theme="BARBIE"] .bg-stone-950\/40,
+      [data-theme="BARBIE"] .bg-stone-800 {
+        background-color: #ffffff !important;
+        border: 2px solid #ffadd2 !important;
+        border-radius: 24px !important;
+        box-shadow: 0 8px 0px #eb2f961a !important;
+      }
+      [data-theme="BARBIE"] .rounded-2xl,
+      [data-theme="BARBIE"] .rounded-3xl,
+      [data-theme="BARBIE"] .rounded-xl {
+        border-radius: 24px !important;
+      }
+      [data-theme="BARBIE"] .text-stone-100,
+      [data-theme="BARBIE"] .text-stone-200,
+      [data-theme="BARBIE"] .text-stone-300 {
+        color: #c41271 !important;
+      }
+      [data-theme="BARBIE"] .text-stone-400,
+      [data-theme="BARBIE"] .text-stone-500,
+      [data-theme="BARBIE"] .text-stone-600 {
+        color: #eb2f96 !important;
+      }
+      [data-theme="BARBIE"] .border-white\/5,
+      [data-theme="BARBIE"] .border-stone-800 {
+        border-color: #ffadd2 !important;
+      }
+      [data-theme="BARBIE"] .text-emerald-400,
+      [data-theme="BARBIE"] .text-emerald-500 {
+        color: #ff4d9f !important;
+      }
+      [data-theme="BARBIE"] .bg-emerald-500,
+      [data-theme="BARBIE"] .bg-emerald-600,
+      [data-theme="BARBIE"] .bg-emerald-700,
+      [data-theme="BARBIE"] .bg-blue-600,
+      [data-theme="BARBIE"] .bg-indigo-600,
+      [data-theme="BARBIE"] .bg-rose-600 {
+        background-color: #ff4d9f !important;
+        background-image: linear-gradient(to bottom right, #ff85c0, #f759ab) !important;
+        color: #fff !important;
+        box-shadow: 0 4px 0 #c41271 !important;
+        border: none !important;
+      }
+      [data-theme="BARBIE"] .bg-stone-950\/40 {
+        background-color: #fff0f6 !important;
+      }
+      [data-theme="BARBIE"] button:active {
+        transform: translateY(2px) !important;
+        box-shadow: 0 2px 0 #c41271 !important;
+      }
+      
       /* Yüksek Kontrast Modu */
       .high-contrast {
         background-color: #000000 !important;

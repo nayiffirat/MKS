@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, Users, Shield, Calendar, Search, Save, Loader2, Edit3, X, Trash2, KeyRound, ChevronRight, Mail, Clock, LogIn } from 'lucide-react';
+import { ChevronLeft, Users, Shield, Calendar, Search, Save, Loader2, Edit3, X, Trash2, KeyRound, ChevronRight, Mail, Clock, LogIn, Newspaper, Plus, Image as ImageIcon, FileText, Link as LinkIcon, RefreshCw } from 'lucide-react';
 import { useAppViewModel } from '../context/AppContext';
-import { UserProfile } from '../types';
+import { UserProfile, News } from '../types';
 import { ConfirmationModal } from './ConfirmationModal';
 import { ListSkeleton } from './Skeleton';
 import { EmptyState } from './EmptyState';
@@ -11,12 +11,48 @@ interface AdminPanelProps {
 }
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
-    const { getAllUsers, updateUserSubscription, deleteUser, sendPasswordReset, showToast, hapticFeedback } = useAppViewModel();
+    const { getAllUsers, updateUserSubscription, deleteUser, sendPasswordReset, showToast, hapticFeedback, news, addNews, updateNews, deleteNews, refreshNews } = useAppViewModel();
+    const [activeTab, setActiveTab] = useState<'USERS' | 'NEWS'>('USERS');
     const [users, setUsers] = useState<(UserProfile & { uid: string, email?: string })[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [editingUser, setEditingUser] = useState<(UserProfile & { uid: string, email?: string }) | null>(null);
+    const [editingNews, setEditingNews] = useState<Partial<News> | null>(null);
+    const fileInputRef = React.useRef<HTMLInputElement>(null);
     const [isSaving, setIsSaving] = useState(false);
+    const [isSyncing, setIsSyncing] = useState(false);
+
+    const handleSyncNews = async () => {
+        setIsSyncing(true);
+        hapticFeedback('medium');
+        try {
+            await refreshNews();
+            showToast('Haberler senkronize edildi.', 'success');
+            hapticFeedback('success');
+        } catch (error) {
+            showToast('Senkronizasyon başarısız oldu.', 'error');
+            hapticFeedback('error');
+        } finally {
+            setIsSyncing(false);
+        }
+    };
+
+    const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            if (file.size > 1024 * 1024) { // 1MB limit
+                showToast('Görsel boyutu 1MB\'dan küçük olmalıdır.', 'error');
+                return;
+            }
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                if (editingNews) {
+                    setEditingNews({ ...editingNews, imageUrl: reader.result as string });
+                }
+            };
+            reader.readAsDataURL(file);
+        }
+    };
     const [confirmModal, setConfirmModal] = useState<{
         isOpen: boolean;
         title: string;
@@ -124,9 +160,60 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
         });
     };
 
+    const handleSaveNews = async () => {
+        if (!editingNews || !editingNews.title || !editingNews.content) {
+            showToast('Lütfen başlık ve içerik girin.', 'error');
+            return;
+        }
+        setIsSaving(true);
+        hapticFeedback('medium');
+        try {
+            if (editingNews.id) {
+                await updateNews(editingNews as News);
+                showToast('Haber güncellendi.', 'success');
+            } else {
+                await addNews({
+                    title: editingNews.title,
+                    content: editingNews.content,
+                    imageUrl: editingNews.imageUrl || '',
+                    category: editingNews.category || 'Haber',
+                    date: new Date().toISOString()
+                });
+                showToast('Haber yayınlandı.', 'success');
+            }
+            setEditingNews(null);
+        } catch (error) {
+            showToast('Haber kaydedilirken hata oluştu.', 'error');
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const handleDeleteNews = async (id: string) => {
+        setConfirmModal({
+            isOpen: true,
+            title: 'Haber Silinecek',
+            message: 'Bu haberi silmek istediğinize emin misiniz?',
+            variant: 'danger',
+            onConfirm: async () => {
+                try {
+                    await deleteNews(id);
+                    showToast('Haber silindi.', 'success');
+                } catch (error) {
+                    showToast('Haber silinirken hata oluştu.', 'error');
+                }
+            }
+        });
+    };
+
     const filteredUsers = users.filter(u => 
-        u.fullName?.toLowerCase().includes(searchTerm.toLowerCase()) || 
-        u.email?.toLowerCase().includes(searchTerm.toLowerCase())
+        u.fullName?.toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR')) || 
+        u.email?.toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR'))
+    );
+
+    const filteredNews = news.filter(n => 
+        n.title.toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR')) || 
+        n.content.toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR'))
     );
 
     return (
@@ -144,77 +231,163 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                 </div>
             </div>
 
+            {/* Tabs */}
+            <div className="flex bg-stone-900/50 p-1 rounded-2xl border border-white/5">
+                <button 
+                    onClick={() => setActiveTab('USERS')}
+                    className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${activeTab === 'USERS' ? 'bg-stone-800 text-white shadow-lg' : 'text-stone-500 hover:text-stone-300'}`}
+                >
+                    <Users size={14} /> Kullanıcılar
+                </button>
+                <button 
+                    onClick={() => setActiveTab('NEWS')}
+                    className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${activeTab === 'NEWS' ? 'bg-stone-800 text-white shadow-lg' : 'text-stone-500 hover:text-stone-300'}`}
+                >
+                    <Newspaper size={14} /> Haberler
+                </button>
+            </div>
+
             {/* Search */}
             <div className="relative">
                 <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-500" />
                 <input 
                     type="text"
-                    placeholder="Kullanıcı Ara..."
+                    placeholder={activeTab === 'USERS' ? "Kullanıcı Ara..." : "Haber Ara..."}
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className="w-full bg-stone-900 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-white placeholder:text-stone-600 focus:outline-none focus:border-emerald-500/50 transition-colors"
                 />
             </div>
 
-            {/* Users List */}
-            {isLoading ? (
-                <div className="space-y-3">
-                    <ListSkeleton count={5} />
+            {activeTab === 'NEWS' && (
+                <div className="flex gap-2">
+                    <button 
+                        onClick={() => setEditingNews({ title: '', content: '', category: 'Haber', imageUrl: '' })}
+                        className="flex-1 py-4 bg-blue-600/10 border border-blue-500/20 text-blue-400 rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-blue-600/20 transition-all active:scale-[0.98]"
+                    >
+                        <Plus size={20} /> Yeni Haber Oluştur
+                    </button>
+                    <button 
+                        onClick={handleSyncNews}
+                        disabled={isSyncing}
+                        className="px-6 py-4 bg-emerald-600/10 border border-emerald-500/20 text-emerald-400 rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-emerald-600/20 transition-all active:scale-[0.98] disabled:opacity-50"
+                    >
+                        {isSyncing ? <Loader2 size={20} className="animate-spin" /> : <RefreshCw size={20} />}
+                        Senkronize Et
+                    </button>
                 </div>
-            ) : filteredUsers.length === 0 ? (
-                <EmptyState
-                    icon={Users}
-                    title="Kullanıcı bulunamadı"
-                    description={searchTerm ? "Arama kriterlerinize uygun kullanıcı bulunamadı." : "Sistemde henüz kayıtlı kullanıcı yok."}
-                />
-            ) : (
-                <div className="space-y-3">
-                    {filteredUsers.map(user => {
-                        const isExpired = new Date(user.subscriptionEndsAt || 0) < new Date();
-                        return (
-                            <div key={user.uid} 
-                                onClick={() => setEditingUser(user)}
-                                className="bg-stone-900/50 hover:bg-stone-800/80 border border-white/5 hover:border-white/10 rounded-2xl p-4 flex items-center gap-4 cursor-pointer transition-all group"
-                            >
-                                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-stone-800 to-stone-900 border border-white/10 flex items-center justify-center flex-shrink-0">
-                                    <span className="text-lg font-black text-stone-300">
-                                        {user.fullName ? user.fullName.charAt(0).toUpperCase() : '?'}
-                                    </span>
-                                </div>
-                                
-                                <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2 mb-1">
-                                        <h3 className="font-bold text-white text-base truncate">{user.fullName || 'İsimsiz Kullanıcı'}</h3>
-                                        {user.role === 'admin' && (
-                                            <Shield size={12} className="text-purple-400 flex-shrink-0" />
-                                        )}
-                                        <span className="text-[8px] font-black px-1.5 py-0.5 rounded border bg-orange-500/10 border-orange-500/30 text-orange-400">
-                                            BAYİ
+            )}
+
+            {/* Content */}
+            {activeTab === 'USERS' ? (
+                isLoading ? (
+                    <div className="space-y-3">
+                        <ListSkeleton count={5} />
+                    </div>
+                ) : filteredUsers.length === 0 ? (
+                    <EmptyState
+                        icon={Users}
+                        title="Kullanıcı bulunamadı"
+                        description={searchTerm ? "Arama kriterlerinize uygun kullanıcı bulunamadı." : "Sistemde henüz kayıtlı kullanıcı yok."}
+                    />
+                ) : (
+                    <div className="space-y-3">
+                        {filteredUsers.map(user => {
+                            const isExpired = new Date(user.subscriptionEndsAt || 0) < new Date();
+                            return (
+                                <div key={user.uid} 
+                                    onClick={() => setEditingUser(user)}
+                                    className="bg-stone-900/50 hover:bg-stone-800/80 border border-white/5 hover:border-white/10 rounded-2xl p-4 flex items-center gap-4 cursor-pointer transition-all group"
+                                >
+                                    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-stone-800 to-stone-900 border border-white/10 flex items-center justify-center flex-shrink-0">
+                                        <span className="text-lg font-black text-stone-300">
+                                            {user.fullName ? user.fullName.charAt(0).toUpperCase() : '?'}
                                         </span>
                                     </div>
-                                    <p className="text-xs text-stone-400 truncate">{user.email || user.uid}</p>
-                                </div>
-
-                                <div className="flex flex-col items-end gap-2 flex-shrink-0">
-                                    <div className={`px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-widest ${
-                                        isExpired ? 'bg-red-500/10 text-red-400' : user.subscriptionStatus === 'trial' ? 'bg-yellow-500/10 text-yellow-500' : 'bg-emerald-500/10 text-emerald-400'
-                                    }`}>
-                                        {isExpired ? 'SÜRESİ DOLDU' : user.subscriptionStatus === 'trial' ? 'DENEME' : 'AKTİF'}
+                                    
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <h3 className="font-bold text-white text-base truncate">{user.fullName || 'İsimsiz Kullanıcı'}</h3>
+                                            {user.role === 'admin' && (
+                                                <Shield size={12} className="text-purple-400 flex-shrink-0" />
+                                            )}
+                                            <span className="text-[8px] font-black px-1.5 py-0.5 rounded border bg-orange-500/10 border-orange-500/30 text-orange-400">
+                                                BAYİ
+                                            </span>
+                                        </div>
+                                        <p className="text-xs text-stone-400 truncate">{user.email || user.uid}</p>
                                     </div>
-                                    <ChevronRight size={16} className="text-stone-600 group-hover:text-stone-300 transition-colors" />
+
+                                    <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                                        <div className={`px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-widest ${
+                                            isExpired ? 'bg-red-500/10 text-red-400' : user.subscriptionStatus === 'trial' ? 'bg-yellow-500/10 text-yellow-500' : 'bg-emerald-500/10 text-emerald-400'
+                                        }`}>
+                                            {isExpired ? 'SÜRESİ DOLDU' : user.subscriptionStatus === 'trial' ? 'DENEME' : 'AKTİF'}
+                                        </div>
+                                        <ChevronRight size={16} className="text-stone-600 group-hover:text-stone-300 transition-colors" />
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )
+            ) : (
+                <div className="space-y-3">
+                    {filteredNews.length === 0 ? (
+                        <EmptyState
+                            icon={Newspaper}
+                            title="Haber bulunamadı"
+                            description={searchTerm ? "Arama kriterlerinize uygun haber bulunamadı." : "Henüz hiç haber yayınlanmamış."}
+                        />
+                    ) : (
+                        filteredNews.map(item => (
+                            <div key={item.id} 
+                                className="bg-stone-900/50 border border-white/5 rounded-2xl overflow-hidden group hover:border-white/10 transition-all"
+                            >
+                                <div className="flex gap-4 p-4">
+                                    <div className="w-20 h-20 rounded-xl bg-stone-800 shrink-0 overflow-hidden border border-white/5">
+                                        {item.imageUrl ? (
+                                            <img src={item.imageUrl} alt={item.title} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                        ) : (
+                                            <div className="w-full h-full flex items-center justify-center text-stone-700">
+                                                <Newspaper size={24} />
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <span className="px-1.5 py-0.5 bg-blue-500/10 text-blue-400 text-[8px] font-black rounded uppercase tracking-widest border border-blue-500/20">
+                                                {item.category || 'Haber'}
+                                            </span>
+                                            <span className="text-[9px] font-bold text-stone-500">
+                                                {new Date(item.date).toLocaleDateString('tr-TR')}
+                                            </span>
+                                        </div>
+                                        <h3 className="font-bold text-white text-sm truncate mb-1">{item.title}</h3>
+                                        <p className="text-xs text-stone-500 line-clamp-2 leading-relaxed">{item.content}</p>
+                                    </div>
+                                    <div className="flex flex-col gap-2">
+                                        <button 
+                                            onClick={() => setEditingNews(item)}
+                                            className="p-2 bg-stone-800 text-stone-400 hover:text-white rounded-lg transition-colors"
+                                        >
+                                            <Edit3 size={16} />
+                                        </button>
+                                        <button 
+                                            onClick={() => handleDeleteNews(item.id)}
+                                            className="p-2 bg-stone-800 text-stone-400 hover:text-rose-400 rounded-lg transition-colors"
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
-                        );
-                    })}
-                    {filteredUsers.length === 0 && (
-                        <div className="text-center py-12 text-stone-500 font-bold">
-                            Kullanıcı bulunamadı.
-                        </div>
+                        ))
                     )}
                 </div>
             )}
 
-            {/* Edit Modal */}
+            {/* User Edit Modal */}
             {editingUser && (
                 <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-4">
                     <div className="bg-stone-900 w-full max-w-md rounded-3xl border border-white/10 p-6 space-y-6 animate-in slide-in-from-bottom-8">
@@ -379,6 +552,120 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                                 </button>
                             </div>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* News Edit Modal */}
+            {editingNews && (
+                <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-4">
+                    <div className="bg-stone-900 w-full max-w-md rounded-3xl border border-white/10 p-6 space-y-6 animate-in slide-in-from-bottom-8">
+                        <div className="flex justify-between items-center">
+                            <h2 className="text-xl font-black text-white">{editingNews.id ? 'Haberi Düzenle' : 'Yeni Haber'}</h2>
+                            <button onClick={() => setEditingNews(null)} className="p-2 bg-stone-800 rounded-full text-stone-400 hover:text-white">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <div className="space-y-4 max-h-[65vh] overflow-y-auto pr-2 custom-scrollbar">
+                            <div className="space-y-3">
+                                <label className="block text-xs font-bold text-stone-500 uppercase tracking-widest">Haber Başlığı</label>
+                                <div className="relative">
+                                    <FileText size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-500" />
+                                    <input 
+                                        type="text" 
+                                        value={editingNews.title || ''}
+                                        onChange={(e) => setEditingNews({...editingNews, title: e.target.value})}
+                                        placeholder="Haber Başlığı"
+                                        className="w-full bg-stone-950 border border-white/10 rounded-xl pl-11 pr-4 py-3 text-white focus:outline-none focus:border-blue-500"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="space-y-3">
+                                <label className="block text-xs font-bold text-stone-500 uppercase tracking-widest">Haber Görseli</label>
+                                <div className="space-y-3">
+                                    {editingNews.imageUrl && (
+                                        <div className="relative w-full aspect-video rounded-xl overflow-hidden border border-white/10 bg-stone-950">
+                                            <img 
+                                                src={editingNews.imageUrl} 
+                                                alt="Haber Görseli" 
+                                                className="w-full h-full object-cover"
+                                                referrerPolicy="no-referrer"
+                                            />
+                                            <button 
+                                                onClick={() => setEditingNews({...editingNews, imageUrl: ''})}
+                                                className="absolute top-2 right-2 p-1.5 bg-red-600 text-white rounded-full shadow-lg hover:bg-red-700 transition-colors"
+                                            >
+                                                <X size={14} />
+                                            </button>
+                                        </div>
+                                    )}
+                                    
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <button 
+                                            onClick={() => fileInputRef.current?.click()}
+                                            className="flex items-center justify-center gap-2 py-3 bg-stone-800 border border-white/10 rounded-xl text-stone-300 hover:bg-stone-700 transition-colors text-xs font-bold"
+                                        >
+                                            <ImageIcon size={16} />
+                                            Galeriden Seç
+                                        </button>
+                                        <div className="relative">
+                                            <LinkIcon size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-500" />
+                                            <input 
+                                                type="text" 
+                                                value={editingNews.imageUrl?.startsWith('data:') ? '' : (editingNews.imageUrl || '')}
+                                                onChange={(e) => setEditingNews({...editingNews, imageUrl: e.target.value})}
+                                                placeholder="URL Yapıştır..."
+                                                className="w-full h-full bg-stone-950 border border-white/10 rounded-xl pl-9 pr-3 py-3 text-[10px] text-white focus:outline-none focus:border-blue-500"
+                                            />
+                                        </div>
+                                    </div>
+                                    <input 
+                                        type="file" 
+                                        ref={fileInputRef}
+                                        onChange={handleImageUpload}
+                                        accept="image/*"
+                                        className="hidden"
+                                    />
+                                    <p className="text-[10px] text-stone-600 italic">Öneri: 16:9 oranında ve 1MB altı görseller kullanın.</p>
+                                </div>
+                            </div>
+
+                            <div className="space-y-3">
+                                <label className="block text-xs font-bold text-stone-500 uppercase tracking-widest">Kategori</label>
+                                <select 
+                                    value={editingNews.category || 'Haber'}
+                                    onChange={(e) => setEditingNews({...editingNews, category: e.target.value})}
+                                    className="w-full bg-stone-950 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-blue-500"
+                                >
+                                    <option value="Haber">Kurumsal Haber</option>
+                                    <option value="Reklam">Reklam</option>
+                                    <option value="Duyuru">Duyuru</option>
+                                    <option value="Kampanya">Kampanya</option>
+                                </select>
+                            </div>
+
+                            <div className="space-y-3">
+                                <label className="block text-xs font-bold text-stone-500 uppercase tracking-widest">Haber İçeriği</label>
+                                <textarea 
+                                    value={editingNews.content || ''}
+                                    onChange={(e) => setEditingNews({...editingNews, content: e.target.value})}
+                                    placeholder="Haber detaylarını buraya yazın..."
+                                    rows={6}
+                                    className="w-full bg-stone-950 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-blue-500 resize-none"
+                                />
+                            </div>
+                        </div>
+
+                        <button 
+                            onClick={handleSaveNews}
+                            disabled={isSaving}
+                            className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-50 shadow-lg shadow-blue-600/20"
+                        >
+                            {isSaving ? <Loader2 size={20} className="animate-spin" /> : <Save size={20} />}
+                            {isSaving ? 'Kaydediliyor...' : editingNews.id ? 'Güncelle' : 'Yayınla'}
+                        </button>
                     </div>
                 </div>
             )}

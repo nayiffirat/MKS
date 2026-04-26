@@ -68,8 +68,8 @@ export const Pesticides: React.FC = () => {
   };
 
   const filteredPesticides = pesticides.filter(p => 
-    p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.activeIngredient.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    p.name.toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR')) ||
+    p.activeIngredient.toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR')) ||
     (p.barcode && p.barcode.includes(searchTerm))
   );
 

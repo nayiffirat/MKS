@@ -7,7 +7,7 @@ interface DeletedPrescriptionsProps {
     onBack: () => void;
 }
 
-type TabType = 'PRESCRIPTIONS' | 'FARMERS' | 'VISITS' | 'PAYMENTS' | 'SUPPLIERS';
+type TabType = 'PRESCRIPTIONS' | 'FARMERS' | 'VISITS' | 'PAYMENTS' | 'SUPPLIERS' | 'PURCHASES' | 'SUPPLIER_PAYMENTS' | 'EXPENSES' | 'MANUAL_DEBTS' | 'INVENTORY';
 
 export const DeletedPrescriptions: React.FC<DeletedPrescriptionsProps> = ({ onBack }) => {
     const { 
@@ -16,6 +16,11 @@ export const DeletedPrescriptions: React.FC<DeletedPrescriptionsProps> = ({ onBa
         trashedVisits, restoreVisit, permanentlyDeleteVisit,
         trashedPayments, restorePayment, permanentlyDeletePayment,
         trashedSuppliers, restoreSupplier, permanentlyDeleteSupplier,
+        trashedSupplierPurchases, restoreSupplierPurchase, permanentlyDeleteSupplierPurchase,
+        trashedSupplierPayments, restoreSupplierPayment, permanentlyDeleteSupplierPayment,
+        trashedExpenses, restoreExpense, permanentlyDeleteExpense,
+        trashedManualDebts, restoreManualDebt, permanentlyDeleteManualDebt,
+        trashedInventory, restoreInventoryItem, permanentlyDeleteInventoryItem,
         farmers, suppliers,
         t
     } = useAppViewModel();
@@ -36,27 +41,43 @@ export const DeletedPrescriptions: React.FC<DeletedPrescriptionsProps> = ({ onBa
     }, {} as Record<string, any>);
 
     const getFilteredItems = () => {
-        const search = searchTerm.toLowerCase();
+        const search = searchTerm.toLocaleLowerCase('tr-TR');
         switch (activeTab) {
             case 'PRESCRIPTIONS':
                 return trashedPrescriptions.filter(p => {
                     const farmer = farmerMap[p.farmerId];
-                    return `${p.prescriptionNo} ${farmer?.fullName || ''}`.toLowerCase().includes(search);
+                    return `${p.prescriptionNo} ${farmer?.fullName || ''}`.toLocaleLowerCase('tr-TR').includes(search);
                 });
             case 'FARMERS':
-                return trashedFarmers.filter(f => f.fullName.toLowerCase().includes(search) || f.phoneNumber.includes(search));
+                return trashedFarmers.filter(f => f.fullName.toLocaleLowerCase('tr-TR').includes(search) || f.phoneNumber.includes(search));
             case 'VISITS':
                 return trashedVisits.filter(v => {
                     const farmer = farmerMap[v.farmerId];
-                    return `${v.note} ${farmer?.fullName || ''}`.toLowerCase().includes(search);
+                    return `${v.note} ${farmer?.fullName || ''}`.toLocaleLowerCase('tr-TR').includes(search);
                 });
             case 'PAYMENTS':
                 return trashedPayments.filter(p => {
                     const farmer = farmerMap[p.farmerId];
-                    return `${p.amount} ${farmer?.fullName || ''}`.toLowerCase().includes(search);
+                    return `${p.amount} ${farmer?.fullName || ''}`.toLocaleLowerCase('tr-TR').includes(search);
                 });
             case 'SUPPLIERS':
-                return trashedSuppliers.filter(s => s.name.toLowerCase().includes(search));
+                return trashedSuppliers.filter(s => s.name.toLocaleLowerCase('tr-TR').includes(search));
+            case 'PURCHASES':
+                return trashedSupplierPurchases.filter(p => {
+                    const supplier = supplierMap[p.supplierId];
+                    return `${p.receiptNo || ''} ${supplier?.name || ''}`.toLocaleLowerCase('tr-TR').includes(search);
+                });
+            case 'SUPPLIER_PAYMENTS':
+                return trashedSupplierPayments.filter(p => {
+                    const supplier = supplierMap[p.supplierId];
+                    return `${p.amount} ${supplier?.name || ''}`.toLocaleLowerCase('tr-TR').includes(search);
+                });
+            case 'EXPENSES':
+                return trashedExpenses.filter(e => e.title.toLocaleLowerCase('tr-TR').includes(search) || e.category.toLocaleLowerCase('tr-TR').includes(search));
+            case 'MANUAL_DEBTS':
+                return trashedManualDebts.filter(d => (d.note || '').toLocaleLowerCase('tr-TR').includes(search) || d.farmerName?.toLocaleLowerCase('tr-TR').includes(search));
+            case 'INVENTORY':
+                return trashedInventory.filter(item => item.pesticideName.toLocaleLowerCase('tr-TR').includes(search));
             default:
                 return [];
         }
@@ -69,6 +90,11 @@ export const DeletedPrescriptions: React.FC<DeletedPrescriptionsProps> = ({ onBa
             case 'VISITS': await restoreVisit(id); break;
             case 'PAYMENTS': await restorePayment(id); break;
             case 'SUPPLIERS': await restoreSupplier(id); break;
+            case 'PURCHASES': await restoreSupplierPurchase(id); break;
+            case 'SUPPLIER_PAYMENTS': await restoreSupplierPayment(id); break;
+            case 'EXPENSES': await restoreExpense(id); break;
+            case 'MANUAL_DEBTS': await restoreManualDebt(id); break;
+            case 'INVENTORY': await restoreInventoryItem(id); break;
         }
     };
 
@@ -86,6 +112,11 @@ export const DeletedPrescriptions: React.FC<DeletedPrescriptionsProps> = ({ onBa
             case 'VISITS': await permanentlyDeleteVisit(itemToDelete); break;
             case 'PAYMENTS': await permanentlyDeletePayment(itemToDelete); break;
             case 'SUPPLIERS': await permanentlyDeleteSupplier(itemToDelete); break;
+            case 'PURCHASES': await permanentlyDeleteSupplierPurchase(itemToDelete); break;
+            case 'SUPPLIER_PAYMENTS': await permanentlyDeleteSupplierPayment(itemToDelete); break;
+            case 'EXPENSES': await permanentlyDeleteExpense(itemToDelete); break;
+            case 'MANUAL_DEBTS': await permanentlyDeleteManualDebt(itemToDelete); break;
+            case 'INVENTORY': await permanentlyDeleteInventoryItem(itemToDelete); break;
         }
         
         setIsDeleteModalOpen(false);
@@ -97,9 +128,14 @@ export const DeletedPrescriptions: React.FC<DeletedPrescriptionsProps> = ({ onBa
     const tabs = [
         { id: 'PRESCRIPTIONS', icon: FileText, label: t('nav.prescriptions') || 'Faturalar', count: trashedPrescriptions.length },
         { id: 'FARMERS', icon: Users, label: t('nav.farmers') || 'Çiftçiler', count: trashedFarmers.length },
-        { id: 'VISITS', icon: ClipboardList, label: t('nav.visits') || 'Ziyaretler', count: trashedVisits.length },
+        { id: 'VISITS', icon: ClipboardList, label: t('nav.visits') || 'Reçeteler', count: trashedVisits.length },
         { id: 'PAYMENTS', icon: CreditCard, label: t('nav.payments') || 'Ödemeler', count: trashedPayments.length },
         { id: 'SUPPLIERS', icon: Truck, label: t('nav.suppliers') || 'Tedarikçiler', count: trashedSuppliers.length },
+        { id: 'PURCHASES', icon: Package, label: t('nav.purchases') || 'Alımlar', count: trashedSupplierPurchases.length },
+        { id: 'SUPPLIER_PAYMENTS', icon: CreditCard, label: t('nav.supplierPayments') || 'T. Ödemeleri', count: trashedSupplierPayments.length },
+        { id: 'EXPENSES', icon: AlertTriangle, label: t('nav.expenses') || 'Giderler', count: trashedExpenses.length },
+        { id: 'MANUAL_DEBTS', icon: AlertCircle, label: t('nav.manualDebts') || 'Borçlar', count: trashedManualDebts.length },
+        { id: 'INVENTORY', icon: Package, label: t('nav.inventory') || 'Depo', count: trashedInventory.length },
     ];
 
     return (
@@ -193,6 +229,28 @@ export const DeletedPrescriptions: React.FC<DeletedPrescriptionsProps> = ({ onBa
                                 title = item.name;
                                 subtitle = item.phoneNumber;
                                 icon = <Truck size={14} />;
+                            } else if (activeTab === 'PURCHASES') {
+                                const supplier = supplierMap[item.supplierId];
+                                title = `Alım #${item.receiptNo || 'No Yok'}`;
+                                subtitle = `${supplier?.name || t('unknown')} - ${item.totalAmount} ₺`;
+                                icon = <Package size={14} />;
+                            } else if (activeTab === 'SUPPLIER_PAYMENTS') {
+                                const supplier = supplierMap[item.supplierId];
+                                title = `${item.amount} ₺`;
+                                subtitle = supplier?.name || t('unknown');
+                                icon = <CreditCard size={14} />;
+                            } else if (activeTab === 'EXPENSES') {
+                                title = item.title;
+                                subtitle = `${item.amount} ₺ - ${item.category}`;
+                                icon = <AlertTriangle size={14} />;
+                            } else if (activeTab === 'MANUAL_DEBTS') {
+                                title = item.note || 'Borç Kaydı';
+                                subtitle = `${item.amount} ₺ - ${item.farmerName || t('unknown')}`;
+                                icon = <AlertCircle size={14} />;
+                            } else if (activeTab === 'INVENTORY') {
+                                title = item.pesticideName;
+                                subtitle = `${Number(item.quantity).toString()} ${item.unit} - ${item.category}`;
+                                icon = <Package size={14} />;
                             }
 
                             return (

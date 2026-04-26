@@ -515,7 +515,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
 
                                 <div className="max-h-32 overflow-y-auto space-y-1 pr-1 no-scrollbar">
                                     {farmers
-                                        .filter(f => f.fullName.toLowerCase().includes(farmerSearch.toLowerCase()))
+                                        .filter(f => f.fullName.toLocaleLowerCase('tr-TR').includes(farmerSearch.toLocaleLowerCase('tr-TR')))
                                         .map(f => (
                                         <button
                                             key={f.id}

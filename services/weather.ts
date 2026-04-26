@@ -14,6 +14,7 @@ export interface WeatherResponse {
     temperature_2m_max: number[];
     temperature_2m_min: number[];
     precipitation_sum: number[];
+    weather_code: number[];
   };
 }
 
@@ -32,7 +33,7 @@ export const WeatherService = {
   async getForecast(lat: number, lon: number): Promise<WeatherResponse> {
     try {
       const response = await fetch(
-        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto`
+        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code&timezone=auto`
       );
       if (!response.ok) throw new Error('Weather API Error');
       return await response.json();
@@ -54,7 +55,8 @@ export const WeatherService = {
           }),
           temperature_2m_max: [24, 25, 26, 25, 24, 25, 26],
           temperature_2m_min: [12, 13, 14, 13, 12, 13, 14],
-          precipitation_sum: [0, 0, 0, 0, 0, 0, 0]
+          precipitation_sum: [0, 0, 0, 0, 0, 0, 0],
+          weather_code: [0, 1, 2, 3, 0, 0, 0]
         }
       };
     }

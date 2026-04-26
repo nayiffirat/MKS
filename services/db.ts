@@ -1,10 +1,67 @@
 
 import { safeStringify } from '../utils/json';
 import { openDB, DBSchema } from 'idb';
-import { Farmer, Pesticide, VisitLog, Prescription, AppNotification, UserProfile, Reminder, InventoryItem, PesticideCategory, Payment, ManualDebt, Supplier, SupplierPurchase, SupplierPayment, MyPayment, TurnoverLog, Expense, Account, Transaction, TeamMember, Message } from '../types';
+import { Farmer, Pesticide, VisitLog, Prescription, AppNotification, UserProfile, Reminder, InventoryItem, PesticideCategory, Payment, ManualDebt, Supplier, SupplierPurchase, SupplierPayment, MyPayment, TurnoverLog, Expense, Account, Transaction, TeamMember, Message, News, CollectionLog, Plant } from '../types';
 import { MOCK_PESTICIDES } from '../constants';
-import { db as firestore, auth } from './firebase';
-import { doc, setDoc, deleteDoc, collection, getDocs, writeBatch, query, where, getDoc, onSnapshot } from 'firebase/firestore';
+import { db as firestore, auth, storage } from './firebase';
+import { doc, setDoc, deleteDoc, collection, getDocs, writeBatch, query, where, getDoc, onSnapshot, getDocFromServer } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', safeStringify(errInfo));
+  // Don't throw if it's a background sync, just log
+  if (operationType === OperationType.WRITE || operationType === OperationType.DELETE) {
+    console.warn(`Background operation failed: ${operationType} on ${path}`);
+  } else {
+    throw new Error(safeStringify(errInfo));
+  }
+}
 
 interface AgriDB extends DBSchema {
   farmers: {
@@ -97,10 +154,24 @@ interface AgriDB extends DBSchema {
     value: Message;
     indexes: { 'by-date': string };
   };
+  news: {
+    key: string;
+    value: News;
+    indexes: { 'by-date': string };
+  };
+  collectionLogs: {
+    key: string;
+    value: CollectionLog;
+    indexes: { 'by-farmer': string };
+  };
+  plants: {
+    key: string;
+    value: Plant;
+  };
 }
 
 const DB_NAME = 'agri-engineer-db';
-const DB_VERSION = 20;
+const DB_VERSION = 23;
 
 const FS_ROOT = "MKS";
 const FS_ORG = "g892bEaJyGfEq1Fa67yb";
@@ -217,6 +288,17 @@ export const initDB = async () => {
         const messageStore = db.createObjectStore('messages', { keyPath: 'id' });
         messageStore.createIndex('by-date', 'timestamp');
       }
+      if (!db.objectStoreNames.contains('news')) {
+        const newsStore = db.createObjectStore('news', { keyPath: 'id' });
+        newsStore.createIndex('by-date', 'date');
+      }
+      if (!db.objectStoreNames.contains('collectionLogs')) {
+        const logStore = db.createObjectStore('collectionLogs', { keyPath: 'id' });
+        logStore.createIndex('by-farmer', 'farmerId');
+      }
+      if (!db.objectStoreNames.contains('plants')) {
+        db.createObjectStore('plants', { keyPath: 'id' });
+      }
     },
   });
 };
@@ -226,24 +308,23 @@ export const initDB = async () => {
  * Hata alsa bile yerel işlem başarılı sayılır.
  */
 const backgroundSync = async (collectionName: string, data: any) => {
-  if (!navigator.onLine) return;
   const user = auth.currentUser;
   if (!user) return;
 
   const cleanData = sanitizeForFirestore(data);
+  const path = [FS_ROOT, FS_ORG, FS_USERS, user.uid, collectionName, data.id].join("/");
 
-  // UI'ı engellememek için async/await'siz arka plana atıyoruz
-  setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, user.uid, collectionName, data.id), cleanData, { merge: true })
-    .catch(err => console.warn(`Background sync failed for ${collectionName}:`, err));
+  return setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, user.uid, collectionName, data.id), cleanData, { merge: true })
+    .catch(err => handleFirestoreError(err, OperationType.WRITE, path));
 };
 
 const backgroundDelete = async (collectionName: string, id: string) => {
-  if (!navigator.onLine) return;
   const user = auth.currentUser;
   if (!user) return;
+  const path = [FS_ROOT, FS_ORG, FS_USERS, user.uid, collectionName, id].join("/");
 
-  deleteDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, user.uid, collectionName, id))
-    .catch(err => console.warn(`Background delete failed for ${collectionName}:`, err));
+  return deleteDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, user.uid, collectionName, id))
+    .catch(err => handleFirestoreError(err, OperationType.DELETE, path));
 };
 
 let isActionBlocked = false;
@@ -419,7 +500,7 @@ const dbServiceObj = {
     if (!navigator.onLine) return;
     const db = await initDB();
     const userPath = [FS_ROOT, FS_ORG, FS_USERS, uid].join("/");
-    const collections = ["farmers", "notifications", "visits", "prescriptions", "reminders", "inventory", "payments", "manualDebts", "suppliers", "supplierPurchases", "supplierPayments", "myPayments", "expenses", "accounts", "transactions", "teamMembers", "messages"] as const;
+    const collections = ["farmers", "notifications", "visits", "prescriptions", "reminders", "inventory", "payments", "manualDebts", "suppliers", "supplierPurchases", "supplierPayments", "myPayments", "expenses", "accounts", "transactions", "teamMembers", "messages", "collectionLogs", "plants"] as const;
 
     for (const col of collections) {
       try {
@@ -460,7 +541,7 @@ const dbServiceObj = {
 
   async clearLocalUserData() {
     const db = await initDB();
-    const stores = ['farmers', 'visits', 'prescriptions', 'notifications', 'reminders', 'inventory', 'payments', 'manualDebts', 'suppliers', 'supplierPurchases', 'supplierPayments', 'myPayments', 'expenses', 'accounts', 'transactions', 'teamMembers', 'messages'] as const;
+    const stores = ['farmers', 'visits', 'prescriptions', 'notifications', 'reminders', 'inventory', 'payments', 'manualDebts', 'suppliers', 'supplierPurchases', 'supplierPayments', 'myPayments', 'expenses', 'accounts', 'transactions', 'teamMembers', 'messages', 'collectionLogs', 'plants'] as const;
     for (const store of stores) await db.clear(store);
     localStorage.removeItem('mks_user_profile');
   },
@@ -492,7 +573,7 @@ const dbServiceObj = {
         const pSnap = await getDocs(pQuery);
         const prescriptions = pSnap.docs.map(d => d.data() as Prescription);
 
-        // 3. Ziyaretleri çek
+        // 3. Reçeteleri çek
         const vQuery = query(collection(firestore, userPath, "visits"), where("farmerId", "==", farmerId));
         const vSnap = await getDocs(vQuery);
         const visits = vSnap.docs.map(d => d.data() as VisitLog);
@@ -576,7 +657,7 @@ const dbServiceObj = {
   async getVisitsByFarmer(farmerId: string) {
     const db = await initDB();
     const visits = await db.getAllFromIndex('visits', 'by-farmer', farmerId);
-    return visits.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    return visits.filter(v => !v.deletedAt).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   },
   
   async addPrescription(prescription: Prescription) {
@@ -601,7 +682,8 @@ const dbServiceObj = {
   
   async getPrescriptionsByFarmer(farmerId: string) {
     const db = await initDB();
-    return db.getAllFromIndex('prescriptions', 'by-farmer', farmerId);
+    const list = await db.getAllFromIndex('prescriptions', 'by-farmer', farmerId);
+    return list.filter(p => !p.deletedAt);
   },
   
   async getAllPrescriptions() {
@@ -662,7 +744,14 @@ const dbServiceObj = {
 
   async getInventory() {
     const db = await initDB();
-    return (await db.getAll('inventory')).sort((a, b) => a.pesticideName.localeCompare(b.pesticideName, 'tr'));
+    return (await db.getAll('inventory'))
+      .filter(item => !item.deletedAt)
+      .sort((a, b) => a.pesticideName.localeCompare(b.pesticideName, 'tr'));
+  },
+
+  async getAllInventoryRaw() {
+    const db = await initDB();
+    return await db.getAll('inventory');
   },
 
   async addInventoryItem(item: InventoryItem) {
@@ -678,6 +767,27 @@ const dbServiceObj = {
   },
 
   async deleteInventoryItem(id: string) {
+    const db = await initDB();
+    const item = await db.get('inventory', id);
+    if (item) {
+      const updatedItem = { ...item, deletedAt: new Date().toISOString() };
+      await db.put('inventory', updatedItem);
+      backgroundSync('inventory', updatedItem);
+    }
+  },
+
+  async restoreInventoryItem(id: string) {
+    const db = await initDB();
+    const item = await db.get('inventory', id);
+    if (item) {
+      const updatedItem = { ...item, deletedAt: undefined };
+      const syncData = { ...updatedItem, deletedAt: null }; 
+      await db.put('inventory', updatedItem);
+      backgroundSync('inventory', syncData);
+    }
+  },
+
+  async permanentlyDeleteInventoryItem(id: string) {
     const db = await initDB();
     await db.delete('inventory', id);
     backgroundDelete('inventory', id);
@@ -720,13 +830,14 @@ const dbServiceObj = {
         }
 
         const item: InventoryItem = {
+            ...existing, // Sustain deletedAt if it exists
             id: existing?.id || crypto.randomUUID(),
             pesticideId: pestId,
             pesticideName: pesticideName || 'Bilinmeyen İlaç',
             category: category,
-            quantity: 1000,
-            unit: 'Adet',
-            buyingPrice: 1,
+            quantity: existing ? existing.quantity : 0, // Don't use 1000 ghost quantity
+            unit: existing?.unit || 'Adet',
+            buyingPrice: existing?.buyingPrice || 0,
             sellingPrice: existing?.sellingPrice || 0,
             lastUpdated: new Date().toISOString()
         };
@@ -753,8 +864,12 @@ const dbServiceObj = {
     for (const item of prescription.items) {
         if (!item.quantity) continue;
         
-        const qty = Number(item.quantity);
+        const qtyStr = String(item.quantity).replace(',', '.');
+        const qty = parseFloat(qtyStr);
         if (isNaN(qty) || qty === 0) continue;
+
+        const isReturn = prescription.type === 'RETURN';
+        const qtyMultiplier = isReturn ? 1 : -1;
 
         const existingIndex = allInventory.findIndex(i => i.pesticideId === item.pesticideId);
         
@@ -762,7 +877,7 @@ const dbServiceObj = {
             const existingItem = allInventory[existingIndex];
             const updatedItem = {
                 ...existingItem,
-                quantity: existingItem.quantity - qty,
+                quantity: existingItem.quantity + (qty * qtyMultiplier),
                 lastUpdated: new Date().toISOString()
             };
             await inventoryStore.put(updatedItem);
@@ -774,7 +889,7 @@ const dbServiceObj = {
                 pesticideId: item.pesticideId,
                 pesticideName: item.pesticideName,
                 category: PesticideCategory.OTHER,
-                quantity: -qty,
+                quantity: qty * qtyMultiplier,
                 unit: 'Adet',
                 buyingPrice: 0,
                 sellingPrice: item.unitPrice || 0,
@@ -810,8 +925,12 @@ const dbServiceObj = {
     for (const item of prescription.items) {
         if (!item.quantity) continue;
         
-        const qty = Number(item.quantity);
+        const qtyStr = String(item.quantity).replace(',', '.');
+        const qty = parseFloat(qtyStr);
         if (isNaN(qty) || qty === 0) continue;
+
+        const isReturn = prescription.type === 'RETURN';
+        const qtyMultiplier = isReturn ? -1 : 1;
 
         const existingIndex = allInventory.findIndex(i => i.pesticideId === item.pesticideId);
         
@@ -819,7 +938,7 @@ const dbServiceObj = {
             const existingItem = allInventory[existingIndex];
             const updatedItem = {
                 ...existingItem,
-                quantity: existingItem.quantity + qty,
+                quantity: existingItem.quantity + (qty * qtyMultiplier),
                 lastUpdated: new Date().toISOString()
             };
             await inventoryStore.put(updatedItem);
@@ -883,7 +1002,8 @@ const dbServiceObj = {
 
   async getPaymentsByFarmer(farmerId: string) {
     const db = await initDB();
-    return db.getAllFromIndex('payments', 'by-farmer', farmerId);
+    const list = await db.getAllFromIndex('payments', 'by-farmer', farmerId);
+    return list.filter(p => !p.deletedAt);
   },
 
   async addPayment(payment: Payment) {
@@ -912,7 +1032,8 @@ const dbServiceObj = {
 
   async getManualDebtsByFarmer(farmerId: string) {
     const db = await initDB();
-    return db.getAllFromIndex('manualDebts', 'by-farmer', farmerId);
+    const list = await db.getAllFromIndex('manualDebts', 'by-farmer', farmerId);
+    return list.filter(d => !d.deletedAt);
   },
 
   async addManualDebt(debt: ManualDebt) {
@@ -960,34 +1081,94 @@ const dbServiceObj = {
     backgroundDelete('suppliers', id);
   },
 
-  async getSupplierPurchases(supplierId: string) {
+  async updateInventoryFromPurchase(purchase: SupplierPurchase, isRevert: boolean = false) {
     const db = await initDB();
+    const tx = db.transaction('inventory', 'readwrite');
+    const store = tx.objectStore('inventory');
+    const inventory = await store.getAll();
+    const updates: InventoryItem[] = [];
+
+    for (const item of (purchase.items || [])) {
+      const existing = inventory.find(i => i.pesticideId === item.pesticideId);
+      const qtyStr = String(item.quantity || '0').replace(',', '.');
+      const quantityChange = parseFloat(qtyStr) || 0;
+      
+      const isReturn = purchase.type === 'RETURN';
+      const effectiveQtyChange = isReturn ? -quantityChange : quantityChange;
+      
+      if (existing) {
+        const newQuantity = (Number(existing.quantity) || 0) + (isRevert ? -effectiveQtyChange : effectiveQtyChange);
+        const updatedItem = {
+          ...existing,
+          quantity: newQuantity,
+          buyingPrice: isRevert ? existing.buyingPrice : (parseFloat(String(item.buyingPrice || '0').replace(',', '.')) || existing.buyingPrice),
+          sellingPrice: (isRevert || !item.sellingPrice) ? existing.sellingPrice : (parseFloat(String(item.sellingPrice || '0').replace(',', '.')) || existing.sellingPrice),
+          lastUpdated: new Date().toISOString()
+        };
+        await store.put(updatedItem);
+        updates.push(updatedItem);
+        
+        const idx = inventory.findIndex(i => i.id === existing.id);
+        if (idx !== -1) inventory[idx] = updatedItem;
+      } else if (!isRevert) {
+        // Create new inventory item if it doesn't exist and we are not reverting
+        const buyingPrice = parseFloat(String(item.buyingPrice || '0').replace(',', '.')) || 0;
+        const sellingPrice = item.sellingPrice ? (parseFloat(String(item.sellingPrice || '0').replace(',', '.')) || buyingPrice * 1.2) : buyingPrice * 1.2;
+        
+        const newItem: InventoryItem = {
+          id: crypto.randomUUID(),
+          pesticideId: item.pesticideId,
+          pesticideName: item.pesticideName,
+          category: PesticideCategory.OTHER,
+          quantity: effectiveQtyChange,
+          unit: item.unit || 'Adet',
+          buyingPrice,
+          sellingPrice,
+          lastUpdated: new Date().toISOString()
+        };
+        await store.put(newItem);
+        updates.push(newItem);
+        inventory.push(newItem);
+      }
+    }
+    await tx.done;
+    updates.forEach(item => backgroundSync('inventory', item));
+  },
+
+  async getSupplierPurchases(supplierId?: string) {
+    const db = await initDB();
+    if (!supplierId) {
+      return db.getAll('supplierPurchases');
+    }
     return db.getAllFromIndex('supplierPurchases', 'by-supplier', supplierId);
+  },
+
+  async getSupplierPayments(supplierId?: string) {
+    const db = await initDB();
+    if (!supplierId) {
+      return db.getAll('supplierPayments');
+    }
+    return db.getAllFromIndex('supplierPayments', 'by-supplier', supplierId);
   },
 
   async addSupplierPurchase(purchase: SupplierPurchase) {
     const db = await initDB();
     await db.put('supplierPurchases', purchase);
-    backgroundSync('supplierPurchases', purchase);
+    await backgroundSync('supplierPurchases', purchase);
     return purchase.id;
   },
 
   async updateSupplierPurchase(purchase: SupplierPurchase) {
     const db = await initDB();
     await db.put('supplierPurchases', purchase);
-    backgroundSync('supplierPurchases', purchase);
+    await backgroundSync('supplierPurchases', purchase);
     return purchase.id;
   },
 
   async deleteSupplierPurchase(id: string) {
     const db = await initDB();
     await db.delete('supplierPurchases', id);
-    backgroundDelete('supplierPurchases', id);
-  },
-
-  async getSupplierPayments(supplierId: string) {
-    const db = await initDB();
-    return db.getAllFromIndex('supplierPayments', 'by-supplier', supplierId);
+    await backgroundDelete('supplierPurchases', id);
   },
 
   async addSupplierPayment(payment: SupplierPayment) {
@@ -1268,11 +1449,165 @@ const dbServiceObj = {
     return (await db.getAll('messages')).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   },
 
+  // News Methods
+  async getNews() {
+    const db = await initDB();
+    const list = await db.getAll('news');
+    return list.filter(n => !n.deletedAt).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  },
+
+  async addNews(news: News) {
+    const db = await initDB();
+    await db.put('news', news);
+    
+    const user = auth.currentUser;
+    if (user) {
+      const path = `${FS_ROOT}/${FS_ORG}/news/${news.id}`;
+      try {
+        await setDoc(doc(firestore, path), sanitizeForFirestore(news));
+      } catch (error) {
+        handleFirestoreError(error, OperationType.WRITE, path);
+      }
+    }
+  },
+
+  async updateNews(news: News) {
+    const db = await initDB();
+    await db.put('news', news);
+    
+    const user = auth.currentUser;
+    if (user) {
+      const path = `${FS_ROOT}/${FS_ORG}/news/${news.id}`;
+      try {
+        await setDoc(doc(firestore, path), sanitizeForFirestore(news));
+      } catch (error) {
+        handleFirestoreError(error, OperationType.WRITE, path);
+      }
+    }
+  },
+
+  async deleteNews(id: string) {
+    const db = await initDB();
+    const news = await db.get('news', id);
+    if (news) {
+      const updated = { ...news, deletedAt: new Date().toISOString() };
+      await db.put('news', updated);
+      
+      const user = auth.currentUser;
+      if (user) {
+        const path = `${FS_ROOT}/${FS_ORG}/news/${id}`;
+        try {
+          await setDoc(doc(firestore, path), sanitizeForFirestore(updated));
+        } catch (error) {
+          handleFirestoreError(error, OperationType.WRITE, path);
+        }
+      }
+    }
+  },
+
+  async syncNews() {
+    const user = auth.currentUser;
+    if (!user) return;
+
+    const path = `${FS_ROOT}/${FS_ORG}/news`;
+    try {
+      const q = query(collection(firestore, path));
+      const snapshot = await getDocs(q);
+      const db = await initDB();
+      const tx = db.transaction('news', 'readwrite');
+      for (const doc of snapshot.docs) {
+        await tx.store.put(doc.data() as News);
+      }
+      await tx.done;
+    } catch (error) {
+      handleFirestoreError(error, OperationType.LIST, path);
+    }
+  },
+
   async sendMessage(message: Message) {
     const db = await initDB();
     await db.put('messages', message);
     backgroundSync('messages', message);
     return message.id;
+  },
+
+  async getCollectionLogs(): Promise<CollectionLog[]> {
+    const db = await initDB();
+    return db.getAll('collectionLogs');
+  },
+
+  async getPlants(): Promise<Plant[]> {
+    const db = await initDB();
+    const all = await db.getAll('plants');
+    return all.filter(p => !p.deletedAt).sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+  },
+
+  async addPlant(plant: Plant): Promise<void> {
+    const db = await initDB();
+    await db.put('plants', plant);
+    backgroundSync('plants', plant);
+  },
+
+  async updatePlant(plant: Plant): Promise<void> {
+    const db = await initDB();
+    await db.put('plants', plant);
+    backgroundSync('plants', plant);
+  },
+
+  async deletePlant(id: string): Promise<void> {
+    const db = await initDB();
+    const existing = await db.get('plants', id);
+    if (existing) {
+      const updated = { ...existing, deletedAt: new Date().toISOString() };
+      await db.put('plants', updated);
+      backgroundSync('plants', updated);
+    }
+  },
+
+  async permanentlyDeletePlant(id: string): Promise<void> {
+    const db = await initDB();
+    await db.delete('plants', id);
+    backgroundDelete('plants', id);
+  },
+
+  async getAllPlantsRaw(): Promise<Plant[]> {
+    const db = await initDB();
+    return db.getAll('plants');
+  },
+
+  async addCollectionLog(log: CollectionLog) {
+    const db = await initDB();
+    await db.put('collectionLogs', log);
+    backgroundSync('collectionLogs', log);
+  },
+
+  async updateCollectionLog(log: CollectionLog) {
+    const db = await initDB();
+    await db.put('collectionLogs', log);
+    backgroundSync('collectionLogs', log);
+  },
+
+  async deleteCollectionLog(id: string) {
+    const db = await initDB();
+    await db.delete('collectionLogs', id);
+    backgroundDelete('collectionLogs', id);
+  },
+
+  /**
+   * Yüklenen bir PDF'i Firebase Storage'a yükler ve indirme bağlantısını döndürür.
+   * WhatsApp paylaşımı vb. için kullanılır.
+   */
+  async uploadPdf(file: Blob, path: string): Promise<string> {
+    const user = auth.currentUser;
+    if (!user) throw new Error("Oturum açılmadı.");
+    
+    // Yolu org/users/uid/pdfs/.. yapısına yerleştir.
+    const fullPath = `${FS_ROOT}/${FS_ORG}/users/${user.uid}/pdfs/${path}`;
+    const storageRef = ref(storage, fullPath);
+    
+    await uploadBytes(storageRef, file, { contentType: 'application/pdf' });
+    const downloadURL = await getDownloadURL(storageRef);
+    return downloadURL;
   },
 
   /**
@@ -1281,7 +1616,7 @@ const dbServiceObj = {
    */
   setupRealtimeSync(uid: string, onSync: () => void, onProfileSync?: (profile: UserProfile) => void) {
     const userPath = [FS_ROOT, FS_ORG, FS_USERS, uid].join("/");
-    const collections = ["farmers", "notifications", "visits", "prescriptions", "reminders", "inventory", "payments", "manualDebts", "suppliers", "supplierPurchases", "supplierPayments", "myPayments", "expenses", "accounts", "transactions", "teamMembers", "messages"] as const;
+    const collections = ["farmers", "notifications", "visits", "prescriptions", "reminders", "inventory", "payments", "manualDebts", "suppliers", "supplierPurchases", "supplierPayments", "myPayments", "expenses", "accounts", "transactions", "teamMembers", "messages", "collectionLogs", "plants"] as const;
     
     const unsubscribes: (() => void)[] = [];
 
@@ -1300,16 +1635,14 @@ const dbServiceObj = {
     collections.forEach(col => {
       const q = collection(firestore, userPath, col);
       const unsub = onSnapshot(q, async (snapshot) => {
-        // Yerel değişiklikleri (pending writes) senkronize etmeye gerek yok, 
-        // çünkü onlar zaten IndexedDB'ye yazıldı.
-        if (snapshot.metadata.hasPendingWrites) return;
-
         const db = await initDB();
         const tx = db.transaction(col, 'readwrite');
         
-        // Firestore'dan gelen tüm verileri yerel DB ile senkronize et
-        // Not: Performans için sadece değişen dökümanları (snapshot.docChanges()) kullanmak daha iyidir.
         for (const change of snapshot.docChanges()) {
+          // Sadece yerel yazma işlemi (pending write) olmayan dökümanları işle.
+          // Bu, yerel optimistik güncellemelerin Firestore'dan gelen eski verilerle ezilmesini önler.
+          if (change.doc.metadata.hasPendingWrites) continue;
+
           if (change.type === 'added' || change.type === 'modified') {
             await tx.store.put(change.doc.data() as any);
           } else if (change.type === 'removed') {
@@ -1320,13 +1653,50 @@ const dbServiceObj = {
         await tx.done;
         onSync(); // UI'ı bilgilendir
       }, (error) => {
-        console.warn(`Realtime sync error for ${col}:`, error);
+        handleFirestoreError(error, OperationType.GET, `${userPath}/${col}`);
       });
       
       unsubscribes.push(unsub);
     });
 
+    // Haberler Dinleyicisi (Global/Organizasyon Geneli)
+    const newsPath = [FS_ROOT, FS_ORG, "news"].join("/");
+    const newsQuery = collection(firestore, newsPath);
+    const newsUnsub = onSnapshot(newsQuery, async (snapshot) => {
+      const db = await initDB();
+      const tx = db.transaction('news', 'readwrite');
+      
+      for (const change of snapshot.docChanges()) {
+        if (change.doc.metadata.hasPendingWrites) continue;
+
+        if (change.type === 'added' || change.type === 'modified') {
+          await tx.store.put(change.doc.data() as any);
+        } else if (change.type === 'removed') {
+          await tx.store.delete(change.doc.id);
+        }
+      }
+      
+      await tx.done;
+      onSync();
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, newsPath);
+    });
+    unsubscribes.push(newsUnsub);
+
     return () => unsubscribes.forEach(unsub => unsub());
+  },
+
+  async testConnection() {
+    try {
+      const user = auth.currentUser;
+      if (!user) return;
+      const path = [FS_ROOT, FS_ORG, FS_USERS, user.uid].join("/");
+      await getDocFromServer(doc(firestore, path));
+    } catch (error) {
+      if(error instanceof Error && error.message.includes('the client is offline')) {
+        console.error("Please check your Firebase configuration. ");
+      }
+    }
   }
 };
 

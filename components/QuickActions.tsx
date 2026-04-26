@@ -153,7 +153,7 @@ export const QuickActions: React.FC = () => {
         if (!expenseAmount || !expenseTitle) return;
         try {
             await addExpense({
-                amount: parseFloat(expenseAmount),
+                amount: parseFloat(expenseAmount.replace(',', '.')) || 0,
                 title: expenseTitle,
                 category: expenseCategory,
                 date: new Date().toISOString(),
@@ -182,7 +182,7 @@ export const QuickActions: React.FC = () => {
         try {
             await addPayment({
                 farmerId: paymentFarmerId,
-                amount: parseFloat(paymentAmount),
+                amount: parseFloat(paymentAmount.replace(',', '.')) || 0,
                 date: new Date().toISOString(),
                 method: paymentMethod,
                 note: paymentNote,

@@ -39,10 +39,12 @@ export interface Field {
 export interface ManualDebt {
   id: string;
   farmerId: string;
+  farmerName?: string;
   amount: number;
   date: string;
   note?: string;
   createdById?: string;
+  deletedAt?: string;
 }
 
 export interface Payment {
@@ -77,6 +79,7 @@ export interface Transaction {
   description: string;
   relatedId?: string;
   category?: string;
+  deletedAt?: string;
 }
 
 export interface Farmer {
@@ -138,13 +141,17 @@ export interface PrescriptionItem {
   quantity?: string; // Opsiyonel ürün adedi (örn: "2", "3 Kutu")
   unitPrice?: number;
   totalPrice?: number;
+  buyingPrice?: number;
 }
 
 export interface Prescription {
   id: string; // REC-YYYY-XXX (Primary Key)
   farmerId: string; // Foreign Key to Farmer
   fieldId?: string;
+  fieldIds?: string[];
+  plantId?: string;
   date: string;
+  type?: 'SALE' | 'RETURN'; // Differentiate between sales and returns
   prescriptionNo: string; // Explicit display number if different from ID
   engineerName: string;
   items: PrescriptionItem[]; // Stored as JSON in DB
@@ -153,6 +160,8 @@ export interface Prescription {
   isInventoryProcessed?: boolean;
   totalAmount?: number;
   priceType?: 'CASH' | 'TERM';
+  discountAmount?: number;
+  dueDate?: string; // ISO String for term payment due date
   status?: 'PENDING' | 'APPROVED' | 'DELIVERED' | 'INVOICED';
   createdById?: string;
   deliveredById?: string;
@@ -192,6 +201,7 @@ export interface UserProfile {
   selectedCity?: AgriCity;
   lastSyncTime?: string;
   highContrastMode?: boolean;
+  theme?: 'DEFAULT' | 'TECHNICAL' | 'ORGANIC' | 'MINIMAL' | 'BARBIE';
   assistantVoice?: 'male' | 'female';
   currency?: 'TRY' | 'USD' | 'EUR';
   role?: 'admin' | 'user';
@@ -216,6 +226,9 @@ export interface InventoryItem {
   barcode?: string;
   lastUpdated: string;
   lowStockThreshold?: number; // Threshold for alerts
+  deletedAt?: string;
+  adjustments?: { date: string; amount: number; note: string; }[];
+  lastAuditDate?: string;
 }
 
 export interface Supplier {
@@ -232,6 +245,7 @@ export interface SupplierPurchase {
   id: string;
   supplierId: string;
   date: string;
+  type?: 'PURCHASE' | 'RETURN';
   receiptNo?: string;
   items: {
     pesticideId: string;
@@ -239,10 +253,13 @@ export interface SupplierPurchase {
     quantity: number;
     unit: string;
     buyingPrice: number;
+    sellingPrice?: number;
   }[];
   totalAmount: number;
   note?: string;
+  isInventoryProcessed?: boolean;
   createdById?: string;
+  deletedAt?: string;
 }
 
 export interface SupplierPayment {
@@ -258,6 +275,8 @@ export interface SupplierPayment {
   createdById?: string;
   installments?: number;
   producerCardMonths?: number;
+  type?: 'PAY' | 'RECEIVE';
+  deletedAt?: string;
 }
 
 export interface MyPayment {
@@ -269,12 +288,13 @@ export interface MyPayment {
   amount: number;
   issueDate: string;
   dueDate: string;
-  type: 'CHECK' | 'PROMISSORY_NOTE' | 'TEDYE' | 'OTHER';
+  type: 'CHECK' | 'PROMISSORY_NOTE' | 'TEDYE' | 'CARD_INSTALLMENT' | 'DEFERRED_CARD' | 'OTHER';
   status: 'PENDING' | 'PAID' | 'CANCELLED';
   note?: string;
   accountId?: string;
   relatedId?: string;
   createdById?: string;
+  deletedAt?: string;
 }
 
 export interface TurnoverLog {
@@ -293,9 +313,44 @@ export interface Expense {
   note?: string;
   accountId?: string;
   createdById?: string;
+  deletedAt?: string;
 }
 
-export type ViewState = 'DASHBOARD' | 'FARMERS' | 'PESTICIDES' | 'PRESCRIPTIONS' | 'VISITS' | 'CONTACT' | 'SETTINGS' | 'NOTIFICATIONS' | 'PROFILE' | 'STATISTICS' | 'REMINDERS' | 'INVENTORY' | 'DEBT_TRACKING' | 'REGIONAL_ALERTS' | 'PRODUCER_PORTAL' | 'COMPATIBILITY_CHECK' | 'SUPPLIERS' | 'PAYMENTS' | 'EXPENSES' | 'KASA' | 'CALCULATOR' | 'MIXTURE_TEST' | 'RECENT_TRANSACTIONS' | 'REPORTS' | 'ADMIN_PANEL' | 'TEAM' | 'MESSAGES' | 'PERFORMANCE' | 'TRASH';
+export interface News {
+  id: string;
+  title: string;
+  content: string;
+  imageUrl?: string;
+  date: string;
+  authorId?: string;
+  category?: string;
+  deletedAt?: string;
+}
+
+export interface CollectionLog {
+  id: string;
+  farmerId: string;
+  date: string;
+  type: 'PHONE_CALL' | 'WP_MESSAGE' | 'IN_PERSON' | 'OTHER';
+  status: 'REMINDED' | 'PROMISED_TO_PAY' | 'PAID' | 'UNREACHABLE';
+  note?: string;
+  nextCallDate?: string;
+  createdById?: string;
+  deletedAt?: string;
+}
+
+export interface Plant {
+  id: string;
+  name: string;
+  category?: string;
+  maturityDate?: string; // Vade tarihi belirlemek için (Örn: 10-31)
+  defaultDosage?: string;
+  culturalPractices?: string;
+  description?: string;
+  deletedAt?: string;
+}
+
+export type ViewState = 'DASHBOARD' | 'FARMERS' | 'PESTICIDES' | 'PRESCRIPTIONS' | 'VISITS' | 'CONTACT' | 'SETTINGS' | 'NOTIFICATIONS' | 'PROFILE' | 'STATISTICS' | 'REMINDERS' | 'INVENTORY' | 'DEBT_TRACKING' | 'REGIONAL_ALERTS' | 'PRODUCER_PORTAL' | 'COMPATIBILITY_CHECK' | 'SUPPLIERS' | 'PAYMENTS' | 'EXPENSES' | 'KASA' | 'CALCULATOR' | 'MIXTURE_TEST' | 'RECENT_TRANSACTIONS' | 'REPORTS' | 'ADMIN_PANEL' | 'TEAM' | 'MESSAGES' | 'PERFORMANCE' | 'TRASH' | 'LAND_DETAIL' | 'NEWS_DETAIL' | 'NEWS' | 'AI_ASSISTANT' | 'FINDEKS' | 'PRODUCT_AI_ASSISTANT' | 'PLANTS';
 
 export type UIScale = 'SMALL' | 'MEDIUM' | 'LARGE';
 

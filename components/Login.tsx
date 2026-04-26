@@ -3,22 +3,30 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
     signInWithEmailAndPassword, 
     createUserWithEmailAndPassword, 
+    signInWithPopup,
+    signInWithRedirect,
+    signInWithCredential,
+    GoogleAuthProvider,
+    getRedirectResult,
     User,
     updateProfile,
     setPersistence, 
     browserLocalPersistence 
 } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { auth, db } from '../services/firebase';
+import { auth, db, googleProvider } from '../services/firebase';
 import { safeStringify } from '../utils/json';
 import { Mail, Lock, Loader2, CheckCircle2, AlertCircle, ArrowLeft, Eye, EyeOff, User as UserIcon, Sparkles, Phone, ChevronRight, MessageCircle, Globe } from 'lucide-react';
 import { useAppViewModel } from '../context/AppContext';
 import { Language } from '../types';
+import { motion, AnimatePresence } from 'motion/react';
+import { Browser } from '@capacitor/browser';
+import { Capacitor } from '@capacitor/core';
 
 export const LoginScreen: React.FC = () => {
-    const { language, setLanguage, t } = useAppViewModel();
+    const { language, setLanguage, t, showToast, hapticFeedback } = useAppViewModel();
     // Modes
-    const [viewMode, setViewMode] = useState<'LOGIN' | 'REGISTER' | 'RESET'>('LOGIN');
+    const [viewMode, setViewMode] = useState<'LOGIN' | 'REGISTER' | 'RESET' | 'BRIDGE_SUCCESS'>('LOGIN');
 
     // Email/Pass Inputs
     const [email, setEmail] = useState('');
@@ -35,9 +43,34 @@ export const LoginScreen: React.FC = () => {
     const [isLoading, setIsLoading] = useState(false);
     const [isSuccess, setIsSuccess] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [authErrorType, setAuthErrorType] = useState<'none' | 'iframe-restricted'>('none');
+    
+    // Auth Bridge State
+    const bridgePollInterval = useRef<any>(null);
+    const urlParams = new URLSearchParams(window.location.search);
+    const bridgeSession = urlParams.get('bridgeSession');
+    const API_BASE = 'https://ais-pre-zmy7cyrul53kimjptv7wnk-324283545149.europe-west2.run.app';
 
     useEffect(() => {
         auth.useDeviceLanguage(); // Türkçe dil desteği
+        
+        // Handle Redirect Result
+        const handleRedirect = async () => {
+            try {
+                const result = await getRedirectResult(auth);
+                if (result) {
+                    setIsLoading(true);
+                    await syncUserToFirestore(result.user);
+                    setIsSuccess(true);
+                }
+            } catch (err: any) {
+                console.error("Redirect redirect error:", err);
+                setError('Google girişi tamamlanamadı.');
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        handleRedirect();
     }, []);
 
     const syncUserToFirestore = async (user: User, additionalData?: any) => {
@@ -65,6 +98,53 @@ export const LoginScreen: React.FC = () => {
             }
         } catch (err) {
             console.error("Firestore sync error:", err);
+        }
+    };
+
+    const handleGoogleAuth = async () => {
+        if (isLoading) return;
+        setIsLoading(true);
+        setError(null);
+        setAuthErrorType('none');
+        hapticFeedback('medium');
+        
+        try {
+            await setPersistence(auth, browserLocalPersistence);
+            googleProvider.setCustomParameters({ 
+                prompt: 'select_account',
+                hl: language
+            });
+
+            // Geliştiricinin Notu: Google'ın standart, hatasız "Popup & Redirect" mekanizmasına geçildi.
+            try {
+                const result = await signInWithPopup(auth, googleProvider);
+                await syncUserToFirestore(result.user);
+                setIsSuccess(true);
+                showToast('Başarıyla giriş yapıldı!', 'success');
+            } catch (e: any) {
+                console.warn("Popup engellendi veya kapandı, standart yönlendirmeye geçiliyor...", e);
+                const isIframe = window.self !== window.top;
+                
+                // Eğer kullanıcı popup'ı manuel olarak kapatmadıysa
+                if (e.code !== 'auth/popup-closed-by-user' && e.code !== 'auth/cancelled-popup-request') {
+                    if (isIframe) {
+                        // AI Studio (iframe) içindeyken "signInWithRedirect" YAPILAMAZ! 
+                        // Çünkü tarayıcılar iframe içinde depolamayı böler ("Storage-partitioned browser environment" hatası verir).
+                        setError('Tarayıcınız açılır pencereyi (Popup) engelledi. Lütfen adres çubuğundaki uyarından izin verin veya uygulamayı sağ üstten "Yeni Sekmede" açın.');
+                        setIsLoading(false);
+                    } else {
+                        showToast('Güvenli giriş sayfasına yönlendiriliyorsunuz...', 'info');
+                        await signInWithRedirect(auth, googleProvider);
+                    }
+                } else {
+                    setIsLoading(false);
+                    setError('Giriş işlemi iptal edildi.');
+                }
+            }
+        } catch (err: any) {
+            console.error("Final Google Auth Error:", err);
+            setError(translateFirebaseError(err.code));
+            setIsLoading(false);
         }
     };
 
@@ -127,9 +207,25 @@ export const LoginScreen: React.FC = () => {
             case 'auth/too-many-requests': return 'Çok fazla deneme. Lütfen bekleyin.';
             case 'auth/invalid-credential': return 'E-posta veya şifre hatalı.';
             case 'auth/captcha-check-failed': return 'Güvenlik doğrulaması başarısız.';
-            default: return 'Bir hata oluştu.';
+            case 'auth/unauthorized-domain': return 'Kritik Uyarı: Bu link Firebase panelinde "Yetkili Alan Adları"na (Authorized Domains) eklenmemiş! Lütfen Firebase Authentication ayarlarına girip bu sayfanın URL adresini ekleyin.';
+            case 'auth/popup-blocked': return 'Tarayıcı pencereyi engelledi. Lütfen izin verin.';
+            default: return `İşlem başarısız (${code}).`;
         }
     };
+    
+    if (viewMode === 'BRIDGE_SUCCESS') {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-stone-950 p-4">
+                <div className="text-center animate-in zoom-in duration-500 max-w-sm">
+                    <div className="w-20 h-20 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto mb-4 border border-emerald-500/20 shadow-[0_0_30px_rgba(16,185,129,0.1)]">
+                        <CheckCircle2 size={40} className="text-emerald-500" />
+                    </div>
+                    <h2 className="text-2xl font-black text-white tracking-tight mb-2">Giriş Başarılı</h2>
+                    <p className="text-stone-400 text-sm mb-6">Uygulamadaki sekmeye güvenle geri dönebilirsiniz. Bu tarayıcı penceresini kapatabilirsiniz.</p>
+                </div>
+            </div>
+        );
+    }
 
     if (isSuccess) {
         return (
@@ -162,6 +258,29 @@ export const LoginScreen: React.FC = () => {
                 </div>
 
                 <div className="bg-stone-900/40 backdrop-blur-2xl rounded-[2.2rem] p-6 border border-white/5 shadow-2xl">
+                    <AnimatePresence>
+                        {authErrorType === 'iframe-restricted' && (
+                            <motion.div 
+                                initial={{ opacity: 0, height: 0 }}
+                                animate={{ opacity: 1, height: 'auto' }}
+                                exit={{ opacity: 0, height: 0 }}
+                                className="mb-6 p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl space-y-3 overflow-hidden"
+                            >
+                                <div className="flex gap-3">
+                                    <AlertCircle className="text-amber-500 shrink-0" size={16} />
+                                    <p className="text-[11px] text-amber-200 font-medium leading-relaxed">
+                                        Google güvenlik kısıtlaması nedeniyle giriş yapılamadı. Çözüm için uygulamayı tam ekranda açın.
+                                    </p>
+                                </div>
+                                <button 
+                                    onClick={() => window.open(window.location.href, '_blank')}
+                                    className="w-full py-3 bg-amber-500 text-black font-black text-[10px] uppercase tracking-widest rounded-xl active:scale-95 transition-all"
+                                >
+                                    Tam Ekran Moduna Geç
+                                </button>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
                     
                     {/* --- RESET PASSWORD VIEW --- */}
                     {viewMode === 'RESET' && (
@@ -245,6 +364,21 @@ export const LoginScreen: React.FC = () => {
 
                                 <button type="submit" disabled={isLoading} className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl font-bold text-sm shadow-lg shadow-emerald-900/20 transition-all active:scale-[0.98] flex items-center justify-center mt-2">
                                     {isLoading ? <Loader2 className="animate-spin" size={18} /> : (viewMode === 'REGISTER' ? t('login.register') : t('login.button'))}
+                                </button>
+
+                                <div className="relative flex items-center justify-center my-4">
+                                    <div className="absolute inset-0 flex items-center px-4"><div className="w-full border-t border-white/5"></div></div>
+                                    <span className="relative bg-stone-900 p-2 text-[8px] font-black text-stone-600 uppercase tracking-widest">VEYA</span>
+                                </div>
+
+                                <button 
+                                    type="button" 
+                                    onClick={handleGoogleAuth}
+                                    disabled={isLoading}
+                                    className="w-full py-3.5 bg-white text-black rounded-2xl font-bold text-xs shadow-lg transition-all active:scale-[0.98] flex items-center justify-center gap-3"
+                                >
+                                    <svg width="18" height="18" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.66l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+                                    Google ile Devam Et
                                 </button>
                             </form>
 

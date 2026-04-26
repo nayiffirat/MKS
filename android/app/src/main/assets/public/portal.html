@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Üretici Portalı</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0c0a09; color: #e7e5e4; }
+        .loader { border: 3px solid rgba(16, 185, 129, 0.2); border-top-color: #10b981; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .card { background: rgba(28, 25, 23, 0.5); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 1rem; padding: 1rem; }
+    </style>
+</head>
+<body>
+    <div id="app" class="min-h-screen pb-20">
+        <div class="flex flex-col items-center justify-center min-h-screen p-6" id="loading">
+            <div class="loader mb-4"></div>
+            <p class="text-stone-400 font-medium">Portal Yükleniyor...</p>
+        </div>
+        <div id="error" class="hidden flex-col items-center justify-center min-h-screen p-6 text-center">
+            <div class="w-20 h-20 bg-stone-900 rounded-full flex items-center justify-center mb-6 border border-white/5">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-stone-600"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+            </div>
+            <h2 class="text-xl font-bold text-stone-100 mb-2">Üretici Bulunamadı</h2>
+            <p class="text-stone-500 text-sm mb-4" id="error-msg">Lütfen bağlantıyı kontrol edin.</p>
+        </div>
+        <div id="content" class="hidden">
+            <!-- Header -->
+            <div class="bg-stone-900/50 backdrop-blur-xl border-b border-white/5 p-6 sticky top-0 z-30">
+                <div class="max-w-2xl mx-auto flex items-center justify-between">
+                    <div class="flex items-center gap-4">
+                        <div id="eng-initial" class="w-12 h-12 rounded-2xl bg-emerald-600 flex items-center justify-center text-white font-black text-xl shadow-lg shadow-emerald-900/20">M</div>
+                        <div>
+                            <span class="text-emerald-200 text-[10px] font-black uppercase tracking-[0.3em] mb-1 block">Üretici Portalı</span>
+                            <h1 id="eng-name" class="text-lg font-bold text-stone-100 leading-tight">Mühendis</h1>
+                            <p id="eng-phone" class="text-xs text-stone-500 mt-0.5">İletişim</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="max-w-2xl mx-auto p-4 space-y-6 mt-4">
+                <!-- Farmer Info -->
+                <div class="card relative overflow-hidden">
+                    <div class="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-3xl -mr-10 -mt-10"></div>
+                    <h2 id="farmer-name" class="text-2xl font-black text-white mb-1 relative z-10">Üretici</h2>
+                    <div class="flex items-center gap-2 text-stone-400 text-sm relative z-10">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
+                        <span id="farmer-phone">Telefon</span>
+                    </div>
+                </div>
+
+                <!-- Balance -->
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="card bg-stone-900/80 border-rose-500/20">
+                        <span class="text-[10px] font-black text-rose-500 uppercase tracking-wider mb-1 block">Toplam Borç</span>
+                        <div id="total-debt" class="text-xl font-black text-stone-200">0 ₺</div>
+                    </div>
+                    <div class="card bg-stone-900/80 border-emerald-500/20">
+                        <span class="text-[10px] font-black text-emerald-500 uppercase tracking-wider mb-1 block">Kalan Bakiye</span>
+                        <div id="current-balance" class="text-xl font-black text-emerald-400">0 ₺</div>
+                    </div>
+                </div>
+
+                <!-- Prescriptions -->
+                <div>
+                    <h3 class="text-xs font-black text-stone-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-blue-500"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                        Son Reçeteler
+                    </h3>
+                    <div id="prescriptions-list" class="space-y-3"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_KEY = "AIzaSyAvQQQmN-VpuhYKdz2fHFgGCpmDw58pnJg";
+        const PROJECT_ID = "muhendiskayitsistemi";
+        const BASE_URL = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/MKS/g892bEaJyGfEq1Fa67yb/users`;
+
+        function formatCurrency(amount) {
+            return new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(amount);
+        }
+
+        function formatDate(dateStr) {
+            return new Date(dateStr).toLocaleDateString('tr-TR');
+        }
+
+        function parseFirestoreValue(val) {
+            if (!val) return null;
+            if ('stringValue' in val) return val.stringValue;
+            if ('integerValue' in val) return parseInt(val.integerValue, 10);
+            if ('doubleValue' in val) return val.doubleValue;
+            if ('booleanValue' in val) return val.booleanValue;
+            if ('timestampValue' in val) return val.timestampValue;
+            if ('arrayValue' in val) return (val.arrayValue.values || []).map(parseFirestoreValue);
+            if ('mapValue' in val) {
+                const obj = {};
+                const fields = val.mapValue.fields || {};
+                for (const k in fields) obj[k] = parseFirestoreValue(fields[k]);
+                return obj;
+            }
+            return null;
+        }
+
+        function parseFirestoreDoc(doc) {
+            if (!doc || !doc.fields) return null;
+            const result = {};
+            for (const key in doc.fields) {
+                result[key] = parseFirestoreValue(doc.fields[key]);
+            }
+            if (doc.name) {
+                const parts = doc.name.split('/');
+                result.id = parts[parts.length - 1];
+            }
+            return result;
+        }
+
+        async function fetchCollection(engineerId, collectionName, queryField, queryValue) {
+            const url = `${BASE_URL}/${engineerId}:runQuery?key=${API_KEY}`;
+            const body = {
+                structuredQuery: {
+                    from: [{ collectionId: collectionName }],
+                    where: {
+                        fieldFilter: {
+                            field: { fieldPath: queryField },
+                            op: "EQUAL",
+                            value: { stringValue: queryValue }
+                        }
+                    }
+                }
+            };
+            
+            try {
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                if (!res.ok) return [];
+                const data = await res.json();
+                return data.map(d => parseFirestoreDoc(d.document)).filter(Boolean);
+            } catch (e) {
+                console.error(e);
+                return [];
+            }
+        }
+
+        async function loadPortal() {
+            const searchParams = new URLSearchParams(window.location.search);
+            let portalId = searchParams.get('portalId');
+            let engineerId = searchParams.get('engineerId');
+
+            if (!portalId || !engineerId) {
+                const hash = window.location.hash;
+                if (hash.includes('?')) {
+                    const hashParams = new URLSearchParams(hash.split('?')[1]);
+                    portalId = portalId || hashParams.get('portalId');
+                    engineerId = engineerId || hashParams.get('engineerId');
+                }
+            }
+
+            if (!portalId || !engineerId) {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('error').style.display = 'flex';
+                document.getElementById('error-msg').innerText = "Portal linki eksik. Lütfen linkin tamamına tıkladığınızdan emin olun.";
+                return;
+            }
+
+            portalId = portalId.replace(/\/$/, '').trim();
+            engineerId = engineerId.replace(/\/$/, '').trim();
+
+            try {
+                // Fetch Engineer Profile
+                const profileRes = await fetch(`${BASE_URL}/${engineerId}?key=${API_KEY}`);
+                const profileDoc = await profileRes.json();
+                const profile = parseFirestoreDoc(profileDoc);
+
+                // Fetch Farmer
+                const farmerRes = await fetch(`${BASE_URL}/${engineerId}/farmers/${portalId}?key=${API_KEY}`);
+                if (!farmerRes.ok) throw new Error("Farmer not found");
+                const farmerDoc = await farmerRes.json();
+                const farmer = parseFirestoreDoc(farmerDoc);
+
+                if (!farmer) throw new Error("Farmer not found");
+
+                // Fetch Data
+                const prescriptions = await fetchCollection(engineerId, 'prescriptions', 'farmerId', portalId);
+                const payments = await fetchCollection(engineerId, 'payments', 'farmerId', portalId);
+                const manualDebts = await fetchCollection(engineerId, 'manualDebts', 'farmerId', portalId);
+
+                // Calculate Totals
+                const totalPrescriptionDebt = prescriptions.reduce((acc, p) => acc + (p.totalAmount || 0), 0);
+                const totalManualDebt = manualDebts.reduce((acc, d) => acc + (d.amount || 0), 0);
+                const totalDebt = totalPrescriptionDebt + totalManualDebt;
+                const totalPaid = payments.reduce((acc, p) => acc + (p.amount || 0), 0);
+                const currentBalance = totalDebt - totalPaid;
+
+                // Render UI
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('content').style.display = 'block';
+
+                if (profile) {
+                    document.getElementById('eng-name').innerText = profile.fullName || 'Mühendis';
+                    document.getElementById('eng-initial').innerText = (profile.fullName || 'M').charAt(0);
+                    document.getElementById('eng-phone').innerText = profile.phoneNumber || '';
+                }
+
+                document.getElementById('farmer-name').innerText = farmer.fullName;
+                document.getElementById('farmer-phone').innerText = farmer.phoneNumber || 'Telefon kayıtlı değil';
+                
+                document.getElementById('total-debt').innerText = formatCurrency(totalDebt);
+                document.getElementById('current-balance').innerText = formatCurrency(currentBalance);
+
+                const pList = document.getElementById('prescriptions-list');
+                if (prescriptions.length === 0) {
+                    pList.innerHTML = '<div class="text-center py-8 card"><p class="text-xs text-stone-500">Henüz reçete bulunmuyor.</p></div>';
+                } else {
+                    prescriptions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).forEach(p => {
+                        const itemsHtml = (p.items || []).map(item => `
+                            <div class="flex justify-between items-center py-1 border-b border-white/5 last:border-0">
+                                <span class="text-xs text-stone-300">${item.pesticideName}</span>
+                                <span class="text-xs font-bold text-stone-400">${item.quantity || 1} Adet</span>
+                            </div>
+                        `).join('');
+
+                        pList.innerHTML += `
+                            <div class="card">
+                                <div class="flex justify-between items-start mb-3">
+                                    <div>
+                                        <div class="text-sm font-bold text-stone-200">${formatDate(p.date)}</div>
+                                        <div class="text-[10px] text-stone-500">No: ${p.prescriptionNo || '-'}</div>
+                                    </div>
+                                    <div class="text-sm font-black text-emerald-400">${formatCurrency(p.totalAmount || 0)}</div>
+                                </div>
+                                <div class="bg-stone-950/50 rounded-lg p-3">
+                                    ${itemsHtml}
+                                </div>
+                            </div>
+                        `;
+                    });
+                }
+
+            } catch (e) {
+                console.error(e);
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('error').style.display = 'flex';
+            }
+        }
+
+        window.onload = loadPortal;
+    </script>
+</body>
+</html>

@@ -200,7 +200,7 @@ export const PerformanceScreen: React.FC<{ onBack: () => void }> = ({ onBack }) 
                                 <div>
                                     <div className="flex items-center gap-2 mb-4">
                                         <ClipboardList size={18} className="text-blue-500" />
-                                        <h3 className="text-sm font-black text-stone-400 uppercase tracking-widest">Son Ziyaretler</h3>
+                                        <h3 className="text-sm font-black text-stone-400 uppercase tracking-widest">Son Reçeteler</h3>
                                     </div>
                                     <div className="space-y-3">
                                         {visits
@@ -227,7 +227,7 @@ export const PerformanceScreen: React.FC<{ onBack: () => void }> = ({ onBack }) 
                                                 </div>
                                             ))}
                                         {visits.filter((v: any) => v.createdById === selectedMemberId || (selectedMemberId === userProfile.id && !v.createdById)).length === 0 && (
-                                            <p className="text-stone-600 text-xs italic text-center py-4 bg-stone-950/50 rounded-2xl border border-dashed border-white/5">Henüz ziyaret kaydı bulunmuyor.</p>
+                                            <p className="text-stone-600 text-xs italic text-center py-4 bg-stone-950/50 rounded-2xl border border-dashed border-white/5">Henüz reçete kaydı bulunmuyor.</p>
                                         )}
                                     </div>
                                 </div>

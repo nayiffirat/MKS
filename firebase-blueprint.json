@@ -1,0 +1,92 @@
+{
+  "entities": {
+    "Farmer": {
+      "title": "Farmer",
+      "description": "Farmer profile and contact information",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "fullName": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "village": { "type": "string" },
+        "fields": { "type": "array" },
+        "avatarUrl": { "type": "string" },
+        "totalDebt": { "type": "number" },
+        "balance": { "type": "number" },
+        "latitude": { "type": "number" },
+        "longitude": { "type": "number" },
+        "createdById": { "type": "string" },
+        "deletedAt": { "type": "string" }
+      },
+      "required": ["id", "fullName", "phoneNumber"]
+    },
+    "Prescription": {
+      "title": "Prescription",
+      "description": "Prescription issued to a farmer",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "farmerId": { "type": "string" },
+        "fieldId": { "type": "string" },
+        "date": { "type": "string" },
+        "prescriptionNo": { "type": "string" },
+        "engineerName": { "type": "string" },
+        "items": { "type": "array" },
+        "isOfficial": { "type": "boolean" },
+        "totalAmount": { "type": "number" },
+        "status": { "type": "string" },
+        "deletedAt": { "type": "string" }
+      },
+      "required": ["id", "farmerId", "date"]
+    },
+    "InventoryItem": {
+      "title": "Inventory Item",
+      "description": "Stock item in the warehouse",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "pesticideId": { "type": "string" },
+        "pesticideName": { "type": "string" },
+        "quantity": { "type": "number" },
+        "unit": { "type": "string" },
+        "buyingPrice": { "type": "number" },
+        "sellingPrice": { "type": "number" },
+        "lastUpdated": { "type": "string" }
+      },
+      "required": ["id", "pesticideId", "quantity"]
+    },
+    "News": {
+      "title": "News",
+      "description": "Corporate news and advertisements",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "date": { "type": "string" },
+        "authorId": { "type": "string" },
+        "category": { "type": "string" }
+      },
+      "required": ["id", "title", "content", "date"]
+    }
+  },
+  "firestore": {
+    "/MKS/{orgId}/users/{userId}/farmers/{farmerId}": {
+      "schema": "Farmer",
+      "description": "Farmers collection"
+    },
+    "/MKS/{orgId}/users/{userId}/prescriptions/{prescriptionId}": {
+      "schema": "Prescription",
+      "description": "Prescriptions collection"
+    },
+    "/MKS/{orgId}/users/{userId}/inventory/{itemId}": {
+      "schema": "InventoryItem",
+      "description": "Inventory collection"
+    },
+    "/MKS/{orgId}/news/{newsId}": {
+      "schema": "News",
+      "description": "News collection"
+    }
+  }
+}

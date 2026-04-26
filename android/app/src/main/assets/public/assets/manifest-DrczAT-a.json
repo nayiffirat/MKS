@@ -1,0 +1,19 @@
+
+{
+  "name": "Mühendis Kayıt Sistemi",
+  "short_name": "MKS",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#faf8f6",
+  "theme_color": "#216e48",
+  "description": "Ziraat Mühendisleri için çevrimdışı öncelikli tarla ve çiftçi yönetim sistemi.",
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

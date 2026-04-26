@@ -321,7 +321,7 @@ export const ExpensesScreen: React.FC<ExpensesProps> = ({ onBack }) => {
                         step="0.01"
                         className="w-full bg-stone-950 border border-stone-800 rounded-2xl py-3.5 px-4 focus:ring-2 focus:ring-emerald-500 outline-none transition-all font-bold text-rose-500"
                         value={newExpense.amount || ''}
-                        onChange={e => setNewExpense({...newExpense, amount: parseFloat(e.target.value)})}
+                        onChange={e => setNewExpense({...newExpense, amount: parseFloat(e.target.value.replace(',', '.')) || 0})}
                       />
                     </div>
                     <div>
@@ -558,7 +558,7 @@ export const ExpensesScreen: React.FC<ExpensesProps> = ({ onBack }) => {
                           className="w-full bg-stone-950 border border-stone-800 rounded-2xl py-3.5 pl-10 pr-4 focus:ring-2 focus:ring-emerald-500 outline-none transition-all text-white font-bold"
                           placeholder="0.00"
                           value={editingExpense.amount || ''}
-                          onChange={e => setEditingExpense({...editingExpense, amount: parseFloat(e.target.value) || 0})}
+                          onChange={e => setEditingExpense({...editingExpense, amount: parseFloat(e.target.value.replace(',', '.')) || 0})}
                         />
                       </div>
                     </div>

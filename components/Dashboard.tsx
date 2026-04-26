@@ -1,12 +1,16 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useAppViewModel } from '../context/AppContext';
+import { useAuth } from '../context/AuthContext';
+import { auth, googleProvider } from '../services/firebase';
+import { linkWithPopup, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { WeatherWidget } from './WeatherComponents';
 import { 
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, 
-  Tooltip, CartesianGrid 
+  Tooltip, CartesianGrid, PieChart, Pie, Cell 
 } from 'recharts';
-import { Users, FileText, Sprout, Plus, X, Calendar, ChevronRight, Droplet, ArrowRight, Zap, MapPin, Send, Loader2, CalendarCheck, Clock, Mic, Bell, CalendarClock, TrendingUp, AlertCircle, Bug, Package, Route, FlaskConical, Star, Truck, Search, DollarSign, Trash2, Wallet, Sparkles, ScanSearch, Calculator } from 'lucide-react';
+import { GoogleGenAI, Type } from "@google/genai";
+import { Users, FileText, Sprout, Plus, X, Calendar, ChevronRight, Droplet, ArrowRight, Zap, MapPin, Send, Loader2, CalendarCheck, Clock, Mic, Bell, CalendarClock, TrendingUp, AlertCircle, Bug, Package, Route, FlaskConical, Star, Truck, Search, DollarSign, Trash2, Wallet, Sparkles, ScanSearch, Calculator, Map, Newspaper, Save, RefreshCw, Camera } from 'lucide-react';
 import { ViewState, Pesticide, PesticideCategory, SupplierPurchase } from '../types';
 import { dbService } from '../services/db';
 import { formatCurrency, getCurrencySuffix } from '../utils/currency';
@@ -16,7 +20,57 @@ interface DashboardProps {
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
-  const { addFarmer, userProfile, reminders, stats, prescriptions, inventory, suppliers, farmers, addSupplierPurchase, showToast, hapticFeedback, activeTeamMember, t, language, unreadCount } = useAppViewModel();
+  const { currentUser } = useAuth();
+  const { addFarmer, userProfile, reminders, stats, prescriptions, inventory, suppliers, farmers, addSupplierPurchase, addSupplierPayment, showToast, hapticFeedback, activeTeamMember, t, language, unreadCount, news } = useAppViewModel();
+  const [selectedNews, setSelectedNews] = useState<any>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
+
+  const isGoogleUser = useMemo(() => {
+    return currentUser?.providerData?.some(p => p.providerId === 'google.com');
+  }, [currentUser]);
+
+  const handleGoogleAiLogin = async () => {
+    if (!currentUser || isAuthLoading) return;
+    
+    setIsAuthLoading(true);
+    hapticFeedback('medium');
+    
+    try {
+        if (isGoogleUser) {
+            showToast('Google hesabınız zaten bağlı.', 'info');
+            setIsAuthLoading(false);
+            return;
+        }
+
+        // Attempt to link accounts
+        await linkWithPopup(currentUser, googleProvider);
+        showToast('Google Hesabı Bağlandı: Asistan tam yetkiyle aktif!', 'success');
+        hapticFeedback('success');
+    } catch (error: any) {
+        console.error("Google linking error:", error);
+        
+        const errorCode = error.code;
+        
+        if (errorCode === 'auth/credential-already-in-use') {
+            showToast('Google hesabı başka bir kayıtla eşleşmiş. Giriş yapılıyor...', 'info');
+            try {
+                await signInWithPopup(auth, googleProvider);
+                showToast('Google ile giriş yapıldı.', 'success');
+                hapticFeedback('success');
+            } catch (signInError: any) {
+                showToast('Giriş başarısız oldu.', 'error');
+            }
+        } else if (errorCode === 'auth/popup-blocked') {
+            showToast('Tarayıcı penceresi engellendi.', 'error');
+        } else if (errorCode === 'auth/popup-closed-by-user' || errorCode === 'auth/cancelled-popup-request') {
+            showToast('Giriş iptal edildi.', 'info');
+        } else {
+            showToast('Google bağlantısı kurulamadı.', 'error');
+        }
+    } finally {
+        setIsAuthLoading(false);
+    }
+  };
   const isSales = activeTeamMember?.role === 'SALES';
   const canCreatePrescription = !isSales;
   const canCreateFarmer = !isSales;
@@ -30,6 +84,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   const [pesticides, setPesticides] = useState<Pesticide[]>([]);
   const [searchPestTerm, setSearchPestTerm] = useState('');
   const [isNewPesticide, setIsNewPesticide] = useState(false);
+  const [paymentType, setPaymentType] = useState<'TERM' | 'CASH'>('TERM');
 
   useEffect(() => {
       const fetchPesticides = async () => {
@@ -49,9 +104,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   const filteredPesticides = useMemo(() => {
       if (!searchPestTerm) return [];
       return pesticides.filter(p => 
-          p.name.toLowerCase().includes(searchPestTerm.toLowerCase()) || 
-          p.activeIngredient.toLowerCase().includes(searchPestTerm.toLowerCase())
-      ).slice(0, 5);
+          p.name.toLocaleLowerCase('tr-TR').includes(searchPestTerm.toLocaleLowerCase('tr-TR')) || 
+          p.activeIngredient.toLocaleLowerCase('tr-TR').includes(searchPestTerm.toLocaleLowerCase('tr-TR'))
+      ).slice(0, 20);
   }, [pesticides, searchPestTerm]);
 
   const handleAddPurchaseItem = (p: Pesticide | { name: string, isNew: boolean }) => {
@@ -72,21 +127,35 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
       if (!selectedSupplierId || purchaseItems.length === 0) return;
 
       const totalAmount = purchaseItems.reduce((sum, item) => sum + (item.quantity * item.buyingPrice), 0);
+      const date = new Date().toISOString();
       
       await addSupplierPurchase({
           supplierId: selectedSupplierId,
-          date: new Date().toISOString(),
+          date,
           receiptNo,
           items: purchaseItems,
           totalAmount
       });
 
-      showToast(t('dashboard.purchase_success'), 'success');
+      // If it's a cash purchase, automatically add a payment
+      if (paymentType === 'CASH') {
+          await addSupplierPayment({
+              supplierId: selectedSupplierId,
+              amount: totalAmount,
+              date,
+              method: 'CASH',
+              note: receiptNo ? `Hızlı Peşin Alım - Fiş No: ${receiptNo}` : 'Hızlı Peşin Alım Ödemesi',
+              createdById: activeTeamMember?.id
+          });
+      }
+
+      showToast(paymentType === 'CASH' ? 'Peşin alım ve ödeme kaydedildi' : t('dashboard.purchase_success'), 'success');
       hapticFeedback('success');
       setIsPurchaseModalOpen(false);
       setPurchaseItems([]);
       setSelectedSupplierId('');
       setReceiptNo('');
+      setPaymentType('TERM');
   };
 
   // Daily Sales Chart Data
@@ -117,6 +186,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
       if (!fullName) return t('dashboard.hello').replace(',', '');
       return fullName.split(' ')[0];
   };
+
+  const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#f97316'];
 
   return (
     <div className="p-3 space-y-3 pb-24 animate-in fade-in duration-500">
@@ -181,65 +252,84 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
             </p>
           </button>
 
-          {/* Tomorrow's Plan Card */}
+          {/* MKS Haber Card */}
           <button 
-            onClick={() => onNavigate('REMINDERS_TOMORROW')}
+            onClick={() => onNavigate('NEWS')}
             className="col-span-1 p-3 bg-stone-900/60 border border-white/10 rounded-2xl flex flex-col justify-center group active:scale-[0.98] transition-all hover:bg-stone-900 min-h-[70px] relative overflow-hidden shadow-md"
           >
              <div className="flex items-center space-x-1.5 mb-1.5 relative z-10">
-                <div className="p-1.5 bg-emerald-500/20 rounded-lg shrink-0">
-                    <CalendarClock className="text-emerald-500" size={12} />
+                <div className="p-1.5 bg-blue-500/20 rounded-lg shrink-0">
+                    <Newspaper className="text-blue-500" size={12} />
                 </div>
-                <h4 className="text-stone-500 font-black text-[8px] uppercase tracking-widest">{t('dashboard.tomorrow')}</h4>
+                <h4 className="text-stone-500 font-black text-[8px] uppercase tracking-widest">MKS Haber</h4>
             </div>
             <div className="relative z-10">
-                {stats.tomorrowReminders > 0 ? (
-                    <p className="text-emerald-400 text-xs font-black tracking-wide">
-                        {stats.tomorrowReminders} {t('dashboard.plans')}
+                {news && news.length > 0 ? (
+                    <p className="text-stone-200 text-[10px] truncate w-full leading-tight font-bold">
+                        {news[0].title}
                     </p>
                 ) : (
-                    <p className="text-stone-600 text-[10px] font-bold">{t('dashboard.no_plan')}</p>
+                    <p className="text-stone-600 text-[10px] font-bold">Haber yok</p>
                 )}
             </div>
           </button>
       </div>
 
-      <WeatherWidget />
+      <div className="grid grid-cols-2 gap-2 mb-3">
+          <WeatherWidget />
+          <div 
+              onClick={() => onNavigate('AI_ASSISTANT')}
+              className="bg-emerald-600/20 border border-emerald-500/30 rounded-[1.3rem] p-3 flex flex-col justify-center items-center cursor-pointer active:scale-95 transition-transform overflow-hidden relative group"
+          >
+              <div className="absolute inset-0 bg-gradient-to-tr from-emerald-500/10 to-teal-500/10 opacity-50 group-hover:opacity-100 transition-opacity"></div>
+              <Sparkles className="text-emerald-400 mb-2" size={24} />
+              <h3 className="text-sm font-black text-emerald-300 text-center uppercase tracking-wider relative z-10">Zirai Teşhis Asistanı</h3>
+          </div>
+      </div>
 
       {/* DEBTS & RECEIVABLES WIDGET */}
       <div className="grid grid-cols-2 gap-2">
+          {/* Combined Financial Card */}
           <div 
             onClick={() => onNavigate('STATISTICS')}
-            className="bg-stone-900/60 border border-white/10 rounded-2xl p-3 overflow-hidden cursor-pointer active:scale-[0.99] transition-transform group shadow-md"
+            className="bg-stone-900/60 border border-white/10 rounded-2xl p-3 overflow-hidden cursor-pointer active:scale-[0.99] transition-transform group shadow-md flex flex-col justify-between gap-3"
           >
-              <div className="flex items-center gap-1.5 mb-2">
-                  <div className="p-1.5 bg-rose-500/20 rounded-lg group-hover:bg-rose-500/30 transition-colors">
-                      <Truck size={12} className="text-rose-500" />
-                  </div>
-                  <h3 className="text-[8px] font-black text-stone-500 uppercase tracking-widest">{t('dashboard.my_debts')}</h3>
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                        <Truck size={12} className="text-rose-500" />
+                        <h3 className="text-[8px] font-black text-stone-500 uppercase tracking-widest">{t('dashboard.my_debts')}</h3>
+                    </div>
+                    <span className="text-[10px] font-black text-rose-400 font-mono">
+                        {formatCurrency(Math.round(totalSupplierDebt), userProfile?.currency || 'TRY')}
+                    </span>
+                </div>
+                <div className="h-px bg-white/5 w-full"></div>
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                        <DollarSign size={12} className="text-emerald-500" />
+                        <h3 className="text-[8px] font-black text-stone-500 uppercase tracking-widest">{t('dashboard.my_receivables')}</h3>
+                    </div>
+                    <span className="text-[10px] font-black text-emerald-400 font-mono">
+                        {formatCurrency(Math.round(stats.totalDebt), userProfile?.currency || 'TRY')}
+                    </span>
+                </div>
               </div>
-              <div className="flex items-end gap-0.5">
-                  <span className="text-lg font-black text-rose-400 font-mono">
-                      {formatCurrency(Math.round(totalSupplierDebt), userProfile?.currency || 'TRY')}
-                  </span>
+              <div className="flex items-center justify-between text-[7px] font-bold text-stone-600 uppercase tracking-tighter">
+                  <span>Finansal Özet</span>
+                  <ChevronRight size={10} />
               </div>
           </div>
 
+          {/* AI Product Recognition Assistant */}
           <div 
-            onClick={() => onNavigate('FARMERS')}
-            className="bg-stone-900/60 border border-white/10 rounded-2xl p-3 overflow-hidden cursor-pointer active:scale-[0.99] transition-transform group shadow-md"
+            onClick={() => onNavigate('PRODUCT_AI_ASSISTANT')}
+            className="rounded-2xl p-3 overflow-hidden cursor-pointer active:scale-[0.99] transition-all group shadow-md flex flex-col items-center justify-center text-center relative bg-stone-900/60 border border-amber-500/30"
           >
-              <div className="flex items-center gap-1.5 mb-2">
-                  <div className="p-1.5 bg-emerald-500/20 rounded-lg group-hover:bg-emerald-500/30 transition-colors">
-                      <DollarSign size={12} className="text-emerald-500" />
-                  </div>
-                  <h3 className="text-[8px] font-black text-stone-500 uppercase tracking-widest">{t('dashboard.my_receivables')}</h3>
+              <div className="p-2 rounded-xl mb-1.5 transition-colors bg-amber-500/10 group-hover:bg-amber-500/20">
+                <ScanSearch size={20} className="text-amber-500" />
               </div>
-              <div className="flex items-end gap-0.5">
-                  <span className="text-lg font-black text-emerald-400 font-mono">
-                      {formatCurrency(Math.round(stats.totalDebt), userProfile?.currency || 'TRY')}
-                  </span>
-              </div>
+              <h3 className="text-sm font-black text-amber-500 uppercase tracking-widest leading-tight">Ürün Bilgi Asistanı</h3>
           </div>
       </div>
 
@@ -339,11 +429,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
             </button>
         </div>
 
-        <div className="grid grid-cols-4 gap-2 mt-3">
-            <ActionButton onClick={() => onNavigate('VISIT_NEW')} icon={Calendar} label={t('dashboard.visit')} color="blue" />
+        <div className="grid grid-cols-3 gap-2 mt-3">
+            <button 
+                onClick={() => onNavigate('FINDEKS')}
+                className="col-span-3 group flex items-center justify-center gap-3 p-5 bg-amber-500/10 backdrop-blur-sm rounded-[32px] border border-amber-500/30 active:scale-95 transition-all shadow-xl shadow-amber-900/10"
+            >
+                <div className="bg-amber-500 text-white p-3 rounded-2xl shadow-lg group-hover:scale-110 transition-transform">
+                    <ScanSearch size={24}/>
+                </div>
+                <div className="text-left">
+                    <span className="block font-black text-sm text-amber-500 uppercase tracking-[0.2em]">FINDEKS ANALİZ</span>
+                    <span className="text-[10px] text-amber-600 font-bold uppercase opacity-70">Çiftçi Risk & Potansiyel Raporu</span>
+                </div>
+            </button>
             <ActionButton onClick={() => onNavigate('CALCULATOR')} icon={Calculator} label={t('dashboard.calculate')} color="emerald" />
-            <ActionButton onClick={() => onNavigate('MIXTURE_TEST')} icon={FlaskConical} label={t('dashboard.mixture')} color="purple" />
-            <ActionButton onClick={() => onNavigate('KASA')} icon={Wallet} label={t('dashboard.safe')} color="amber" />
+            <ActionButton onClick={() => onNavigate('VISIT_NEW')} icon={Calendar} label={t('dashboard.visit')} color="blue" />
+            <ActionButton onClick={() => onNavigate('PLANTS')} icon={Sprout} label="Bitkiler" color="purple" />
         </div>
       </div>
 
@@ -400,6 +501,65 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
           </div>
       </div>
 
+      {/* CROP DISTRIBUTION (ARAZI) */}
+      <div className="bg-stone-900/40 border border-white/5 rounded-2xl p-3 overflow-hidden">
+          <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-1.5">
+                  <div className="p-1 bg-emerald-500/10 rounded-lg">
+                      <Sprout size={12} className="text-emerald-500" />
+                  </div>
+                  <h3 className="text-[8px] font-black text-stone-400 uppercase tracking-widest">Arazi Dağılımı</h3>
+              </div>
+              <span className="text-[8px] font-black text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                  {stats.totalArea} da Toplam
+              </span>
+          </div>
+          
+          <div className="flex items-center gap-4">
+              <div className="h-24 w-24 shrink-0">
+                  <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                          <Pie
+                              data={stats.cropDistribution}
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={30}
+                              outerRadius={45}
+                              paddingAngle={2}
+                              dataKey="area"
+                              nameKey="crop"
+                          >
+                              {stats.cropDistribution.map((entry, index) => (
+                                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="rgba(0,0,0,0.2)" />
+                              ))}
+                          </Pie>
+                      </PieChart>
+                  </ResponsiveContainer>
+              </div>
+              <div className="flex-1 grid grid-cols-2 gap-x-3 gap-y-1.5">
+                  {stats.cropDistribution.slice(0, 4).map((item, idx) => (
+                      <div key={idx} className="flex items-center gap-1.5 min-w-0">
+                          <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: COLORS[idx % COLORS.length] }}></div>
+                          <div className="min-w-0">
+                              <p className="text-[8px] font-bold text-stone-300 truncate">{item.crop}</p>
+                              <p className="text-[7px] text-stone-500 font-mono">{item.area} da</p>
+                          </div>
+                      </div>
+                  ))}
+                  {stats.cropDistribution.length > 4 && (
+                      <div className="col-span-2 pt-1 border-t border-white/5">
+                          <button 
+                            onClick={() => onNavigate('STATISTICS')}
+                            className="text-[7px] font-black text-stone-600 uppercase tracking-widest hover:text-emerald-500 transition-colors"
+                          >
+                              Tümünü Gör <ChevronRight size={8} className="inline" />
+                          </button>
+                      </div>
+                  )}
+              </div>
+          </div>
+      </div>
+
       {/* QUICK PURCHASE MODAL */}
       {isPurchaseModalOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-end justify-center animate-in fade-in duration-300">
@@ -437,15 +597,35 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                         </div>
                     </div>
                 </div>
-                <div>
-                    <label className="text-[8px] font-black text-stone-600 ml-1 uppercase tracking-widest mb-1 block">{t('dashboard.receipt_no')}</label>
-                    <input 
-                        type="text" 
-                        value={receiptNo}
-                        onChange={e => setReceiptNo(e.target.value)}
-                        placeholder={t('dashboard.optional')} 
-                        className="w-full h-[48px] px-4 bg-stone-950 border border-stone-800 focus:border-emerald-500/30 rounded-xl outline-none font-bold transition-all text-white placeholder-stone-800 text-sm"
-                    />
+                <div className="flex flex-col gap-1.5">
+                    <label className="text-[8px] font-black text-stone-600 ml-1 uppercase tracking-widest block">{t('dashboard.receipt_no')} / Ödeme</label>
+                    <div className="flex gap-2">
+                        <div className="relative flex-1">
+                            <input 
+                                type="text" 
+                                value={receiptNo}
+                                onChange={e => setReceiptNo(e.target.value)}
+                                placeholder={t('dashboard.optional')} 
+                                className="w-full h-[48px] px-4 bg-stone-950 border border-stone-800 focus:border-emerald-500/30 rounded-xl outline-none font-bold transition-all text-white placeholder-stone-800 text-sm"
+                            />
+                        </div>
+                        <div className="flex bg-stone-950 border border-stone-800 rounded-xl p-1">
+                            <button 
+                                type="button"
+                                onClick={() => setPaymentType('TERM')}
+                                className={`px-3 py-2 rounded-lg text-[9px] font-black uppercase transition-all ${paymentType === 'TERM' ? 'bg-stone-800 text-white shadow-lg' : 'text-stone-600 hover:text-stone-400'}`}
+                            >
+                                Vadeli
+                            </button>
+                            <button 
+                                type="button"
+                                onClick={() => setPaymentType('CASH')}
+                                className={`px-3 py-2 rounded-lg text-[9px] font-black uppercase transition-all ${paymentType === 'CASH' ? 'bg-emerald-600 text-white shadow-lg' : 'text-stone-600 hover:text-stone-400'}`}
+                            >
+                                Peşin
+                            </button>
+                        </div>
+                    </div>
                 </div>
               </div>
               {suppliers.length === 0 && (
@@ -494,7 +674,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
               </div>
 
               {/* Items List */}
-              <div className="space-y-2 max-h-[30vh] overflow-y-auto custom-scrollbar pr-1">
+              <div className="space-y-2 max-h-[50vh] overflow-y-auto custom-scrollbar pr-1">
                   {purchaseItems.map((item, idx) => (
                       <div key={idx} className="bg-stone-950/50 border border-white/5 rounded-2xl p-3 space-y-3">
                           <div className="flex justify-between items-center">
@@ -512,10 +692,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                   <label className="text-[8px] font-black text-stone-600 uppercase tracking-widest mb-1 block">{t('dashboard.quantity')}</label>
                                   <input 
                                     type="number" 
+                                    step="any"
                                     value={item.quantity}
                                     onChange={e => {
                                         const newItems = [...purchaseItems];
-                                        newItems[idx].quantity = Number(e.target.value);
+                                        const qty = parseFloat(e.target.value.replace(',', '.'));
+                                        newItems[idx].quantity = isNaN(qty) ? 0 : qty;
                                         setPurchaseItems(newItems);
                                     }}
                                     className="w-full h-[34px] px-2 bg-stone-900 border border-stone-800 rounded-lg text-xs font-bold text-white outline-none"
@@ -552,7 +734,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                         value={item.buyingPrice}
                                         onChange={e => {
                                             const newItems = [...purchaseItems];
-                                            newItems[idx].buyingPrice = Number(e.target.value);
+                                            const price = parseFloat(e.target.value.replace(',', '.'));
+                                            newItems[idx].buyingPrice = isNaN(price) ? 0 : price;
                                             setPurchaseItems(newItems);
                                         }}
                                         className="w-full h-[34px] pl-6 pr-2 bg-stone-900 border border-stone-800 rounded-lg text-xs font-bold text-white outline-none"
@@ -587,6 +770,59 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                   </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* News Detail Modal */}
+      {selectedNews && (
+        <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-300">
+          <div className="bg-stone-900 w-full max-w-lg rounded-3xl border border-white/10 overflow-hidden flex flex-col max-h-[90vh] shadow-2xl">
+            <div className="relative h-48 sm:h-64 bg-stone-800 shrink-0">
+              {selectedNews.imageUrl ? (
+                <img 
+                  src={selectedNews.imageUrl} 
+                  alt={selectedNews.title}
+                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-stone-700">
+                  <Newspaper size={64} />
+                </div>
+              )}
+              <button 
+                onClick={() => setSelectedNews(null)}
+                className="absolute top-4 right-4 p-2 bg-black/50 backdrop-blur-md rounded-full text-white hover:bg-black/70 transition-colors"
+              >
+                <X size={20} />
+              </button>
+              <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-stone-900 to-transparent">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="px-2 py-0.5 bg-blue-600 text-[8px] font-black text-white rounded uppercase tracking-widest">
+                    {selectedNews.category || 'Haber'}
+                  </span>
+                  <span className="text-[10px] font-bold text-stone-400">
+                    {new Date(selectedNews.date).toLocaleDateString('tr-TR')}
+                  </span>
+                </div>
+                <h2 className="text-lg font-black text-white leading-tight">{selectedNews.title}</h2>
+              </div>
+            </div>
+            <div className="p-6 overflow-y-auto custom-scrollbar flex-1">
+              <div className="prose prose-invert max-w-none">
+                <p className="text-stone-300 text-sm leading-relaxed whitespace-pre-wrap">
+                  {selectedNews.content}
+                </p>
+              </div>
+            </div>
+            <div className="p-4 border-t border-white/5 bg-stone-900/80 shrink-0">
+              <button 
+                onClick={() => setSelectedNews(null)}
+                className="w-full py-3 bg-stone-800 text-stone-300 rounded-xl font-bold text-sm hover:bg-stone-700 transition-colors"
+              >
+                Kapat
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -4,9 +4,11 @@ import {
     onAuthStateChanged, 
     signOut, 
     setPersistence, 
-    browserLocalPersistence 
+    browserLocalPersistence,
+    getRedirectResult 
 } from 'firebase/auth';
-import { auth } from '../services/firebase';
+import { auth, db } from '../services/firebase';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 interface AuthContextType {
     currentUser: User | null;
@@ -20,23 +22,53 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [currentUser, setCurrentUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
 
+    const syncUserToFirestore = async (user: User) => {
+        try {
+            // Updated to use the correct path provided in your previous config turn
+            const userRef = doc(db, "MKS", "g892bEaJyGfEq1Fa67yb", "users", user.uid);
+            const userSnap = await getDoc(userRef);
+
+            if (!userSnap.exists()) {
+                await setDoc(userRef, {
+                    uid: user.uid,
+                    email: user.email || '',
+                    fullName: user.displayName || 'İsimsiz Kullanıcı',
+                    role: 'user',
+                    subscriptionStatus: 'active',
+                    subscriptionEndsAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+                    createdAt: new Date().toISOString(),
+                    lastLogin: new Date().toISOString(),
+                    photoURL: user.photoURL || ''
+                });
+            } else {
+                await setDoc(userRef, { lastLogin: new Date().toISOString() }, { merge: true });
+            }
+        } catch (err) {
+            console.error("Central Sync Error:", err);
+        }
+    };
+
     useEffect(() => {
-        const initAuth = async () => {
-            // Firebase remembers the last set persistence. 
-            // We set it explicitly during login.
-            const unsubscribe = onAuthStateChanged(auth, (user) => {
-                setCurrentUser(user);
-                setLoading(false);
-            });
-
-            return unsubscribe;
+        // Handle Global Redirect Results (Flawless Bridge)
+        const checkAuthResults = async () => {
+            try {
+                const result = await getRedirectResult(auth);
+                if (result) {
+                    console.log("Redirect result captured globally!");
+                    await syncUserToFirestore(result.user);
+                }
+            } catch (error: any) {
+                console.error("Global Auth Redirect Error:", error);
+            }
         };
+        checkAuthResults();
 
-        const unsubscribePromise = initAuth();
-        
-        return () => {
-            unsubscribePromise.then(unsub => unsub && unsub());
-        };
+        const unsubscribe = onAuthStateChanged(auth, (user) => {
+            setCurrentUser(user);
+            setLoading(false);
+        });
+
+        return () => unsubscribe();
     }, []);
 
     const logout = async () => {

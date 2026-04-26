@@ -1,0 +1,13 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- Realistic Background Image -->
+  <image href="https://images.unsplash.com/photo-1592919016381-f07ecd5a244a?auto=format&fit=crop&w=512&h=512&q=80" width="512" height="512" />
+  
+  <!-- Subtle Gradient Overlay for Text Readability -->
+  <rect x="0" y="350" width="512" height="162" fill="black" fill-opacity="0.4" />
+  
+  <!-- MKS Text -->
+  <text x="50%" y="450" text-anchor="middle" fill="white" font-family="Arial, sans-serif" font-weight="900" font-size="100" style="text-shadow: 2px 2px 10px rgba(0,0,0,0.8);">MKS</text>
+  
+  <!-- Decorative Wheat Icon Overlay (Optional but adds to the spirit) -->
+  <path d="M450 50 L470 70 M460 40 L480 60" stroke="#F59E0B" stroke-width="4" opacity="0.8" />
+</svg>

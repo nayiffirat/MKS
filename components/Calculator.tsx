@@ -20,9 +20,11 @@ export const Calculator: React.FC<CalculatorProps> = ({ onBack }) => {
     const [calculatedSellingPrice, setCalculatedSellingPrice] = useState<number | null>(null);
     const [costPerDekar, setCostPerDekar] = useState<number | null>(null);
 
+    const parseFloatSafe = (val: string) => parseFloat(val.replace(',', '.')) || 0;
+
     const handleCalculateMargin = () => {
-        const buy = parseFloat(buyingPrice);
-        const sell = parseFloat(sellingPrice);
+        const buy = parseFloatSafe(buyingPrice);
+        const sell = parseFloatSafe(sellingPrice);
         
         if (!isNaN(buy) && !isNaN(sell) && buy > 0) {
             const profitAmount = sell - buy;
@@ -35,8 +37,8 @@ export const Calculator: React.FC<CalculatorProps> = ({ onBack }) => {
     };
 
     const handleCalculateSellingPrice = () => {
-        const buy = parseFloat(buyingPrice);
-        const marg = parseFloat(margin);
+        const buy = parseFloatSafe(buyingPrice);
+        const marg = parseFloatSafe(margin);
 
         if (!isNaN(buy) && !isNaN(marg) && buy > 0) {
             const profitAmount = buy * (marg / 100);
@@ -49,8 +51,8 @@ export const Calculator: React.FC<CalculatorProps> = ({ onBack }) => {
     };
 
     const calculateDekarCost = (sellPrice: number) => {
-        const pkgSize = parseFloat(packageSize);
-        const dosage = parseFloat(dosagePerDekar);
+        const pkgSize = parseFloatSafe(packageSize);
+        const dosage = parseFloatSafe(dosagePerDekar);
         
         if (!isNaN(pkgSize) && !isNaN(dosage) && pkgSize > 0) {
             const cost = (sellPrice / pkgSize) * dosage;
