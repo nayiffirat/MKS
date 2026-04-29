@@ -15,15 +15,14 @@ import {
     History,
     ShieldCheck,
     ShieldAlert,
-    Zap,
     Map,
+    Zap,
     X,
     ChevronRight,
     Info,
     Calendar,
     Wallet,
-    LandPlot as LandPlotIcon,
-    Bot
+    LandPlot as LandPlotIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { formatCurrency } from '../utils/currency';
@@ -64,7 +63,7 @@ export const Findeks: React.FC<FindeksProps> = ({ onBack }) => {
             // 2. Calculate Total Sales (Company turnover with this farmer)
             const totalSales = totalPrescriptionAmount;
 
-            // 3. Calculate Actual Earnings (Your profit from sales to this farmer) - AI Driven
+            // 3. Calculate Actual Earnings (Your profit from sales to this farmer)
             let totalProfit = 0;
             farmerPrescriptions.forEach(pres => {
                 pres.items.forEach(item => {
@@ -87,7 +86,7 @@ export const Findeks: React.FC<FindeksProps> = ({ onBack }) => {
                 });
             });
 
-            // 4. Calculate Risk Capacity (Based on Land * AI Pesticide Costs)
+            // 4. Calculate Risk Capacity (Based on Land * Pesticide Costs)
             let totalExpectedPesticideCapacity = 0;
             const fieldBreakdown = farmer.fields.map(field => {
                 const costPerDa = CROP_PESTICIDE_COSTS[field.crop] || DEFAULT_PESTICIDE_COST;
@@ -97,7 +96,7 @@ export const Findeks: React.FC<FindeksProps> = ({ onBack }) => {
             });
 
             // 5. Risk Score Calculation (Current Debt vs Field Capacity)
-            // AI Insight: If debt > 120% of capacity, it's extreme risk.
+            // Insight: If debt > 120% of capacity, it's extreme risk.
             let riskScore = 0;
             if (currentDebt > 0) {
                 if (totalExpectedPesticideCapacity > 0) {
@@ -327,8 +326,8 @@ export const Findeks: React.FC<FindeksProps> = ({ onBack }) => {
                                     {/* Field List */}
                                     <div className="space-y-4">
                                         <h3 className="text-sm font-black text-stone-200 flex items-center gap-2">
-                                            <Bot size={16} className="text-amber-500" />
-                                            AI Saha Reçetesi & Analizi
+                                            <LandPlotIcon size={16} className="text-amber-500" />
+                                            Saha Reçetesi & Analizi
                                         </h3>
                                         {selectedDetailFarmer.fields.map((field, i) => {
                                             const agronomy = CROP_AGRONOMY_INTEL[field.crop] || DEFAULT_AGRONOMY;
@@ -349,7 +348,7 @@ export const Findeks: React.FC<FindeksProps> = ({ onBack }) => {
                                                         </div>
                                                     </div>
 
-                                                    {/* AI DATA GRID */}
+                                                    {/* SAHA VERİLERİ */}
                                                     <div className="grid grid-cols-2 gap-2 mb-4">
                                                         <div className="p-3 bg-stone-950/40 rounded-2xl border border-white/5">
                                                             <span className="text-[7px] font-black text-stone-500 uppercase block mb-1">Toprak İhtiyacı</span>
@@ -363,7 +362,7 @@ export const Findeks: React.FC<FindeksProps> = ({ onBack }) => {
 
                                                     {/* RISK MONITORING */}
                                                     <div className="mb-4">
-                                                        <span className="text-[7px] font-black text-stone-500 uppercase block mb-1.5 ml-1">Kritik Zararlı Takibi (AI Tahmin)</span>
+                                                        <span className="text-[7px] font-black text-stone-500 uppercase block mb-1.5 ml-1">Kritik Zararlı Takibi</span>
                                                         <div className="flex flex-wrap gap-1.5">
                                                             {agronomy.pestRisk.map((pest, idx) => (
                                                                 <span key={idx} className="bg-rose-500/10 text-rose-400 border border-rose-500/20 text-[8px] font-black px-2 py-0.5 rounded-full uppercase italic">
@@ -373,11 +372,11 @@ export const Findeks: React.FC<FindeksProps> = ({ onBack }) => {
                                                         </div>
                                                     </div>
 
-                                                    {/* SMART RECOMMENDATION */}
+                                                    {/* AKILLI TAVSİYE */}
                                                     <div className="p-3 bg-amber-500/5 border border-amber-500/10 rounded-2xl">
                                                         <div className="flex items-center gap-2 mb-1">
                                                             <Info size={10} className="text-amber-500" />
-                                                            <span className="text-[8px] font-black text-amber-500 uppercase tracking-widest">Akıllı Not</span>
+                                                            <span className="text-[8px] font-black text-amber-500 uppercase tracking-widest">Bilgi Notu</span>
                                                         </div>
                                                         <p className="text-[10px] text-stone-400 font-medium leading-relaxed">
                                                             Bu parsel için <span className="text-amber-200">{agronomy.criticalPeriod}</span> dönemi en kritik evredir. {field.crop} gelişimi için <span className="text-emerald-400">{agronomy.yieldPotential}</span> potansiyeli öngörülmektedir.

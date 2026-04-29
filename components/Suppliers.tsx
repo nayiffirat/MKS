@@ -5,11 +5,12 @@ import {
     Package, CreditCard, ArrowUpRight, ArrowDownRight, 
     Search, Phone, MapPin, Calendar, DollarSign, 
     AlertCircle, CheckCircle2, FlaskConical, Info, X, User, RefreshCcw,
-    Receipt, Save, Barcode, Download, ArrowDownLeft
+    Receipt, Save, Barcode, Download, ArrowDownLeft, FileText
 } from 'lucide-react';
 import BarcodeScanner from './BarcodeScanner';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { format } from 'date-fns';
 import { useAppViewModel } from '../context/AppContext';
 import { dbService } from '../services/db';
 import { Supplier, SupplierPurchase, SupplierPayment, PesticideCategory, InventoryItem } from '../types';
@@ -17,6 +18,28 @@ import { formatCurrency, getCurrencySuffix } from '../utils/currency';
 import { ConfirmationModal } from './ConfirmationModal';
 import { ListSkeleton } from './Skeleton';
 import { EmptyState } from './EmptyState';
+
+const trToEn = (str: string) => {
+    return str.replace(/Ğ/g, 'G')
+        .replace(/Ü/g, 'U')
+        .replace(/Ş/g, 'S')
+        .replace(/İ/g, 'I')
+        .replace(/Ö/g, 'O')
+        .replace(/Ç/g, 'C')
+        .replace(/ğ/g, 'g')
+        .replace(/ü/g, 'u')
+        .replace(/ş/g, 's')
+        .replace(/ı/g, 'i')
+        .replace(/ö/g, 'o')
+        .replace(/ç/g, 'c');
+};
+
+const pdfCurrency = (amount: number) => {
+    return new Intl.NumberFormat('tr-TR', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    }).format(amount) + ' TL';
+};
 
 export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: string | null; }> = ({ onBack, initialSupplierId }) => {
     const { 
@@ -44,6 +67,9 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
     const [isSaleModalOpen, setIsSaleModalOpen] = useState(false);
     const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
     const [isDebtModalOpen, setIsDebtModalOpen] = useState(false);
+    const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+    const [reportOptions, setReportOptions] = useState({ supplierId: 'ALL', dateRange: 'ALL_TIME' });
+    const [isGeneratingReport, setIsGeneratingReport] = useState(false);
     const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
     
     useEffect(() => {
@@ -150,6 +176,133 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
         setIsPurchaseModalOpen(false);
         setNewPurchase({ items: [], note: '', receiptNo: '', paymentType: 'TERM' });
         showToast(newPurchase.paymentType === 'CASH' ? 'Peşin alım ve ödeme kaydedildi' : 'Alım başarıyla kaydedildi ve depoya aktarıldı', 'success');
+    };
+
+    const generateSupplierReportPDF = () => {
+        setIsGeneratingReport(true);
+        setTimeout(() => {
+            try {
+                const doc = new jsPDF();
+                let currentY = 20;
+
+                const addPageIfNeeded = (requiredSpace: number) => {
+                    if (currentY + requiredSpace > 280) {
+                        doc.addPage();
+                        currentY = 20;
+                    }
+                };
+
+                doc.setFont("helvetica", "bold");
+                doc.setFontSize(22);
+                doc.setTextColor(16, 185, 129);
+                doc.text(trToEn(userProfile?.companyName || "BAYI").toUpperCase(), 14, currentY);
+                currentY += 8;
+                
+                doc.setFontSize(14);
+                doc.text(trToEn("TEDARIKCI ISLEM RAPORU"), 14, currentY);
+                currentY += 6;
+                
+                doc.setFontSize(10);
+                doc.setTextColor(100, 100, 100);
+                doc.setFont("helvetica", "normal");
+                
+                let dateStr = 'Tumu';
+                if (reportOptions.dateRange === 'THIS_MONTH') dateStr = 'Bu Ay';
+                if (reportOptions.dateRange === 'LAST_MONTH') dateStr = 'Gecen Ay';
+                if (reportOptions.dateRange === 'THIS_YEAR') dateStr = 'Bu Yil';
+                
+                doc.text(`Tarih Araligi: ${dateStr}`, 14, currentY);
+                currentY += 5;
+                doc.text(`Olusturulma: ${format(new Date(), 'dd.MM.yyyy HH:mm')}`, 14, currentY);
+                currentY += 15;
+
+                const suppliersToReport = reportOptions.supplierId === 'ALL' 
+                    ? suppliers 
+                    : suppliers.filter(s => s.id === reportOptions.supplierId);
+
+                const now = new Date();
+                
+                suppliersToReport.forEach((supplier, index) => {
+                    addPageIfNeeded(40);
+                    
+                    const ledger: any[] = [];
+                    // Fetch from supplierPurchases and myPayments
+                    
+                    supplierPurchases.filter(p => !p.deletedAt && p.supplierId === supplier.id).forEach(p => {
+                        const pDate = new Date(p.date);
+                        // Apply date filter
+                        if (reportOptions.dateRange === 'THIS_MONTH' && (pDate.getMonth() !== now.getMonth() || pDate.getFullYear() !== now.getFullYear())) return;
+                        if (reportOptions.dateRange === 'LAST_MONTH' && (pDate.getMonth() !== (now.getMonth() - 1 === -1 ? 11 : now.getMonth() - 1) || pDate.getFullYear() !== (now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear()))) return;
+                        if (reportOptions.dateRange === 'THIS_YEAR' && pDate.getFullYear() !== now.getFullYear()) return;
+
+                        ledger.push({
+                            date: pDate,
+                            type: p.type === 'RETURN' ? 'Alis Iade' : 'Alis Faturasi',
+                            docNo: p.receiptNo || '-',
+                            amount: p.totalAmount || p.items.reduce((acc, i) => acc + (i.quantity * (i.buyingPrice || 0)), 0) || 0,
+                            isDebtToUs: p.type !== 'RETURN'
+                        });
+                    });
+
+                    myPayments.filter(p => !p.deletedAt && p.status !== 'CANCELLED' && p.supplierId === supplier.id).forEach(p => {
+                        const pDate = new Date(p.issueDate);
+                        if (reportOptions.dateRange === 'THIS_MONTH' && (pDate.getMonth() !== now.getMonth() || pDate.getFullYear() !== now.getFullYear())) return;
+                        if (reportOptions.dateRange === 'LAST_MONTH' && (pDate.getMonth() !== (now.getMonth() - 1 === -1 ? 11 : now.getMonth() - 1) || pDate.getFullYear() !== (now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear()))) return;
+                        if (reportOptions.dateRange === 'THIS_YEAR' && pDate.getFullYear() !== now.getFullYear()) return;
+
+                        ledger.push({
+                            date: pDate,
+                            type: 'Odeme',
+                            docNo: '-',
+                            amount: p.amount,
+                            isDebtToUs: false
+                        });
+                    });
+
+                    ledger.sort((a, b) => a.date.getTime() - b.date.getTime());
+
+                    let currentBalance = 0;
+                    const body = ledger.map(l => {
+                        if (l.isDebtToUs) currentBalance -= l.amount;
+                        else currentBalance += l.amount;
+                        
+                        return [
+                            format(l.date, 'dd.MM.yyyy'),
+                            trToEn(l.type),
+                            trToEn(l.docNo),
+                            l.isDebtToUs ? pdfCurrency(l.amount) : '', 
+                            !l.isDebtToUs ? pdfCurrency(l.amount) : '', 
+                            pdfCurrency(Math.abs(currentBalance)) + (currentBalance < 0 ? ' (Bize Borclu)' : ' (Bize Alacak)')
+                        ];
+                    });
+
+                    doc.setFontSize(11);
+                    doc.setFont("helvetica", "bold");
+                    doc.setTextColor(0, 0, 0);
+                    doc.text(`${index + 1}. Tedarikci: ` + trToEn(supplier.name) + ` - Tel: ${supplier.phoneNumber || '-'}`, 14, currentY);
+                    currentY += 5;
+
+                    autoTable(doc, {
+                        startY: currentY,
+                        head: [['Tarih', 'Islem Turu', 'Belge No', 'Firmaya Borclandik', 'Firmaya Odedik', 'Bakiye']],
+                        body: body.length > 0 ? body : [['(Secili tarihte islem yok)', '', '', '', '', pdfCurrency(0)]],
+                        theme: 'grid',
+                        styles: { font: 'helvetica', fontSize: 8 },
+                        headStyles: { fillColor: [139, 92, 246] },
+                        columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' } }
+                    });
+                    currentY = (doc as any).lastAutoTable.finalY + 10;
+                });
+
+                doc.save(`Tedarikci_Raporu_${format(new Date(), 'yyyyMMdd_HHmm')}.pdf`);
+                setIsGeneratingReport(false);
+                setIsReportModalOpen(false);
+            } catch(e) {
+                console.error(e);
+                setIsGeneratingReport(false);
+                showToast('Rapor oluşturulurken hata!', 'error');
+            }
+        }, 500);
     };
 
     const handleAddReturn = async (manualSupplierId?: string) => {
@@ -369,31 +522,38 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
 
     return (
         <div className="p-4 space-y-6 animate-in fade-in duration-500">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
                     <button onClick={onBack} className="p-2 bg-stone-900 rounded-xl text-stone-400 hover:text-white transition-colors">
                         <ChevronLeft size={20} />
                     </button>
                     <h1 className="text-xl font-black text-stone-100 tracking-tight">Tedarikçiler</h1>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex justify-between items-stretch gap-1.5 sm:gap-2 w-full md:w-auto">
+                    <button 
+                        onClick={() => setIsReportModalOpen(true)}
+                        className="flex-1 md:flex-none py-2.5 px-2 sm:px-4 bg-amber-600 text-white rounded-[1rem] shadow-lg shadow-amber-900/20 active:scale-95 transition-all flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 min-w-[30%]"
+                    >
+                        <FileText size={18} />
+                        <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-wider text-center leading-tight">Raporla</span>
+                    </button>
                     <button 
                         onClick={() => {
                             setSelectedSupplier(null);
                             setNewPurchase({ items: [], note: '', receiptNo: '', paymentType: 'TERM' });
                             setIsPurchaseModalOpen(true);
                         }}
-                        className="p-2.5 bg-indigo-600 text-white rounded-xl shadow-lg shadow-indigo-900/20 active:scale-95 transition-all flex items-center gap-2"
+                        className="flex-1 md:flex-none py-2.5 px-2 sm:px-4 bg-indigo-600 text-white rounded-[1rem] shadow-lg shadow-indigo-900/20 active:scale-95 transition-all flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 min-w-[30%]"
                     >
                         <Package size={18} />
-                        <span className="text-xs font-bold uppercase tracking-wider">Alım Yap</span>
+                        <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-wider text-center leading-tight">Alım Yap</span>
                     </button>
                     <button 
                         onClick={() => setIsAddModalOpen(true)}
-                        className="p-2.5 bg-emerald-600 text-white rounded-xl shadow-lg shadow-emerald-900/20 active:scale-95 transition-all flex items-center gap-2"
+                        className="flex-1 md:flex-none py-2.5 px-2 sm:px-4 bg-emerald-600 text-white rounded-[1rem] shadow-lg shadow-emerald-900/20 active:scale-95 transition-all flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 min-w-[30%]"
                     >
                         <Plus size={18} />
-                        <span className="text-xs font-bold uppercase tracking-wider">Yeni Ekle</span>
+                        <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-wider text-center leading-tight">Yeni Ekle</span>
                     </button>
                 </div>
             </div>
@@ -474,6 +634,80 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
                     </div>
                 ))}
             </div>
+
+
+            {/* Report Modal */}
+            {isReportModalOpen && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
+                    <div className="bg-stone-900 border border-white/10 w-full max-w-md rounded-[2.5rem] p-6 shadow-2xl animate-in zoom-in-95 duration-300">
+                        <div className="flex items-center justify-between mb-8">
+                            <div>
+                                <h2 className="text-2xl font-black text-white tracking-tight">Rapor Al</h2>
+                                <p className="text-stone-400 text-sm mt-1">Tedarikçi işlemlerini raporlayın</p>
+                            </div>
+                            <button onClick={() => setIsReportModalOpen(false)} className="p-2 bg-white/5 hover:bg-white/10 rounded-full text-white transition-colors">
+                                <X size={20} />
+                            </button>
+                        </div>
+                        
+                        <div className="space-y-5">
+                            <div>
+                                <label className="block text-xs font-bold text-stone-500 uppercase tracking-wider mb-2">Tedarikçi</label>
+                                <select 
+                                    className="w-full bg-stone-800 border border-white/5 rounded-2xl p-4 text-white outline-none focus:border-amber-500/50 transition-all appearance-none"
+                                    value={reportOptions.supplierId}
+                                    onChange={(e) => setReportOptions({ ...reportOptions, supplierId: e.target.value })}
+                                >
+                                    <option value="ALL">Tümü</option>
+                                    {suppliers.map(s => (
+                                        <option key={s.id} value={s.id}>{s.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-stone-500 uppercase tracking-wider mb-2">Zaman Aralığı</label>
+                                <select 
+                                    className="w-full bg-stone-800 border border-white/5 rounded-2xl p-4 text-white outline-none focus:border-amber-500/50 transition-all appearance-none"
+                                    value={reportOptions.dateRange}
+                                    onChange={(e) => setReportOptions({ ...reportOptions, dateRange: e.target.value })}
+                                >
+                                    <option value="ALL_TIME">Tüm Zamanlar</option>
+                                    <option value="THIS_MONTH">Bu Ay</option>
+                                    <option value="LAST_MONTH">Geçen Ay</option>
+                                    <option value="THIS_YEAR">Bu Yıl</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div className="flex gap-3 mt-8">
+                            <button 
+                                onClick={() => setIsReportModalOpen(false)}
+                                className="flex-1 py-4 bg-stone-800 text-stone-400 rounded-2xl font-bold text-sm active:scale-95 transition-all"
+                            >
+                                İptal
+                            </button>
+                            <button 
+                                onClick={generateSupplierReportPDF}
+                                disabled={isGeneratingReport}
+                                className="flex-1 py-4 bg-gradient-to-r from-amber-600 to-orange-500 text-white rounded-2xl font-bold text-sm shadow-lg shadow-amber-900/20 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                            >
+                                {isGeneratingReport ? (
+                                    <>
+                                        <RefreshCcw size={18} className="animate-spin" />
+                                        <span>Hazırlanıyor...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <FileText size={18} />
+                                        <span>PDF İndir</span>
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Add Supplier Modal */}
             {isAddModalOpen && (
@@ -897,16 +1131,21 @@ const SupplierDetailView = ({
     const handleUpdatePurchase = async (manualId?: string) => {
         if (!editingPurchase) return;
         
-        // If manualId is provided and different from current supplierId (though unlikely in edit)
-        const updatedPurchase = {
-            ...editingPurchase,
-            supplierId: manualId || editingPurchase.supplierId
-        };
+        try {
+            // If manualId is provided and different from current supplierId (though unlikely in edit)
+            const updatedPurchase = {
+                ...editingPurchase,
+                supplierId: manualId || editingPurchase.supplierId
+            };
 
-        await updateSupplierPurchase(updatedPurchase);
-        setEditingPurchase(null);
-        showToast('Alım kaydı güncellendi', 'success');
-        loadData();
+            await updateSupplierPurchase(updatedPurchase);
+            setEditingPurchase(null);
+            showToast('Alım kaydı güncellendi', 'success');
+            loadData();
+        } catch (error) {
+            console.error('Update purchase error:', error);
+            showToast('Güncelleme sırasında bir hata oluştu', 'error');
+        }
     };
 
     // Unique products purchased from this supplier
@@ -1752,15 +1991,13 @@ const PurchaseModal = ({
                                             </div>
                                             <span className="text-sm font-black text-stone-100">{item.pesticideName}</span>
                                         </div>
-                                        {!isEdit && (
-                                            <button 
-                                                onClick={() => removeItem(item.pesticideId)} 
-                                                className="p-2 text-stone-600 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all"
-                                                title="Listeden Çıkar"
-                                            >
-                                                <Trash2 size={16} />
-                                            </button>
-                                        )}
+                                        <button 
+                                            onClick={() => removeItem(item.pesticideId)} 
+                                            className="p-2 text-stone-600 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all"
+                                            title="Listeden Çıkar"
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
                                     </div>
 
                                     <div className="grid grid-cols-3 gap-3">

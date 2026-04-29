@@ -92,10 +92,6 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.language.desc': 'Uygulama arayüz dilini değiştirin.',
     'settings.contrast': 'Yüksek Kontrast (Saha Modu)',
     'settings.contrast.desc': 'Güneş altında daha iyi görünürlük',
-    'settings.voice': 'Asistan Sesi',
-    'settings.voice.desc': 'Saha Asistanı Karakteri',
-    'settings.voice.male': 'Erkek (Tok)',
-    'settings.voice.female': 'Kadın (Sakin)',
     'settings.currency': 'Para Birimi',
     'settings.currency.desc': 'Uygulama İçi Para Birimi',
     'settings.currency.try': 'TL (₺)',
@@ -154,7 +150,6 @@ export const translations: Record<Language, Record<string, string>> = {
 
     // Dashboard
     'dashboard.hello': 'Merhaba,',
-    'dashboard.field_assistant': 'Saha Asistanı',
     'dashboard.today': 'Bugün',
     'dashboard.tomorrow': 'Yarın',
     'dashboard.no_plan': 'Plan yok.',
@@ -471,10 +466,6 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.language.desc': 'Change the application interface language.',
     'settings.contrast': 'High Contrast (Field Mode)',
     'settings.contrast.desc': 'Better visibility under sunlight',
-    'settings.voice': 'Assistant Voice',
-    'settings.voice.desc': 'Field Assistant Character',
-    'settings.voice.male': 'Male (Deep)',
-    'settings.voice.female': 'Female (Calm)',
     'settings.currency': 'Currency',
     'settings.currency.desc': 'In-app Currency',
     'settings.currency.try': 'TL (₺)',
@@ -533,7 +524,6 @@ export const translations: Record<Language, Record<string, string>> = {
 
     // Dashboard
     'dashboard.hello': 'Hello,',
-    'dashboard.field_assistant': 'Field Assistant',
     'dashboard.today': 'Today',
     'dashboard.tomorrow': 'Tomorrow',
     'dashboard.no_plan': 'No plan.',

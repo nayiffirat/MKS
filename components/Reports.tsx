@@ -21,7 +21,8 @@ export const Reports: React.FC = () => {
     farmerLabel,
     farmerPluralLabel,
     prescriptionLabel,
-    suppliers
+    suppliers,
+    supplierPurchases
   } = useAppViewModel();
   const [generating, setGenerating] = useState<string | null>(null);
   const [startDate, setStartDate] = useState<string>(format(new Date(new Date().getFullYear(), 0, 1), 'yyyy-MM-dd'));
@@ -254,6 +255,304 @@ export const Reports: React.FC = () => {
         });
         
         doc.save(`Bayi_Raporu_${format(new Date(), 'yyyyMMdd_HHmm')}.pdf`);
+        setGenerating(null);
+      } catch (e) {
+        console.error(e);
+        setGenerating(null);
+      }
+    }, 500);
+  };
+
+  const generateDetailedBayiRaporuPDF = () => {
+    setGenerating('DETAILED_BAYI_RAPORU');
+    setTimeout(() => {
+      try {
+        const doc = new jsPDF();
+        
+        let currentY = 20;
+
+        const addPageIfNeeded = (requiredSpace: number) => {
+            if (currentY + requiredSpace > 280) {
+                doc.addPage();
+                currentY = 20;
+            }
+        };
+        
+        // --- 1. HEADER ---
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(22);
+        doc.setTextColor(16, 185, 129);
+        doc.text(trToEn(userProfile?.companyName || "BAYI RAPORU"), 14, currentY);
+        currentY += 8;
+        
+        doc.setFontSize(14);
+        doc.text(trToEn("DETAYLI TUM VERI DOKUMU"), 14, currentY);
+        currentY += 6;
+        
+        doc.setFontSize(10);
+        doc.setTextColor(100, 100, 100);
+        doc.setFont("helvetica", "normal");
+        doc.text(`Olusturulma: ${format(new Date(), 'dd.MM.yyyy HH:mm')}`, 14, currentY);
+        currentY += 15;
+
+        // --- 2. KASA & BANKA DURUMU ---
+        doc.setFontSize(14);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(0, 0, 0);
+        doc.text(trToEn("1. HESAPLAR / KASA & BANKA"), 14, currentY);
+        currentY += 5;
+        
+        const accountData = accounts.map(acc => [
+            trToEn(acc.name),
+            trToEn(acc.type === 'CASH' ? 'Nakit Kasa' : 'Banka Hesabi'),
+            pdfCurrency(acc.balance)
+        ]);
+        const totalBalance = accounts.reduce((acc, curr) => acc + curr.balance, 0);
+        
+        autoTable(doc, {
+            startY: currentY,
+            head: [['Hesap Adi', 'Tur', 'Bakiye']],
+            body: accountData.length > 0 ? accountData : [['Hesap Yok', '', '']],
+            theme: 'grid',
+            styles: { font: 'helvetica', fontSize: 9 },
+            headStyles: { fillColor: [16, 185, 129] },
+            foot: [['', 'TOPLAM VARLIK:', pdfCurrency(totalBalance)]],
+            footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' },
+            columnStyles: { 2: { halign: 'right' } }
+        });
+        currentY = (doc as any).lastAutoTable.finalY + 15;
+
+        // --- 3. TUM CIFTCI (MUSTERI) ISLEMLERI ---
+        addPageIfNeeded(30);
+        doc.setFontSize(14);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(0, 0, 0);
+        doc.text(trToEn(`2. ${farmerPluralLabel.toLocaleUpperCase('en-US')} DETAYLI HESAP DOKUMU`), 14, currentY);
+        currentY += 5;
+
+        farmers.forEach((farmer, index) => {
+            addPageIfNeeded(40);
+            
+            // Collect ledger items
+            const ledger: any[] = [];
+            
+            prescriptions.filter(p => !p.deletedAt && p.farmerId === farmer.id).forEach(p => {
+                const isDebt = p.type !== 'RETURN';
+                ledger.push({
+                    date: new Date(p.date || Date.now()),
+                    type: isDebt ? 'Satis Faturasi' : 'Iade Faturasi',
+                    docNo: p.prescriptionNo || '-',
+                    amount: p.totalAmount || 0,
+                    isDebt: isDebt
+                });
+            });
+
+            payments.filter(p => !p.deletedAt && p.farmerId === farmer.id).forEach(p => {
+                ledger.push({
+                    date: new Date(p.date),
+                    type: 'Tahsilat (Bize Odenen)',
+                    docNo: '-',
+                    amount: p.amount,
+                    isDebt: false
+                });
+            });
+
+            myPayments.filter(p => !p.deletedAt && p.status !== 'CANCELLED' && p.farmerId === farmer.id).forEach(p => {
+                ledger.push({
+                    date: new Date(p.issueDate),
+                    type: 'Musteri Odemesi (Bizden cikan)',
+                    docNo: '-',
+                    amount: p.amount,
+                    isDebt: true
+                });
+            });
+
+            manualDebts.filter(d => d.farmerId === farmer.id && !d.id.startsWith('turnover-')).forEach(d => {
+                ledger.push({
+                    date: new Date(d.date),
+                    type: 'Bakiye Eklentisi (Borc)',
+                    docNo: '-',
+                    amount: d.amount,
+                    isDebt: true
+                });
+            });
+
+            manualDebts.filter(d => d.farmerId === farmer.id && d.id.startsWith('turnover-')).forEach(d => {
+                ledger.push({
+                    date: new Date(d.date),
+                    type: 'Devir Bakiye',
+                    docNo: '-',
+                    amount: d.amount,
+                    isDebt: true
+                });
+            });
+
+            ledger.sort((a, b) => a.date.getTime() - b.date.getTime());
+
+            let currentBalance = 0;
+            const body = ledger.map(l => {
+                if (l.isDebt) currentBalance -= l.amount;
+                else currentBalance += l.amount;
+                
+                return [
+                    format(l.date, 'dd.MM.yyyy'),
+                    trToEn(l.type),
+                    trToEn(l.docNo),
+                    l.isDebt ? pdfCurrency(l.amount) : '', 
+                    !l.isDebt ? pdfCurrency(l.amount) : '',
+                    pdfCurrency(Math.abs(currentBalance)) + (currentBalance < 0 ? ' (Borclu)' : ' (Alacakli)')
+                ];
+            });
+
+            doc.setFontSize(11);
+            doc.setFont("helvetica", "bold");
+            doc.text(`${index + 1}. Musteri: ` + trToEn(farmer.fullName) + ` - Tel: ${farmer.phoneNumber || '-'}`, 14, currentY);
+            currentY += 5;
+
+            autoTable(doc, {
+                startY: currentY,
+                head: [['Tarih', 'Islem Turu', 'Belge Numarasi', 'Bize Borclandi', 'Bize Odedi', 'Bakiye Durumu']],
+                body: body.length > 0 ? body : [['(Hic islem yok)', '', '', '', '', pdfCurrency(0)]],
+                theme: 'grid',
+                styles: { font: 'helvetica', fontSize: 8 },
+                headStyles: { fillColor: [59, 130, 246] },
+                columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' } }
+            });
+            currentY = (doc as any).lastAutoTable.finalY + 10;
+        });
+
+        // --- 4. TEDARIKCILER ===
+        addPageIfNeeded(30);
+        doc.setFontSize(14);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(0, 0, 0);
+        doc.text(trToEn("3. TEDARIKCI DETAYLI HESAP DOKUMU"), 14, currentY);
+        currentY += 5;
+
+        suppliers.forEach((supplier, index) => {
+            addPageIfNeeded(40);
+            
+            const ledger: any[] = [];
+            
+            supplierPurchases.filter(p => !p.deletedAt && p.supplierId === supplier.id).forEach(p => {
+                ledger.push({
+                    date: new Date(p.date),
+                    type: p.type === 'RETURN' ? 'Alis Iade' : 'Alis Faturasi',
+                    docNo: p.receiptNo || '-',
+                    amount: p.totalAmount || p.items.reduce((acc, i) => acc + (i.quantity * (i.buyingPrice || 0)), 0) || 0,
+                    isDebtToUs: p.type !== 'RETURN'
+                });
+            });
+
+            myPayments.filter(p => !p.deletedAt && p.status !== 'CANCELLED' && p.supplierId === supplier.id).forEach(p => {
+                ledger.push({
+                    date: new Date(p.issueDate),
+                    type: 'Tedarikciye Odeme',
+                    docNo: '-',
+                    amount: p.amount,
+                    isDebtToUs: false
+                });
+            });
+
+            ledger.sort((a, b) => a.date.getTime() - b.date.getTime());
+
+            let currentBalance = 0;
+            const body = ledger.map(l => {
+                if (l.isDebtToUs) currentBalance -= l.amount;
+                else currentBalance += l.amount;
+                
+                return [
+                    format(l.date, 'dd.MM.yyyy'),
+                    trToEn(l.type),
+                    trToEn(l.docNo),
+                    l.isDebtToUs ? pdfCurrency(l.amount) : '', 
+                    !l.isDebtToUs ? pdfCurrency(l.amount) : '', 
+                    pdfCurrency(Math.abs(currentBalance)) + (currentBalance < 0 ? ' (Bize Borclu)' : ' (Bize Alacak)')
+                ];
+            });
+
+            doc.setFontSize(11);
+            doc.setFont("helvetica", "bold");
+            doc.text(`${index + 1}. Tedarikci: ` + trToEn(supplier.name) + ` - Tel: ${supplier.phoneNumber || '-'}`, 14, currentY);
+            currentY += 5;
+
+            autoTable(doc, {
+                startY: currentY,
+                head: [['Tarih', 'Islem Turu', 'Belge Numarasi', 'Firmaya Borclandik', 'Firmaya Odedik', 'Bakiye Durumu']],
+                body: body.length > 0 ? body : [['(Hic islem yok)', '', '', '', '', pdfCurrency(0)]],
+                theme: 'grid',
+                styles: { font: 'helvetica', fontSize: 8 },
+                headStyles: { fillColor: [245, 158, 11] },
+                columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' } }
+            });
+            currentY = (doc as any).lastAutoTable.finalY + 10;
+        });
+
+        // --- 5. STOK DURUMU ---
+        addPageIfNeeded(40);
+        doc.setFontSize(14);
+        doc.setFont("helvetica", "bold");
+        doc.text(trToEn("4. TUM DEPO / STOK DURUMU"), 14, currentY);
+        currentY += 5;
+        
+        let totalInventoryBuyingValue = 0;
+        const inventoryData = inventory.map(item => {
+            const buyingValue = item.quantity * item.buyingPrice;
+            totalInventoryBuyingValue += buyingValue;
+            
+            return [
+                trToEn(item.pesticideName),
+                trToEn(item.category),
+                `${item.quantity} ${item.unit}`,
+                pdfCurrency(item.buyingPrice),
+                pdfCurrency(buyingValue)
+            ];
+        });
+
+        autoTable(doc, {
+            startY: currentY,
+            head: [['Urun Adi', 'Kategori', 'Miktar', 'Alis Birim Maliyet', 'Alis Toplam Maliyet']],
+            body: inventoryData.length > 0 ? inventoryData : [['Depoda urun yok', '', '', '', '']],
+            theme: 'grid',
+            styles: { font: 'helvetica', fontSize: 8 },
+            headStyles: { fillColor: [139, 92, 246] },
+            foot: [['', '', 'TOPLAM DEPO MALIYETI:', '', pdfCurrency(totalInventoryBuyingValue)]],
+            footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' },
+            columnStyles: { 2: { halign: 'center' }, 3: { halign: 'right' }, 4: { halign: 'right' } }
+        });
+        currentY = (doc as any).lastAutoTable.finalY + 15;
+
+        // --- 6. GIDERLER ---
+        addPageIfNeeded(40);
+        doc.setFontSize(14);
+        doc.setFont("helvetica", "bold");
+        doc.text(trToEn("5. TUM GIDERLER DOKUMU"), 14, currentY);
+        currentY += 5;
+        
+        let totalExpenseAmount = 0;
+        const expenseData = [...expenses].sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime()).map(e => {
+            totalExpenseAmount += e.amount;
+            return [
+                format(new Date(e.date), 'dd.MM.yyyy'),
+                trToEn(e.category),
+                trToEn(e.note || '-'),
+                pdfCurrency(e.amount)
+            ];
+        });
+
+        autoTable(doc, {
+            startY: currentY,
+            head: [['Tarih', 'Gider Kategorisi', 'Aciklama', 'Tutar']],
+            body: expenseData.length > 0 ? expenseData : [['Gider kaydi yok', '', '', '']],
+            theme: 'grid',
+            styles: { font: 'helvetica', fontSize: 8 },
+            headStyles: { fillColor: [225, 29, 72] },
+            foot: [['', '', 'TOPLAM GIDER:', pdfCurrency(totalExpenseAmount)]],
+            footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' },
+            columnStyles: { 3: { halign: 'right' } }
+        });
+
+        doc.save(`Detayli_Bayi_Raporu_${format(new Date(), 'yyyyMMdd_HHmm')}.pdf`);
         setGenerating(null);
       } catch (e) {
         console.error(e);
@@ -510,6 +809,15 @@ export const Reports: React.FC = () => {
       color: 'text-purple-400',
       bgColor: 'bg-purple-500/10',
       action: generateBayiRaporuPDF
+    },
+    {
+      id: 'DETAILED_BAYI_RAPORU',
+      title: 'Detaylı Bayi Raporum',
+      description: 'Tüm dükkan verisini (faturalar, işlemler, borçlar, giderler vb.) tarih sırasıyla eksiksiz gösterir.',
+      icon: FileText,
+      color: 'text-indigo-400',
+      bgColor: 'bg-indigo-500/10',
+      action: generateDetailedBayiRaporuPDF
     },
     {
       id: 'FARMER_BALANCES',

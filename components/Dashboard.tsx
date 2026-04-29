@@ -9,7 +9,7 @@ import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, 
   Tooltip, CartesianGrid, PieChart, Pie, Cell 
 } from 'recharts';
-import { Users, FileText, Sprout, Plus, X, Calendar, ChevronRight, Droplet, ArrowRight, Zap, MapPin, Send, Loader2, CalendarCheck, Clock, Mic, Bell, CalendarClock, TrendingUp, AlertCircle, Bug, Package, Route, FlaskConical, Star, Truck, Search, DollarSign, Trash2, Wallet, Sparkles, ScanSearch, Calculator, Map, Newspaper, Save, RefreshCw, Camera } from 'lucide-react';
+import { Users, FileText, Sprout, Plus, X, Calendar, ChevronRight, Droplet, ArrowRight, Zap, MapPin, Send, Loader2, CalendarCheck, Clock, Mic, Bell, CalendarClock, TrendingUp, AlertCircle, Bug, Package, Route, FlaskConical, Star, Truck, Search, DollarSign, Trash2, Wallet, ScanSearch, Calculator, Map, Newspaper, Save, RefreshCw, Camera } from 'lucide-react';
 import { ViewState, Pesticide, PesticideCategory, SupplierPurchase } from '../types';
 import { dbService } from '../services/db';
 import { formatCurrency, getCurrencySuffix } from '../utils/currency';
@@ -28,48 +28,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     return currentUser?.providerData?.some(p => p.providerId === 'google.com');
   }, [currentUser]);
 
-  const handleGoogleAiLogin = async () => {
-    if (!currentUser || isAuthLoading) return;
-    
-    setIsAuthLoading(true);
-    hapticFeedback('medium');
-    
-    try {
-        if (isGoogleUser) {
-            showToast('Google hesabınız zaten bağlı.', 'info');
-            setIsAuthLoading(false);
-            return;
-        }
-
-        // Attempt to link accounts
-        await linkWithPopup(currentUser, googleProvider);
-        showToast('Google Hesabı Bağlandı: Asistan tam yetkiyle aktif!', 'success');
-        hapticFeedback('success');
-    } catch (error: any) {
-        console.error("Google linking error:", error);
-        
-        const errorCode = error.code;
-        
-        if (errorCode === 'auth/credential-already-in-use') {
-            showToast('Google hesabı başka bir kayıtla eşleşmiş. Giriş yapılıyor...', 'info');
-            try {
-                await signInWithPopup(auth, googleProvider);
-                showToast('Google ile giriş yapıldı.', 'success');
-                hapticFeedback('success');
-            } catch (signInError: any) {
-                showToast('Giriş başarısız oldu.', 'error');
-            }
-        } else if (errorCode === 'auth/popup-blocked') {
-            showToast('Tarayıcı penceresi engellendi.', 'error');
-        } else if (errorCode === 'auth/popup-closed-by-user' || errorCode === 'auth/cancelled-popup-request') {
-            showToast('Giriş iptal edildi.', 'info');
-        } else {
-            showToast('Google bağlantısı kurulamadı.', 'error');
-        }
-    } finally {
-        setIsAuthLoading(false);
-    }
-  };
   const isSales = activeTeamMember?.role === 'SALES';
   const canCreatePrescription = !isSales;
   const canCreateFarmer = !isSales;
@@ -274,16 +232,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
           </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 mb-3">
+      <div className="grid grid-cols-1 gap-2 mb-3">
           <WeatherWidget />
-          <div 
-              onClick={() => onNavigate('AI_ASSISTANT')}
-              className="bg-emerald-600/20 border border-emerald-500/30 rounded-[1.3rem] p-3 flex flex-col justify-center items-center cursor-pointer active:scale-95 transition-transform overflow-hidden relative group"
-          >
-              <div className="absolute inset-0 bg-gradient-to-tr from-emerald-500/10 to-teal-500/10 opacity-50 group-hover:opacity-100 transition-opacity"></div>
-              <Sparkles className="text-emerald-400 mb-2" size={24} />
-              <h3 className="text-sm font-black text-emerald-300 text-center uppercase tracking-wider relative z-10">Zirai Teşhis Asistanı</h3>
-          </div>
       </div>
 
       {/* DEBTS & RECEIVABLES WIDGET */}
@@ -291,7 +241,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
           {/* Combined Financial Card */}
           <div 
             onClick={() => onNavigate('STATISTICS')}
-            className="bg-stone-900/60 border border-white/10 rounded-2xl p-3 overflow-hidden cursor-pointer active:scale-[0.99] transition-transform group shadow-md flex flex-col justify-between gap-3"
+            className="col-span-2 bg-stone-900/60 border border-white/10 rounded-2xl p-3 overflow-hidden cursor-pointer active:scale-[0.99] transition-transform group shadow-md flex flex-col justify-between gap-3"
           >
               <div className="flex flex-col gap-2">
                 <div className="flex items-center justify-between">
@@ -318,17 +268,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                   <span>Finansal Özet</span>
                   <ChevronRight size={10} />
               </div>
-          </div>
-
-          {/* AI Product Recognition Assistant */}
-          <div 
-            onClick={() => onNavigate('PRODUCT_AI_ASSISTANT')}
-            className="rounded-2xl p-3 overflow-hidden cursor-pointer active:scale-[0.99] transition-all group shadow-md flex flex-col items-center justify-center text-center relative bg-stone-900/60 border border-amber-500/30"
-          >
-              <div className="p-2 rounded-xl mb-1.5 transition-colors bg-amber-500/10 group-hover:bg-amber-500/20">
-                <ScanSearch size={20} className="text-amber-500" />
-              </div>
-              <h3 className="text-sm font-black text-amber-500 uppercase tracking-widest leading-tight">Ürün Bilgi Asistanı</h3>
           </div>
       </div>
 

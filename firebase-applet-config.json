@@ -1,9 +1,10 @@
 {
+  "projectId": "muhendiskayitsistemi",
+  "appId": "1:92102884744:web:800acd065ea854076a4e3d",
   "apiKey": "AIzaSyBR2JWNFbh7M93x3i7wy7LrXdaEDxUrpLs",
   "authDomain": "muhendiskayitsistemi.firebaseapp.com",
-  "projectId": "muhendiskayitsistemi",
+  "firestoreDatabaseId": "(default)",
   "storageBucket": "muhendiskayitsistemi.firebasestorage.app",
   "messagingSenderId": "92102884744",
-  "appId": "1:92102884744:web:800acd065ea854076a4e3d",
   "measurementId": "G-40SCW715YY"
 }

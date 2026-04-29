@@ -148,6 +148,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     const [prescriptionPriceType, setPrescriptionPriceType] = useState<'CASH' | 'TERM'>('TERM');
     const [prescriptionDiscount, setPrescriptionDiscount] = useState<string>('');
     const [prescriptionDueDate, setPrescriptionDueDate] = useState('');
+    const [isManualDueDate, setIsManualDueDate] = useState(false);
     const [prescriptionType, setPrescriptionType] = useState<'SALE' | 'RETURN'>('SALE');
     
     const currentPrescriptionLabel = prescriptionType === 'RETURN' ? 'İade Faturası' : 'Satış Faturası';
@@ -234,7 +235,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     }, [initialPrescriptionId, contextPrescriptions, pesticides, hasInitializedEdit]);
 
     useEffect(() => {
-        if (!selectedFarmer || prescriptionPriceType !== 'TERM') {
+        if (!selectedFarmer || prescriptionPriceType !== 'TERM' || isManualDueDate) {
             if (prescriptionPriceType !== 'TERM') {
                 setPrescriptionDueDate('');
             }
@@ -345,6 +346,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         setCustomPrescriptionNo('');
         setPrescriptionPriceType('TERM');
         setPrescriptionDueDate('');
+        setIsManualDueDate(false);
         setPrescriptionType(type);
     };
 
@@ -506,8 +508,13 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         setCustomPrescriptionNo(p.prescriptionNo || '');
         setPrescriptionPriceType(p.priceType || 'TERM');
         setPrescriptionType(p.type || 'SALE');
-        if (p.dueDate) setPrescriptionDueDate(p.dueDate.split('T')[0]);
-        else setPrescriptionDueDate('');
+        if (p.dueDate) {
+            setPrescriptionDueDate(p.dueDate.split('T')[0]);
+            setIsManualDueDate(true);
+        } else {
+            setPrescriptionDueDate('');
+            setIsManualDueDate(false);
+        }
         setSelectedItems(reconstructedItems);
         setEditingId(p.id);
         changeViewMode('FORM');
@@ -905,24 +912,26 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                             trToEn(farmer?.fullName || '-'),
                             p.prescriptionNo || '-',
                             p.type === 'RETURN' ? 'Iade' : 'Satis',
+                            p.dueDate ? format(new Date(p.dueDate), 'dd.MM.yyyy') : '-',
                             pdfCurrency(netAmount)
                         ];
                     });
 
                     autoTable(doc, {
                         startY: currentY + 5,
-                        head: [['Tarih', 'Musteri', 'Fatura No', 'Tur', 'Tutar']],
-                        body: tableData.length > 0 ? tableData : [['Secili tarihte kayit yok.', '', '', '', '']],
+                        head: [['Tarih', 'Musteri', 'Fatura No', 'Tur', 'Vade', 'Tutar']],
+                        body: tableData.length > 0 ? tableData : [['Secili tarihte kayit yok.', '', '', '', '', '']],
                         theme: 'grid',
                         styles: { font: 'helvetica', fontSize: 9 },
                         headStyles: { fillColor: [59, 130, 246] },
-                        columnStyles: { 4: { halign: 'right' } }
+                        columnStyles: { 5: { halign: 'right' } }
                     });
                 } else {
                     const tableBody: any[] = [];
                     filtered.forEach(p => {
                         const farmer = contextFarmers.find(f => f.id === p.farmerId);
                         const pDate = format(new Date(p.date || Date.now()), 'dd.MM.yyyy');
+                        const vDate = p.dueDate ? ` | Vade: ${format(new Date(p.dueDate), 'dd.MM.yyyy')}` : '';
                         const netAmount = p.totalAmount || 0;
                         
                         if (p.type === 'RETURN') {
@@ -934,7 +943,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                         // Invoice Header Row
                         tableBody.push([
                             { 
-                                content: `${pDate} | ${trToEn(farmer?.fullName || '-')} | Fatura No: ${p.prescriptionNo || '-'} | Tur: ${p.type === 'RETURN' ? 'Iade' : 'Satis'}`, 
+                                content: `${pDate} | ${trToEn(farmer?.fullName || '-')} | Fatura No: ${p.prescriptionNo || '-'} | Tur: ${p.type === 'RETURN' ? 'Iade' : 'Satis'}${vDate}`, 
                                 colSpan: 4, 
                                 styles: { fillColor: [245, 245, 245], fontStyle: 'bold', textColor: [0,0,0] } 
                             },
@@ -2179,13 +2188,22 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                 </button>
                             </div>
                             
-                            {/* Due Date Display */}
+                            {/* Due Date Input */}
                             <div className={`flex-1 flex items-center space-x-1.5 bg-stone-900 px-2 py-2 rounded-xl border border-white/5 shadow-inner transition-all duration-300 ${prescriptionPriceType === 'CASH' ? 'opacity-30 grayscale pointer-events-none' : 'opacity-100'}`}>
                                 <Calendar size={10} className="text-amber-500 shrink-0" />
                                 <div className="flex-1 min-w-0">
                                     <p className="text-[7px] font-black text-stone-500 uppercase tracking-tighter leading-none mb-0.5">VADE</p>
-                                    <div className="text-[9px] text-stone-200 font-black truncate">
-                                        {prescriptionDueDate ? new Date(prescriptionDueDate).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' }) : '-'}
+                                    <div className="text-[9px] text-stone-200 font-black truncate relative">
+                                        <input
+                                            type="date"
+                                            value={prescriptionDueDate}
+                                            onChange={(e) => {
+                                                setPrescriptionDueDate(e.target.value);
+                                                setIsManualDueDate(true);
+                                            }}
+                                            className="bg-transparent border-none text-[9px] text-stone-200 font-black w-full focus:ring-0 p-0 outline-none relative z-10"
+                                            style={{ colorScheme: 'dark' }}
+                                        />
                                     </div>
                                 </div>
                             </div>

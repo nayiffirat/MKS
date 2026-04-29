@@ -26,16 +26,15 @@ import { Kasa } from './components/Kasa';
 import { Suppliers } from './components/Suppliers';
 import { Payments } from './components/Payments';
 import { ProducerPortal } from './components/ProducerPortal';
-import { AiAssistant } from './components/AiAssistant';
-import { ProductAiAssistant } from './components/ProductAiAssistant';
 import { Findeks } from './components/Findeks';
 import { Calculator } from './components/Calculator';
-import { MixtureTest } from './components/MixtureTest';
 import { RecentTransactions } from './components/RecentTransactions';
 import { Reports } from './components/Reports';
 import { AdminPanel } from './components/AdminPanel';
 import { News } from './components/News';
 import { Plants } from './components/Plants';
+import { AIAssistant } from './components/AIAssistant';
+import { SmartStock } from './components/SmartStock';
 import { SubscriptionLock } from './components/SubscriptionLock';
 import { MapComponent } from './components/MapComponent';
 import { AppProvider, useAppViewModel } from './context/AppContext';
@@ -253,7 +252,7 @@ function MainApp() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  // Global Navigation Helper for AI Screens to jump to Settings
+  // Global Navigation Helper to jump to Settings
   useEffect(() => {
     (window as any).mks_navigate_settings = () => setCurrentView('SETTINGS');
   }, []);
@@ -390,17 +389,16 @@ function MainApp() {
         />;
         case 'PAYMENTS': return <Payments onBack={() => window.history.back()} />;
         case 'CALCULATOR': return <Calculator onBack={() => window.history.back()} />;
-        case 'MIXTURE_TEST': return <MixtureTest onBack={() => window.history.back()} />;
         case 'REPORTS': return <Reports />;
         case 'TEAM': return <TeamScreen onBack={() => window.history.back()} />;
         case 'MESSAGES': return <MessagesScreen onBack={() => window.history.back()} />;
         case 'PERFORMANCE': return <PerformanceScreen onBack={() => window.history.back()} />;
         case 'NEWS': return <News onBack={() => window.history.back()} />;
         case 'ADMIN_PANEL': return isAdmin ? <AdminPanel onBack={() => window.history.back()} /> : <Dashboard onNavigate={handleNavigate} />;
-        case 'AI_ASSISTANT': return <AiAssistant onBack={() => window.history.back()} />;
-        case 'PRODUCT_AI_ASSISTANT': return <ProductAiAssistant onBack={() => window.history.back()} />;
         case 'PLANTS': return <Plants onNavigate={handleNavigate} />;
         case 'FINDEKS': return <Findeks onBack={() => window.history.back()} />;
+        case 'AI_ASSISTANT': return <AIAssistant onBack={() => window.history.back()} />;
+        case 'SMART_STOCK': return <SmartStock onBack={() => window.history.back()} />;
         default: return <Dashboard onNavigate={handleNavigate} />;
     }
   };

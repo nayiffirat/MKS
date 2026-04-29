@@ -12,8 +12,6 @@ import {
 } from 'recharts';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { getGeminiModel, GENERATIVE_MODELS } from '../services/gemini';
-import { safeStringify } from '../utils/json';
 import { dbService } from '../services/db';
 import { auth } from '../services/firebase';
 import { InventoryItem, Pesticide, PesticideCategory } from '../types';
@@ -29,6 +27,7 @@ export const InventoryScreen: React.FC<{
         inventory, 
         addInventoryItem, 
         updateInventoryItem, 
+        bulkUpdateInventoryItems,
         deleteInventoryItem, softDeleteInventoryItem, restoreInventoryItem, permanentlyDeleteInventoryItem,
         refreshInventory,
         refreshStats,
@@ -63,9 +62,12 @@ export const InventoryScreen: React.FC<{
     // Modal States
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
-    const [isAiProcessing, setIsAiProcessing] = useState(false);
     const fileInputRef = React.useRef<HTMLInputElement>(null);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [isPriceUpdateModalOpen, setIsPriceUpdateModalOpen] = useState(false);
+    const [priceUpdateSearch, setPriceUpdateSearch] = useState('');
+    const [priceUpdateItems, setPriceUpdateItems] = useState<InventoryItem[]>([]);
+
     const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
     const [isQuickStockModalOpen, setIsQuickStockModalOpen] = useState(false);
     const [quickStockQuantity, setQuickStockQuantity] = useState('');
@@ -157,149 +159,56 @@ export const InventoryScreen: React.FC<{
     }, []);
 
     // One-time auto-fix for corrupted inventory data (e.g. duplicates, NaN)
-    useEffect(() => {
-        const fixAnomalies = async () => {
-            if (inventory.length === 0) return;
-            
-            let needsRefresh = false;
-            const seenMap = new Map<string, InventoryItem>();
-            
-            for (const item of inventory) {
-                let isCorrupted = false;
-                
-                // 1. Fix NaN or null in numbers
-                const fixedItem = { ...item };
-                if (isNaN(Number(fixedItem.quantity)) || fixedItem.quantity === null) { fixedItem.quantity = 0; isCorrupted = true; }
-                if (isNaN(Number(fixedItem.buyingPrice)) || fixedItem.buyingPrice === null) { fixedItem.buyingPrice = 0; isCorrupted = true; }
-                if (isNaN(Number(fixedItem.sellingPrice)) || fixedItem.sellingPrice === null) { fixedItem.sellingPrice = 0; isCorrupted = true; }
-                if (isNaN(Number(fixedItem.cashBuyingPrice)) || fixedItem.cashBuyingPrice === null) { fixedItem.cashBuyingPrice = fixedItem.buyingPrice; isCorrupted = true; }
-                if (isNaN(Number(fixedItem.cashPrice)) || fixedItem.cashPrice === null) { fixedItem.cashPrice = fixedItem.sellingPrice; isCorrupted = true; }
-
-                // Force numeric types
-                fixedItem.quantity = Number(fixedItem.quantity);
-                fixedItem.buyingPrice = Number(fixedItem.buyingPrice);
-                fixedItem.sellingPrice = Number(fixedItem.sellingPrice);
-                fixedItem.cashBuyingPrice = Number(fixedItem.cashBuyingPrice);
-                fixedItem.cashPrice = Number(fixedItem.cashPrice);
-
-                // Sync name and category from global pesticides
-                const pest = pesticides.find(p => p.id === fixedItem.pesticideId);
-                if (pest) {
-                    if (pest.name !== fixedItem.pesticideName) {
-                        fixedItem.pesticideName = pest.name;
-                        isCorrupted = true;
-                    }
-                    if (pest.category !== fixedItem.category) {
-                        fixedItem.category = pest.category;
-                        isCorrupted = true;
-                    }
-                }
-
-                // 2. Deduplicate
-                if (seenMap.has(fixedItem.pesticideId)) {
-                    // It's a duplicate. Merge quantity into the first one, delete this one.
-                    const existing = seenMap.get(fixedItem.pesticideId)!;
-                    existing.quantity += fixedItem.quantity;
-                    
-                    // Update existing
-                    await updateInventoryItem(existing);
-                    
-                    // Permanent delete the duplicate
-                    await permanentlyDeleteInventoryItem(fixedItem.id);
-                    needsRefresh = true;
-                } else {
-                    seenMap.set(fixedItem.pesticideId, fixedItem);
-                    
-                    // 3. Sync Prices & Quantity from Official Records
-                    
-                    // Calculate expected total purchases for this specific item
-                    let expectedQuantity = 0;
-                    supplierPurchases.filter(p => !p.deletedAt).forEach(purchase => {
-                        purchase.items.forEach(pi => {
-                            if (pi.pesticideId === fixedItem.pesticideId) {
-                                const q = parseFloat(String(pi.quantity).replace(',', '.')) || 0;
-                                if (purchase.type === 'RETURN') expectedQuantity -= q;
-                                else expectedQuantity += q;
-                            }
-                        });
-                    });
-
-                    // Subtract sales
-                    prescriptions.filter(p => !p.deletedAt).forEach(pres => {
-                        pres.items.forEach(pi => {
-                            if (pi.pesticideId === fixedItem.pesticideId) {
-                                const q = parseFloat(String(pi.quantity).replace(',', '.')) || 0;
-                                if (pres.type === 'RETURN') {
-                                    // Returned by farmer -> comes back to inventory
-                                    expectedQuantity += q;
-                                } else {
-                                    expectedQuantity -= q;
-                                }
-                            }
-                        });
-                    });
-
-                    // Add manual adjustments
-                    if (fixedItem.adjustments && fixedItem.adjustments.length > 0) {
-                        fixedItem.adjustments.forEach(adj => {
-                            expectedQuantity += (parseFloat(String(adj.amount).replace(',', '.')) || 0);
-                        });
-                    }
-
-                    // Force the actual quantity to perfectly match history (supplier, sales, adjustments)
-                    // We check if it has ANY history at all
-                    const hasHistory = supplierPurchases.some(p => !p.deletedAt && p.items.some(pi => pi.pesticideId === fixedItem.pesticideId)) ||
-                                       prescriptions.some(p => !p.deletedAt && p.items.some(pi => pi.pesticideId === fixedItem.pesticideId)) ||
-                                       (fixedItem.adjustments && fixedItem.adjustments.length > 0);
-                    
-                    if (hasHistory && fixedItem.quantity !== expectedQuantity) {
-                        fixedItem.quantity = expectedQuantity;
-                        isCorrupted = true;
-                    }
-
-                    // Sync Prices from Latest Purchase
-                    const relatedPurchases = supplierPurchases.filter(p => 
-                        !p.deletedAt && p.items.some(pi => pi.pesticideId === fixedItem.pesticideId) && p.type === 'PURCHASE'
-                    ).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
-                    if (relatedPurchases.length > 0) {
-                        const latestPurchase = relatedPurchases[0];
-                        const purchasedItem = latestPurchase.items.find(pi => pi.pesticideId === fixedItem.pesticideId);
-                        if (purchasedItem && purchasedItem.buyingPrice) {
-                            const newBuyingPrice = parseFloat(String(purchasedItem.buyingPrice).replace(',', '.')) || 0;
-                            // Update price if it was 0 or corrupted (or forcefully sync to match supplier)
-                            // We will forcefully sync it to ensure "alış satış sorunlu" problem is gone.
-                            if (newBuyingPrice > 0) {
-                                fixedItem.buyingPrice = newBuyingPrice;
-                                fixedItem.cashBuyingPrice = newBuyingPrice; // Usually same
-                                
-                                // Optional: Update selling price based on logic if it's 0
-                                if (fixedItem.sellingPrice <= 0) {
-                                    fixedItem.sellingPrice = newBuyingPrice * 1.2;
-                                    fixedItem.cashPrice = newBuyingPrice * 1.2;
-                                }
-                                isCorrupted = true; // Flag for update
-                            }
-                        }
-                    }
-
-                    if (isCorrupted || 
-                        typeof item.quantity !== 'number' || 
-                        typeof item.buyingPrice !== 'number' || 
-                        typeof item.sellingPrice !== 'number') {
-                        await updateInventoryItem(fixedItem);
-                        needsRefresh = true;
-                    }
-                }
-            }
-            
-            if (needsRefresh) {
-                await refreshInventory();
-            }
-        };
+    // Disabled automatic run to prevent infinite loops. Can be triggered manually if needed.
+    const fixAnomalies = async () => {
+        if (inventory.length === 0) return;
         
-        fixAnomalies();
-    }, [inventory, supplierPurchases, prescriptions]); 
+        console.log('Starting inventory anomaly check...');
+        let needsRefresh = false;
+        const seenMap = new Map<string, InventoryItem>();
+        
+        // We do this in a single pass to be efficient
+        for (const item of inventory) {
+            let isCorrupted = false;
+            
+            // 1. Fix NaN or null in numbers
+            const fixedItem = { ...item };
+            if (isNaN(Number(fixedItem.quantity)) || fixedItem.quantity === null) { fixedItem.quantity = 0; isCorrupted = true; }
+            if (isNaN(Number(fixedItem.buyingPrice)) || fixedItem.buyingPrice === null) { fixedItem.buyingPrice = 0; isCorrupted = true; }
+            if (isNaN(Number(fixedItem.sellingPrice)) || fixedItem.sellingPrice === null) { fixedItem.sellingPrice = 0; isCorrupted = true; }
+            if (isNaN(Number(fixedItem.cashBuyingPrice)) || fixedItem.cashBuyingPrice === null) { fixedItem.cashBuyingPrice = fixedItem.buyingPrice; isCorrupted = true; }
+            if (isNaN(Number(fixedItem.cashPrice)) || fixedItem.cashPrice === null) { fixedItem.cashPrice = fixedItem.sellingPrice; isCorrupted = true; }
+
+            // Force numeric types
+            fixedItem.quantity = Number(fixedItem.quantity);
+            fixedItem.buyingPrice = Number(fixedItem.buyingPrice);
+            fixedItem.sellingPrice = Number(fixedItem.sellingPrice);
+            fixedItem.cashBuyingPrice = Number(fixedItem.cashBuyingPrice);
+            fixedItem.cashPrice = Number(fixedItem.cashPrice);
+
+            // 2. Deduplicate
+            if (seenMap.has(fixedItem.pesticideId)) {
+                const existing = seenMap.get(fixedItem.pesticideId)!;
+                existing.quantity += fixedItem.quantity;
+                await updateInventoryItem(existing);
+                await permanentlyDeleteInventoryItem(fixedItem.id);
+                needsRefresh = true;
+                continue;
+            } else {
+                seenMap.set(fixedItem.pesticideId, fixedItem);
+            }
+
+            if (isCorrupted) {
+                await updateInventoryItem(fixedItem);
+                needsRefresh = true;
+            }
+        }
+        
+        if (needsRefresh) {
+            await refreshInventory();
+            showToast('Envanter verileri optimize edildi', 'info');
+        }
+    };
 
     const filteredInventory = useMemo(() => {
         return inventory.filter(item => {
@@ -371,13 +280,23 @@ export const InventoryScreen: React.FC<{
                 setPesticides(prev => [...prev, newPest]);
             }
 
-            const parseFloatSafe = (val: string | number) => parseFloat(String(val).replace(',', '.')) || 0;
+            const _parseFloatSafe = (val: string | number) => {
+                const parsed = parseFloat(String(val).replace(',', '.'));
+                return isNaN(parsed) ? 0 : parsed;
+            };
+
+            const addQty = _parseFloatSafe(formData.quantity);
+            const buyingPrice = _parseFloatSafe(formData.buyingPrice);
             
-            const addQty = parseFloatSafe(formData.quantity);
-            const buyingPrice = parseFloatSafe(formData.buyingPrice);
-            const cashBuyingPrice = parseFloatSafe(formData.cashBuyingPrice) || buyingPrice;
-            const sellingPrice = parseFloatSafe(formData.sellingPrice);
-            const cashPrice = parseFloatSafe(formData.cashPrice) || sellingPrice;
+            const stringValCB = String(formData.cashBuyingPrice).trim();
+            const cashBuyingPrice = stringValCB !== '' ? _parseFloatSafe(stringValCB) : buyingPrice;
+            
+            const sellingPrice = _parseFloatSafe(formData.sellingPrice);
+            
+            const stringValCP = String(formData.cashPrice).trim();
+            const cashPrice = stringValCP !== '' ? _parseFloatSafe(stringValCP) : sellingPrice;
+
+            const stringValThreshold = String(formData.lowStockThreshold || '').trim();
 
             const inventoryExisting = inventory.find(i => i.pesticideId === finalPesticideId);
             
@@ -393,7 +312,7 @@ export const InventoryScreen: React.FC<{
                     cashPrice: cashPrice !== 0 ? cashPrice : inventoryExisting.cashPrice,
                     barcode: formData.barcode || inventoryExisting.barcode,
                     lastUpdated: new Date().toISOString(),
-                    lowStockThreshold: parseFloatSafe(formData.lowStockThreshold) !== 0 ? parseFloatSafe(formData.lowStockThreshold) : inventoryExisting.lowStockThreshold
+                    lowStockThreshold: stringValThreshold !== '' ? _parseFloatSafe(stringValThreshold) : inventoryExisting.lowStockThreshold
                 };
 
                 if (addQty !== 0) {
@@ -427,7 +346,7 @@ export const InventoryScreen: React.FC<{
                 cashPrice: cashPrice,
                 barcode: formData.barcode,
                 lastUpdated: new Date().toISOString(),
-                lowStockThreshold: parseFloatSafe(formData.lowStockThreshold)
+                lowStockThreshold: _parseFloatSafe(formData.lowStockThreshold)
             };
 
             if (addQty !== 0) {
@@ -456,14 +375,25 @@ export const InventoryScreen: React.FC<{
 
         setIsSaving(true);
         try {
-            const parseFloatSafe = (val: string | number) => parseFloat(String(val).replace(',', '.')) || 0;
-            const newTotalQty = parseFloatSafe(formData.quantity);
+            const _parseFloatSafe = (val: string | number) => {
+                const parsed = parseFloat(String(val).replace(',', '.'));
+                return isNaN(parsed) ? 0 : parsed;
+            };
+
+            const newTotalQty = _parseFloatSafe(formData.quantity);
             const qtyDiff = newTotalQty - selectedItem.quantity;
 
-            const buyingPrice = parseFloatSafe(formData.buyingPrice);
-            const cashBuyingPrice = parseFloatSafe(formData.cashBuyingPrice) || buyingPrice;
-            const sellingPrice = parseFloatSafe(formData.sellingPrice);
-            const cashPrice = parseFloatSafe(formData.cashPrice) || sellingPrice;
+            const buyingPrice = _parseFloatSafe(formData.buyingPrice);
+            
+            const stringValCB = String(formData.cashBuyingPrice).trim();
+            const cashBuyingPrice = stringValCB !== '' ? _parseFloatSafe(stringValCB) : buyingPrice;
+            
+            const sellingPrice = _parseFloatSafe(formData.sellingPrice);
+            
+            const stringValCP = String(formData.cashPrice).trim();
+            const cashPrice = stringValCP !== '' ? _parseFloatSafe(stringValCP) : sellingPrice;
+
+            const stringValThreshold = String(formData.lowStockThreshold || '').trim();
 
             const updatedItem: InventoryItem = {
                 ...selectedItem,
@@ -477,7 +407,7 @@ export const InventoryScreen: React.FC<{
                 cashPrice: cashPrice,
                 barcode: formData.barcode,
                 lastUpdated: new Date().toISOString(),
-                lowStockThreshold: parseFloatSafe(formData.lowStockThreshold)
+                lowStockThreshold: stringValThreshold !== '' ? _parseFloatSafe(stringValThreshold) : 0
             };
 
             // Log manual adjustment
@@ -704,6 +634,51 @@ export const InventoryScreen: React.FC<{
         }
     };
 
+    const openPriceUpdateModal = () => {
+        setPriceUpdateItems([...inventory]);
+        setPriceUpdateSearch('');
+        setIsPriceUpdateModalOpen(true);
+        hapticFeedback('medium');
+    };
+
+    const handleBatchPriceUpdate = async () => {
+        setIsSaving(true);
+        try {
+            // Find items that actually changed
+            const itemsToUpdate = priceUpdateItems.filter(item => {
+                const original = inventory.find(i => i.id === item.id);
+                if (!original) return false;
+                return original.buyingPrice !== item.buyingPrice || 
+                       original.cashBuyingPrice !== item.cashBuyingPrice ||
+                       original.sellingPrice !== item.sellingPrice ||
+                       original.cashPrice !== item.cashPrice;
+            });
+
+            if (itemsToUpdate.length === 0) {
+                showToast('Değişiklik yapılmadı', 'info');
+                setIsPriceUpdateModalOpen(false);
+                return;
+            }
+
+            if (itemsToUpdate.length > 0) {
+                const preparedItems = itemsToUpdate.map(item => ({
+                    ...item,
+                    lastUpdated: new Date().toISOString()
+                }));
+                await bulkUpdateInventoryItems(preparedItems);
+            }
+
+            showToast(`${itemsToUpdate.length} ürün fiyatı güncellendi`, 'success');
+            hapticFeedback('success');
+            setIsPriceUpdateModalOpen(false);
+        } catch (error) {
+            console.error("Batch update error:", error);
+            showToast('Güncelleme sırasında hata oluştu', 'error');
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
     const closeModal = () => {
         setIsAddModalOpen(false);
         setIsEditModalOpen(false);
@@ -715,105 +690,6 @@ export const InventoryScreen: React.FC<{
         setSelectedItem(null);
         setSelectedDetailItem(null);
         setSelectedSupplierId('');
-    };
-
-    const handleAiLens = () => {
-        fileInputRef.current?.click();
-    };
-
-    const processImageWithAI = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-
-        try {
-            setIsAiProcessing(true);
-            showToast('Yapay zeka ürünü inceliyor...', 'info');
-
-            const reader = new FileReader();
-            const base64Promise = new Promise<string>((resolve) => {
-                reader.onload = () => {
-                    const base64 = (reader.result as string).split(',')[1];
-                    resolve(base64);
-                };
-            });
-            reader.readAsDataURL(file);
-            const base64Data = await base64Promise;
-
-            const prompt = "Bu bir zirai ilaç veya gübre etiketi. Lütfen etiketteki bilgileri oku ve şu formatta JSON olarak dön: Ürün Adı (productName), Kategori (category - HERBICIDE, INSECTICIDE, FUNGICIDE, FERTILIZER, ACARICIDE, OTHER seçeneklerinden biri), Birim (unit - Adet, Litre, Kg, Kutu, Çuval seçeneklerinden biri). Sadece JSON dön.";
-
-            const generateAiContent = async (modelName: string) => {
-                const model = getGeminiModel(modelName);
-                return await model.generateContent({
-                    contents: [{
-                        role: "user",
-                        parts: [
-                            { text: prompt },
-                            { inlineData: { data: base64Data, mimeType: file.type } }
-                        ]
-                    }],
-                    generationConfig: {
-                        temperature: 0.1,
-                        responseMimeType: "application/json",
-                    }
-                });
-            };
-
-            let result;
-            try {
-                result = await generateAiContent(GENERATIVE_MODELS.FLASH);
-            } catch (e: any) {
-                console.warn("Primary AI model failed, trying fallback...", e);
-                result = await generateAiContent(GENERATIVE_MODELS.FLASH);
-            }
-
-            const response = await result.response;
-            const text = response.text();
-
-            if (text) {
-                const parsedResult = JSON.parse(text || '{}');
-                
-                if (parsedResult.productName) {
-                    setProductName(parsedResult.productName);
-                    const matchedPest = pesticides.find(p => p.name.toLocaleLowerCase('tr-TR') === parsedResult.productName.toLocaleLowerCase('tr-TR'));
-                    if (matchedPest) {
-                        setSelectedPesticide(matchedPest);
-                        setFormData(prev => ({ 
-                            ...prev, 
-                            category: matchedPest.category,
-                            unit: parsedResult.unit || prev.unit
-                        }));
-                    } else {
-                        setFormData(prev => ({ 
-                            ...prev, 
-                            category: (parsedResult.category as PesticideCategory) || PesticideCategory.OTHER,
-                            unit: parsedResult.unit || 'Adet'
-                        }));
-                    }
-                    showToast('Ürün başarıyla tanındı!', 'success');
-                    hapticFeedback('success');
-                    return;
-                }
-            }
-
-            throw new Error('Analiz başarısız oldu.');
-
-        } catch (error: any) {
-            console.error("AI Lens Error:", error);
-            const errMsg = typeof error === 'string' ? error : (error?.message || safeStringify(error));
-            
-            dbService.addSystemError({
-                id: crypto.randomUUID(),
-                timestamp: Date.now(),
-                source: 'Inventory (AI Lens)',
-                message: errMsg,
-                userEmail: auth.currentUser?.email || 'Bilinmiyor'
-            });
-
-            showToast('Şu anda sunucularımızda aşırı yoğunluk yaşanmaktadır. Lütfen biraz sonra tekrar deneyin.', 'error');
-        } finally {
-            setIsAiProcessing(false);
-            if (e.target) e.target.value = '';
-        }
     };
 
     // Helper for Turkish characters (jsPDF default fonts don't support them well without custom fonts)
@@ -1281,14 +1157,14 @@ export const InventoryScreen: React.FC<{
                     </div>
                 </div>
                 
-                <div className="flex items-center gap-2">
-                    <div className="relative">
+                <div className="flex items-center gap-1 w-full flex-nowrap overflow-hidden">
+                    <div className="relative flex-1 min-w-0">
                         <button 
                             onClick={() => setIsListMenuOpen(!isListMenuOpen)}
-                            className="bg-stone-900/80 hover:bg-stone-800 text-stone-300 px-3 py-1.5 rounded-xl font-black text-[11px] border border-white/10 active:scale-95 transition-all flex items-center gap-1.5 group shadow-sm uppercase tracking-wider"
+                            className="w-full bg-stone-900/80 hover:bg-stone-800 text-stone-300 px-1 py-1.5 rounded-xl font-black text-[9px] border border-white/10 active:scale-95 transition-all flex flex-col items-center justify-center gap-1 group shadow-sm uppercase tracking-tighter h-11 min-w-0"
                         >
-                            <List size={14} className="text-stone-500 group-hover:text-emerald-400 transition-colors" />
-                            Depo Raporu
+                            <List size={14} className="text-stone-500 group-hover:text-emerald-400 transition-colors shrink-0" />
+                            <span className="truncate w-full text-center px-0.5">Depo Raporu</span>
                         </button>
                         
                         {isListMenuOpen && (
@@ -1324,13 +1200,13 @@ export const InventoryScreen: React.FC<{
                         )}
                     </div>
 
-                    <div className="relative">
+                    <div className="relative flex-1 min-w-0">
                         <button 
                             onClick={() => setIsStockMenuOpen(!isStockMenuOpen)}
-                            className={`px-3 py-1.5 rounded-xl border transition-all flex items-center gap-1.5 font-black text-[11px] uppercase tracking-wider shadow-sm active:scale-95 ${stockFilter !== 'ALL' ? 'bg-amber-500/20 border-amber-500/50 text-amber-400' : 'bg-stone-900/80 border-white/10 text-stone-500 hover:text-stone-300'}`}
+                            className={`w-full px-1 py-1.5 rounded-xl border transition-all flex flex-col items-center justify-center gap-1 font-black text-[9px] uppercase tracking-tighter shadow-sm active:scale-95 h-11 min-w-0 ${stockFilter !== 'ALL' ? 'bg-amber-500/20 border-amber-500/50 text-amber-400' : 'bg-stone-900/80 border-white/10 text-stone-500 hover:text-stone-300'}`}
                         >
-                            {stockFilter === 'ALL' ? <List size={14} /> : stockFilter === 'OUT_OF_STOCK' ? <EyeOff size={14} /> : <Eye size={14} />}
-                            {stockFilter === 'ALL' ? "Tümünü Göster" : stockFilter === 'OUT_OF_STOCK' ? "Bitenleri Göster" : "Kalanları Göster"}
+                            {stockFilter === 'ALL' ? <Eye size={14} className="shrink-0" /> : stockFilter === 'OUT_OF_STOCK' ? <EyeOff size={14} className="shrink-0" /> : <Eye size={14} className="shrink-0" />}
+                            <span className="truncate w-full text-center px-0.5">{stockFilter === 'ALL' ? "Tümünü Göster" : "Filtreli"}</span>
                         </button>
 
                         {isStockMenuOpen && (
@@ -1362,11 +1238,21 @@ export const InventoryScreen: React.FC<{
 
                     {canEditInventory && (
                         <button 
-                            onClick={() => openAddModal()}
-                            className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-xl font-black text-[11px] shadow-lg shadow-emerald-900/20 active:scale-95 transition-all flex items-center gap-1.5 uppercase tracking-wider"
+                            onClick={openPriceUpdateModal}
+                            className="flex-1 bg-amber-600/20 hover:bg-amber-600/30 text-amber-500 border border-amber-500/30 px-1 py-1.5 rounded-xl font-black text-[9px] shadow-sm active:scale-95 transition-all flex flex-col items-center justify-center gap-1 uppercase tracking-tighter h-11 min-w-0"
                         >
-                            <Plus size={16} />
-                            Ürün Ekle
+                            <DollarSign size={14} className="shrink-0" />
+                            <span className="truncate w-full text-center px-0.5">Fiyat Güncelle</span>
+                        </button>
+                    )}
+
+                    {canEditInventory && (
+                        <button 
+                            onClick={() => openAddModal()}
+                            className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white px-1 py-1.5 rounded-xl font-black text-[9px] shadow-lg shadow-emerald-900/20 active:scale-95 transition-all flex flex-col items-center justify-center gap-1 uppercase tracking-tighter h-11 min-w-0"
+                        >
+                            <Plus size={16} className="shrink-0" />
+                            <span className="truncate w-full text-center px-0.5">Ürün Ekle</span>
                         </button>
                     )}
                 </div>
@@ -1628,6 +1514,7 @@ export const InventoryScreen: React.FC<{
                                             outerRadius={80}
                                             paddingAngle={5}
                                             dataKey="value"
+                                            isAnimationActive={false}
                                         >
                                             {analysisData.chartData.map((entry, index) => (
                                                 <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="rgba(0,0,0,0.2)" />
@@ -1805,25 +1692,6 @@ export const InventoryScreen: React.FC<{
                                 <div className="space-y-2">
                                     <div className="flex justify-between items-center">
                                         <label className="text-xs font-bold text-stone-500 uppercase tracking-widest">Ürün Adı</label>
-                                        {isAddModalOpen && (
-                                            <button 
-                                                onClick={handleAiLens}
-                                                disabled={isAiProcessing}
-                                                className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${isAiProcessing ? 'bg-amber-500/20 text-amber-500' : 'bg-blue-500/10 text-blue-400 hover:bg-blue-500/20'}`}
-                                            >
-                                                {isAiProcessing ? (
-                                                    <>
-                                                        <RefreshCw size={12} className="animate-spin" />
-                                                        İşleniyor...
-                                                    </>
-                                                ) : (
-                                                    <>
-                                                        <Camera size={12} />
-                                                        AI Lens
-                                                    </>
-                                                )}
-                                            </button>
-                                        )}
                                     </div>
                                     <div className="relative">
                                         <Package className="absolute left-3 top-3 text-stone-500" size={16} />
@@ -2451,6 +2319,181 @@ export const InventoryScreen: React.FC<{
                 />
             )}
 
+            {/* Price Batch Update Modal */}
+            {isPriceUpdateModalOpen && (
+                <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[300] flex items-center justify-center p-4">
+                    <div className="bg-stone-900 w-full max-w-4xl rounded-[2.5rem] border border-white/10 shadow-2xl overflow-hidden flex flex-col h-[85vh] animate-in zoom-in-95 duration-300">
+                        <div className="p-6 border-b border-white/10 flex justify-between items-center bg-stone-950/50">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2.5 bg-amber-500/20 rounded-2xl text-amber-500 border border-amber-500/20">
+                                    <DollarSign size={24} />
+                                </div>
+                                <div>
+                                    <h3 className="text-xl font-black text-stone-100 tracking-tight">Hızlı Fiyat Güncelleme</h3>
+                                    <p className="text-[10px] font-black text-stone-500 uppercase tracking-widest">Alış ve Satış Fiyatlarını Toplu Düzenle</p>
+                                </div>
+                            </div>
+                            <button onClick={() => setIsPriceUpdateModalOpen(false)} className="p-2 bg-stone-800 text-stone-500 hover:text-stone-300 rounded-xl transition-all">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <div className="p-4 bg-stone-950/30 border-b border-white/5">
+                            <div className="relative">
+                                <Search className="absolute left-4 top-3 text-stone-600" size={18} />
+                                <input 
+                                    type="text" 
+                                    placeholder="Ürün Ara..." 
+                                    className="w-full bg-stone-900 border border-white/5 rounded-2xl p-3 pl-12 text-stone-200 text-sm outline-none focus:border-amber-500/30 transition-all font-bold"
+                                    value={priceUpdateSearch}
+                                    onChange={(e) => setPriceUpdateSearch(e.target.value)}
+                                />
+                            </div>
+                        </div>
+                        
+                        <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+                            <div className="grid grid-cols-1 md:grid-cols-1 lg:grid-cols-2 gap-4">
+                                {priceUpdateItems
+                                    .filter(item => item.pesticideName.toLocaleLowerCase('tr-TR').includes(priceUpdateSearch.toLocaleLowerCase('tr-TR')))
+                                    .map((item, idx) => {
+                                        const actualIdx = priceUpdateItems.findIndex(i => i.id === item.id);
+                                        const original = inventory.find(i => i.id === item.id);
+                                        const isChanged = original && (
+                                            original.buyingPrice !== item.buyingPrice || 
+                                            original.cashBuyingPrice !== item.cashBuyingPrice ||
+                                            original.sellingPrice !== item.sellingPrice ||
+                                            original.cashPrice !== item.cashPrice
+                                        );
+
+                                        return (
+                                            <div 
+                                                key={item.id} 
+                                                className={`p-4 rounded-3xl border transition-all ${isChanged ? 'bg-amber-500/5 border-amber-500/30 shadow-lg' : 'bg-stone-950/50 border-white/5'}`}
+                                            >
+                                                <div className="flex justify-between items-start mb-4">
+                                                    <div className="flex-1 min-w-0">
+                                                        <h4 className="text-sm font-black text-stone-100 truncate">{item.pesticideName}</h4>
+                                                        <span className="text-[10px] font-bold text-stone-500 uppercase tracking-widest">{item.category}</span>
+                                                    </div>
+                                                    <span className="text-[10px] font-black text-stone-600 font-mono bg-stone-900 px-2 py-0.5 rounded-full">
+                                                        Stok: {item.quantity} {item.unit}
+                                                    </span>
+                                                </div>
+
+                                                <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                                                    {/* Buying Section */}
+                                                    <div className="space-y-1.5">
+                                                        <label className="text-[9px] font-black text-stone-600 uppercase tracking-widest ml-1">V. Alış</label>
+                                                        <div className="relative">
+                                                            <input 
+                                                                type="number" 
+                                                                className="w-full bg-stone-900 border border-white/5 rounded-xl p-2 text-xs font-bold text-stone-300 outline-none focus:border-amber-500/50 font-mono h-9"
+                                                                value={item.buyingPrice || ''}
+                                                                onChange={(e) => {
+                                                                    const val = parseFloat(e.target.value);
+                                                                    const newList = [...priceUpdateItems];
+                                                                    newList[actualIdx] = { ...newList[actualIdx], buyingPrice: isNaN(val) ? 0 : val };
+                                                                    setPriceUpdateItems(newList);
+                                                                }}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                    <div className="space-y-1.5">
+                                                        <label className="text-[9px] font-black text-stone-600 uppercase tracking-widest ml-1">P. Alış</label>
+                                                        <input 
+                                                            type="number" 
+                                                            className="w-full bg-stone-900 border border-white/5 rounded-xl p-2 text-xs font-bold text-stone-300 outline-none focus:border-emerald-500/50 font-mono h-9"
+                                                            value={item.cashBuyingPrice || ''}
+                                                            onChange={(e) => {
+                                                                const val = parseFloat(e.target.value);
+                                                                const newList = [...priceUpdateItems];
+                                                                newList[actualIdx] = { ...newList[actualIdx], cashBuyingPrice: isNaN(val) ? 0 : val };
+                                                                setPriceUpdateItems(newList);
+                                                            }}
+                                                        />
+                                                    </div>
+
+                                                    {/* Selling Section */}
+                                                    <div className="space-y-1.5">
+                                                        <label className="text-[9px] font-black text-amber-500/70 uppercase tracking-widest ml-1">V. Satış</label>
+                                                        <input 
+                                                            type="number" 
+                                                            className="w-full bg-stone-900 border border-amber-500/20 rounded-xl p-2 text-xs font-black text-amber-400 outline-none focus:border-amber-500 font-mono h-9 shadow-inner shadow-amber-500/5"
+                                                            value={item.sellingPrice || ''}
+                                                            onChange={(e) => {
+                                                                const val = parseFloat(e.target.value);
+                                                                const newList = [...priceUpdateItems];
+                                                                newList[actualIdx] = { ...newList[actualIdx], sellingPrice: isNaN(val) ? 0 : val };
+                                                                setPriceUpdateItems(newList);
+                                                            }}
+                                                        />
+                                                    </div>
+                                                    <div className="space-y-1.5">
+                                                        <label className="text-[9px] font-black text-blue-500/70 uppercase tracking-widest ml-1">P. Satış</label>
+                                                        <input 
+                                                            type="number" 
+                                                            className="w-full bg-stone-900 border border-blue-500/20 rounded-xl p-2 text-xs font-black text-blue-400 outline-none focus:border-blue-500 font-mono h-9 shadow-inner shadow-blue-500/5"
+                                                            value={item.cashPrice || ''}
+                                                            onChange={(e) => {
+                                                                const val = parseFloat(e.target.value);
+                                                                const newList = [...priceUpdateItems];
+                                                                newList[actualIdx] = { ...newList[actualIdx], cashPrice: isNaN(val) ? 0 : val };
+                                                                setPriceUpdateItems(newList);
+                                                            }}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                            </div>
+                        </div>
+
+                        <div className="p-6 border-t border-white/10 bg-stone-950/50 flex items-center justify-between">
+                            <div className="flex flex-col">
+                                <span className="text-[10px] font-black text-stone-500 uppercase tracking-widest">Düzenlenen Ürün Sayısı</span>
+                                <span className="text-xl font-black text-amber-500 font-mono">
+                                    {priceUpdateItems.filter(item => {
+                                        const original = inventory.find(i => i.id === item.id);
+                                        return original && (
+                                            original.buyingPrice !== item.buyingPrice || 
+                                            original.cashBuyingPrice !== item.cashBuyingPrice ||
+                                            original.sellingPrice !== item.sellingPrice ||
+                                            original.cashPrice !== item.cashPrice
+                                        );
+                                    }).length}
+                                </span>
+                            </div>
+                            <div className="flex gap-3">
+                                <button 
+                                    onClick={() => setIsPriceUpdateModalOpen(false)}
+                                    className="px-6 py-3 rounded-2xl text-stone-400 hover:text-stone-200 font-bold text-sm transition-all"
+                                >
+                                    Vazgeç
+                                </button>
+                                <button 
+                                    onClick={handleBatchPriceUpdate}
+                                    disabled={isSaving}
+                                    className="px-10 py-3 bg-amber-600 hover:bg-amber-500 text-stone-950 rounded-2xl font-black text-sm shadow-xl shadow-amber-600/20 active:scale-95 transition-all flex items-center gap-2 disabled:opacity-50"
+                                >
+                                    {isSaving ? (
+                                        <>
+                                            <RefreshCw size={16} className="animate-spin" />
+                                            GÜNCELLENİYOR
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Save size={18} />
+                                            FİYATLARI KAYDET
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             <ConfirmationModal 
                 isOpen={confirmModal.isOpen}
                 onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
@@ -2460,15 +2503,6 @@ export const InventoryScreen: React.FC<{
                 variant="danger"
             />
 
-            <input 
-                type="file" 
-                ref={fileInputRef} 
-                className="hidden" 
-                accept="image/*" 
-                capture="environment"
-                onChange={processImageWithAI} 
-                onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
-            />
         </div>
     );
 };

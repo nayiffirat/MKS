@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { ContactService, ContactInfo } from '../services/contact';
 import { Farmer, VisitLog, Prescription, ManualDebt, Payment, Pesticide } from '../types';
 import { COMMON_CROPS, CROP_PESTICIDE_COSTS, DEFAULT_PESTICIDE_COST, CROP_AGRONOMY_INTEL, DEFAULT_AGRONOMY } from '../constants';
-import { Search, Phone, MessageCircle, MapPin, Wheat, ChevronLeft, ChevronRight, Contact, Loader2, User, Ruler, FileText, Calendar, Navigation, Plus, X, ArrowLeft, Edit2, Trash2, CheckSquare, Square, Check, FlaskConical, Clock, ImageIcon, Upload, AlertCircle, MessageSquare, Share2, Save, Download, FileJson, RefreshCw, RefreshCcw, Wallet, History, CreditCard, TrendingDown, TrendingUp as TrendingUpIcon, Send, Copy, ClipboardList, AlertTriangle, Zap, Sprout, Bot, Info, Scale, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { Search, Phone, MessageCircle, MapPin, Wheat, ChevronLeft, ChevronRight, Contact, Loader2, User, Ruler, FileText, Calendar, Navigation, Plus, X, ArrowLeft, Edit2, Trash2, CheckSquare, Square, Check, FlaskConical, Clock, ImageIcon, Upload, AlertCircle, MessageSquare, Share2, Save, Download, FileJson, RefreshCw, RefreshCcw, Wallet, History, CreditCard, TrendingDown, TrendingUp as TrendingUpIcon, Send, Copy, ClipboardList, AlertTriangle, Sprout, Info, Scale, ShieldAlert, ShieldCheck } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
@@ -379,19 +379,18 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   });
   
   // Detail View Tab State
-  const [activeTab, setActiveTab] = useState<'GENERAL' | 'VISITS' | 'PRESCRIPTIONS' | 'DEBT' | 'ANALYSIS'>('DEBT');
+  const [activeTab, setActiveTab] = useState<'GENERAL' | 'VISITS' | 'PRESCRIPTIONS' | 'DEBT'>('DEBT');
 
   const tabs = useMemo(() => {
     const allTabs = [
         { id: 'GENERAL', label: 'Genel Bilgiler', icon: User },
-        { id: 'ANALYSIS', label: 'AI Analiz', icon: Zap },
         { id: 'VISITS', label: 'Reçeteler', icon: ClipboardList },
         { id: 'PRESCRIPTIONS', label: prescriptionLabel, icon: FileText },
         { id: 'DEBT', label: 'Borç / Tahsilat', icon: Wallet }
     ];
     
     if (isSales) {
-        return allTabs.filter(t => t.id === 'DEBT' || t.id === 'PRESCRIPTIONS' || t.id === 'ANALYSIS');
+        return allTabs.filter(t => t.id === 'DEBT' || t.id === 'PRESCRIPTIONS');
     }
     return allTabs;
   }, [isSales, prescriptionLabel]);
@@ -1266,11 +1265,24 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       doc.setFont("helvetica", "normal");
       doc.text(`Tarih: ${new Date().toLocaleDateString('tr-TR')}`, 14, 28);
 
+      const trToEn = (str: string) => {
+          if (!str) return '';
+          return str.replace(/Ğ/g, 'G').replace(/Ü/g, 'U').replace(/Ş/g, 'S').replace(/İ/g, 'I').replace(/Ö/g, 'O').replace(/Ç/g, 'C')
+              .replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ş/g, 's').replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ç/g, 'c');
+      };
+      
+      const pdfCurrency = (amount: number) => {
+          return new Intl.NumberFormat('en-US', { style: 'currency', currency: userProfile?.currency || 'TRY' })
+              .format(amount)
+              .replace('TRY', 'TL')
+              .replace('₺', 'TL');
+      };
+
       const tableData = farmersWithDebt.map(f => [
-          f.fullName,
+          trToEn(f.fullName),
           f.phoneNumber,
-          f.village,
-          `${formatCurrency(Math.abs(f.overallBalance || 0), userProfile?.currency || 'TRY')} ${f.overallBalance && f.overallBalance >= 0 ? 'ALACAK' : 'BORC'}`
+          trToEn(f.village),
+          `${pdfCurrency(Math.abs(f.overallBalance || 0))} ${f.overallBalance && f.overallBalance > 0 ? 'ALACAK' : 'BORC'}`
       ]);
 
       (doc as any).autoTable({
@@ -1976,172 +1988,6 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                     </div>
                 )}
 
-                {activeTab === 'ANALYSIS' && selectedFarmer && (
-                    <div className="space-y-4 animate-in fade-in zoom-in-95 duration-300">
-                        {/* Summary Metrics */}
-                        {(() => {
-                            const currentDebt = yearBalance; // Adjusted to yearBalance
-
-                            let totalProfit = 0;
-                            farmerPrescriptions.forEach(pres => {
-                                if (pres.deletedAt) return;
-                                pres.items.forEach(item => {
-                                    const quantityNum = parseFloat(item.quantity?.split(' ')[0] || '0');
-                                    const sellingPrice = item.totalPrice || ((item.unitPrice || 0) * quantityNum);
-                                    const invItem = inventory.find(inv => inv.pesticideId === item.pesticideId);
-                                    const baseBuyingPrice = invItem?.buyingPrice || 0;
-                                    const actualBuyingPrice = (item.buyingPrice || baseBuyingPrice) * quantityNum;
-                                    if (actualBuyingPrice > 0) totalProfit += (sellingPrice - actualBuyingPrice);
-                                    else totalProfit += sellingPrice * 0.30;
-                                });
-                            });
-
-                            let totalExpectedPesticideCapacity = 0;
-                            const fieldBreakdown = (selectedFarmer.fields || []).map(field => {
-                                const costPerDa = CROP_PESTICIDE_COSTS[field.crop] || DEFAULT_PESTICIDE_COST;
-                                const estimatedCost = field.size * costPerDa;
-                                totalExpectedPesticideCapacity += estimatedCost;
-                                return { ...field, estimatedCost, costPerDa };
-                            });
-
-                            let riskScore = 0;
-                            if (currentDebt < 0 && totalExpectedPesticideCapacity > 0) {
-                                // currentDebt is negative when farmer owes money in some contexts, 
-                                // but here let's assume currentDebt is absolute balance if they owe
-                                const absoluteDebt = Math.abs(Math.min(0, yearBalance)); // Example logic
-                                riskScore = Math.min((absoluteDebt / totalExpectedPesticideCapacity) * 100, 100);
-                            }
-
-                            // Let's just use the logic from Findeks for consistency
-                            const totalPrescriptionAmount = farmerPrescriptions.filter(p => !p.deletedAt).reduce((acc, p) => acc + (p.totalAmount || 0), 0);
-                            const totalManualDebtAmount = farmerManualDebts.filter(d => !d.deletedAt).reduce((acc, d) => acc + (d.amount || 0), 0);
-                            const totalPaid = farmerPayments.filter(p => !p.deletedAt).reduce((acc, p) => acc + (p.amount || 0), 0);
-                            const realCurrentDebt = (totalPrescriptionAmount + totalManualDebtAmount) - totalPaid;
-
-                            riskScore = totalExpectedPesticideCapacity > 0 ? Math.min((Math.max(0, realCurrentDebt) / totalExpectedPesticideCapacity) * 100, 100) : (realCurrentDebt > 0 ? 100 : 0);
-
-                            let loyaltyScore = 85;
-                            const now = new Date();
-                            let maxOverdueDays = 0;
-                            farmerPrescriptions.filter(p => !p.deletedAt).forEach(p => {
-                                if (p.priceType === 'TERM' && p.dueDate) {
-                                    const dueDate = new Date(p.dueDate);
-                                    if (now > dueDate && realCurrentDebt > 0) {
-                                        const diff = (now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24);
-                                        if (diff > maxOverdueDays) maxOverdueDays = diff;
-                                    }
-                                } else if (realCurrentDebt > 100) {
-                                    const pDate = new Date(p.date);
-                                    const diff = (now.getTime() - pDate.getTime()) / (1000 * 60 * 60 * 24);
-                                    if (diff > 60) {
-                                        const overdue = diff - 60;
-                                        if (overdue > maxOverdueDays) maxOverdueDays = overdue;
-                                    }
-                                }
-                            });
-                            loyaltyScore -= (maxOverdueDays * 2.5);
-                            loyaltyScore += (farmerPrescriptions.length * 1.5);
-                            loyaltyScore = Math.min(Math.max(loyaltyScore, 5), 100);
-
-                            return (
-                                <div className="space-y-4 pb-4">
-                                    <div className="grid grid-cols-2 gap-3">
-                                        <div className="bg-stone-900 shadow-xl border border-white/5 p-4 rounded-[28px]">
-                                            <div className="flex items-center gap-2 mb-2">
-                                                <div className="w-6 h-6 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-500">
-                                                    <TrendingUpIcon size={12} />
-                                                </div>
-                                                <span className="text-[10px] font-black text-stone-500 uppercase tracking-widest">Tahmini Net Kar</span>
-                                            </div>
-                                            <div className="text-xl font-black text-white font-mono">{formatCurrency(totalProfit, userProfile?.currency || 'TRY')}</div>
-                                            <div className="text-[8px] font-bold text-stone-600 mt-1 uppercase">Satışlardan Elde Edilen Kazanç</div>
-                                        </div>
-                                        <div className="bg-stone-900 shadow-xl border border-white/5 p-4 rounded-[28px]">
-                                            <div className="flex items-center gap-2 mb-2">
-                                                <div className="w-6 h-6 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-500">
-                                                    <Scale size={12} />
-                                                </div>
-                                                <span className="text-[10px] font-black text-stone-500 uppercase tracking-widest">Risk Kapasitesi</span>
-                                            </div>
-                                            <div className="text-xl font-black text-amber-400 font-mono">{formatCurrency(totalExpectedPesticideCapacity, userProfile?.currency || 'TRY')}</div>
-                                            <div className="text-[8px] font-bold text-stone-600 mt-1 uppercase">Arazi İlaçlama Limiti</div>
-                                        </div>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-3">
-                                        <div className="bg-stone-900 shadow-xl border border-white/5 p-4 rounded-[28px]">
-                                            <div className="flex items-center justify-between mb-2">
-                                                <span className="text-[10px] font-black text-stone-500 uppercase tracking-widest">Risk Skoru</span>
-                                                <ShieldAlert size={14} className={riskScore > 60 ? 'text-rose-500' : 'text-emerald-500'} />
-                                            </div>
-                                            <div className={`text-2xl font-black ${riskScore > 60 ? 'text-rose-500' : 'text-emerald-500'}`}>%{Math.round(riskScore)}</div>
-                                            <div className="w-full h-1 bg-stone-950 rounded-full mt-2 overflow-hidden">
-                                                <div className={`h-full ${riskScore > 60 ? 'bg-rose-500' : 'bg-emerald-500'}`} style={{ width: `${riskScore}%` }}></div>
-                                            </div>
-                                        </div>
-                                        <div className="bg-stone-900 shadow-xl border border-white/5 p-4 rounded-[28px]">
-                                            <div className="flex items-center justify-between mb-2">
-                                                <span className="text-[10px] font-black text-stone-500 uppercase tracking-widest">Ödeme Gücü</span>
-                                                <ShieldCheck size={14} className={loyaltyScore > 50 ? 'text-emerald-500' : 'text-rose-500'} />
-                                            </div>
-                                            <div className={`text-2xl font-black ${loyaltyScore > 50 ? 'text-emerald-400' : 'text-rose-400'}`}>%{Math.round(loyaltyScore)}</div>
-                                            <div className="w-full h-1 bg-stone-950 rounded-full mt-2 overflow-hidden">
-                                                <div className={`h-full ${loyaltyScore > 50 ? 'bg-emerald-500' : 'bg-rose-500'}`} style={{ width: `${loyaltyScore}%` }}></div>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div className="bg-stone-900/60 p-5 rounded-[32px] border border-white/5">
-                                        <h3 className="text-xs font-black text-white uppercase tracking-widest mb-4 flex items-center gap-2">
-                                            <Bot size={16} className="text-amber-500" />
-                                            AI Saha Verileri & Arazi Haritası
-                                        </h3>
-                                        <div className="space-y-3">
-                                            {fieldBreakdown.map((field, i) => {
-                                                const agronomy = CROP_AGRONOMY_INTEL[field.crop] || DEFAULT_AGRONOMY;
-                                                return (
-                                                    <div key={i} className="p-4 bg-stone-950/40 border border-white/5 rounded-2xl">
-                                                        <div className="flex justify-between items-start mb-3">
-                                                            <div>
-                                                                <div className="text-xs font-black text-white">{field.crop}</div>
-                                                                <div className="text-[9px] font-bold text-stone-500 uppercase">Mevkii {i+1} · {field.size} da</div>
-                                                            </div>
-                                                            <div className="text-right">
-                                                                <div className="text-[10px] font-black text-stone-300 font-mono">{formatCurrency(field.estimatedCost, userProfile?.currency || 'TRY')}</div>
-                                                                <div className="text-[7px] font-bold text-stone-600 uppercase">İlaç Limiti</div>
-                                                            </div>
-                                                        </div>
-                                                        <div className="grid grid-cols-2 gap-2">
-                                                            <div className="p-2 bg-stone-900/50 rounded-xl">
-                                                                <span className="text-[6px] font-black text-stone-500 uppercase block mb-1">Toprak</span>
-                                                                <span className="text-[9px] font-bold text-stone-400 line-clamp-1">{agronomy.soilType}</span>
-                                                            </div>
-                                                            <div className="p-2 bg-stone-900/50 rounded-xl">
-                                                                <span className="text-[6px] font-black text-stone-500 uppercase block mb-1">Sulama</span>
-                                                                <span className="text-[9px] font-bold text-blue-400 line-clamp-1">{agronomy.irrigationNeeds}</span>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                    
-                                    {maxOverdueDays > 0 && (
-                                        <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl flex items-center gap-3">
-                                            <AlertTriangle size={18} className="text-rose-500" />
-                                            <div>
-                                                <p className="text-[10px] font-black text-rose-500 uppercase">Kritik Vade Aşımı</p>
-                                                <p className="text-[11px] text-rose-200/70 font-medium">Bu cari hesaba ait {Math.round(maxOverdueDays)} günlük vade aşımı tespit edildi.</p>
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            );
-                        })()}
-                    </div>
-                )}
-
                 {activeTab === 'VISITS' && (
                     <div className="space-y-2">
                         {isDataLoading ? <Loader2 size={20} className="animate-spin text-emerald-500 mx-auto"/> : farmerVisits.length > 0 ? farmerVisits.map(visit => (
@@ -2542,7 +2388,16 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       <input type="file" accept=".vcf" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
 
       <div className="flex items-center justify-between mb-3 mt-2 px-1">
-          <button onClick={onBack} className="flex items-center text-stone-400 hover:text-stone-200 font-medium py-1 rounded-lg transition-colors text-xs"><ArrowLeft size={16} className="mr-1"/> Geri</button>
+          <div className="flex items-center gap-3">
+              <button onClick={onBack} className="flex items-center text-stone-400 hover:text-stone-200 font-medium py-1 rounded-lg transition-colors text-xs"><ArrowLeft size={16} className="mr-1"/> Geri</button>
+              <button 
+                  onClick={downloadFarmersPdf}
+                  className="py-1.5 px-3 bg-amber-600 rounded-lg text-white text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 hover:bg-amber-500 transition-colors shadow-lg shadow-amber-900/20"
+              >
+                  <FileText size={14} />
+                  Raporla
+              </button>
+          </div>
           <div className="text-right">
               <span className="text-[9px] font-bold text-stone-500 uppercase tracking-widest block">{farmers.length} {farmerLabel}</span>
               {userProfile.lastSyncTime && (

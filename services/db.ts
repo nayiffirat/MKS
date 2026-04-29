@@ -44,14 +44,14 @@ const backgroundSyncGlobal = async (collectionName: string, data: any) => {
   
   return setDoc(docRef, cleanData, { merge: true })
     .catch((error) => {
-        console.error(`Global sync failed for ${collectionName}:`, error);
+        console.error(`Global sync failed for ${collectionName}:`, error instanceof Error ? error.message : safeStringify(error));
     });
 };
 
 const backgroundDeleteGlobal = async (collectionName: string, id: string) => {
   return deleteDoc(doc(firestore, FS_ROOT, FS_ORG, collectionName, id))
     .catch((error) => {
-        console.error(`Global delete failed for ${collectionName}:`, error);
+        console.error(`Global delete failed for ${collectionName}:`, error instanceof Error ? error.message : safeStringify(error));
     });
 };
 
@@ -505,7 +505,7 @@ const dbServiceObj = {
             });
             await setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid), cleanProfile, { merge: true });
         } catch (error) {
-            console.error("Error saving user profile:", error);
+            handleFirestoreError(error, OperationType.WRITE, `${FS_ROOT}/${FS_ORG}/${FS_USERS}/${uid}`);
         }
     }
   },
@@ -518,7 +518,7 @@ const dbServiceObj = {
       const snap = await getDocs(collection(firestore, FS_ROOT, FS_ORG, FS_USERS));
       return snap.docs.map(d => ({ ...d.data() as UserProfile, uid: d.id }));
     } catch (error) {
-      console.error("Error fetching all users:", error);
+      console.error("Error fetching all users:", error instanceof Error ? error.message : safeStringify(error));
       return [];
     }
   },
@@ -529,7 +529,7 @@ const dbServiceObj = {
       await requireAdmin();
       await setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid), sanitizeForFirestore(updates), { merge: true });
     } catch (error) {
-      console.error("Error updating user subscription:", error);
+      console.error("Error updating user subscription:", error instanceof Error ? error.message : safeStringify(error));
       throw error;
     }
   },
@@ -540,7 +540,7 @@ const dbServiceObj = {
       await requireAdmin();
       await deleteDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid));
     } catch (error) {
-      console.error("Error deleting user profile:", error);
+      console.error("Error deleting user profile:", error instanceof Error ? error.message : safeStringify(error));
       throw error;
     }
   },
@@ -1183,31 +1183,39 @@ const dbServiceObj = {
     const db = await initDB();
     const tx = db.transaction('inventory', 'readwrite');
     const store = tx.objectStore('inventory');
-    const inventory = await store.getAll();
+    const index = store.index('by-pesticide');
     const updates: InventoryItem[] = [];
 
-    for (const item of (purchase.items || [])) {
-      const existing = inventory.find(i => i.pesticideId === item.pesticideId);
+    const items = purchase.items || [];
+    for (const item of items) {
+      // Use index to get the inventory item faster
+      let existing = await index.get(item.pesticideId);
+      
       const qtyStr = String(item.quantity || '0').replace(',', '.');
       const quantityChange = parseFloat(qtyStr) || 0;
       
-      const isReturn = purchase.type === 'RETURN';
-      const effectiveQtyChange = isReturn ? -quantityChange : quantityChange;
+      if (isNaN(quantityChange)) {
+          console.warn('Skipping item with invalid quantity:', item);
+          continue;
+      }
+      
+      const isReturnOrSale = purchase.type === 'RETURN' || purchase.note?.startsWith('SATIŞ') || quantityChange < 0;
+      // Force sign based on type if needed, but here we trust the sign if it's already consistent
+      const effectiveQtyChange = isReturnOrSale ? -Math.abs(quantityChange) : Math.abs(quantityChange);
       
       if (existing) {
-        const newQuantity = (Number(existing.quantity) || 0) + (isRevert ? -effectiveQtyChange : effectiveQtyChange);
+        const currentQty = Number(existing.quantity) || 0;
+        const newQuantity = currentQty + (isRevert ? -effectiveQtyChange : effectiveQtyChange);
+        
         const updatedItem = {
           ...existing,
-          quantity: newQuantity,
-          buyingPrice: isRevert ? existing.buyingPrice : (parseFloat(String(item.buyingPrice || '0').replace(',', '.')) || existing.buyingPrice),
-          sellingPrice: (isRevert || !item.sellingPrice) ? existing.sellingPrice : (parseFloat(String(item.sellingPrice || '0').replace(',', '.')) || existing.sellingPrice),
+          quantity: isNaN(newQuantity) ? currentQty : newQuantity,
+          buyingPrice: isRevert ? (existing.buyingPrice || 0) : (parseFloat(String(item.buyingPrice || '0').replace(',', '.')) || (existing.buyingPrice || 0)),
+          sellingPrice: (isRevert || !item.sellingPrice) ? (existing.sellingPrice || 0) : (parseFloat(String(item.sellingPrice || '0').replace(',', '.')) || (existing.sellingPrice || 0)),
           lastUpdated: new Date().toISOString()
         };
         await store.put(updatedItem);
         updates.push(updatedItem);
-        
-        const idx = inventory.findIndex(i => i.id === existing.id);
-        if (idx !== -1) inventory[idx] = updatedItem;
       } else if (!isRevert) {
         // Create new inventory item if it doesn't exist and we are not reverting
         const buyingPrice = parseFloat(String(item.buyingPrice || '0').replace(',', '.')) || 0;
@@ -1226,11 +1234,13 @@ const dbServiceObj = {
         };
         await store.put(newItem);
         updates.push(newItem);
-        inventory.push(newItem);
       }
     }
     await tx.done;
-    updates.forEach(item => backgroundSync('inventory', item));
+    // Perform background syncs in parallel without blocking the main flow too much (though we await all if possible)
+    if (updates.length > 0) {
+        Promise.all(updates.map(item => backgroundSync('inventory', item))).catch(() => {});
+    }
   },
 
   async getSupplierPurchases(supplierId?: string) {
@@ -1239,6 +1249,11 @@ const dbServiceObj = {
       return db.getAll('supplierPurchases');
     }
     return db.getAllFromIndex('supplierPurchases', 'by-supplier', supplierId);
+  },
+
+  async getSupplierPurchaseById(id: string) {
+    const db = await initDB();
+    return db.get('supplierPurchases', id);
   },
 
   async getSupplierPayments(supplierId?: string) {
@@ -1259,7 +1274,8 @@ const dbServiceObj = {
   async updateSupplierPurchase(purchase: SupplierPurchase) {
     const db = await initDB();
     await db.put('supplierPurchases', purchase);
-    await backgroundSync('supplierPurchases', purchase);
+    // Non-blocking sync
+    backgroundSync('supplierPurchases', purchase).catch(() => {});
     return purchase.id;
   },
 

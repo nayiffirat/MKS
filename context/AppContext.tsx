@@ -59,7 +59,7 @@ interface AppContextType {
   clearNotifications: () => void;
   markAllAsRead: () => void;
   userProfile: UserProfile;
-  updateUserProfile: (profile: UserProfile) => void;
+  updateUserProfile: (profile: UserProfile) => Promise<void>;
   teamMembers: TeamMember[];
   addTeamMember: (member: Omit<TeamMember, 'id' | 'createdAt'>) => Promise<void>;
   updateTeamMember: (member: TeamMember) => Promise<void>;
@@ -92,6 +92,7 @@ interface AppContextType {
   trashedInventory: InventoryItem[];
   refreshInventory: () => Promise<void>;
   addInventoryItem: (item: InventoryItem) => Promise<void>;
+  bulkUpdateInventoryItems: (items: InventoryItem[]) => Promise<void>;
   updateInventoryItem: (item: InventoryItem) => Promise<void>;
   deleteInventoryItem: (id: string) => Promise<void>;
   softDeleteInventoryItem: (id: string) => Promise<void>;
@@ -371,14 +372,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return translation;
   };
 
-  const updateUserProfile = (profile: UserProfile) => {
+  const updateUserProfile = async (profile: UserProfile) => {
       setUserProfile(profile);
       localStorage.setItem('mks_user_profile', safeStringify(profile));
       
       // Firebase Sync
       const user = auth.currentUser;
       if (user) {
-          dbService.saveUserProfile(user.uid, profile);
+          await dbService.saveUserProfile(user.uid, profile);
       }
   };
 
@@ -595,13 +596,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const now = new Date();
     const thirtyDaysInMs = 30 * 24 * 60 * 60 * 1000;
     const rawInventory = await dbService.getInventory();
-    const trashedInv = (await dbService.getAllInventoryRaw()).filter(item => item.deletedAt);
+    const allInventoryRaw = await dbService.getAllInventoryRaw();
+    const trashedInv = allInventoryRaw.filter(item => item.deletedAt);
     
-    // Auto-delete trashed inventory older than 30 days
+    // Auto-delete trashed inventory older than 30 days in background
+    const deletePromises: Promise<any>[] = [];
     for (const item of trashedInv) {
       if (item.deletedAt && now.getTime() - new Date(item.deletedAt).getTime() > thirtyDaysInMs) {
-        await dbService.permanentlyDeleteInventoryItem(item.id);
+        deletePromises.push(dbService.permanentlyDeleteInventoryItem(item.id));
       }
+    }
+    
+    if (deletePromises.length > 0) {
+      Promise.allSettled(deletePromises).catch(err => console.warn("Inventory cleanup failed:", err));
     }
 
     setInventory(rawInventory);
@@ -614,10 +621,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await refreshStats();
   };
 
-  const updateInventoryItem = async (item: InventoryItem) => {
+  const updateInventoryItem = async (item: InventoryItem, skipRefresh: boolean = false) => {
     await dbService.updateInventoryItem(item);
-    await refreshInventory();
-    await refreshStats();
+    if (!skipRefresh) {
+        await refreshInventory();
+        await refreshStats();
+    }
+  };
+
+  const bulkUpdateInventoryItems = async (items: InventoryItem[]) => {
+      for (const item of items) {
+          await dbService.updateInventoryItem(item);
+      }
+      await refreshInventory();
+      await refreshStats();
   };
 
   const deleteInventoryItem = async (id: string) => {
@@ -803,56 +820,64 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const trashedMyPayments = myPaymentList.filter(p => p.deletedAt);
     const trashedTransactions = (await dbService.getTransactions()).filter(tx => tx.deletedAt);
 
-    // Auto-delete trashed items older than 30 days
+    // Auto-delete trashed items older than 30 days in parallel to avoid hanging
+    const deletePromises: Promise<any>[] = [];
+
     for (const f of trashedF) {
         if (now.getTime() - new Date(f.deletedAt!).getTime() > thirtyDaysInMs) {
-            await dbService.deleteFarmer(f.id);
+            deletePromises.push(dbService.deleteFarmer(f.id));
         }
     }
     for (const v of trashedV) {
         if (now.getTime() - new Date(v.deletedAt!).getTime() > thirtyDaysInMs) {
-            await dbService.deleteVisit(v.id);
+            deletePromises.push(dbService.deleteVisit(v.id));
         }
     }
     for (const p of trashedP) {
         if (now.getTime() - new Date(p.deletedAt!).getTime() > thirtyDaysInMs) {
-            await dbService.deletePayment(p.id);
+            deletePromises.push(dbService.deletePayment(p.id));
         }
     }
     for (const s of trashedS) {
         if (now.getTime() - new Date(s.deletedAt!).getTime() > thirtyDaysInMs) {
-            await dbService.deleteSupplier(s.id);
+            deletePromises.push(dbService.deleteSupplier(s.id));
         }
     }
     for (const d of trashedMD) {
         if (now.getTime() - new Date(d.deletedAt!).getTime() > thirtyDaysInMs) {
-            await dbService.deleteManualDebt(d.id);
+            deletePromises.push(dbService.deleteManualDebt(d.id));
         }
     }
     for (const e of trashedE) {
         if (now.getTime() - new Date(e.deletedAt!).getTime() > thirtyDaysInMs) {
-            await dbService.deleteExpense(e.id);
+            deletePromises.push(dbService.deleteExpense(e.id));
         }
     }
     for (const p of trashedSPurchases) {
         if (now.getTime() - new Date(p.deletedAt!).getTime() > thirtyDaysInMs) {
-            await dbService.deleteSupplierPurchase(p.id);
+            deletePromises.push(dbService.deleteSupplierPurchase(p.id));
         }
     }
     for (const p of trashedSPayments) {
         if (now.getTime() - new Date(p.deletedAt!).getTime() > thirtyDaysInMs) {
-            await dbService.deleteSupplierPayment(p.id);
+            deletePromises.push(dbService.deleteSupplierPayment(p.id));
         }
     }
     for (const p of trashedMyPayments) {
         if (now.getTime() - new Date(p.deletedAt!).getTime() > thirtyDaysInMs) {
-            await dbService.deleteMyPayment(p.id);
+            deletePromises.push(dbService.deleteMyPayment(p.id));
         }
     }
+
     for (const tx of trashedTransactions) {
         if (now.getTime() - new Date(tx.deletedAt!).getTime() > thirtyDaysInMs) {
-            await dbService.deleteTransaction(tx.id);
+            deletePromises.push(dbService.deleteTransaction(tx.id));
         }
+    }
+
+    if (deletePromises.length > 0) {
+        // Don't await deletions, they can happen in background to prevent UI hang
+        Promise.allSettled(deletePromises).catch(err => console.warn('Background cleanup failed:', err));
     }
 
     setTrashedFarmers(trashedF.filter(f => now.getTime() - new Date(f.deletedAt!).getTime() <= thirtyDaysInMs));
@@ -870,18 +895,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const finalReminders = [...(syncedReminders || reminderListFromDB)];
     
     const updatedSupplierList = supplierList.map((s) => {
-        const purchases = flatPurchases.filter(p => p.supplierId === s.id);
-        const payments = flatPayments.filter(p => p.supplierId === s.id);
+        const purchasesForSupplier = flatPurchases.filter(p => p.supplierId === s.id);
+        const paymentsForSupplier = flatPayments.filter(p => p.supplierId === s.id);
         // Only include checks that are not already part of the supplier's flatPayments (i.e. those without a relatedId linking them back)
         const checks = myPaymentList.filter(p => p.supplierId === s.id && !p.deletedAt && p.status !== 'CANCELLED' && !p.relatedId);
         
-        const totalPurchased = purchases.reduce((acc, p) => {
-            const amt = Number(p.totalAmount) || 0;
+        const totalPurchased = purchasesForSupplier.reduce((acc, p) => {
+            const amt = Math.abs(Number(p.totalAmount) || 0);
             return acc + (p.type === 'RETURN' ? -amt : amt);
         }, 0);
 
         // Payments TO supplier increase totalPaid, Payments FROM supplier (RECEIVE) decrease totalPaid
-        const totalPaid = payments.reduce((acc, p) => {
+        const totalPaid = paymentsForSupplier.reduce((acc, p) => {
             const amt = Number(p.amount) || 0;
             return acc + (p.type === 'RECEIVE' ? -amt : amt);
         }, 0) + 
@@ -889,7 +914,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         
         return {
             ...s,
-            totalDebt: totalPurchased || 0,
+            totalDebt: purchasesForSupplier.filter(p => p.type !== 'RETURN').reduce((acc, p) => acc + (Math.abs(Number(p.totalAmount)) || 0), 0),
             balance: (totalPaid || 0) - (totalPurchased || 0) // Negative means we owe money
         };
     });
@@ -1665,54 +1690,71 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateSupplierPurchase = async (purchase: SupplierPurchase) => {
-    // Recalculate totalAmount
-    purchase.totalAmount = (purchase.items || []).reduce((acc, item) => acc + (item.buyingPrice * item.quantity), 0);
+    try {
+        console.log('Starting updateSupplierPurchase for:', purchase.id);
+        // Recalculate totalAmount
+        const items = purchase.items || [];
+        purchase.totalAmount = items.reduce((acc, item) => {
+            const price = Number(item.buyingPrice) || 0;
+            const qty = Number(item.quantity) || 0;
+            return acc + (price * qty);
+        }, 0);
 
-    // 1. Get old purchase to revert inventory
-    const allPurchases = await dbService.getSupplierPurchases(purchase.supplierId);
-    const oldPurchase = allPurchases.find(p => p.id === purchase.id);
-    
-    if (oldPurchase) {
-        await dbService.updateInventoryFromPurchase(oldPurchase, true); // Revert old
-    }
-
-    // 2. Handle new pesticides in the updated purchase
-    for (let i = 0; i < (purchase.items || []).length; i++) {
-        const item = purchase.items[i];
-        if (item.pesticideId.startsWith('new-')) {
-            const finalPesticideId = crypto.randomUUID();
-            purchase.items[i].pesticideId = finalPesticideId;
-            
-            await dbService.addGlobalPesticide({
-                id: finalPesticideId,
-                name: item.pesticideName,
-                activeIngredient: 'Belirtilmedi',
-                defaultDosage: '100ml/100L',
-                category: PesticideCategory.OTHER,
-                description: 'Tedarikçi alımı ile otomatik eklendi.'
-            });
-
-            await dbService.addInventoryItem({
-                id: crypto.randomUUID(),
-                pesticideId: finalPesticideId,
-                pesticideName: item.pesticideName,
-                category: PesticideCategory.OTHER,
-                quantity: 0,
-                unit: item.unit,
-                buyingPrice: Number(item.buyingPrice) || 0,
-                sellingPrice: (Number(item.buyingPrice) || 0) * 1.2,
-                lastUpdated: new Date().toISOString()
-            });
+        // 1. Get old purchase to revert inventory - Use direct lookup instead of getAll
+        const oldPurchase = await dbService.getSupplierPurchaseById(purchase.id);
+        
+        if (oldPurchase) {
+            console.log('Reverting old inventory for:', purchase.id);
+            await dbService.updateInventoryFromPurchase(oldPurchase, true); // Revert old
+        } else {
+            console.warn('Old purchase not found for reverting inventory:', purchase.id);
         }
+
+        // 2. Handle new pesticides in the updated purchase
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            if (String(item.pesticideId).startsWith('new-')) {
+                console.log('Adding new pesticide from purchase:', item.pesticideName);
+                const finalPesticideId = crypto.randomUUID();
+                items[i].pesticideId = finalPesticideId;
+                
+                await dbService.addGlobalPesticide({
+                    id: finalPesticideId,
+                    name: item.pesticideName,
+                    activeIngredient: 'Belirtilmedi',
+                    defaultDosage: '100ml/100L',
+                    category: PesticideCategory.OTHER,
+                    description: 'Tedarikçi alımı ile otomatik eklendi.'
+                });
+
+                await dbService.addInventoryItem({
+                    id: crypto.randomUUID(),
+                    pesticideId: finalPesticideId,
+                    pesticideName: item.pesticideName,
+                    category: PesticideCategory.OTHER,
+                    quantity: 0,
+                    unit: item.unit,
+                    buyingPrice: Number(item.buyingPrice) || 0,
+                    sellingPrice: (Number(item.buyingPrice) || 0) * 1.2,
+                    lastUpdated: new Date().toISOString()
+                });
+            }
+        }
+
+        // 3. Apply new inventory changes
+        console.log('Applying new inventory for:', purchase.id);
+        await dbService.updateInventoryFromPurchase(purchase, false);
+
+        // 4. Update purchase in DB
+        console.log('Finalizing purchase update in DB:', purchase.id);
+        await dbService.updateSupplierPurchase({ ...purchase, isInventoryProcessed: true });
+
+        await refreshStats();
+        console.log('updateSupplierPurchase completed successfully');
+    } catch (error) {
+        console.error('Error in updateSupplierPurchase:', error);
+        throw error;
     }
-
-    // 3. Apply new inventory changes
-    await dbService.updateInventoryFromPurchase(purchase, false);
-
-    // 4. Update purchase in DB
-    await dbService.updateSupplierPurchase({ ...purchase, isInventoryProcessed: true });
-
-    await refreshStats();
   };
 
   const softDeleteSupplierPurchase = async (id: string) => {
@@ -2435,7 +2477,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         messages, sendMessage,
         prescriptionLabel, farmerLabel, farmerPluralLabel,
         addVisit, updateVisit, deleteVisit, softDeleteVisit, restoreVisit, permanentlyDeleteVisit,
-        inventory, trashedInventory, refreshInventory, addInventoryItem, updateInventoryItem, deleteInventoryItem, softDeleteInventoryItem, restoreInventoryItem, permanentlyDeleteInventoryItem,
+        inventory, trashedInventory, refreshInventory, addInventoryItem, updateInventoryItem, bulkUpdateInventoryItems, deleteInventoryItem, softDeleteInventoryItem, restoreInventoryItem, permanentlyDeleteInventoryItem,
         prescriptions, trashedPrescriptions, supplierPurchases, addPrescription, refreshPrescriptions, togglePrescriptionStatus, softDeletePrescription, restorePrescription, permanentlyDeletePrescription,
         news, addNews, updateNews, deleteNews, refreshNews,
         payments, trashedPayments, addPayment, updatePayment, deletePayment, softDeletePayment, restorePayment, permanentlyDeletePayment,

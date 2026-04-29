@@ -65,13 +65,8 @@ export const ProfileScreen: React.FC<ProfileProps> = ({ onBack }) => {
       setError(null);
 
       try {
-          // 1. Update Global State & Local Storage
-          updateUserProfile(formData);
-          
-          // 2. Persist to Firestore if user is logged in
-          if (currentUser) {
-              await dbService.saveUserProfile(currentUser.uid, formData);
-          }
+          // Update Global State & Local Storage (includes Firebase Sync)
+          await updateUserProfile(formData);
 
           setIsSaving(false);
           setShowSuccess(true);
