@@ -8,6 +8,7 @@ import {
     getRedirectResult 
 } from 'firebase/auth';
 import { auth, db } from '../services/firebase';
+import { dbService } from '../services/db';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 interface AuthContextType {
@@ -63,9 +64,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
         checkAuthResults();
 
-        const unsubscribe = onAuthStateChanged(auth, (user) => {
+        const unsubscribe = onAuthStateChanged(auth, async (user) => {
             if (user && user.email) {
                 localStorage.setItem('mks_user_email', user.email);
+                
+                // Track user ID for IndexedDB isolation
+                const lastUid = localStorage.getItem('lastUserId');
+                if (lastUid && lastUid !== user.uid) {
+                    console.log("Farklı bir kullanıcı algılandı. Veritabanı adı 'lastUserId' ile izole edilecek.");
+                }
+                localStorage.setItem('lastUserId', user.uid);
             }
             setCurrentUser(user);
             setLoading(false);
@@ -75,6 +83,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }, []);
 
     const logout = async () => {
+        try {
+            await dbService.clearLocalData();
+        } catch (e) {
+            console.error("Local veri temizleme hatası:", e);
+        }
         await signOut(auth);
     };
 

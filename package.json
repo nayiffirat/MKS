@@ -4,9 +4,10 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
+    "dev": "tsx server.ts",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "preview": "node dist/server.cjs",
+    "start": "node dist/server.cjs",
     "lint": "tsc --noEmit && eslint ."
   },
   "dependencies": {
@@ -29,6 +30,7 @@
     "html2canvas": "^1.4.1",
     "html5-qrcode": "^2.3.8",
     "idb": "^8.0.0",
+    "json-stringify-safe": "^5.0.1",
     "jspdf": "^2.5.1",
     "jspdf-autotable": "^5.0.7",
     "leaflet": "^1.9.4",

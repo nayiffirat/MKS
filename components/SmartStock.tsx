@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAppViewModel } from '../context/AppContext';
 import { Package, TrendingUp, AlertTriangle, ArrowLeft, Bot, RefreshCw, BarChart2, CheckCircle2, Loader2 } from 'lucide-react';
-import { GoogleGenAI } from '@google/genai';
+import { API_BASE } from '../utils/api';
+import { generateAIContent } from '../utils/gemini';
 
 export const SmartStock: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   const { inventory, prescriptions, t } = useAppViewModel();
@@ -11,11 +12,6 @@ export const SmartStock: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   const performAnalysis = async () => {
     setLoading(true);
     try {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) throw new Error("Gemini API anahtarı bulunamadı.");
-
-      const ai = new GoogleGenAI({ apiKey });
-
       // Gather simple stats to avoid huge token usage
       const stockItems = inventory.map(i => `${i.pesticideName} (${i.category}): ${i.quantity} adet/lt`).join('\n');
       
@@ -42,16 +38,17 @@ ${recentSales.slice(0, 1500)}
 
 Lütfen bana çok net ve aksiyona geçirici stok uyarısı ve sipariş tavsiyeleri ver.`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.1-pro-preview',
-        contents: prompt
-      });
+      const text = await generateAIContent(
+        'gemini-3-flash-preview',
+        prompt
+      );
+      
+      setAnalysis(text || "Analiz yapılamadı.");
 
-      setAnalysis(response.text || "Analiz yapılamadı.");
-
-    } catch (error) {
-      console.error(error);
-      setAnalysis("Uyarı: Analiz için sunucu bağlantısı sağlanamadı. Lütfen daha sonra tekrar deneyin veya API ayarlarını kontrol edin.");
+    } catch (error: any) {
+      console.error("Analysis Error:", error?.message || error);
+      const errorMsg = error?.message || error?.toString();
+      setAnalysis(`Uyarı: Analiz sırasında bir hata oluştu.\n\nDetay: ${errorMsg}\n\nLütfen sunucu bağlantınızı kontrol edin.`);
     } finally {
       setLoading(false);
     }

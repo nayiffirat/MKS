@@ -198,7 +198,8 @@ const DEFAULT_PROFILE: UserProfile = {
   companyName: '',
   title: '',
   highContrastMode: false,
-  language: 'tr'
+  language: 'tr',
+  theme: 'APPLE'
 };
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -292,7 +293,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         try {
             const saved = localStorage.getItem('mks_user_profile');
             const parsed = saved ? JSON.parse(saved) : DEFAULT_PROFILE;
-            return { ...DEFAULT_PROFILE, ...parsed };
+            const merged = { ...DEFAULT_PROFILE, ...parsed };
+            if (merged.theme === 'DEFAULT' || !merged.theme) {
+              merged.theme = 'APPLE';
+            }
+            return merged;
         } catch (e) {
             console.error("Profile load error", e);
             return DEFAULT_PROFILE;
@@ -902,7 +907,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         
         const totalPurchased = purchasesForSupplier.reduce((acc, p) => {
             const amt = Math.abs(Number(p.totalAmount) || 0);
-            return acc + (p.type === 'RETURN' ? -amt : amt);
+            // Treat RETURN or negative totalAmount as a reduction of what we purchased
+            return acc + ((p.type === 'RETURN' || (p.totalAmount && p.totalAmount < 0)) ? -amt : amt);
         }, 0);
 
         // Payments TO supplier increase totalPaid, Payments FROM supplier (RECEIVE) decrease totalPaid
@@ -914,7 +920,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         
         return {
             ...s,
-            totalDebt: purchasesForSupplier.filter(p => p.type !== 'RETURN').reduce((acc, p) => acc + (Math.abs(Number(p.totalAmount)) || 0), 0),
+            totalDebt: purchasesForSupplier.filter(p => p.type !== 'RETURN' && !(p.totalAmount && p.totalAmount < 0)).reduce((acc, p) => acc + (Math.abs(Number(p.totalAmount)) || 0), 0),
             balance: (totalPaid || 0) - (totalPurchased || 0) // Negative means we owe money
         };
     });
@@ -1365,6 +1371,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const allPrescriptions = await dbService.getAllPrescriptions();
     const target = allPrescriptions.find(p => p.id === id);
     if (target) {
+      // Revert transaction if it was CASH
+      const allTransactions = await dbService.getTransactions();
+      const relatedTx = allTransactions.find(tx => tx.relatedId === id);
+      if (relatedTx) {
+          await dbService.deleteTransaction(relatedTx.id);
+      }
+
       if (target.isInventoryProcessed) {
         await dbService.revertInventory(target);
       }
@@ -1383,7 +1396,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const allPrescriptions = await dbService.getAllPrescriptions();
     const target = allPrescriptions.find(p => p.id === id);
     if (target) {
-      const restored = { ...target, deletedAt: null as any };
+      if (target.priceType === 'CASH') {
+          const accountList = await dbService.getAccounts();
+          const targetAccount = accountList.find(a => a.type === 'CASH');
+          if (targetAccount) {
+              const txId = crypto.randomUUID();
+              await dbService.addTransaction({
+                  id: txId,
+                  accountId: targetAccount.id,
+                  type: target.type === 'RETURN' ? 'EXPENSE' : 'INCOME',
+                  amount: Math.abs(target.totalAmount || 0),
+                  date: target.date,
+                  description: target.type === 'RETURN' ? 'Peşin İade Kasadan Çıkış (Geri Yüklenen)' : 'Peşin Satış Tahsilatı (Geri Yüklenen)',
+                  category: 'Satış/İade',
+                  relatedId: target.id
+              });
+          }
+      }
+
+      const restored = { ...target, deletedAt: undefined as any };
       await dbService.updatePrescription(restored);
       await dbService.processInventory(restored);
       await refreshPrescriptions();
@@ -1521,6 +1552,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const softDeletePayment = async (id: string) => {
     const payment = payments.find(p => p.id === id);
     if (payment) {
+        // İlgili işlemleri (işlemler ve myPayments) tamamen silerek bakiyeyi geri al
+        const allTransactions = await dbService.getTransactions();
+        const relatedTx = allTransactions.find(tx => tx.relatedId === id);
+        if (relatedTx) {
+          await dbService.deleteTransaction(relatedTx.id);
+        }
+        
+        const myPays = await dbService.getMyPayments();
+        const relatedMyPays = myPays.filter(p => p.relatedId === id);
+        for (const p of relatedMyPays) {
+            await dbService.deleteMyPayment(p.id);
+        }
+
         await dbService.updatePayment({ ...payment, deletedAt: new Date().toISOString() });
         await refreshStats();
     }
@@ -1529,8 +1573,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const restorePayment = async (id: string) => {
     const payment = trashedPayments.find(p => p.id === id);
     if (payment) {
-        await dbService.updatePayment({ ...payment, deletedAt: null as any });
-        await refreshStats();
+        // İşlemleri yeniden oluşturmak için updatePayment fonksiyonunu kullanıyoruz
+        const restoredPayment = { ...payment, deletedAt: undefined as any };
+        await updatePayment(restoredPayment);
     }
   };
 
@@ -1995,6 +2040,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     if (targetPayment) {
+        // İlgili işlemleri (işlemler ve myPayments) tamamen silerek bakiyeyi geri al
+        const transactions = await dbService.getTransactions();
+        const relatedTx = transactions.filter(t => t.relatedId === id);
+        for (const tx of relatedTx) {
+            await dbService.deleteTransaction(tx.id);
+        }
+
+        const myPays = await dbService.getMyPayments();
+        const relatedMyPays = myPays.filter(p => p.relatedId === id);
+        for (const p of relatedMyPays) {
+            await dbService.deleteMyPayment(p.id);
+        }
+
         await dbService.updateSupplierPayment({ ...targetPayment, deletedAt: new Date().toISOString() });
         await refreshStats();
     }
@@ -2003,8 +2061,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const restoreSupplierPayment = async (id: string) => {
     const payment = trashedSupplierPayments.find(p => p.id === id);
     if (payment) {
-        await dbService.updateSupplierPayment({ ...payment, deletedAt: null as any });
-        await refreshStats();
+        // İşlemleri yeniden oluşturmak için updateSupplierPayment fonksiyonunu kullanıyoruz
+        const restoredPayment = { ...payment, deletedAt: undefined as any };
+        await updateSupplierPayment(restoredPayment);
     }
   };
 
@@ -2060,6 +2119,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const allMyPayments = await dbService.getMyPayments();
     const payment = allMyPayments.find(p => p.id === id);
     if (payment) {
+      const allTransactions = await dbService.getTransactions();
+      const relatedTx = allTransactions.find(tx => tx.relatedId === id);
+      if (relatedTx) {
+          await dbService.deleteTransaction(relatedTx.id);
+      }
       await dbService.updateMyPayment({ ...payment, deletedAt: new Date().toISOString() });
       await refreshStats();
     }
@@ -2068,12 +2132,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const restoreMyPayment = async (id: string) => {
     const payment = trashedMyPayments.find(p => p.id === id);
     if (payment) {
-      await dbService.updateMyPayment({ ...payment, deletedAt: null as any });
-      await refreshStats();
+      const restoredPayment = { ...payment, deletedAt: undefined as any };
+      await updateMyPayment(restoredPayment);
     }
   };
 
   const permanentlyDeleteMyPayment = async (id: string) => {
+    const allTransactions = await dbService.getTransactions();
+    const relatedTx = allTransactions.find(tx => tx.relatedId === id);
+    if (relatedTx) {
+      await dbService.deleteTransaction(relatedTx.id);
+    }
     await dbService.deleteMyPayment(id);
     await refreshStats();
   };
@@ -2153,6 +2222,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const softDeleteExpense = async (id: string) => {
     const expense = expenses.find(e => e.id === id);
     if (expense) {
+        const allTransactions = await dbService.getTransactions();
+        const relatedTx = allTransactions.find(tx => tx.relatedId === id);
+        if (relatedTx) {
+          await dbService.deleteTransaction(relatedTx.id);
+        }
         await dbService.updateExpense({ ...expense, deletedAt: new Date().toISOString() });
         await refreshStats();
     }
@@ -2161,8 +2235,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const restoreExpense = async (id: string) => {
     const expense = trashedExpenses.find(e => e.id === id);
     if (expense) {
-        await dbService.updateExpense({ ...expense, deletedAt: null as any });
-        await refreshStats();
+        const restoredExpense = { ...expense, deletedAt: undefined as any };
+        await updateExpense(restoredExpense);
     }
   };
 
@@ -2447,6 +2521,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         
         await cleanupOldData();
         await syncLegacyData();
+        await dbService.rebuildInventoryBalances(); // Fix past inventory mismatches automatically
         await refreshStats();
         await refreshNews();
         await refreshPlants();

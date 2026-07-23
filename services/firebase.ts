@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
-import { getFirestore, enableIndexedDbPersistence, doc, getDocFromServer } from "firebase/firestore";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, getDocFromServer } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 import firebaseConfig from '../firebase-applet-config.json';
 
@@ -9,15 +9,12 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 // The database ID must be provided to getFirestore for Enterprise edition (which is the default in AI Studio)
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({tabManager: persistentMultipleTabManager()})
+});
 export const storage = getStorage(app);
 
-// Enable offline persistence
-if (typeof window !== 'undefined') {
-  enableIndexedDbPersistence(db).catch((err) => {
-    console.warn("Firestore persistence error:", err.code);
-  });
-}
+// Enable offline persistence is now handled by persistentLocalCache above
 
 // CRITICAL: Validate Connection to Firestore on boot
 async function testConnection() {

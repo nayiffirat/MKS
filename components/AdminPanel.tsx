@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, Users, Shield, Calendar, Search, Save, Loader2, Edit3, X, Trash2, KeyRound, ChevronRight, Mail, Clock, LogIn, Newspaper, Plus, Image as ImageIcon, FileText, Link as LinkIcon, RefreshCw, AlertCircle } from 'lucide-react';
+import { ChevronLeft, Users, Shield, Calendar, Search, Save, Loader2, Edit3, X, Trash2, KeyRound, ChevronRight, Mail, Clock, LogIn, Newspaper, Plus, Image as ImageIcon, FileText, Link as LinkIcon, RefreshCw, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { useAppViewModel } from '../context/AppContext';
 import { UserProfile, News } from '../types';
 import { ConfirmationModal } from './ConfirmationModal';
@@ -18,11 +18,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     const [systemErrors, setSystemErrors] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
+    const [userFilter, setUserFilter] = useState<'ALL' | 'trial' | 'active' | 'expired'>('ALL');
     const [editingUser, setEditingUser] = useState<(UserProfile & { uid: string, email?: string }) | null>(null);
     const [editingNews, setEditingNews] = useState<Partial<News> | null>(null);
     const fileInputRef = React.useRef<HTMLInputElement>(null);
     const [isSaving, setIsSaving] = useState(false);
     const [isSyncing, setIsSyncing] = useState(false);
+    const [isPasswordVisible, setIsPasswordVisible] = useState(false);
 
     const handleSyncNews = async () => {
         setIsSyncing(true);
@@ -73,13 +75,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
         loadErrors();
     }, []);
 
-    const loadUsers = async () => {
+    const loadUsers = async (showSuccessFeedback = false) => {
         setIsLoading(true);
         try {
             const data = await getAllUsers();
             setUsers(data);
+            if (showSuccessFeedback) {
+                showToast('Kullanıcı listesi güncel.', 'success');
+                hapticFeedback('success');
+            }
         } catch (error) {
             showToast('Kullanıcılar yüklenirken hata oluştu.', 'error');
+            if (showSuccessFeedback) hapticFeedback('error');
         } finally {
             setIsLoading(false);
         }
@@ -116,6 +123,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                 companyName: editingUser.companyName,
                 title: editingUser.title,
                 role: editingUser.role,
+                password: editingUser.password,
                 subscriptionStatus: editingUser.subscriptionStatus,
                 subscriptionEndsAt: editingUser.subscriptionEndsAt
             });
@@ -228,10 +236,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
         });
     };
 
-    const filteredUsers = users.filter(u => 
-        u.fullName?.toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR')) || 
-        u.email?.toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR'))
-    );
+    const filteredUsers = users.filter(u => {
+        const matchesSearch = (u.fullName || '').toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR')) || 
+            (u.email || '').toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR'));
+            
+        let matchesFilter = true;
+        const isExpired = new Date(u.subscriptionEndsAt || 0) < new Date();
+        const status = isExpired ? 'expired' : (u.subscriptionStatus === 'trial' ? 'trial' : 'active');
+        
+        if (userFilter !== 'ALL') {
+            matchesFilter = status === userFilter;
+        }
+
+        return matchesSearch && matchesFilter;
+    });
 
     const filteredNews = news.filter(n => 
         n.title.toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR')) || 
@@ -276,16 +294,59 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
             </div>
 
             {/* Search */}
-            <div className="relative">
-                <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-500" />
-                <input 
-                    type="text"
-                    placeholder={activeTab === 'USERS' ? "Kullanıcı Ara..." : "Haber Ara..."}
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full bg-stone-900 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-white placeholder:text-stone-600 focus:outline-none focus:border-emerald-500/50 transition-colors"
-                />
+            <div className="flex gap-2">
+                <div className="relative flex-1">
+                    <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-500" />
+                    <input 
+                        type="text"
+                        placeholder={activeTab === 'USERS' ? "Kullanıcı Ara..." : "Haber Ara..."}
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="w-full bg-stone-900 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-white placeholder:text-stone-600 focus:outline-none focus:border-emerald-500/50 transition-colors"
+                    />
+                </div>
+                {activeTab === 'USERS' && (
+                    <button
+                        onClick={() => {
+                            if (isPasswordVisible) {
+                                setIsPasswordVisible(false);
+                            } else {
+                                const pwd = window.prompt("Lütfen yönetici şifresini girin:");
+                                if (pwd === "636311") {
+                                    setIsPasswordVisible(true);
+                                } else if (pwd !== null) {
+                                    showToast("Hatalı şifre!", "error");
+                                }
+                            }
+                        }}
+                        className={`p-4 border rounded-2xl transition-colors flex items-center justify-center flex-shrink-0 ${isPasswordVisible ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-400' : 'bg-stone-900 border-white/10 text-stone-400 hover:text-white'}`}
+                        title={isPasswordVisible ? "Şifreleri Gizle" : "Şifreleri Göster"}
+                    >
+                        {isPasswordVisible ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                )}
             </div>
+
+            {activeTab === 'USERS' && (
+                <div className="flex flex-col gap-3">
+                    <div className="flex gap-2">
+                        <button 
+                            onClick={() => { hapticFeedback('warning'); loadUsers(true); }}
+                            disabled={isLoading}
+                            className="flex-1 py-4 bg-emerald-600/10 border border-emerald-500/20 text-emerald-400 rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-emerald-600/20 transition-all active:scale-[0.98] disabled:opacity-50"
+                        >
+                            {isLoading ? <Loader2 size={20} className="animate-spin" /> : <RefreshCw size={20} />}
+                            Yenile
+                        </button>
+                    </div>
+                    <div className="flex bg-stone-900/50 p-1 rounded-2xl border border-white/5 overflow-x-auto custom-scrollbar">
+                        <button onClick={() => setUserFilter('ALL')} className={`flex-1 min-w-[80px] py-2 rounded-xl font-bold text-[10px] uppercase tracking-widest transition-all ${userFilter === 'ALL' ? 'bg-stone-800 text-white shadow-lg' : 'text-stone-500 hover:text-stone-300'}`}>Tümü</button>
+                        <button onClick={() => setUserFilter('active')} className={`flex-1 min-w-[80px] py-2 rounded-xl font-bold text-[10px] uppercase tracking-widest transition-all ${userFilter === 'active' ? 'bg-emerald-900/30 text-emerald-400 border border-emerald-500/30' : 'text-stone-500 border border-transparent hover:text-stone-300'}`}>Aktif</button>
+                        <button onClick={() => setUserFilter('trial')} className={`flex-1 min-w-[80px] py-2 rounded-xl font-bold text-[10px] uppercase tracking-widest transition-all ${userFilter === 'trial' ? 'bg-yellow-900/30 text-yellow-500 border border-yellow-500/30' : 'text-stone-500 border border-transparent hover:text-stone-300'}`}>Deneme</button>
+                        <button onClick={() => setUserFilter('expired')} className={`flex-1 min-w-[80px] py-2 rounded-xl font-bold text-[10px] uppercase tracking-widest transition-all ${userFilter === 'expired' ? 'bg-red-900/30 text-red-500 border border-red-500/30' : 'text-stone-500 border border-transparent hover:text-stone-300'}`}>Süresi Dolmuş</button>
+                    </div>
+                </div>
+            )}
 
             {activeTab === 'NEWS' && (
                 <div className="flex gap-2">
@@ -344,6 +405,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                                             </span>
                                         </div>
                                         <p className="text-xs text-stone-400 truncate">{user.email || user.uid}</p>
+                                        {user.password && (
+                                            <div className="flex items-center gap-1.5 mt-1">
+                                                <KeyRound size={10} className="text-stone-500" />
+                                                <p className="text-[10px] text-emerald-400 font-mono tracking-wider">
+                                                    {isPasswordVisible ? user.password : '********'}
+                                                </p>
+                                            </div>
+                                        )}
                                     </div>
 
                                     <div className="flex flex-col items-end gap-2 flex-shrink-0">
@@ -496,6 +565,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                                         placeholder="E-posta Adresi"
                                         className="w-full bg-stone-950 border border-white/10 rounded-xl pl-11 pr-4 py-3 text-white focus:outline-none focus:border-emerald-500"
                                     />
+                                </div>
+                                <div className="relative">
+                                    <KeyRound size={16} className="absolute left-4 top-4 text-stone-500" />
+                                    <input 
+                                        type={isPasswordVisible ? "text" : "password"}
+                                        value={editingUser.password || ''}
+                                        onChange={(e) => setEditingUser({...editingUser, password: e.target.value})}
+                                        placeholder="Kullanıcı Şifresi (Gösterim Amaçlı)"
+                                        className="w-full bg-stone-950 border border-white/10 rounded-xl pl-11 pr-4 py-3 text-emerald-400 font-mono tracking-wider focus:outline-none focus:border-emerald-500"
+                                    />
+                                    <p className="text-[10px] text-stone-500 mt-1.5 pl-1 leading-tight">Not: Bu şifre kullanıcının sisteme giriş yaparken kullandığı şifreyi ifade eder. Değiştirildiğinde kullanıcının asıl Firebase üyeliğindeki şifre değişmez, sadece bu panelde görüntülenen kayıt güncellenir. Tam şifre sıfırlama işlemi için aşağıdaki e-posta bağlantısını kullanın.</p>
                                 </div>
                                 <input 
                                     type="text" 

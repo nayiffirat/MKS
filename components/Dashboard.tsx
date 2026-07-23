@@ -9,7 +9,7 @@ import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, 
   Tooltip, CartesianGrid, PieChart, Pie, Cell 
 } from 'recharts';
-import { Users, FileText, Sprout, Plus, X, Calendar, ChevronRight, Droplet, ArrowRight, Zap, MapPin, Send, Loader2, CalendarCheck, Clock, Mic, Bell, CalendarClock, TrendingUp, AlertCircle, Bug, Package, Route, FlaskConical, Star, Truck, Search, DollarSign, Trash2, Wallet, ScanSearch, Calculator, Map, Newspaper, Save, RefreshCw, Camera } from 'lucide-react';
+import { Users, FileText, Sprout, Plus, X, Calendar, ChevronRight, Droplet, ArrowRight, Zap, MapPin, Send, Loader2, CalendarCheck, Clock, Mic, Bell, CalendarClock, TrendingUp, AlertCircle, Bug, Package, Route, FlaskConical, Star, Truck, Search, DollarSign, Trash2, Wallet, ScanSearch, Calculator, Map, Newspaper, Save, RefreshCw, Camera, Bot, Database } from 'lucide-react';
 import { ViewState, Pesticide, PesticideCategory, SupplierPurchase } from '../types';
 import { dbService } from '../services/db';
 import { formatCurrency, getCurrencySuffix } from '../utils/currency';
@@ -128,7 +128,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     prescriptions.forEach(p => {
         const date = p.date.split('T')[0];
         if (days.includes(date)) {
-            salesMap[date] = (salesMap[date] || 0) + (p.totalAmount || 0);
+            const amt = p.totalAmount || 0;
+            const isReturn = p.type === 'RETURN' || amt < 0;
+            salesMap[date] = (salesMap[date] || 0) + (isReturn ? -Math.abs(amt) : Math.abs(amt));
         }
     });
 
@@ -145,6 +147,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   };
 
   const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#f97316'];
+
+  const [isBuyPlanModalOpen, setIsBuyPlanModalOpen] = useState(false);
 
   return (
     <div className="p-3 space-y-3 pb-24 animate-in fade-in duration-500">
@@ -171,6 +175,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                         </h1>
                     </div>
                     <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => setIsBuyPlanModalOpen(true)}
+                            className="relative flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 border border-emerald-400/30 rounded-full text-white shadow-[0_0_15px_rgba(16,185,129,0.3)] active:scale-90 transition-all group"
+                        >
+                            <Star size={14} className="fill-white" />
+                            <span className="text-[10px] font-black uppercase tracking-widest text-white">Satın Al</span>
+                        </button>
                         <button 
                             onClick={() => onNavigate('NOTIFICATIONS')}
                             className="relative flex items-center gap-2 px-4 py-2.5 bg-stone-800/50 backdrop-blur-xl border border-white/10 rounded-full text-stone-300 shadow-lg active:scale-90 transition-all hover:bg-stone-700 hover:text-white group"
@@ -367,22 +378,40 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
             </button>
         </div>
 
-        <div className="grid grid-cols-3 gap-2 mt-3">
+        <div className="mt-3 mb-2 grid grid-cols-2 gap-2">
             <button 
-                onClick={() => onNavigate('FINDEKS')}
-                className="col-span-3 group flex items-center justify-center gap-3 p-5 bg-amber-500/10 backdrop-blur-sm rounded-[32px] border border-amber-500/30 active:scale-95 transition-all shadow-xl shadow-amber-900/10"
+                onClick={() => onNavigate('AI_ASSISTANT')}
+                className="w-full group flex flex-col items-center justify-center gap-2 p-4 bg-emerald-500/10 backdrop-blur-sm rounded-3xl border border-emerald-500/30 active:scale-95 transition-all shadow-xl shadow-emerald-900/10 text-center relative overflow-hidden"
             >
-                <div className="bg-amber-500 text-white p-3 rounded-2xl shadow-lg group-hover:scale-110 transition-transform">
-                    <ScanSearch size={24}/>
+                <div className="absolute inset-0 bg-emerald-400/5 rotate-12 scale-150 group-hover:rotate-45 transition-transform duration-700"></div>
+                <div className="bg-gradient-to-br from-emerald-400 to-teal-500 text-white p-2.5 rounded-2xl shadow-lg group-hover:scale-110 transition-transform relative z-10">
+                    <Bot size={20}/>
                 </div>
-                <div className="text-left">
-                    <span className="block font-black text-sm text-amber-500 uppercase tracking-[0.2em]">FINDEKS ANALİZ</span>
-                    <span className="text-[10px] text-amber-600 font-bold uppercase opacity-70">Çiftçi Risk & Potansiyel Raporu</span>
+                <div className="relative z-10">
+                    <span className="block font-black text-xs text-emerald-400 uppercase tracking-widest">MKS ASİSTAN</span>
+                    <span className="text-[8px] text-emerald-600 font-bold uppercase opacity-70 mt-1">Yapay Zeka Uzmanı</span>
                 </div>
             </button>
+            <button 
+                onClick={() => onNavigate('MKS_MUHENDISIM')}
+                className="w-full group flex flex-col items-center justify-center gap-2 p-4 bg-purple-500/10 backdrop-blur-sm rounded-3xl border border-purple-500/30 active:scale-95 transition-all shadow-xl shadow-purple-900/10 text-center relative overflow-hidden"
+            >
+                <div className="absolute inset-0 bg-purple-400/5 rotate-12 scale-150 group-hover:rotate-45 transition-transform duration-700"></div>
+                <div className="bg-gradient-to-br from-purple-400 to-indigo-500 text-white p-2.5 rounded-2xl shadow-lg group-hover:scale-110 transition-transform relative z-10">
+                    <FlaskConical size={20}/>
+                </div>
+                <div className="relative z-10">
+                    <span className="block font-black text-xs text-purple-400 uppercase tracking-widest">MÜHENDİSİM</span>
+                    <span className="text-[8px] text-purple-600 font-bold uppercase opacity-70 mt-1">Dijital Danışman</span>
+                </div>
+            </button>
+        </div>
+
+        <div className="grid grid-cols-4 gap-2">
             <ActionButton onClick={() => onNavigate('CALCULATOR')} icon={Calculator} label={t('dashboard.calculate')} color="emerald" />
-            <ActionButton onClick={() => onNavigate('VISIT_NEW')} icon={Calendar} label={t('dashboard.visit')} color="blue" />
-            <ActionButton onClick={() => onNavigate('PLANTS')} icon={Sprout} label="Bitkiler" color="purple" />
+            <ActionButton onClick={() => onNavigate('PRESCRIPTION_NEW')} icon={FileText} label="Reçete" color="blue" />
+            <ActionButton onClick={() => onNavigate('SILO')} icon={Database} label="Silom" color="orange" />
+            <ActionButton onClick={() => onNavigate('FINDEKS')} icon={Wallet} label="Findeks" color="purple" />
         </div>
       </div>
 
@@ -762,6 +791,74 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* --- BUY PLAN MODAL --- */}
+      {isBuyPlanModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-in fade-in duration-300">
+            <div className="w-full max-w-sm bg-stone-900 border border-emerald-500/30 rounded-3xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300 relative">
+                
+                {/* Close Button */}
+                <button 
+                    onClick={() => setIsBuyPlanModalOpen(false)}
+                    className="absolute top-4 right-4 p-2 bg-stone-800/80 hover:bg-stone-700 text-stone-400 hover:text-white rounded-full transition-colors z-10"
+                >
+                    <X size={18} />
+                </button>
+
+                {/* Header */}
+                <div className="relative p-6 px-8 text-center" style={{ background: 'linear-gradient(135deg, rgba(16,185,129,0.1) 0%, rgba(20,83,45,0) 100%)' }}>
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 pointer-events-none"></div>
+                    <div className="w-16 h-16 mx-auto bg-gradient-to-br from-emerald-400 to-teal-500 rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-emerald-500/20 rotate-3">
+                        <Star size={32} className="text-white fill-white" />
+                    </div>
+                    <h3 className="text-xl font-black text-white tracking-tight mb-1">PRO Üyelik</h3>
+                    <p className="text-[11px] text-emerald-400 font-medium uppercase tracking-widest">Sınırsız Özelliklerin Kilidini Açın</p>
+                </div>
+
+                {/* Features List */}
+                <div className="p-6 pt-2 space-y-4">
+                    <ul className="space-y-3">
+                        {['Sınırsız çiftçi ve reçete kaydı', 'Zirai yapay zeka asistanı', 'Detaylı finans ve ürün raporları', 'Premium WhatsApp desteği', 'Gelişmiş borç ve stok takibi', 'HER YIL SABİT FİYAT GARANTİSİ'].map((feature, idx) => (
+                            <li key={idx} className="flex items-start gap-3">
+                                <div className="mt-0.5 w-5 h-5 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0">
+                                    <svg className="w-2.5 h-2.5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                    </svg>
+                                </div>
+                                <span className={`text-xs ${feature === 'HER YIL SABİT FİYAT GARANTİSİ' ? 'text-amber-400 font-black tracking-widest' : 'text-stone-300 font-medium'} leading-relaxed`}>{feature}</span>
+                            </li>
+                        ))}
+                    </ul>
+
+                    {/* Pricing */}
+                    <div className="pt-5 pb-3 mt-5 border-t border-white/5 text-center">
+                        <div className="text-[9px] font-black text-stone-500 uppercase tracking-widest mb-1.5 flex flex-col gap-0.5">
+                            <span className="text-emerald-400">HER YIL SABİT FİYAT GARANTİSİ</span>
+                            <span>Tek Seferlik Sabit Yıllık Ücret</span>
+                        </div>
+                        <div className="flex items-center justify-center items-baseline gap-1">
+                            <span className="text-4xl font-black text-white tracking-tighter">170</span>
+                            <span className="text-lg font-bold text-stone-400">$</span>
+                        </div>
+                    </div>
+
+                    {/* Buy Button */}
+                    <button 
+                        onClick={() => {
+                            const message = encodeURIComponent("Mühendis Kayıt Uygulamasını çok beğendim ve ben de bu aileye katılmak istiyorum");
+                            window.open(`https://wa.me/905428254087?text=${message}`, '_blank');
+                            setIsBuyPlanModalOpen(false);
+                        }}
+                        className="w-full mt-2 py-4 bg-gradient-to-r from-emerald-500 to-teal-600 rounded-2xl text-white font-black text-sm uppercase tracking-widest shadow-[0_0_20px_rgba(16,185,129,0.3)] active:scale-95 transition-all flex items-center justify-center gap-2 hover:brightness-110"
+                    >
+                        <Zap size={18} className="fill-white" />
+                        Şimdi Satın Al
+                    </button>
+                    <p className="text-center text-[9px] text-stone-500 mt-3 font-medium">Ödeme işlemi için WhatsApp üzerinden iletişime geçilecektir.</p>
+                </div>
+            </div>
         </div>
       )}
     </div>

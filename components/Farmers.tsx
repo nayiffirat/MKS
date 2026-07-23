@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { ContactService, ContactInfo } from '../services/contact';
 import { Farmer, VisitLog, Prescription, ManualDebt, Payment, Pesticide } from '../types';
 import { COMMON_CROPS, CROP_PESTICIDE_COSTS, DEFAULT_PESTICIDE_COST, CROP_AGRONOMY_INTEL, DEFAULT_AGRONOMY } from '../constants';
-import { Search, Phone, MessageCircle, MapPin, Wheat, ChevronLeft, ChevronRight, Contact, Loader2, User, Ruler, FileText, Calendar, Navigation, Plus, X, ArrowLeft, Edit2, Trash2, CheckSquare, Square, Check, FlaskConical, Clock, ImageIcon, Upload, AlertCircle, MessageSquare, Share2, Save, Download, FileJson, RefreshCw, RefreshCcw, Wallet, History, CreditCard, TrendingDown, TrendingUp as TrendingUpIcon, Send, Copy, ClipboardList, AlertTriangle, Sprout, Info, Scale, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { Search, Phone, MessageCircle, MapPin, Wheat, ChevronLeft, ChevronRight, Contact, Loader2, User, Ruler, FileText, Calendar, Navigation, Plus, X, ArrowLeft, Edit2, Trash2, CheckSquare, Square, Check, FlaskConical, Clock, ImageIcon, Upload, AlertCircle, MessageSquare, Share2, Save, Download, FileJson, RefreshCw, RefreshCcw, Wallet, History, CreditCard, TrendingDown, TrendingUp as TrendingUpIcon, Send, Copy, ClipboardList, AlertTriangle, Sprout, Info, Scale, ShieldAlert, ShieldCheck, Hammer, ClipboardCheck } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
@@ -232,6 +232,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
     addPrescription,
     togglePrescriptionStatus,
     softDeletePrescription,
+    refreshStats,
     t
   } = useAppViewModel();
   const isSales = activeTeamMember?.role === 'SALES';
@@ -343,12 +344,12 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const [isDataLoading, setIsDataLoading] = useState(false);
 
   const farmerPrescriptions = useMemo(() => 
-    prescriptions.filter(p => p.farmerId === selectedFarmer?.id)
+    prescriptions.filter(p => !p.deletedAt && p.farmerId === selectedFarmer?.id)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
   [prescriptions, selectedFarmer]);
 
   const farmerManualDebts = useMemo(() => 
-    manualDebts.filter(d => d.farmerId === selectedFarmer?.id)
+    manualDebts.filter(d => !d.deletedAt && d.farmerId === selectedFarmer?.id)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
   [manualDebts, selectedFarmer]);
 
@@ -428,6 +429,60 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const [reportFieldId, setReportFieldId] = useState<string>('ALL');
   const [reportCrop, setReportCrop] = useState<string>('ALL');
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+
+  // Cari Onar States
+  const [isRepairModalOpen, setIsRepairModalOpen] = useState(false);
+  const [repairState, setRepairState] = useState<'IDLE' | 'ANALYZING' | 'RESULT' | 'REPAIRING'>('IDLE');
+  const [repairMismatches, setRepairMismatches] = useState<{
+      farmerId: string, 
+      farmerName: string, 
+      currentBalance: number, 
+      calculatedBalance: number, 
+      brokenPrescriptions: {id: string, expected: number, actual: number}[],
+      brokenPayments?: {id: string, expected: number, actual: number}[],
+      brokenMyPayments?: {id: string, expected: number, actual: number}[],
+      brokenManualDebts?: {id: string, expected: number, actual: number}[]
+  }[]>([]);
+  const [selectedRepairs, setSelectedRepairs] = useState<Set<string>>(new Set());
+
+  const handleAnalyzeFarmers = async () => {
+      setRepairState('ANALYZING');
+      try {
+          const results = await dbService.analyzeFarmerBalances();
+          setRepairMismatches(results);
+          setSelectedRepairs(new Set(results.map(r => r.farmerId)));
+          setRepairState('RESULT');
+      } catch (error) {
+          console.error("Analysis error:", error);
+          showToast("Cariler analiz edilirken hata oluştu.", "error");
+          setIsRepairModalOpen(false);
+          setRepairState('IDLE');
+      }
+  };
+
+  const handleRepairFarmers = async () => {
+      setRepairState('REPAIRING');
+      try {
+          const selectedFixes = repairMismatches.filter(m => selectedRepairs.has(m.farmerId));
+          await dbService.applyFarmerFixes(selectedFixes.map(m => ({
+              farmerId: m.farmerId,
+              brokenPrescriptions: m.brokenPrescriptions,
+              brokenPayments: m.brokenPayments,
+              brokenMyPayments: m.brokenMyPayments,
+              brokenManualDebts: m.brokenManualDebts
+          })));
+          showToast("Seçilen cariler kusursuz bir şekilde onarıldı.", "success");
+          
+          await refreshStats();
+          setIsRepairModalOpen(false);
+          setRepairState('IDLE');
+      } catch (error) {
+          console.error("Repair error:", error);
+          showToast("Cariler onarılırken hata oluştu.", "error");
+          setRepairState('RESULT');
+      }
+  };
+
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const reportRef = useRef<HTMLDivElement>(null);
 
@@ -454,7 +509,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
 
   // Set default selected year to the latest available year
   const farmerPayments = useMemo(() => 
-    payments.filter(p => p.farmerId === selectedFarmer?.id)
+    payments.filter(p => !p.deletedAt && p.farmerId === selectedFarmer?.id)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()), 
   [payments, selectedFarmer]);
   
@@ -481,12 +536,15 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
     // Only include checks/notes that do not have a relatedId (i.e. not generated by a normal Payment record) to prevent duplication
     const farmerMyPayments = myPayments.filter(p => p.farmerId === selectedFarmer.id && !p.deletedAt && p.status !== 'CANCELLED' && !p.relatedId);
     return [
-        ...farmerPrescriptions.map(p => ({ 
-            ...p, 
-            type: p.priceType === 'CASH' ? 'CASH' : 'DEBT', 
-            label: p.priceType === 'CASH' ? 'Peşin Satış' : ((p.totalAmount || 0) < 0 ? 'İade Makbuzu' : `${prescriptionLabel} Satışı`),
-            note: p.prescriptionNo ? `Fatura No: ${p.prescriptionNo}` : ''
-        })),
+        ...farmerPrescriptions.map(p => {
+            const isReturn = p.type === 'RETURN' || (p.totalAmount || 0) < 0;
+            return { 
+                ...p, 
+                type: p.priceType === 'CASH' ? 'CASH' : 'DEBT', 
+                label: p.priceType === 'CASH' ? 'Peşin Satış' : (isReturn ? 'İade Makbuzu' : `${prescriptionLabel} Satışı`),
+                note: p.prescriptionNo ? `Fatura No: ${p.prescriptionNo}` : ''
+            };
+        }),
         ...farmerPayments.map(p => ({ 
             ...p, 
             type: 'PAYMENT', 
@@ -499,10 +557,10 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
             date: p.issueDate,
             note: p.note
         })),
-        ...farmerManualDebts.map(d => ({ 
+        ...farmerManualDebts.filter(d => !d.id.startsWith('turnover-')).map(d => ({ 
             ...d, 
             type: 'DEBT', 
-            label: 'Manuel Borç' 
+            label: 'Manuel Borç/Alacak' 
         }))
     ]
     .filter(item => {
@@ -532,11 +590,19 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
     .sort((a, b) => new Date((a as any).date).getTime() - new Date((b as any).date).getTime());
   }, [farmerPrescriptions, farmerPayments, farmerManualDebts, myPayments, reportStartDate, reportEndDate, reportFieldId, reportCrop, selectedFarmer, prescriptionLabel]);
 
-  const reportTotalDebt = useMemo(() => reportItems.filter(item => item.type === 'DEBT' && ((item as any).totalAmount >= 0 || (item as any).amount >= 0)).reduce((acc, item) => acc + ((item as any).amount || (item as any).totalAmount || 0), 0), [reportItems]);
+  const reportTotalDebt = useMemo(() => reportItems.filter(item => {
+      if (item.type !== 'DEBT') return false;
+      const amt = (item as any).totalAmount !== undefined ? (item as any).totalAmount : (item as any).amount;
+      return (Number(amt) || 0) >= 0;
+  }).reduce((acc, item) => acc + ((item as any).amount || (item as any).totalAmount || 0), 0), [reportItems]);
   const reportTotalPaid = useMemo(() => {
-      const payments = reportItems.filter(item => item.type === 'PAYMENT').reduce((acc, item) => acc + (item as any).amount, 0);
-      const returns = reportItems.filter(item => item.type === 'DEBT' && (item as any).totalAmount < 0).reduce((acc, item) => acc + Math.abs((item as any).totalAmount), 0);
-      return payments + returns;
+      const payments = reportItems.filter(item => item.type === 'PAYMENT').reduce((acc, item) => acc + ((item as any).amount || 0), 0);
+      const returnsOrCredit = reportItems.filter(item => {
+          if (item.type !== 'DEBT') return false;
+          const amt = (item as any).totalAmount !== undefined ? (item as any).totalAmount : (item as any).amount;
+          return (Number(amt) || 0) < 0 || item.label === 'İade Makbuzu';
+      }).reduce((acc, item) => acc + Math.abs((item as any).totalAmount || (item as any).amount || 0), 0);
+      return payments + returnsOrCredit;
   }, [reportItems]);
   const reportBalance = reportTotalPaid - reportTotalDebt;
 
@@ -561,7 +627,9 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       // Sum all transactions BEFORE the selected year
       farmerPrescriptions.forEach(p => {
           if (new Date(p.date).getFullYear() < selectedYear && p.priceType !== 'CASH') {
-              balance -= (p.totalAmount || 0);
+              const amt = Number(p.totalAmount) || 0;
+              const isReturn = p.type === 'RETURN' || amt < 0;
+              balance -= (isReturn ? -Math.abs(amt) : Math.abs(amt));
           }
       });
       
@@ -588,7 +656,11 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
 
   const yearTotalPaid = useMemo(() => filteredPayments.reduce((acc, p) => acc + p.amount, 0), [filteredPayments]);
   const yearTotalDebt = useMemo(() => 
-    filteredPrescriptions.filter(p => p.priceType !== 'CASH').reduce((acc, p) => acc + (p.totalAmount || 0), 0) + 
+    filteredPrescriptions.filter(p => p.priceType !== 'CASH').reduce((acc, p) => {
+        const amt = Number(p.totalAmount) || 0;
+        const isReturn = p.type === 'RETURN' || amt < 0;
+        return acc + (isReturn ? -Math.abs(amt) : Math.abs(amt));
+    }, 0) + 
     filteredManualDebts.filter(d => !d.id.startsWith('turnover-')).reduce((acc, d) => acc + d.amount, 0),
   [filteredPrescriptions, filteredManualDebts]);
 
@@ -601,7 +673,11 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       return cashPayments + checkPayments;
   }, [farmerPayments, myPayments, selectedFarmer]);
 
-  const totalDebt = farmerPrescriptions.filter(p => p.priceType !== 'CASH').reduce((acc, p) => acc + (p.totalAmount || 0), 0) + farmerManualDebts.filter(d => !d.id.startsWith('turnover-')).reduce((acc, d) => acc + d.amount, 0);
+  const totalDebt = farmerPrescriptions.filter(p => p.priceType !== 'CASH').reduce((acc, p) => {
+      const amt = Number(p.totalAmount) || 0;
+      const isReturn = p.type === 'RETURN' || amt < 0;
+      return acc + (isReturn ? -Math.abs(amt) : Math.abs(amt));
+  }, 0) + farmerManualDebts.filter(d => !d.id.startsWith('turnover-')).reduce((acc, d) => acc + d.amount, 0);
   const overallBalance = totalPaid - totalDebt;
 
   useEffect(() => {
@@ -700,14 +776,15 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
         });
 
         const imgData = canvas.toDataURL('image/jpeg', 0.95);
-        const pdf = new jsPDF('p', 'mm', 'a5');
-        const pdfWidth = pdf.internal.pageSize.getWidth();
-        const pdfHeight = pdf.internal.pageSize.getHeight();
-        const imgWidth = canvas.width;
-        const imgHeight = canvas.height;
-        const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight);
         
-        pdf.addImage(imgData, 'JPEG', 0, 0, imgWidth * ratio, imgHeight * ratio);
+        // Use pixel unit and set exact canvas size for one continuous beautiful PDF
+        const pdf = new jsPDF({
+            orientation: canvas.width > canvas.height ? 'l' : 'p',
+            unit: 'px',
+            format: [canvas.width, canvas.height]
+        });
+        
+        pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
         
         // Türkçe karakterleri temizle ve ASCII'ye çevir
         const charMap: {[key: string]: string} = {'Ğ':'G','ğ':'g','Ü':'U','ü':'u','Ş':'S','ş':'s','İ':'I','ı':'i','Ö':'O','ö':'o','Ç':'C','ç':'c'};
@@ -742,7 +819,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
 
     } catch (error) {
         console.error("PDF Action Error:", error);
-        alert("PDF oluşturulurken hata oluştu.");
+        showToast("PDF oluşturulurken hata oluştu.", "error");
     } finally {
         setIsProcessingPdf(false);
     }
@@ -760,7 +837,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
         setSelectedImportIds(new Set(tempContacts.filter(c => !c.isAlreadyRegistered).map(c => c.id)));
         setIsImportModalOpen(true);
     } else {
-        alert("Kişi bulunamadı.");
+        showToast("Kişi bulunamadı.", "info");
     }
   };
 
@@ -783,7 +860,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       try {
           const contacts = await ContactService.parseVCF(file);
           processImportedContacts(contacts);
-      } catch (err) { alert("Dosya hatası."); } 
+      } catch (err) { showToast("Dosya hatası.", "error"); } 
       finally { setIsImporting(false); if (fileInputRef.current) fileInputRef.current.value = ''; }
   };
 
@@ -800,7 +877,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           await loadFarmers();
           setIsImportModalOpen(false);
           setImportPreviewList([]);
-          alert(`${toAdd.length} çiftçi eklendi.`);
+          showToast(`${toAdd.length} çiftçi eklendi.`, "success");
       }
       setIsImporting(false);
   };
@@ -992,6 +1069,132 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       setIsPaymentModalOpen(true);
   };
 
+  const handleSendReceipt = async (payment: Payment) => {
+      hapticFeedback('medium');
+      const farmerName = selectedFarmer?.fullName || 'Sayın Müşterimiz';
+      const dateStr = new Date(payment.date).toLocaleDateString('tr-TR');
+      const amountStr = formatCurrency(payment.amount, userProfile?.currency || 'TRY');
+      const paymentTypeStr = payment.method === 'CHECK' ? 'Çek' : 
+                          payment.method === 'TEDYE' ? 'Tediye' : 'Nakit/Diğer';
+                          
+      setIsProcessingPdf(true);
+      try {
+          const container = document.createElement('div');
+          container.style.position = 'absolute';
+          container.style.left = '-9999px';
+          container.style.top = '0';
+          container.innerHTML = `
+              <div id="receipt-print-${payment.id}" style="width: 400px; padding: 40px; background: white; color: #1c1917; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+                  <div style="text-align: center; margin-bottom: 30px;">
+                      <h2 style="margin: 0; font-size: 26px; font-weight: 900; color: #064e3b; text-transform: uppercase;">${userProfile?.companyName || 'ZİRAİ OTOMASYON'}</h2>
+                      <p style="margin: 5px 0 0; font-size: 14px; font-weight: 600; color: #57534e; letter-spacing: 2px;">TAHSİLAT MAKBUZU</p>
+                  </div>
+                  <div style="border-top: 2px dashed #d6d3d1; margin: 20px 0;"></div>
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 15px;">
+                      <span style="color: #78716c; font-weight: 600;">Tarih:</span>
+                      <strong style="color: #292524;">${dateStr}</strong>
+                  </div>
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 15px;">
+                      <span style="color: #78716c; font-weight: 600;">Müşteri:</span>
+                      <strong style="color: #292524;">${farmerName}</strong>
+                  </div>
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 15px;">
+                      <span style="color: #78716c; font-weight: 600;">Ödeme:</span>
+                      <strong style="color: #292524;">${paymentTypeStr}</strong>
+                  </div>
+                  ${payment.dueDate ? `
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 15px;">
+                      <span style="color: #78716c; font-weight: 600;">Vade:</span>
+                      <strong style="color: #292524;">${new Date(payment.dueDate).toLocaleDateString('tr-TR')}</strong>
+                  </div>` : ''}
+                  ${payment.note ? `
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 15px;">
+                      <span style="color: #78716c; font-weight: 600;">Not:</span>
+                      <strong style="color: #292524;">${payment.note}</strong>
+                  </div>` : ''}
+                  <div style="border-top: 2px dashed #d6d3d1; margin: 20px 0;"></div>
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px;">
+                      <span style="font-weight: 900; font-size: 18px; color: #292524;">TUTAR:</span>
+                      <strong style="font-size: 28px; color: #059669;">${amountStr}</strong>
+                  </div>
+                  <div style="text-align: center; margin-top: 40px; font-size: 12px; font-weight: 600; color: #a8a29e;">
+                      Bizi tercih ettiğiniz için teşekkür ederiz.
+                  </div>
+              </div>
+          `;
+          document.body.appendChild(container);
+          
+          const elementToCapture = container.firstElementChild as HTMLElement;
+          const canvas = await html2canvas(elementToCapture, {
+              scale: 2, 
+              backgroundColor: '#ffffff',
+              useCORS: true,
+              logging: false
+          });
+          
+          document.body.removeChild(container);
+          
+          const imgData = canvas.toDataURL('image/jpeg', 0.95);
+          const pdf = new jsPDF({
+              orientation: 'p',
+              unit: 'px',
+              format: [canvas.width, canvas.height]
+          });
+          
+          pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+          const pdfBlob = pdf.output('blob');
+          
+          const charMap: {[key: string]: string} = {'Ğ':'G','ğ':'g','Ü':'U','ü':'u','Ş':'S','ş':'s','İ':'I','ı':'i','Ö':'O','ö':'o','Ç':'C','ç':'c'};
+          const safeName = farmerName
+              .replace(/[ĞğÜüŞşİıÖöÇç]/g, match => charMap[match])
+              .replace(/[^a-zA-Z0-9]/g, '_')
+              .replace(/_+/g, '_')
+              .replace(/^_|_$/g, '');
+          const fileName = `${safeName}_Tahsilat_Makbuzu.pdf`;
+          
+          const fallbackToWhatsApp = (phone?: string, text?: string) => {
+              const encodedMessage = encodeURIComponent(text || '');
+              let phoneParam = '';
+              if (phone) {
+                  let cleanPhone = phone.replace(/[^0-9]/g, '');
+                  if (cleanPhone.length === 10) {
+                      cleanPhone = '90' + cleanPhone;
+                  }
+                  phoneParam = cleanPhone.replace('+', '');
+              }
+              const whatsappUrl = phoneParam 
+                  ? `https://wa.me/${phoneParam}?text=${encodedMessage}` 
+                  : `https://wa.me/?text=${encodedMessage}`;
+              window.open(whatsappUrl, '_blank');
+          };
+
+          const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
+          let message = `Merhaba ${farmerName},\nTahsilat makbuzunuz ektedir.\n\nTutar: ${amountStr}\nBizi tercih ettiğiniz için teşekkür ederiz.\n${userProfile?.companyName || 'Zirai Otomasyon'}`;
+          const shareData = {
+              files: [file],
+              title: 'Tahsilat Makbuzu',
+              text: message
+          };
+          
+          if (navigator.canShare && navigator.canShare(shareData)) {
+              try {
+                  await navigator.share(shareData);
+              } catch (shareError) {
+                  console.log('Share canceled or failed', shareError);
+                  fallbackToWhatsApp(selectedFarmer?.phoneNumber, message);
+              }
+          } else {
+              pdf.save(fileName);
+              fallbackToWhatsApp(selectedFarmer?.phoneNumber, message);
+          }
+      } catch (e) {
+          console.error('PDF Error:', e);
+          showToast('Makbuz oluşturulamadı', 'error');
+      } finally {
+          setIsProcessingPdf(false);
+      }
+  };
+
   const handleSaveManualDebt = async () => {
       if (!selectedFarmer || !debtAmount) return;
       setIsSavingDebt(true);
@@ -1088,14 +1291,15 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
               allowTaint: true
           });
           const imgData = canvas.toDataURL('image/jpeg', 0.95);
-          const pdf = new jsPDF('p', 'mm', 'a4');
-          const pdfWidth = pdf.internal.pageSize.getWidth();
-          const pdfHeight = pdf.internal.pageSize.getHeight();
-          const imgWidth = canvas.width;
-          const imgHeight = canvas.height;
-          const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight);
           
-          pdf.addImage(imgData, 'JPEG', 0, 0, imgWidth * ratio, imgHeight * ratio);
+          // Use pixel unit and set exact canvas size for one beautiful continuous scroll PDF
+          const pdf = new jsPDF({
+              orientation: canvas.width > canvas.height ? 'l' : 'p',
+              unit: 'px',
+              format: [canvas.width, canvas.height]
+          });
+          
+          pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
           
           // Türkçe karakterleri temizle ve ASCII'ye çevir
           const charMap: {[key: string]: string} = {'Ğ':'G','ğ':'g','Ü':'U','ü':'u','Ş':'S','ş':'s','İ':'I','ı':'i','Ö':'O','ö':'o','Ç':'C','ç':'c'};
@@ -1231,22 +1435,20 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
 
   const farmersWithDebt = useMemo(() => {
     return farmers.map(farmer => {
-      const fPayments = payments.filter(p => p.farmerId === farmer.id);
-      const fMyPayments = myPayments.filter(p => p.farmerId === farmer.id && !p.deletedAt && p.status !== 'CANCELLED' && !p.relatedId);
-      const fPrescriptions = prescriptions.filter(p => p.farmerId === farmer.id);
-      const fManualDebts = manualDebts.filter(d => d.farmerId === farmer.id);
+      const fPayments = payments.filter(p => !p.deletedAt && p.farmerId === farmer.id);
+      const fMyPayments = myPayments.filter(p => !p.deletedAt && p.farmerId === farmer.id && p.status !== 'CANCELLED' && !p.relatedId);
+      const fPrescriptions = prescriptions.filter(p => !p.deletedAt && p.farmerId === farmer.id);
+      const fManualDebts = manualDebts.filter(d => !d.deletedAt && d.farmerId === farmer.id);
       
       const totalPaid = fPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0) + 
                        fMyPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
       const totalDebt = fPrescriptions.filter(p => p.priceType !== 'CASH').reduce((acc, p) => {
         const amt = Number(p.totalAmount) || 0;
-        const isReturn = p.type === 'RETURN';
+        const isReturn = p.type === 'RETURN' || amt < 0;
         // If it's a return, it should decrease the debt. 
-        // We assume totalAmount for returns is already negative or we handle the sign.
-        // To be safe, for returns we subtract the absolute amount or just use the raw amount if the system stores it negative.
         return acc + (isReturn ? -Math.abs(amt) : Math.abs(amt));
       }, 0) + 
-      fManualDebts.reduce((acc, d) => acc + (Number(d.amount) || 0), 0);
+      fManualDebts.filter(d => !d.id.startsWith('turnover-')).reduce((acc, d) => acc + (Number(d.amount) || 0), 0);
       
       const overallBalance = totalPaid - totalDebt;
       return { ...farmer, overallBalance };
@@ -1255,46 +1457,85 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
 
   const filteredFarmers = farmersWithDebt.filter(f => f.fullName.toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR')) || f.village.toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR')));
 
-  const downloadFarmersPdf = () => {
-      const doc = new jsPDF();
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(16);
-      doc.text("Ciftci Cari Listesi", 14, 20);
-      
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
-      doc.text(`Tarih: ${new Date().toLocaleDateString('tr-TR')}`, 14, 28);
-
-      const trToEn = (str: string) => {
-          if (!str) return '';
-          return str.replace(/Ğ/g, 'G').replace(/Ü/g, 'U').replace(/Ş/g, 'S').replace(/İ/g, 'I').replace(/Ö/g, 'O').replace(/Ç/g, 'C')
-              .replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ş/g, 's').replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ç/g, 'c');
-      };
-      
-      const pdfCurrency = (amount: number) => {
-          return new Intl.NumberFormat('en-US', { style: 'currency', currency: userProfile?.currency || 'TRY' })
-              .format(amount)
-              .replace('TRY', 'TL')
-              .replace('₺', 'TL');
-      };
-
-      const tableData = farmersWithDebt.map(f => [
-          trToEn(f.fullName),
-          f.phoneNumber,
-          trToEn(f.village),
-          `${pdfCurrency(Math.abs(f.overallBalance || 0))} ${f.overallBalance && f.overallBalance > 0 ? 'ALACAK' : 'BORC'}`
-      ]);
-
-      (doc as any).autoTable({
-          startY: 35,
-          head: [['Ad Soyad', 'Telefon', 'Koy', 'Bakiye']],
-          body: tableData,
-          theme: 'grid',
-          styles: { fontSize: 8, cellPadding: 3 },
-          headStyles: { fillColor: [16, 185, 129] } // Emerald 500
-      });
-
-      doc.save('Ciftci_Cari_Listesi.pdf');
+  const downloadFarmersPdf = async () => {
+      setIsGeneratingReport(true);
+      try {
+          const container = document.createElement('div');
+          container.style.position = 'absolute';
+          container.style.left = '-9999px';
+          container.style.top = '0';
+          container.style.width = '800px';
+          container.style.backgroundColor = '#ffffff';
+          container.style.padding = '40px';
+          container.style.color = '#1c1917';
+          container.style.fontFamily = 'system-ui, -apple-system, sans-serif';
+          
+          let tableHtml = `
+            <div style="margin-bottom: 30px;">
+                <h1 style="font-size: 24px; font-weight: 800; margin: 0 0 8px 0; color: #1c1917;">ÇİFTÇİ CARİ LİSTESİ</h1>
+                <p style="font-size: 14px; margin: 0; color: #78716c;">Tarih: ${new Date().toLocaleDateString('tr-TR')} &nbsp;&bull;&nbsp; Toplam Çiftçi: ${farmersWithDebt.length}</p>
+            </div>
+            <table style="width: 100%; border-collapse: collapse; font-size: 12px; text-align: left;">
+                <thead>
+                    <tr style="background-color: #10b981; color: white;">
+                        <th style="padding: 12px; border-bottom: 2px solid #059669; border-top-left-radius: 8px;">Ad Soyad</th>
+                        <th style="padding: 12px; border-bottom: 2px solid #059669;">Telefon</th>
+                        <th style="padding: 12px; border-bottom: 2px solid #059669;">Köy/Mevki</th>
+                        <th style="padding: 12px; border-bottom: 2px solid #059669; border-top-right-radius: 8px; text-align: right;">Bakiye</th>
+                    </tr>
+                </thead>
+                <tbody>
+          `;
+          
+          farmersWithDebt.forEach((f, i) => {
+              const bg = i % 2 === 0 ? '#fafaf9' : '#ffffff';
+              const balanceStr = formatCurrency(Math.abs(f.overallBalance || 0), userProfile?.currency || 'TRY');
+              const statusStr = f.overallBalance && f.overallBalance > 0 ? '<span style="color:#10b981;font-weight:bold;margin-left:4px;">ALACAK</span>' : (f.overallBalance && f.overallBalance < 0 ? '<span style="color:#ef4444;font-weight:bold;margin-left:4px;">BORÇ</span>' : '');
+              
+              tableHtml += `
+                <tr style="background-color: ${bg}; border-bottom: 1px solid #e7e5e4;">
+                    <td style="padding: 12px; font-weight: 600;">${f.fullName}</td>
+                    <td style="padding: 12px; color: #57534e;">${f.phoneNumber || '-'}</td>
+                    <td style="padding: 12px; color: #57534e;">${f.village || '-'}</td>
+                    <td style="padding: 12px; text-align: right; font-family: monospace; font-size: 13px;">${balanceStr} ${statusStr}</td>
+                </tr>
+              `;
+          });
+          
+          tableHtml += `
+                </tbody>
+            </table>
+          `;
+          
+          container.innerHTML = tableHtml;
+          document.body.appendChild(container);
+          
+          const canvas = await html2canvas(container, {
+              scale: 2,
+              backgroundColor: '#ffffff',
+              logging: false
+          });
+          
+          document.body.removeChild(container);
+          
+          const imgData = canvas.toDataURL('image/jpeg', 0.95);
+          
+          const pdf = new jsPDF({
+              orientation: canvas.width > canvas.height ? 'l' : 'p',
+              unit: 'px',
+              format: [canvas.width, canvas.height]
+          });
+          
+          pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+          pdf.save('Ciftci_Cari_Listesi.pdf');
+          showToast('Kurumsal PDF indirildi', 'success');
+          
+      } catch (error) {
+          console.error(error);
+          showToast('PDF oluşturulurken hata oluştu', 'error');
+      } finally {
+          setIsGeneratingReport(false);
+      }
   };
 
   const handleSync = async () => {
@@ -1302,9 +1543,9 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       try {
           const result = await dbService.backupAllData();
           updateUserProfile({ ...userProfile, lastSyncTime: result.timestamp });
-          alert("Tüm veriler başarıyla Firebase'e yedeklendi.");
+          showToast("Tüm veriler başarıyla Firebase'e yedeklendi.", "success");
       } catch (error) {
-          alert("Yedekleme hatası: " + (error as any).message);
+          showToast("Yedekleme hatası: " + (error as any).message, "error");
       } finally {
           setIsSyncing(false);
       }
@@ -1575,10 +1816,10 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                                     <td className="py-3 text-[11px] font-bold uppercase tracking-wide text-stone-700">{item.label}</td>
                                                     <td className="py-3 text-xs text-stone-500">{(item as any).note || (item.type === 'CASH' ? `Tutar: ${formatCurrency(Math.abs((item as any).amount || (item as any).totalAmount), userProfile?.currency || 'TRY')}` : '-')}</td>
                                                     <td className="py-3 text-sm text-right font-bold font-mono text-rose-600">
-                                                        {item.type === 'DEBT' && ((item as any).totalAmount >= 0 || (item as any).amount >= 0) ? formatCurrency((item as any).amount || (item as any).totalAmount, userProfile?.currency || 'TRY') : '-'}
+                                                        {item.type === 'DEBT' && ((item as any).totalAmount !== undefined ? (item as any).totalAmount >= 0 : (item as any).amount >= 0) && item.label !== 'İade Makbuzu' ? formatCurrency((item as any).amount || (item as any).totalAmount, userProfile?.currency || 'TRY') : '-'}
                                                     </td>
                                                     <td className="py-3 text-sm text-right font-bold font-mono text-emerald-600">
-                                                        {item.type === 'PAYMENT' ? formatCurrency((item as any).amount, userProfile?.currency || 'TRY') : (item.type === 'DEBT' && (item as any).totalAmount < 0 ? formatCurrency(Math.abs((item as any).totalAmount), userProfile?.currency || 'TRY') : '-')}
+                                                        {item.type === 'PAYMENT' ? formatCurrency((item as any).amount, userProfile?.currency || 'TRY') : (item.type === 'DEBT' && (((item as any).totalAmount !== undefined ? (item as any).totalAmount < 0 : (item as any).amount < 0) || item.label === 'İade Makbuzu') ? formatCurrency(Math.abs((item as any).amount || (item as any).totalAmount), userProfile?.currency || 'TRY') : '-')}
                                                     </td>
                                                 </tr>
                                                 {reportType === 'DETAILED' && (item as any).items && (
@@ -1905,9 +2146,16 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                 )}
 
                                 {[
-                                    ...filteredPrescriptions.map(p => ({ ...p, type: p.priceType === 'CASH' ? 'CASH' : 'DEBT', label: p.priceType === 'CASH' ? 'Peşin Satış' : ((p.totalAmount || 0) < 0 ? 'İade Makbuzu' : `${prescriptionLabel} Satışı`) })), 
+                                    ...filteredPrescriptions.map(p => {
+                                        const isReturn = p.type === 'RETURN' || (p.totalAmount || 0) < 0;
+                                        return { 
+                                            ...p, 
+                                            type: p.priceType === 'CASH' ? 'CASH' : 'DEBT', 
+                                            label: p.priceType === 'CASH' ? 'Peşin Satış' : (isReturn ? 'İade Makbuzu' : `${prescriptionLabel} Satışı`) 
+                                        };
+                                    }), 
                                     ...filteredPayments.map(p => ({ ...p, type: 'PAYMENT', label: 'Tahsilat' })),
-                                    ...filteredManualDebts.filter(d => !d.id.startsWith('turnover-')).map(d => ({ ...d, type: 'DEBT', label: 'Manuel Borç' }))
+                                    ...filteredManualDebts.filter(d => !d.id.startsWith('turnover-')).map(d => ({ ...d, type: 'DEBT', label: 'Manuel Borç/Alacak' }))
                                 ]
                                     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
                                     .map((item, idx) => {
@@ -1922,7 +2170,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                                     if (item.label === `${prescriptionLabel} Satışı` || item.label === 'İade Makbuzu') {
                                                         const prescription = farmerPrescriptions.find(p => p.id === item.id);
                                                         if (prescription) setSelectedPrescription(prescription);
-                                                    } else if (item.label === 'Manuel Borç') {
+                                                    } else if (item.label === 'Manuel Borç/Alacak') {
                                                         const debt = farmerManualDebts.find(d => d.id === item.id);
                                                         if (debt) handleEditManualDebt(debt);
                                                     } else if (item.label === 'Tahsilat') {
@@ -1932,7 +2180,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                                 }}
                                             >
                                                 <div className="flex items-center gap-3">
-                                                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${item.type === 'DEBT' ? ((item as any).totalAmount < 0 ? 'bg-emerald-900/40 text-emerald-400 border border-emerald-500/30' : 'bg-rose-900/20 text-rose-500') : item.type === 'CASH' ? 'bg-blue-900/20 text-blue-500' : 'bg-emerald-900/20 text-emerald-500'}`}>
+                                                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${item.type === 'DEBT' ? (((item as any).totalAmount !== undefined ? (item as any).totalAmount < 0 : (item as any).amount < 0) || item.label === 'İade Makbuzu' ? 'bg-emerald-900/40 text-emerald-400 border border-emerald-500/30' : 'bg-rose-900/20 text-rose-500') : item.type === 'CASH' ? 'bg-blue-900/20 text-blue-500' : 'bg-emerald-900/20 text-emerald-500'}`}>
                                                         {item.label === 'İade Makbuzu' ? <RefreshCcw size={14} /> : (item.type === 'DEBT' || item.type === 'CASH' ? <FileText size={14} /> : <CreditCard size={14} />)}
                                                     </div>
                                                     <div>
@@ -1953,18 +2201,23 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                                 </div>
                                                 <div className="text-right flex items-center gap-3">
                                                     <div>
-                                                        <p className={`text-xs font-black ${item.type === 'DEBT' ? ((item as any).totalAmount < 0 ? 'text-emerald-400' : 'text-rose-400') : item.type === 'CASH' ? 'text-blue-400' : 'text-emerald-400'}`}>
-                                                            {item.type === 'DEBT' ? ((item as any).totalAmount < 0 ? '+' : '-') : item.type === 'CASH' ? '' : '+'}{formatCurrency(Math.abs((item as any).amount || (item as any).totalAmount), userProfile?.currency || 'TRY')}
+                                                        <p className={`text-xs font-black ${item.type === 'DEBT' ? (((item as any).totalAmount !== undefined ? (item as any).totalAmount < 0 : (item as any).amount < 0) || item.label === 'İade Makbuzu' ? 'text-emerald-400' : 'text-rose-400') : item.type === 'CASH' ? 'text-blue-400' : 'text-emerald-400'}`}>
+                                                            {item.type === 'DEBT' ? (((item as any).totalAmount !== undefined ? (item as any).totalAmount < 0 : (item as any).amount < 0) || item.label === 'İade Makbuzu' ? '+' : '-') : item.type === 'CASH' ? '' : '+'}{formatCurrency(Math.abs((item as any).amount || (item as any).totalAmount), userProfile?.currency || 'TRY')}
                                                         </p>
                                                         {(item as any).note && <p className="text-[7px] text-stone-500 italic truncate max-w-[60px]">{(item as any).note}</p>}
                                                     </div>
                                                     {item.type === 'PAYMENT' ? (
-                                                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                                                            <button onClick={(e) => { e.stopPropagation(); handleEditPayment(item as any); }} className="p-1 text-stone-500 hover:text-emerald-500">
-                                                                <Edit2 size={12}/>
-                                                            </button>
-                                                            <button onClick={(e) => { e.stopPropagation(); handleDeletePayment(item.id); }} className="p-1 text-stone-500 hover:text-rose-500 transition-all">
-                                                                <Trash2 size={12}/>
+                                                        <div className="flex gap-2 items-center">
+                                                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                                                                <button onClick={(e) => { e.stopPropagation(); handleEditPayment(item as any); }} className="p-1 text-stone-500 hover:text-emerald-500">
+                                                                    <Edit2 size={12}/>
+                                                                </button>
+                                                                <button onClick={(e) => { e.stopPropagation(); handleDeletePayment(item.id); }} className="p-1 text-stone-500 hover:text-rose-500 transition-all">
+                                                                    <Trash2 size={12}/>
+                                                                </button>
+                                                            </div>
+                                                            <button onClick={(e) => { e.stopPropagation(); handleSendReceipt(item as any); }} className="px-2 py-0.5 text-[9px] font-black uppercase text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 rounded hover:bg-emerald-500/20 transition-all flex items-center justify-center">
+                                                                MAKBUZ
                                                             </button>
                                                         </div>
                                                     ) : (
@@ -2008,20 +2261,22 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                 
                 {activeTab === 'PRESCRIPTIONS' && (
                     <div className="space-y-2">
-                         {isDataLoading ? <Loader2 size={20} className="animate-spin text-amber-500 mx-auto"/> : filteredPrescriptions.length > 0 ? filteredPrescriptions.map(p => (
+                         {isDataLoading ? <Loader2 size={20} className="animate-spin text-amber-500 mx-auto"/> : filteredPrescriptions.length > 0 ? filteredPrescriptions.map(p => {
+                            const isReturn = p.type === 'RETURN' || (p.totalAmount || 0) < 0;
+                            return (
                             <div key={p.id} onClick={() => setSelectedPrescription(p)} className="bg-stone-900/80 p-3 rounded-xl border border-white/5 hover:bg-stone-800 transition-colors cursor-pointer active:scale-98">
                                 <div className="flex justify-between items-start mb-1.5">
                                     <div className="flex flex-col gap-0.5">
                                         <span className="text-[8px] font-mono text-stone-500 block uppercase">No: {p.prescriptionNo}</span>
-                                        {(p.totalAmount || 0) < 0 && (
+                                        {isReturn && (
                                             <span className="text-[7px] font-black text-emerald-500 bg-emerald-900/30 px-1 border border-emerald-500/30 rounded uppercase tracking-tighter w-fit">İADE</span>
                                         )}
                                     </div>
-                                    <span className={`text-[9px] font-bold ${(p.totalAmount || 0) < 0 ? 'text-emerald-400 bg-emerald-900/20 border-emerald-800/30' : 'text-amber-400 bg-amber-900/20 border-amber-800/30'} px-1.5 py-0.5 rounded border`}>{new Date(p.date).toLocaleDateString('tr-TR')}</span>
+                                    <span className={`text-[9px] font-bold ${isReturn ? 'text-emerald-400 bg-emerald-900/20 border-emerald-800/30' : 'text-amber-400 bg-amber-900/20 border-amber-800/30'} px-1.5 py-0.5 rounded border`}>{new Date(p.date).toLocaleDateString('tr-TR')}</span>
                                 </div>
                                 <div className="flex flex-wrap gap-1">{p.items.map((item, idx) => (<span key={idx} className="text-[8px] bg-stone-800 text-stone-400 px-1.5 py-0.5 rounded flex items-center"><FlaskConical size={8} className="mr-1 text-stone-500"/>{item.pesticideName}</span>))}</div>
                             </div>
-                        )) : <div className="text-center py-6 text-stone-600 text-[10px]">{prescriptionLabel} yok.</div>}
+                        )}) : <div className="text-center py-6 text-stone-600 text-[10px]">{prescriptionLabel} yok.</div>}
                     </div>
                 )}
             </div>
@@ -2296,6 +2551,15 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                         </div>
                         <div className="p-4 space-y-4">
                             <div className="flex gap-2 mb-2 overflow-x-auto no-scrollbar pb-1">
+                                <button 
+                                    onClick={() => {
+                                        setReportStartDate('');
+                                        setReportEndDate('');
+                                    }}
+                                    className="px-3 py-1.5 bg-stone-800 hover:bg-emerald-600 text-stone-300 hover:text-white rounded-xl text-[10px] font-bold border border-white/5 whitespace-nowrap active:scale-95 transition-all"
+                                >
+                                    Tüm Zamanlar
+                                </button>
                                 {availableYears.map(year => (
                                     <button 
                                         key={year}
@@ -2390,6 +2654,16 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       <div className="flex items-center justify-between mb-3 mt-2 px-1">
           <div className="flex items-center gap-3">
               <button onClick={onBack} className="flex items-center text-stone-400 hover:text-stone-200 font-medium py-1 rounded-lg transition-colors text-xs"><ArrowLeft size={16} className="mr-1"/> Geri</button>
+              <button 
+                  onClick={() => {
+                      setIsRepairModalOpen(true);
+                      handleAnalyzeFarmers();
+                  }}
+                  className="py-1.5 px-3 bg-red-600/20 border border-red-500/30 rounded-lg text-red-500 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 hover:bg-red-600/30 transition-colors shadow-lg shadow-red-900/20"
+              >
+                  <RefreshCw size={14} />
+                  Cari Onar
+              </button>
               <button 
                   onClick={downloadFarmersPdf}
                   className="py-1.5 px-3 bg-amber-600 rounded-lg text-white text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 hover:bg-amber-500 transition-colors shadow-lg shadow-amber-900/20"
@@ -2498,6 +2772,139 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
         onDelete={handleDeleteFarmer}
         farmerLabel={farmerLabel}
       />
+
+            {/* Repair Modal */}
+            {isRepairModalOpen && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
+                    <div className="bg-[#1c1c1c] border border-stone-800 rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col font-sans">
+                        <div className="p-6 border-b border-stone-800/50 flex items-center justify-between bg-stone-900/50">
+                            <div>
+                                <h3 className="text-xl font-bold text-stone-100 mb-1 flex items-center gap-2">
+                                    <RefreshCw size={20} className="text-red-500" />
+                                    Cari Onarım Uzmanı
+                                </h3>
+                                <p className="text-xs text-stone-400 font-medium">Satış fişlerindeki toplam hesap uyuşmazlıkları tespit edilip düzeltilir.</p>
+                            </div>
+                            {repairState !== 'ANALYZING' && repairState !== 'REPAIRING' && (
+                                <button
+                                    onClick={() => {
+                                        setIsRepairModalOpen(false);
+                                        setRepairState('IDLE');
+                                    }}
+                                    className="p-2 bg-stone-900 hover:bg-stone-800 text-stone-400 hover:text-stone-200 rounded-xl transition-colors shrink-0"
+                                >
+                                    <X size={20} />
+                                </button>
+                            )}
+                        </div>
+
+                        <div className="p-6 max-h-[60vh] overflow-y-auto">
+                            {repairState === 'ANALYZING' && (
+                                <div className="flex flex-col items-center justify-center py-10 space-y-4">
+                                    <RefreshCw size={40} className="text-red-500 animate-spin" />
+                                    <div className="text-center">
+                                        <div className="font-bold text-stone-200">Reçeteler Analiz Ediliyor</div>
+                                        <div className="text-xs text-stone-500 mt-1">Geçmiş işlemler taranıyor...</div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {repairState === 'RESULT' && (
+                                <div className="space-y-4">
+                                    {repairMismatches.length === 0 ? (
+                                        <div className="flex flex-col items-center justify-center py-10 space-y-4">
+                                            <div className="w-16 h-16 rounded-full bg-emerald-950/50 border border-emerald-500/20 flex items-center justify-center">
+                                                <ClipboardCheck size={32} className="text-emerald-500" />
+                                            </div>
+                                            <div className="text-center">
+                                                <div className="font-bold text-emerald-400 text-lg">Mükemmel!</div>
+                                                <div className="text-stone-400 text-sm mt-1 mb-2">Tüm çiftçi bakiyeleri kusursuz eşleşiyor.</div>
+                                            </div>
+                                            <button 
+                                                onClick={() => setIsRepairModalOpen(false)}
+                                                className="px-6 py-2.5 bg-stone-800 hover:bg-stone-700 text-white rounded-xl font-bold transition-all text-sm"
+                                            >
+                                                Kapat
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <div className="bg-red-950/20 border border-red-500/20 rounded-xl p-4">
+                                                <div className="text-red-400 font-bold mb-2 flex items-center gap-2">
+                                                    <AlertTriangle size={18} />
+                                                    {repairMismatches.length} Çiftçide Uyuşmazlık Bulundu
+                                                </div>
+                                                <p className="text-xs text-stone-300">
+                                                    Satışların içindeki ürün fiyatları toplamı ile reçete genel toplamı uyuşmuyor. Toplamları yeniden hesaplayacağız.
+                                                </p>
+                                            </div>
+
+                                            <div className="space-y-2 mt-4">
+                                                {repairMismatches.map((mismatch, index) => {
+                                                    const isSelected = selectedRepairs.has(mismatch.farmerId);
+                                                    return (
+                                                        <div 
+                                                            key={mismatch.farmerId + index}
+                                                            onClick={() => {
+                                                                const newSet = new Set(selectedRepairs);
+                                                                if (isSelected) newSet.delete(mismatch.farmerId);
+                                                                else newSet.add(mismatch.farmerId);
+                                                                setSelectedRepairs(newSet);
+                                                            }}
+                                                            className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${isSelected ? 'bg-red-950/10 border-red-500/30' : 'bg-stone-900 border-stone-800 hover:border-stone-700'}`}
+                                                        >
+                                                            <div className="flex-1 min-w-0">
+                                                                <div className="font-bold text-stone-200 text-sm truncate">{mismatch.farmerName}</div>
+                                                                <div className="text-[10px] text-stone-500 mt-1 space-y-0.5">
+                                                                    <div className="flex items-center justify-between">
+                                                                        <span>Kayıtlı: <span className="font-mono text-red-400 bg-red-400/10 px-1 rounded">{mismatch.currentBalance.toLocaleString('tr-TR')} ₺</span></span>
+                                                                        <span>Olması Gereken: <span className="font-mono text-emerald-400 bg-emerald-400/10 px-1 rounded">{mismatch.calculatedBalance.toLocaleString('tr-TR')} ₺</span></span>
+                                                                    </div>
+                                                                    {((mismatch.brokenPrescriptions?.length || 0) + (mismatch.brokenPayments?.length || 0) + (mismatch.brokenMyPayments?.length || 0) + (mismatch.brokenManualDebts?.length || 0)) > 0 && (
+                                                                        <div className="text-[9px] text-stone-500 mt-1 italic flex flex-wrap gap-1">
+                                                                            {(mismatch.brokenPrescriptions?.length || 0) > 0 && <span>({mismatch.brokenPrescriptions?.length} reçete)</span>}
+                                                                            {(mismatch.brokenPayments?.length || 0) > 0 && <span>({mismatch.brokenPayments?.length} ödeme)</span>}
+                                                                            {(mismatch.brokenMyPayments?.length || 0) > 0 && <span>({mismatch.brokenMyPayments?.length} tahsilat)</span>}
+                                                                            {(mismatch.brokenManualDebts?.length || 0) > 0 && <span>({mismatch.brokenManualDebts?.length} manuel borç)</span>}
+                                                                            onarılacak.
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                            <div className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 transition-colors ${isSelected ? 'bg-red-500 border-red-500 text-white' : 'border-stone-600'}`}>
+                                                                {isSelected && <Check size={14} strokeWidth={3} />}
+                                                            </div>
+                                                        </div>
+                                                    )
+                                                })}
+                                            </div>
+
+                                            <button 
+                                                onClick={handleRepairFarmers}
+                                                disabled={selectedRepairs.size === 0}
+                                                className="w-full mt-4 py-3 bg-red-600 hover:bg-red-500 text-white font-black rounded-xl text-sm transition-all shadow-lg shadow-red-900/20 min-h-[48px] disabled:opacity-50 flex items-center justify-center gap-2"
+                                            >
+                                                <RefreshCw size={18} />
+                                                Seçilenleri Onar ({selectedRepairs.size})
+                                            </button>
+                                        </>
+                                    )}
+                                </div>
+                            )}
+
+                            {repairState === 'REPAIRING' && (
+                                <div className="flex flex-col items-center justify-center py-10 space-y-4">
+                                    <Hammer size={40} className="text-red-500 animate-bounce" />
+                                    <div className="text-center">
+                                        <div className="font-bold text-stone-200 text-lg">Onarılıyor...</div>
+                                        <div className="text-sm text-stone-400 mt-1">Cariler kusursuz hale getiriliyor. Lütfen bekleyin.</div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
 
       <DebtReminderModal
         isOpen={isDebtReminderModalOpen}

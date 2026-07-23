@@ -3,8 +3,10 @@ import { dbService } from '../services/db';
 import { Pesticide, PesticideCategory } from '../types';
 import { Search, FlaskConical, Droplet, Info, Plus, X, Loader2, Save, Camera, Barcode } from 'lucide-react';
 import BarcodeScanner from './BarcodeScanner';
+import { useAppViewModel } from '../context/AppContext';
 
 export const Pesticides: React.FC = () => {
+  const { showToast } = useAppViewModel();
   const [pesticides, setPesticides] = useState<Pesticide[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isScanning, setIsScanning] = useState(false);
@@ -59,9 +61,10 @@ export const Pesticides: React.FC = () => {
           });
           
           await loadPesticides(); // Refresh list
+          showToast("İlaç başarıyla eklendi", "success");
       } catch (error) {
           console.error("Failed to add pesticide", error);
-          alert("İlaç eklenirken bir hata oluştu.");
+          showToast("İlaç eklenirken bir hata oluştu.", "error");
       } finally {
           setIsSaving(false);
       }

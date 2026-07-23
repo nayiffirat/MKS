@@ -4,7 +4,7 @@ import { openDB, DBSchema } from 'idb';
 import { Farmer, Pesticide, VisitLog, Prescription, AppNotification, UserProfile, Reminder, InventoryItem, PesticideCategory, Payment, ManualDebt, Supplier, SupplierPurchase, SupplierPayment, MyPayment, TurnoverLog, Expense, Account, Transaction, TeamMember, Message, News, CollectionLog, Plant, SystemError } from '../types';
 import { MOCK_PESTICIDES } from '../constants';
 import { db as firestore, auth, storage } from './firebase';
-import { doc, setDoc, deleteDoc, collection, getDocs, writeBatch, query, where, getDoc, onSnapshot, getDocFromServer } from 'firebase/firestore';
+import { doc, setDoc, deleteDoc, collection, getDocs, getDocsFromServer, writeBatch, query, where, getDoc, onSnapshot, getDocFromServer } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 export enum OperationType {
@@ -108,7 +108,7 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   }
 }
 
-interface AgriDB extends DBSchema {
+export interface AgriDB extends DBSchema {
   farmers: {
     key: string;
     value: Farmer;
@@ -217,10 +217,22 @@ interface AgriDB extends DBSchema {
     key: string;
     value: SystemError;
   };
+  siloTransactions: {
+    key: string;
+    value: import('../types').SiloTransaction;
+    indexes: { 'by-date': string, 'by-product': string };
+  };
+  siloContacts: {
+    key: string;
+    value: import('../types').SiloContact;
+  };
 }
 
-const DB_NAME = 'agri-engineer-db';
-const DB_VERSION = 24;
+const getDBName = () => {
+    const uid = localStorage.getItem('lastUserId');
+    return uid ? `agri-engineer-db-${uid}` : 'agri-engineer-db';
+};
+const DB_VERSION = 26;
 
 const FS_ROOT = "MKS";
 const FS_ORG = "g892bEaJyGfEq1Fa67yb";
@@ -263,7 +275,15 @@ const sanitizeForFirestore = (obj: any, cache = new WeakSet()): any => {
 };
 
 export const initDB = async () => {
-  return openDB<AgriDB>(DB_NAME, DB_VERSION, {
+  return openDB<AgriDB>(getDBName(), DB_VERSION, {
+    blocked() {
+      console.warn("IndexedDB upgrade blocked by another tab.");
+    },
+    blocking() {
+      // Close this connection to allow the other tab to upgrade
+      console.warn("IndexedDB blocking an upgrade. Closing...");
+      window.location.reload();
+    },
     upgrade(db) {
       if (!db.objectStoreNames.contains('farmers')) {
         const farmerStore = db.createObjectStore('farmers', { keyPath: 'id' });
@@ -351,6 +371,14 @@ export const initDB = async () => {
       if (!db.objectStoreNames.contains('systemErrors')) {
         db.createObjectStore('systemErrors', { keyPath: 'id' });
       }
+      if (!db.objectStoreNames.contains('siloTransactions')) {
+        const siloStore = db.createObjectStore('siloTransactions', { keyPath: 'id' });
+        siloStore.createIndex('by-date', 'date');
+        siloStore.createIndex('by-product', 'product');
+      }
+      if (!db.objectStoreNames.contains('siloContacts')) {
+        db.createObjectStore('siloContacts', { keyPath: 'id' });
+      }
     },
   });
 };
@@ -370,13 +398,20 @@ const backgroundSync = async (collectionName: string, data: any) => {
     .catch(err => handleFirestoreError(err, OperationType.WRITE, path));
 };
 
-const backgroundDelete = async (collectionName: string, id: string) => {
-  const user = auth.currentUser;
-  if (!user) return;
-  const path = [FS_ROOT, FS_ORG, FS_USERS, user.uid, collectionName, id].join("/");
-
-  return deleteDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, user.uid, collectionName, id))
-    .catch(err => handleFirestoreError(err, OperationType.DELETE, path));
+const backgroundDelete = async (collectionName: import('idb').StoreNames<import('./db').AgriDB>, id: string) => {
+  const db = await initDB();
+  const item = await db.get(collectionName, id) as any;
+  if (item) {
+      item.deletedAt = new Date().toISOString();
+      await db.put(collectionName, item);
+      return backgroundSync(collectionName, item);
+  } else {
+      const user = auth.currentUser;
+      if (!user) return;
+      const path = [FS_ROOT, FS_ORG, FS_USERS, user.uid, collectionName, id].join("/");
+      return setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, user.uid, collectionName, id), { deletedAt: new Date().toISOString() }, { merge: true })
+        .catch(err => handleFirestoreError(err, OperationType.WRITE, path));
+  }
 };
 
 let isActionBlocked = false;
@@ -515,7 +550,7 @@ const dbServiceObj = {
     if (!navigator.onLine) return [];
     try {
       await requireAdmin();
-      const snap = await getDocs(collection(firestore, FS_ROOT, FS_ORG, FS_USERS));
+      const snap = await getDocsFromServer(collection(firestore, FS_ROOT, FS_ORG, FS_USERS));
       return snap.docs.map(d => ({ ...d.data() as UserProfile, uid: d.id }));
     } catch (error) {
       console.error("Error fetching all users:", error instanceof Error ? error.message : safeStringify(error));
@@ -545,6 +580,23 @@ const dbServiceObj = {
     }
   },
 
+  async clearLocalData() {
+    const db = await initDB();
+    const collections = ["farmers", "pesticides", "notifications", "visits", "prescriptions", "reminders", "inventory", "payments", "manualDebts", "suppliers", "supplierPurchases", "supplierPayments", "myPayments", "expenses", "accounts", "transactions", "teamMembers", "messages", "collectionLogs", "plants", "siloTransactions", "siloContacts"] as const;
+    for (const col of collections) {
+      if (db.objectStoreNames.contains(col)) {
+        const tx = db.transaction(col, 'readwrite');
+        await tx.store.clear();
+        await tx.done;
+      }
+    }
+    // Also clear localStorage profile
+    localStorage.removeItem('mks_user_profile');
+    localStorage.removeItem('userProfile'); // fallback
+    localStorage.removeItem('lastUserId');
+    console.log("Local IndexedDB cleared.");
+  },
+
   /**
    * Giriş yapıldığında tüm verileri çeker ve yerelle birleştirir.
    */
@@ -552,18 +604,35 @@ const dbServiceObj = {
     if (!navigator.onLine) return;
     const db = await initDB();
     const userPath = [FS_ROOT, FS_ORG, FS_USERS, uid].join("/");
-    const collections = ["farmers", "notifications", "visits", "prescriptions", "reminders", "inventory", "payments", "manualDebts", "suppliers", "supplierPurchases", "supplierPayments", "myPayments", "expenses", "accounts", "transactions", "teamMembers", "messages", "collectionLogs", "plants"] as const;
+    const collections = ["farmers", "notifications", "visits", "prescriptions", "reminders", "inventory", "payments", "manualDebts", "suppliers", "supplierPurchases", "supplierPayments", "myPayments", "expenses", "accounts", "transactions", "teamMembers", "messages", "collectionLogs", "plants", "siloTransactions", "siloContacts"] as const;
 
     for (const col of collections) {
       try {
-        const snap = await getDocs(collection(firestore, userPath, col));
+        const snap = await getDocsFromServer(collection(firestore, userPath, col));
         const data = snap.docs.map(d => d.data());
+        
+        const tx = db.transaction(col, 'readwrite');
+        
+        // 1. Get all local keys
+        const localKeys = await tx.store.getAllKeys();
+        
+        // 2. Put all server items
         if (data.length > 0) {
-          const tx = db.transaction(col, 'readwrite');
           await Promise.all(data.map(item => tx.store.put(item as any)));
-          await tx.done;
         }
-      } catch (e) {}
+        
+        // 3. Find and delete local items that no longer exist on the server
+        const serverIds = new Set(snap.docs.map(d => d.id));
+        for (const localKey of localKeys) {
+          if (!serverIds.has(localKey as string)) {
+            await tx.store.delete(localKey);
+          }
+        }
+        
+        await tx.done;
+      } catch (e: any) {
+        console.error(`Error syncing collection ${col}:`, e);
+      }
     }
   },
 
@@ -581,11 +650,21 @@ const dbServiceObj = {
 
     // İnternet varsa arka planda güncelle
     if (navigator.onLine) {
-        getDocs(collection(firestore, 'pesticides')).then(snapshot => {
+        getDocs(collection(firestore, 'pesticides')).then(async snapshot => {
             if (!snapshot.empty) {
                 const cloudData = snapshot.docs.map(d => d.data() as Pesticide);
                 const tx = db.transaction('pesticides', 'readwrite');
+                const localKeys = await tx.store.getAllKeys();
+                
                 cloudData.forEach(p => tx.store.put(p));
+                
+                const serverIds = new Set(snapshot.docs.map(d => d.id));
+                for (const localKey of localKeys) {
+                    if (!serverIds.has(localKey as string)) {
+                        await tx.store.delete(localKey);
+                    }
+                }
+                await tx.done;
             }
         }).catch(() => {});
     }
@@ -593,7 +672,7 @@ const dbServiceObj = {
 
   async clearLocalUserData() {
     const db = await initDB();
-    const stores = ['farmers', 'visits', 'prescriptions', 'notifications', 'reminders', 'inventory', 'payments', 'manualDebts', 'suppliers', 'supplierPurchases', 'supplierPayments', 'myPayments', 'expenses', 'accounts', 'transactions', 'teamMembers', 'messages', 'collectionLogs', 'plants', 'systemErrors'] as const;
+    const stores = ['farmers', 'visits', 'prescriptions', 'notifications', 'reminders', 'inventory', 'payments', 'manualDebts', 'suppliers', 'supplierPurchases', 'supplierPayments', 'myPayments', 'expenses', 'accounts', 'transactions', 'teamMembers', 'messages', 'collectionLogs', 'plants', 'systemErrors', 'siloTransactions', 'siloContacts'] as const;
     for (const store of stores) await db.clear(store);
     localStorage.removeItem('mks_user_profile');
   },
@@ -624,8 +703,7 @@ const dbServiceObj = {
 
   async deleteSystemError(id: string) {
     const db = await initDB();
-    await db.delete('systemErrors', id);
-    backgroundDelete('systemErrors', id);
+    await backgroundDelete('systemErrors', id);
     // Also try to delete from global if exists
     backgroundDeleteGlobal('system_errors', id);
   },
@@ -699,13 +777,13 @@ const dbServiceObj = {
 
   async deleteFarmer(id: string) {
     const db = await initDB();
-    await db.delete('farmers', id);
-    backgroundDelete('farmers', id);
+    await backgroundDelete('farmers', id);
   },
   
   async getPesticides() {
     const db = await initDB();
-    return (await db.getAll('pesticides')).sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+    const items = await db.getAll('pesticides');
+    return items.filter((i: any) => !i.deletedAt).sort((a, b) => a.name.localeCompare(b.name, 'tr'));
   },
 
   async addGlobalPesticide(pesticide: Pesticide) {
@@ -748,8 +826,7 @@ const dbServiceObj = {
 
   async deleteVisit(id: string) {
     const db = await initDB();
-    await db.delete('visits', id);
-    backgroundDelete('visits', id);
+    await backgroundDelete('visits', id);
   },
   
   async getVisitsByFarmer(farmerId: string) {
@@ -774,8 +851,7 @@ const dbServiceObj = {
 
   async deletePrescription(id: string) {
     const db = await initDB();
-    await db.delete('prescriptions', id);
-    backgroundDelete('prescriptions', id);
+    await backgroundDelete('prescriptions', id);
   },
   
   async getPrescriptionsByFarmer(farmerId: string) {
@@ -786,17 +862,20 @@ const dbServiceObj = {
   
   async getAllPrescriptions() {
     const db = await initDB();
-    return (await db.getAll('prescriptions')).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const items = await db.getAll('prescriptions');
+    return items.filter((i: any) => !i.deletedAt).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   },
   
   async getAllVisits() {
     const db = await initDB();
-    return (await db.getAll('visits')).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const items = await db.getAll('visits');
+    return items.filter((i: any) => !i.deletedAt).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   },
 
   async getReminders() {
     const db = await initDB();
-    return (await db.getAll('reminders')).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    const items = await db.getAll('reminders');
+    return items.filter((i: any) => !i.deletedAt).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   },
 
   async addReminder(reminder: Reminder) {
@@ -813,13 +892,13 @@ const dbServiceObj = {
 
   async deleteReminder(id: string) {
     const db = await initDB();
-    await db.delete('reminders', id);
-    backgroundDelete('reminders', id);
+    await backgroundDelete('reminders', id);
   },
 
   async getNotifications() {
     const db = await initDB();
-    return (await db.getAll('notifications')).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const items = await db.getAll('notifications');
+    return items.filter((i: any) => !i.deletedAt).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   },
 
   async addNotification(n: AppNotification) {
@@ -836,8 +915,7 @@ const dbServiceObj = {
 
   async deleteNotification(id: string) {
     const db = await initDB();
-    await db.delete('notifications', id);
-    backgroundDelete('notifications', id);
+    await backgroundDelete('notifications', id);
   },
 
   async getInventory() {
@@ -887,8 +965,7 @@ const dbServiceObj = {
 
   async permanentlyDeleteInventoryItem(id: string) {
     const db = await initDB();
-    await db.delete('inventory', id);
-    backgroundDelete('inventory', id);
+    await backgroundDelete('inventory', id);
   },
 
   async initializeInventoryFromPrescriptions() {
@@ -946,6 +1023,411 @@ const dbServiceObj = {
 
     await tx.done;
     updates.forEach(item => backgroundSync('inventory', item));
+  },
+
+  async applyInventoryFixes(fixes: { pesticideId: string, quantity: number }[]) {
+    const db = await initDB();
+    const inventory = await db.getAll('inventory');
+    
+    const tx = db.transaction('inventory', 'readwrite');
+    for (const fix of fixes) {
+        const item = inventory.find(i => i.pesticideId === fix.pesticideId && !i.deletedAt);
+        if (item) {
+            item.quantity = fix.quantity;
+            item.lastUpdated = new Date().toISOString();
+            await tx.store.put(item);
+            backgroundSync('inventory', item);
+        }
+    }
+    await tx.done;
+  },
+
+  async applyFarmerFixes(fixes: { 
+      farmerId: string, 
+      brokenPrescriptions: {id: string, expected: number, actual: number}[],
+      brokenPayments?: {id: string, expected: number, actual: number}[],
+      brokenMyPayments?: {id: string, expected: number, actual: number}[],
+      brokenManualDebts?: {id: string, expected: number, actual: number}[]
+  }[]) {
+    const db = await initDB();
+    
+    // Process Prescriptions
+    const txP = db.transaction('prescriptions', 'readwrite');
+    const storeP = txP.objectStore('prescriptions');
+    const syncQueueP = [];
+    for (const fix of fixes) {
+        if (!fix.brokenPrescriptions) continue;
+        for (const bp of fix.brokenPrescriptions) {
+            const p = await storeP.get(bp.id);
+            if (p && !p.deletedAt) {
+                p.totalAmount = bp.expected;
+                await storeP.put(p);
+                syncQueueP.push(p);
+            }
+        }
+    }
+    await txP.done;
+    
+    // Process Payments
+    const txPay = db.transaction('payments', 'readwrite');
+    const storePay = txPay.objectStore('payments');
+    const syncQueuePay = [];
+    for (const fix of fixes) {
+        if (!fix.brokenPayments) continue;
+        for (const bp of fix.brokenPayments) {
+            const p = await storePay.get(bp.id);
+            if (p && !p.deletedAt) {
+                p.amount = bp.expected;
+                await storePay.put(p);
+                syncQueuePay.push(p);
+            }
+        }
+    }
+    await txPay.done;
+
+    // Process MyPayments
+    const txMyPay = db.transaction('myPayments', 'readwrite');
+    const storeMyPay = txMyPay.objectStore('myPayments');
+    const syncQueueMyPay = [];
+    for (const fix of fixes) {
+        if (!fix.brokenMyPayments) continue;
+        for (const bp of fix.brokenMyPayments) {
+            const p = await storeMyPay.get(bp.id);
+            if (p && !p.deletedAt) {
+                p.amount = bp.expected;
+                await storeMyPay.put(p);
+                syncQueueMyPay.push(p);
+            }
+        }
+    }
+    await txMyPay.done;
+
+    // Process ManualDebts
+    const txMD = db.transaction('manualDebts', 'readwrite');
+    const storeMD = txMD.objectStore('manualDebts');
+    const syncQueueMD = [];
+    for (const fix of fixes) {
+        if (!fix.brokenManualDebts) continue;
+        for (const bp of fix.brokenManualDebts) {
+            const p = await storeMD.get(bp.id);
+            if (p && !p.deletedAt) {
+                p.amount = bp.expected;
+                await storeMD.put(p);
+                syncQueueMD.push(p);
+            }
+        }
+    }
+    await txMD.done;
+
+    syncQueueP.forEach(p => backgroundSync('prescriptions', p));
+    syncQueuePay.forEach(p => backgroundSync('payments', p));
+    syncQueueMyPay.forEach(p => backgroundSync('myPayments', p));
+    syncQueueMD.forEach(p => backgroundSync('manualDebts', p));
+  },
+
+  async analyzeFarmerBalances(): Promise<{
+      farmerId: string; 
+      farmerName: string; 
+      currentBalance: number; 
+      calculatedBalance: number; 
+      brokenPrescriptions: {id: string, expected: number, actual: number}[];
+      brokenPayments: {id: string, expected: number, actual: number}[];
+      brokenMyPayments: {id: string, expected: number, actual: number}[];
+      brokenManualDebts: {id: string, expected: number, actual: number}[];
+  }[]> {
+    const db = await initDB();
+    const farmers = await db.getAll('farmers');
+    const payments = await db.getAll('payments');
+    const myPayments = await db.getAll('myPayments');
+    const prescriptions = await db.getAll('prescriptions');
+    const manualDebts = await db.getAll('manualDebts');
+
+    const results = [];
+
+    for (const farmer of farmers) {
+        if (farmer.deletedAt) continue;
+        
+        let currentTotalDebt = 0;
+        let calculatedTotalDebt = 0;
+        let currentTotalPaid = 0;
+        let calculatedTotalPaid = 0;
+
+        const brokenPayments: {id: string, expected: number, actual: number}[] = [];
+        const fPayments = payments.filter(p => !p.deletedAt && p.farmerId === farmer.id);
+        for(const p of fPayments) {
+            currentTotalPaid += Number(p.amount) || 0;
+            
+            const trueAmount = parseFloat(String(p.amount).replace(',', '.')) || 0;
+            calculatedTotalPaid += Math.abs(trueAmount);
+
+            if (p.amount !== Math.abs(trueAmount) || isNaN(p.amount as any) || typeof p.amount === 'string') {
+                brokenPayments.push({id: p.id, expected: Math.abs(trueAmount), actual: p.amount});
+            }
+        }
+
+        const brokenMyPayments: {id: string, expected: number, actual: number}[] = [];
+        const fMyPayments = myPayments.filter(p => !p.deletedAt && p.farmerId === farmer.id && p.status !== 'CANCELLED' && !p.relatedId);
+        for(const p of fMyPayments) {
+            currentTotalPaid += Number(p.amount) || 0;
+            
+            const trueAmount = parseFloat(String(p.amount).replace(',', '.')) || 0;
+            calculatedTotalPaid += Math.abs(trueAmount);
+
+            if (p.amount !== Math.abs(trueAmount) || isNaN(p.amount as any) || typeof p.amount === 'string') {
+                brokenMyPayments.push({id: p.id, expected: Math.abs(trueAmount), actual: p.amount});
+            }
+        }
+
+        const brokenManualDebts: {id: string, expected: number, actual: number}[] = [];
+        const fManualDebts = manualDebts.filter(d => !d.deletedAt && d.farmerId === farmer.id && !d.id.startsWith('turnover-'));
+        for(const d of fManualDebts) {
+            currentTotalDebt += Number(d.amount) || 0;
+            
+            let trueAmount = parseFloat(String(d.amount).replace(',', '.')) || 0;
+            // Manual debts can be negative if it's a credit, so we keep the sign.
+            calculatedTotalDebt += trueAmount;
+
+            if (d.amount !== trueAmount || isNaN(d.amount as any) || typeof d.amount === 'string') {
+                brokenManualDebts.push({id: d.id, expected: trueAmount, actual: d.amount});
+            }
+        }
+
+        const brokenPrescriptions: {id: string, expected: number, actual: number}[] = [];
+        const fPrescriptions = prescriptions.filter(p => !p.deletedAt && p.farmerId === farmer.id);
+        
+        for(const p of fPrescriptions) {
+            if (p.priceType === 'CASH') continue;
+            
+            const amt = Number(p.totalAmount) || 0;
+            
+            let calculatedAmt = 0;
+            for(const item of (p.items || [])) {
+                let itemTotal = Number(item.totalPrice) || 0;
+                if (!itemTotal) {
+                    const price = Number(item.unitPrice) || 0;
+                    const qtyStr = String(item.quantity || '0').replace(',', '.');
+                    const qty = parseFloat(qtyStr) || 0;
+                    itemTotal = price * qty;
+                }
+                calculatedAmt += itemTotal;
+            }
+            
+            const isReturn = p.type === 'RETURN' || (p.totalAmount !== undefined && Number(p.totalAmount) < 0) || calculatedAmt < 0;
+            currentTotalDebt += (isReturn ? -Math.abs(amt) : Math.abs(amt));
+            
+            const discount = Number(p.discountAmount) || 0;
+            let magnitude = Math.abs(calculatedAmt) - discount;
+            if (magnitude < 0) magnitude = 0;
+
+            const calcEffectiveDebt = isReturn ? -magnitude : magnitude;
+            calculatedTotalDebt += calcEffectiveDebt;
+
+            // Notice we compare the expected totalAmount value structure
+            const expectedTotalAmount = isReturn ? -magnitude : magnitude;
+            
+            if (Math.abs(calcEffectiveDebt - (isReturn ? -Math.abs(amt) : Math.abs(amt))) > 0.01 || typeof p.totalAmount === 'string') {
+                brokenPrescriptions.push({id: p.id, expected: expectedTotalAmount, actual: p.totalAmount || 0});
+            }
+        }
+
+        const currentBalance = currentTotalPaid - currentTotalDebt;
+        const calculatedBalance = calculatedTotalPaid - calculatedTotalDebt;
+
+        if (Math.abs(currentBalance - calculatedBalance) > 0.01 || brokenPrescriptions.length > 0 || brokenPayments.length > 0 || brokenMyPayments.length > 0 || brokenManualDebts.length > 0) {
+            results.push({
+                farmerId: farmer.id,
+                farmerName: farmer.fullName,
+                currentBalance,
+                calculatedBalance,
+                brokenPrescriptions,
+                brokenPayments,
+                brokenMyPayments,
+                brokenManualDebts
+            });
+        }
+    }
+    return results;
+  },
+
+  async analyzeInventoryBalances(): Promise<{pesticideId: string, pesticideName: string, currentQty: number, calculatedQty: number, purchasedQty: number, soldQty: number, adjustedQty: number}[]> {
+    const db = await initDB();
+    const inventory = await db.getAll('inventory');
+    const purchases = await db.getAll('supplierPurchases');
+    const prescriptions = await db.getAll('prescriptions');
+
+    const mismatches: {pesticideId: string, pesticideName: string, currentQty: number, calculatedQty: number, purchasedQty: number, soldQty: number, adjustedQty: number}[] = [];
+
+    // Calculate correctly based on history
+    const calculatedMap = new Map<string, { total: number, purchased: number, sold: number, adjusted: number }>();
+    const originalMap = new Map<string, InventoryItem>();
+
+    for (const item of inventory) {
+        if (!item.deletedAt) {
+            originalMap.set(item.pesticideId, item);
+            let qty = 0;
+            if (item.adjustments) {
+                for (const adj of item.adjustments) {
+                    qty += (adj.amount || 0);
+                }
+            }
+            calculatedMap.set(item.pesticideId, { total: qty, purchased: 0, sold: 0, adjusted: qty });
+        }
+    }
+
+    for (const purchase of purchases) {
+        if (purchase.deletedAt) continue;
+        for (const item of (purchase.items || [])) {
+            const qtyStr = String(item.quantity || '0').replace(',', '.');
+            const qty = parseFloat(qtyStr) || 0;
+            if (isNaN(qty) || qty === 0) continue;
+
+            const isReturnOrSale = purchase.type === 'RETURN' || purchase.note?.startsWith('SATIŞ') || qty < 0;
+            const effectiveQty = isReturnOrSale ? -Math.abs(qty) : Math.abs(qty);
+            
+            const stats = calculatedMap.get(item.pesticideId) || { total: 0, purchased: 0, sold: 0, adjusted: 0 };
+            stats.total += effectiveQty;
+            if (effectiveQty > 0) {
+                stats.purchased += effectiveQty;
+            } else {
+                // If it's a return or sale to supplier it subtracts from inventory (like sold but maybe labeled returned)
+                stats.sold += Math.abs(effectiveQty);
+            }
+            calculatedMap.set(item.pesticideId, stats);
+        }
+    }
+
+    for (const prescription of prescriptions) {
+        if (prescription.deletedAt) continue;
+        if (prescription.isProcessed === false) continue;
+        if (prescription.isInventoryProcessed === false) continue;
+        const isReturn = prescription.type === 'RETURN';
+        const qtyMultiplier = isReturn ? 1 : -1;
+        
+        for (const item of (prescription.items || [])) {
+            const qty = parseFloat(String(item.quantity).replace(',', '.')) || 0;
+            if (qty === 0) continue;
+            
+            const effectiveQty = qty * qtyMultiplier;
+            const stats = calculatedMap.get(item.pesticideId) || { total: 0, purchased: 0, sold: 0, adjusted: 0 };
+            stats.total += effectiveQty;
+            if (effectiveQty > 0) {
+                stats.purchased += effectiveQty;
+            } else {
+                stats.sold += Math.abs(effectiveQty);
+            }
+            calculatedMap.set(item.pesticideId, stats);
+        }
+    }
+
+    // Now compare
+    for (const [pesticideId, item] of originalMap.entries()) {
+        const stats = calculatedMap.get(pesticideId) || { total: 0, purchased: 0, sold: 0, adjusted: 0 };
+        // Float precision fix
+        const diff = Math.abs(item.quantity - stats.total);
+        if (diff > 0.001) {
+            mismatches.push({
+                pesticideId,
+                pesticideName: item.pesticideName,
+                currentQty: Number(item.quantity.toFixed(2)),
+                calculatedQty: Number(stats.total.toFixed(2)),
+                purchasedQty: Number(stats.purchased.toFixed(2)),
+                soldQty: Number(stats.sold.toFixed(2)),
+                adjustedQty: Number(stats.adjusted.toFixed(2))
+            });
+        }
+    }
+
+    return mismatches;
+  },
+
+  async rebuildInventoryBalances() {
+    const db = await initDB();
+    const inventory = await db.getAll('inventory');
+    const purchases = await db.getAll('supplierPurchases');
+    const prescriptions = await db.getAll('prescriptions');
+
+    // Reset all quantities to 0 but keep adjustments
+    const inventoryMap = new Map<string, InventoryItem>();
+    for (const item of inventory) {
+        if (!item.deletedAt) {
+            inventoryMap.set(item.pesticideId, { ...item, quantity: 0 });
+            // Add initial quantities from adjustments if any
+            if (item.adjustments) {
+                let adjTotal = 0;
+                for (const adj of item.adjustments) {
+                    adjTotal += (adj.amount || 0);
+                }
+                inventoryMap.get(item.pesticideId)!.quantity = adjTotal;
+            }
+        }
+    }
+
+    // Process Purchases
+    for (const purchase of purchases) {
+        if (purchase.deletedAt) continue;
+        
+        for (const item of (purchase.items || [])) {
+            const qtyStr = String(item.quantity || '0').replace(',', '.');
+            const qty = parseFloat(qtyStr) || 0;
+            if (isNaN(qty) || qty === 0) continue;
+
+            const isReturnOrSale = purchase.type === 'RETURN' || purchase.note?.startsWith('SATIŞ') || qty < 0;
+            const effectiveQty = isReturnOrSale ? -Math.abs(qty) : Math.abs(qty);
+            
+            if (inventoryMap.has(item.pesticideId)) {
+                const existing = inventoryMap.get(item.pesticideId)!;
+                existing.quantity += effectiveQty;
+                // Update prices based on latest purchase (optional, but good for consistency)
+                if (!isReturnOrSale && item.buyingPrice) {
+                     existing.buyingPrice = parseFloat(String(item.buyingPrice).replace(',', '.')) || existing.buyingPrice;
+                     if (item.sellingPrice) {
+                         existing.sellingPrice = parseFloat(String(item.sellingPrice).replace(',', '.')) || existing.sellingPrice;
+                     }
+                }
+            } else {
+                // Should exist from DB, but just in case
+                const buyingPrice = parseFloat(String(item.buyingPrice).replace(',', '.')) || 0;
+                const sellingPrice = item.sellingPrice ? parseFloat(String(item.sellingPrice).replace(',', '.')) : buyingPrice * 1.2;
+                inventoryMap.set(item.pesticideId, {
+                    id: crypto.randomUUID(),
+                    pesticideId: item.pesticideId,
+                    pesticideName: item.pesticideName,
+                    category: PesticideCategory.OTHER,
+                    quantity: effectiveQty,
+                    unit: item.unit || 'Adet',
+                    buyingPrice,
+                    sellingPrice,
+                    lastUpdated: new Date().toISOString()
+                });
+            }
+        }
+    }
+
+    // Process Prescriptions
+    for (const prescription of prescriptions) {
+        if (prescription.deletedAt) continue;
+        if (prescription.isProcessed === false) continue;
+        if (prescription.isInventoryProcessed === false) continue;
+
+        const isReturn = prescription.type === 'RETURN';
+        const qtyMultiplier = isReturn ? 1 : -1;
+
+        for (const item of (prescription.items || [])) {
+            const qty = parseFloat(String(item.quantity).replace(',', '.')) || 0;
+            if (qty === 0) continue;
+
+            if (inventoryMap.has(item.pesticideId)) {
+                inventoryMap.get(item.pesticideId)!.quantity += (qty * qtyMultiplier);
+            }
+        }
+    }
+
+    // Save all to DB
+    const tx = db.transaction('inventory', 'readwrite');
+    for (const item of inventoryMap.values()) {
+        await tx.store.put(item);
+    }
+    await tx.done;
   },
 
   async processInventory(prescription: Prescription) {
@@ -1095,7 +1577,8 @@ const dbServiceObj = {
 
   async getPayments() {
     const db = await initDB();
-    return (await db.getAll('payments')).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const items = await db.getAll('payments');
+    return items.filter((i: any) => !i.deletedAt).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   },
 
   async getPaymentsByFarmer(farmerId: string) {
@@ -1119,13 +1602,13 @@ const dbServiceObj = {
 
   async deletePayment(id: string) {
     const db = await initDB();
-    await db.delete('payments', id);
-    backgroundDelete('payments', id);
+    await backgroundDelete('payments', id);
   },
   
   async getManualDebts() {
     const db = await initDB();
-    return (await db.getAll('manualDebts')).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const items = await db.getAll('manualDebts');
+    return items.filter((i: any) => !i.deletedAt).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   },
 
   async getManualDebtsByFarmer(farmerId: string) {
@@ -1150,13 +1633,13 @@ const dbServiceObj = {
 
   async deleteManualDebt(id: string) {
     const db = await initDB();
-    await db.delete('manualDebts', id);
-    backgroundDelete('manualDebts', id);
+    await backgroundDelete('manualDebts', id);
   },
 
   async getSuppliers() {
     const db = await initDB();
-    return (await db.getAll('suppliers')).sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+    const items = await db.getAll('suppliers');
+    return items.filter((i: any) => !i.deletedAt).sort((a, b) => a.name.localeCompare(b.name, 'tr'));
   },
 
   async addSupplier(supplier: Supplier) {
@@ -1175,8 +1658,7 @@ const dbServiceObj = {
 
   async deleteSupplier(id: string) {
     const db = await initDB();
-    await db.delete('suppliers', id);
-    backgroundDelete('suppliers', id);
+    await backgroundDelete('suppliers', id);
   },
 
   async updateInventoryFromPurchase(purchase: SupplierPurchase, isRevert: boolean = false) {
@@ -1245,10 +1727,13 @@ const dbServiceObj = {
 
   async getSupplierPurchases(supplierId?: string) {
     const db = await initDB();
+    let items;
     if (!supplierId) {
-      return db.getAll('supplierPurchases');
+      items = await db.getAll('supplierPurchases');
+    } else {
+      items = await db.getAllFromIndex('supplierPurchases', 'by-supplier', supplierId);
     }
-    return db.getAllFromIndex('supplierPurchases', 'by-supplier', supplierId);
+    return items.filter((i: any) => !i.deletedAt);
   },
 
   async getSupplierPurchaseById(id: string) {
@@ -1258,10 +1743,13 @@ const dbServiceObj = {
 
   async getSupplierPayments(supplierId?: string) {
     const db = await initDB();
+    let items;
     if (!supplierId) {
-      return db.getAll('supplierPayments');
+      items = await db.getAll('supplierPayments');
+    } else {
+      items = await db.getAllFromIndex('supplierPayments', 'by-supplier', supplierId);
     }
-    return db.getAllFromIndex('supplierPayments', 'by-supplier', supplierId);
+    return items.filter((i: any) => !i.deletedAt);
   },
 
   async addSupplierPurchase(purchase: SupplierPurchase) {
@@ -1281,7 +1769,6 @@ const dbServiceObj = {
 
   async deleteSupplierPurchase(id: string) {
     const db = await initDB();
-    await db.delete('supplierPurchases', id);
     await backgroundDelete('supplierPurchases', id);
   },
 
@@ -1300,13 +1787,13 @@ const dbServiceObj = {
 
   async deleteSupplierPayment(id: string) {
     const db = await initDB();
-    await db.delete('supplierPayments', id);
-    backgroundDelete('supplierPayments', id);
+    await backgroundDelete('supplierPayments', id);
   },
 
   async getMyPayments() {
     const db = await initDB();
-    return (await db.getAll('myPayments')).sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
+    const items = await db.getAll('myPayments');
+    return items.filter((i: any) => !i.deletedAt).sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
   },
 
   async addMyPayment(payment: MyPayment) {
@@ -1325,14 +1812,14 @@ const dbServiceObj = {
 
   async deleteMyPayment(id: string) {
     const db = await initDB();
-    await db.delete('myPayments', id);
-    backgroundDelete('myPayments', id);
+    await backgroundDelete('myPayments', id);
   },
 
   // --- TURNOVER LOGS ---
   async getTurnoverLogs(): Promise<TurnoverLog[]> {
     const db = await initDB();
-    return db.getAll('turnoverLogs');
+    const items = await db.getAll('turnoverLogs');
+    return items.filter((i: any) => !i.deletedAt);
   },
 
   async addTurnoverLog(log: TurnoverLog): Promise<void> {
@@ -1406,7 +1893,8 @@ const dbServiceObj = {
   // --- EXPENSES ---
   async getExpenses() {
     const db = await initDB();
-    return (await db.getAll('expenses')).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const items = await db.getAll('expenses');
+    return items.filter((i: any) => !i.deletedAt).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   },
 
   async addExpense(expense: Expense) {
@@ -1425,7 +1913,8 @@ const dbServiceObj = {
   // --- ACCOUNTS & TRANSACTIONS ---
   async getAccounts() {
     const db = await initDB();
-    return db.getAll('accounts');
+    const items = await db.getAll('accounts');
+    return items.filter((i: any) => !i.deletedAt);
   },
 
   async addAccount(account: Account) {
@@ -1444,13 +1933,13 @@ const dbServiceObj = {
 
   async deleteAccount(id: string) {
     const db = await initDB();
-    await db.delete('accounts', id);
-    backgroundDelete('accounts', id);
+    await backgroundDelete('accounts', id);
   },
 
   async getTransactions() {
     const db = await initDB();
-    return (await db.getAll('transactions')).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const items = await db.getAll('transactions');
+    return items.filter((i: any) => !i.deletedAt).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   },
 
   async addTransaction(transaction: Transaction) {
@@ -1521,20 +2010,19 @@ const dbServiceObj = {
         backgroundSync('accounts', account);
       }
     }
-    await db.delete('transactions', id);
-    backgroundDelete('transactions', id);
+    await backgroundDelete('transactions', id);
   },
 
   async deleteExpense(id: string) {
     const db = await initDB();
-    await db.delete('expenses', id);
-    backgroundDelete('expenses', id);
+    await backgroundDelete('expenses', id);
   },
 
   // --- TEAM MEMBERS ---
   async getTeamMembers() {
     const db = await initDB();
-    return db.getAll('teamMembers');
+    const items = await db.getAll('teamMembers');
+    return items.filter((i: any) => !i.deletedAt);
   },
 
   async addTeamMember(member: TeamMember) {
@@ -1553,14 +2041,14 @@ const dbServiceObj = {
 
   async deleteTeamMember(id: string) {
     const db = await initDB();
-    await db.delete('teamMembers', id);
-    backgroundDelete('teamMembers', id);
+    await backgroundDelete('teamMembers', id);
   },
 
   // --- MESSAGES ---
   async getMessages() {
     const db = await initDB();
-    return (await db.getAll('messages')).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    const items = await db.getAll('messages');
+    return items.filter((i: any) => !i.deletedAt).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   },
 
   // News Methods
@@ -1647,7 +2135,8 @@ const dbServiceObj = {
 
   async getCollectionLogs(): Promise<CollectionLog[]> {
     const db = await initDB();
-    return db.getAll('collectionLogs');
+    const items = await db.getAll('collectionLogs');
+    return items.filter((i: any) => !i.deletedAt);
   },
 
   async getPlants(): Promise<Plant[]> {
@@ -1680,8 +2169,7 @@ const dbServiceObj = {
 
   async permanentlyDeletePlant(id: string): Promise<void> {
     const db = await initDB();
-    await db.delete('plants', id);
-    backgroundDelete('plants', id);
+    await backgroundDelete('plants', id);
   },
 
   async getAllPlantsRaw(): Promise<Plant[]> {
@@ -1703,8 +2191,30 @@ const dbServiceObj = {
 
   async deleteCollectionLog(id: string) {
     const db = await initDB();
-    await db.delete('collectionLogs', id);
-    backgroundDelete('collectionLogs', id);
+    await backgroundDelete('collectionLogs', id);
+  },
+
+  async getAllSiloTransactions(): Promise<import('../types').SiloTransaction[]> {
+    const db = await initDB();
+    const items = await db.getAll('siloTransactions');
+    return items.filter((i: any) => !i.deletedAt);
+  },
+
+  async addSiloTransaction(transaction: import('../types').SiloTransaction) {
+    const db = await initDB();
+    await db.put('siloTransactions', transaction);
+    backgroundSync('siloTransactions', transaction);
+  },
+
+  async updateSiloTransaction(transaction: import('../types').SiloTransaction) {
+    const db = await initDB();
+    await db.put('siloTransactions', transaction);
+    backgroundSync('siloTransactions', transaction);
+  },
+
+  async deleteSiloTransaction(id: string) {
+    const db = await initDB();
+    await backgroundDelete('siloTransactions', id);
   },
 
   /**
@@ -1728,9 +2238,9 @@ const dbServiceObj = {
    * Gerçek zamanlı senkronizasyon için Firestore dinleyicilerini kurar.
    * Diğer cihazlardan gelen değişiklikleri yerel veritabanına yansıtır.
    */
-  setupRealtimeSync(uid: string, onSync: () => void, onProfileSync?: (profile: UserProfile) => void) {
+  setupRealtimeSync(uid: string, onSync: () => void, onProfileSync?: (profile: import('../types').UserProfile) => void) {
     const userPath = [FS_ROOT, FS_ORG, FS_USERS, uid].join("/");
-    const collections = ["farmers", "notifications", "visits", "prescriptions", "reminders", "inventory", "payments", "manualDebts", "suppliers", "supplierPurchases", "supplierPayments", "myPayments", "expenses", "accounts", "transactions", "teamMembers", "messages", "collectionLogs", "plants"] as const;
+    const collections = ["farmers", "notifications", "visits", "prescriptions", "reminders", "inventory", "payments", "manualDebts", "suppliers", "supplierPurchases", "supplierPayments", "myPayments", "expenses", "accounts", "transactions", "teamMembers", "messages", "collectionLogs", "plants", "siloTransactions", "siloContacts"] as const;
     
     const unsubscribes: (() => void)[] = [];
 
@@ -1810,6 +2320,36 @@ const dbServiceObj = {
       if(error instanceof Error && error.message.includes('the client is offline')) {
         console.error("Please check your Firebase configuration. ");
       }
+    }
+  },
+
+  async getSiloContacts() {
+    const db = await initDB();
+    const contacts = await db.getAll('siloContacts');
+    return contacts.filter((c: any) => !c.deletedAt).sort((a: any, b: any) => a.name.localeCompare(b.name, 'tr'));
+  },
+
+  async addSiloContact(contact: import('../types').SiloContact) {
+    const db = await initDB();
+    await db.put('siloContacts', contact);
+    backgroundSync('siloContacts', contact);
+    return contact.id;
+  },
+
+  async updateSiloContact(contact: import('../types').SiloContact) {
+    const db = await initDB();
+    await db.put('siloContacts', contact);
+    backgroundSync('siloContacts', contact);
+    return contact.id;
+  },
+
+  async deleteSiloContact(id: string) {
+    const db = await initDB();
+    const contact = await db.get('siloContacts', id);
+    if (contact) {
+      const updatedContact = { ...contact, deletedAt: new Date().toISOString() };
+      await db.put('siloContacts', updatedContact);
+      backgroundSync('siloContacts', updatedContact);
     }
   }
 };

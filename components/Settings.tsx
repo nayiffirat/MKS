@@ -7,6 +7,7 @@ import { auth, googleProvider } from '../services/firebase';
 import { signInWithPopup, linkWithPopup, signInWithRedirect, linkWithRedirect, getRedirectResult } from 'firebase/auth';
 import { UIScale, Language } from '../types';
 import { ConfirmationModal } from './ConfirmationModal';
+import { dbService } from '../services/db';
 
 interface SettingsProps {
     onNavigate: (view: any) => void;
@@ -38,6 +39,7 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
   const { currentUser, logout } = useAuth();
   const { uiScale, setUiScale, userProfile, updateUserProfile, performManualTurnover, language, setLanguage, t, showToast, hapticFeedback } = useAppViewModel();
   const [isTurnoverModalOpen, setIsTurnoverModalOpen] = useState(false);
+  const [isRebuildModalOpen, setIsRebuildModalOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<string | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
 
@@ -248,6 +250,22 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
             </button>
         </div>
       </div>
+      
+      <div className="bg-stone-900/60 backdrop-blur rounded-[2.5rem] p-6 shadow-sm border border-white/5 mt-6">
+        <h4 className="text-xs font-bold text-stone-400 mb-3 uppercase tracking-wider">Veri Yönetimi</h4>
+        <div className="flex flex-col gap-3">
+            <button 
+                onClick={() => setIsRebuildModalOpen(true)}
+                className="w-full flex items-center gap-3 p-4 bg-orange-950/30 text-orange-400 hover:bg-orange-900/50 transition-all rounded-2xl border border-orange-500/20"
+            >
+                <RefreshCw size={18} />
+                <div className="text-left">
+                    <div className="text-xs font-bold">Stokları Onar (Yeniden Hesapla)</div>
+                    <div className="text-[9px] opacity-70 mt-1 uppercase">Stok uyuşmazlıklarını geçmiş kayıtlardan düzelt</div>
+                </div>
+            </button>
+        </div>
+      </div>
     </div>
   );
 
@@ -257,12 +275,14 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
       
       <div className="bg-stone-900/60 backdrop-blur rounded-[2.5rem] p-6 shadow-sm border border-white/5">
         <div className="flex flex-col gap-2">
-            {(['DEFAULT', 'TECHNICAL', 'ORGANIC', 'MINIMAL', 'BARBIE'] as const).map((themeOption) => {
-                const isActive = (userProfile.theme || 'DEFAULT') === themeOption;
-                let label = themeOption === 'DEFAULT' ? 'Klasik (Standart)' : 
-                            themeOption === 'TECHNICAL' ? 'Mühendis Defteri (Teknik)' : 
+            {(['DEFAULT', 'TECHNICAL', 'ORGANIC', 'MINIMAL', 'BARBIE', 'APPLE'] as const).map((themeOption) => {
+                const isActive = (userProfile.theme || 'APPLE') === themeOption || (themeOption === 'APPLE' && userProfile.theme === 'DEFAULT');
+                if (themeOption === 'DEFAULT') return null; // Hide the old 'DEFAULT' option since APPLE is the new default
+
+                let label = themeOption === 'TECHNICAL' ? 'Mühendis Defteri (Teknik)' : 
                             themeOption === 'ORGANIC' ? 'Toprak ve Canlılık (Doğal)' : 
                             themeOption === 'MINIMAL' ? 'Stark (Keskin Minimal)' :
+                            themeOption === 'APPLE' ? 'Apple (iOS/macOS) - Standart' :
                             'Barbie Land (Pembe & Eğlenceli)';
 
                 return (
@@ -271,12 +291,12 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
                         onClick={() => updateUserProfile({ ...userProfile, theme: themeOption })}
                         className={`w-full py-4 px-4 rounded-xl font-bold text-sm text-left transition-all duration-300 border flex items-center justify-between ${
                             isActive 
-                            ? (themeOption === 'BARBIE' ? 'bg-pink-500 border-white/40 text-white shadow-lg' : 'bg-stone-800 border-white/20 text-white shadow-lg')
+                            ? (themeOption === 'BARBIE' ? 'bg-pink-500 border-white/40 text-white shadow-lg' : themeOption === 'APPLE' ? 'bg-[#0A84FF] border-white/40 text-white shadow-lg' : 'bg-stone-800 border-white/20 text-white shadow-lg')
                             : 'bg-stone-950/40 border-stone-800/50 hover:bg-stone-900 text-stone-400 hover:text-stone-300 border-dashed'
                         }`}
                     >
                         <span>{label}</span>
-                        {isActive && <div className={`w-2 h-2 rounded-full ${themeOption === 'BARBIE' ? 'bg-white' : 'bg-emerald-500'}`} />}
+                        {isActive && <div className={`w-2 h-2 rounded-full ${themeOption === 'BARBIE' || themeOption === 'APPLE' ? 'bg-white' : 'bg-emerald-500'}`} />}
                     </button>
                 );
             })}
@@ -388,6 +408,27 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
         }}
         title={t('settings.turnover')}
         message={t('settings.turnover.confirm')}
+        variant="warning"
+      />
+
+      <ConfirmationModal
+        isOpen={isRebuildModalOpen}
+        onClose={() => setIsRebuildModalOpen(false)}
+        onConfirm={async () => {
+            try {
+               await dbService.rebuildInventoryBalances();
+               showToast("Stoklar başarıyla yeniden hesaplandı. Sistem yenileniyor...", "success");
+               setTimeout(() => {
+                   window.location.reload();
+               }, 1500);
+            } catch (e) {
+               showToast("Hata oluştu.", "error");
+            }
+            setIsRebuildModalOpen(false);
+        }}
+        title="Stokları Yeniden Hesapla"
+        message="Bu işlem tüm geçmiş alım ve satımlarınızı tarayarak mevcut stok miktarlarınızı baştan hesaplar. Stok miktarındaki uyuşmazlıkları gidermek için kullanılır. Onaylıyor musunuz?"
+        confirmText="Evet, Onar"
         variant="warning"
       />
     </>

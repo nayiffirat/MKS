@@ -9,7 +9,7 @@ const weatherCache: { [key: string]: { data: WeatherResponse; timestamp: number 
 const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes
 
 export const useWeatherViewModel = () => {
-  const { userProfile, updateUserProfile, t } = useAppViewModel();
+  const { userProfile, updateUserProfile, t, showToast } = useAppViewModel();
 
   const [selectedCity, setSelectedCity] = useState<AgriCity>(() => {
     // 1. Profilde kayıtlı mı?
@@ -91,7 +91,7 @@ export const useWeatherViewModel = () => {
 
   const detectCurrentLocation = async () => {
       if (!("geolocation" in navigator)) {
-          alert(t('weather.error.geolocation'));
+          showToast(t('weather.error.geolocation'), 'error');
           return;
       }
 
@@ -105,7 +105,7 @@ export const useWeatherViewModel = () => {
       }, (err) => {
           console.error(err);
           setIsSearching(false);
-          alert(t('weather.error.denied'));
+          showToast(t('weather.error.denied'), 'error');
       });
   };
 

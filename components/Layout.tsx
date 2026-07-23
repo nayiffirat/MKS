@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Home, Users, BookOpen, FileText, ClipboardList, Menu, X, LogOut, Settings, ChevronRight, User, Bell, Phone, UserCircle, Plus, PieChart, Sprout, CalendarCheck, ChevronLeft, Package, Truck, CreditCard, Receipt, Wallet, History as HistoryIcon, Printer, Shield, Clock, MessageCircle, Trash2, TrendingDown, Map, Sparkles, LineChart } from 'lucide-react';
+import { Home, Users, BookOpen, FileText, ClipboardList, Menu, X, LogOut, Settings, ChevronRight, User, Bell, Phone, UserCircle, Plus, PieChart, Sprout, CalendarCheck, ChevronLeft, Package, Truck, CreditCard, Receipt, Wallet, History as HistoryIcon, Printer, Shield, Clock, MessageCircle, Trash2, TrendingDown, Map, Sparkles, LineChart, Search } from 'lucide-react';
 import { ViewState } from '../types';
 import { useAppViewModel } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
@@ -24,7 +24,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
   const navGroups = [
     { title: "Zeka & Asistan", items: [{ id: 'AI_ASSISTANT', icon: Sparkles, label: 'Zirai Asistan (Gemini AI)' }, { id: 'SMART_STOCK', icon: LineChart, label: 'Akıllı Stok Tahmini' }] },
     { title: t('nav.group.general') || "Genel", items: [{ id: 'DASHBOARD', icon: Home, label: t('nav.dashboard') }, { id: 'NOTIFICATIONS', icon: Bell, label: t('nav.notifications') || 'Bildirimler', badge: unreadCount }, { id: 'RECENT_TRANSACTIONS', icon: HistoryIcon, label: t('nav.recent') || 'Son İşlemler' }, { id: 'REPORTS', icon: Printer, label: t('nav.reports') }, { id: 'REMINDERS', icon: CalendarCheck, label: t('nav.reminders') || 'Hatırlatıcılar', badge: stats.activeReminders }, { id: 'MAP', icon: Map, label: 'Harita' }, { id: 'KASA', icon: Wallet, label: t('nav.kasa') }, { id: 'EXPENSES', icon: Receipt, label: t('nav.expenses') || 'Giderler' }, { id: 'STATISTICS', icon: PieChart, label: t('nav.statistics') || 'İstatistikler' }] },
-    { title: t('nav.group.field') || "Saha & Kayıt", items: [{ id: 'FARMERS', icon: Users, label: t('nav.farmers') }, { id: 'DEBT_TRACKING', icon: TrendingDown, label: 'Borç Takibi' }, { id: 'PESTICIDES', icon: BookOpen, label: t('nav.pesticides') || 'İlaçlar' }, { id: 'INVENTORY', icon: Package, label: t('nav.inventory') }, { id: 'SUPPLIERS', icon: Truck, label: t('nav.suppliers') }, { id: 'PAYMENTS', icon: CreditCard, label: t('nav.payments') || 'Ödemelerim' }, { id: 'PRESCRIPTIONS', icon: FileText, label: t('nav.prescriptions') }, { id: 'VISITS', icon: ClipboardList, label: t('nav.visits') }] },
+    { title: t('nav.group.field') || "Saha & Kayıt", items: [{ id: 'FARMERS', icon: Users, label: t('nav.farmers') }, { id: 'DEBT_TRACKING', icon: TrendingDown, label: 'Borç Takibi' }, { id: 'PESTICIDES', icon: BookOpen, label: t('nav.pesticides') || 'İlaçlar' }, { id: 'INVENTORY', icon: Package, label: t('nav.inventory') }, { id: 'SILO', icon: Sprout, label: 'Silom' }, { id: 'SUPPLIERS', icon: Truck, label: t('nav.suppliers') }, { id: 'PAYMENTS', icon: CreditCard, label: t('nav.payments') || 'Ödemelerim' }, { id: 'PRESCRIPTIONS', icon: FileText, label: t('nav.prescriptions') }, { id: 'VISITS', icon: ClipboardList, label: t('nav.visits') }] },
     { title: t('nav.group.support') || "Destek", items: [{ id: 'TRASH', icon: Trash2, label: t('nav.trash') || 'Çöp Kutusu' }, { id: 'CONTACT', icon: Phone, label: t('nav.contact') || 'Bize Ulaşın' }, { id: 'SETTINGS', icon: Settings, label: t('nav.settings') }] }
   ];
 
@@ -62,7 +62,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
     <div className={`min-h-screen relative font-sans text-stone-200 bg-stone-950 flex flex-col ${isHighContrast ? 'high-contrast' : ''}`}>
       <div className="fixed inset-0 z-0 pointer-events-none"><div className="absolute inset-0 bg-cover bg-center bg-no-repeat transform scale-105 blur-[3px] opacity-40" style={{ backgroundImage: 'url("https://images.unsplash.com/photo-1500382017468-9049fed747ef?q=80&w=2832&auto=format&fit=crop")' }}></div><div className="absolute inset-0 bg-gradient-to-br from-stone-950 via-stone-900/95 to-black/90"></div></div>
 
-      {/* Global Back Button */}
+       {/* Global Back Button */}
       {currentView !== 'DASHBOARD' && (
         <button 
             onClick={() => window.history.back()} 

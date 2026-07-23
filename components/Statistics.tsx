@@ -36,7 +36,8 @@ import { formatCurrency } from '../utils/currency';
         farmerLabel,
         farmerPluralLabel,
         prescriptionLabel,
-        plants
+        plants,
+        showToast
     } = useAppViewModel();
     const [activeTab, setActiveTab] = useState<StatTab>(initialTab || 'OVERVIEW');
     const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
@@ -112,23 +113,37 @@ import { formatCurrency } from '../utils/currency';
                 prescriptionTotal = p.items.reduce((acc, item) => acc + (item.totalPrice || 0), 0);
             }
 
-            if (prescriptionTotal > 0) {
-                monthlySales[monthKey] = (monthlySales[monthKey] || 0) + prescriptionTotal;
-                totalRevenue += prescriptionTotal;
+            const isReturn = p.type === 'RETURN' || prescriptionTotal < 0;
+            const amountAbs = Math.abs(prescriptionTotal);
+
+            if (isReturn) {
+                monthlySales[monthKey] = (monthlySales[monthKey] || 0) - amountAbs;
+                totalRevenue -= amountAbs;
+            } else {
+                monthlySales[monthKey] = (monthlySales[monthKey] || 0) + amountAbs;
+                totalRevenue += amountAbs;
             }
 
             // Ürün bazlı satışlar ve maliyet
-            p.items.forEach(item => {
-                const qty = parseFloat(item.quantity?.replace(',', '.') || '0');
-                if (qty > 0) {
-                    const cost = buyingPriceMap[item.pesticideId] || 0;
-                    totalCost += qty * cost;
-
-                    if (item.totalPrice && item.totalPrice > 0) {
-                        productSales[item.pesticideName] = (productSales[item.pesticideName] || 0) + item.totalPrice;
+            if (p.items) {
+                p.items.forEach(item => {
+                    const qty = parseFloat(item.quantity?.replace(',', '.') || '0');
+                    if (qty > 0) {
+                        const cost = buyingPriceMap[item.pesticideId] || 0;
+                        if (isReturn) {
+                            totalCost -= qty * cost;
+                            if (item.totalPrice) {
+                                productSales[item.pesticideName] = (productSales[item.pesticideName] || 0) - item.totalPrice;
+                            }
+                        } else {
+                            totalCost += qty * cost;
+                            if (item.totalPrice) {
+                                productSales[item.pesticideName] = (productSales[item.pesticideName] || 0) + item.totalPrice;
+                            }
+                        }
                     }
-                }
-            });
+                });
+            }
         });
 
         const totalProfit = totalRevenue - totalCost;
@@ -257,7 +272,7 @@ import { formatCurrency } from '../utils/currency';
             pdf.save(`MKS_Detayli_Analiz_Raporu_${new Date().toISOString().split('T')[0]}.pdf`);
         } catch (e) {
             console.error("PDF Generation Error:", e);
-            alert("Rapor oluşturulurken bir hata oluştu.");
+            showToast("Rapor oluşturulurken bir hata oluştu.", "error");
         } finally {
             setIsGeneratingPdf(false);
         }
@@ -303,6 +318,7 @@ import { formatCurrency } from '../utils/currency';
     const consumptionData = React.useMemo(() => {
         const counts: Record<string, number> = {};
         prescriptions.forEach(p => {
+            const isReturn = p.type === 'RETURN' || (p.totalAmount || 0) < 0;
             p.items.forEach(item => {
                 const name = item.pesticideName;
                 // Eğer quantity varsa onu sayıya çevirip ekle, yoksa 1 say
@@ -311,7 +327,11 @@ import { formatCurrency } from '../utils/currency';
                     const match = String(item.quantity).replace(',', '.').match(/[\d.]+/);
                     if (match) qty = parseFloat(match[0]);
                 }
-                counts[name] = (counts[name] || 0) + qty;
+                if (isReturn) {
+                    counts[name] = (counts[name] || 0) - qty;
+                } else {
+                    counts[name] = (counts[name] || 0) + qty;
+                }
             });
         });
 
@@ -333,14 +353,20 @@ import { formatCurrency } from '../utils/currency';
         }, {} as Record<string, number>);
 
         processed.forEach(p => {
+            const isReturn = p.type === 'RETURN' || (p.totalAmount || 0) < 0;
             p.items.forEach(item => {
                 const qty = parseFloat(item.quantity?.replace(',', '.') || '0');
                 if (qty > 0) {
                     const cost = buyingPriceMap[item.pesticideId] || 0;
                     const revenue = item.unitPrice || 0;
                     
-                    totalSoldCost += qty * cost;
-                    totalSoldRevenue += qty * revenue;
+                    if (isReturn) {
+                        totalSoldCost -= qty * cost;
+                        totalSoldRevenue -= qty * revenue;
+                    } else {
+                        totalSoldCost += qty * cost;
+                        totalSoldRevenue += qty * revenue;
+                    }
                 }
             });
         });

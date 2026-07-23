@@ -5,7 +5,7 @@ import { dbService } from '../services/db';
 import { Farmer, Pesticide, Prescription, PesticideCategory, VisitLog, AppNotification } from '../types';
 import { useAppViewModel } from '../context/AppContext';
 import { safeStringify } from '../utils/json';
-import { Check, Plus, Trash2, FileOutput, Share2, FileText, Calendar, MapPin, X, User, Loader2, Search, FlaskConical, MessageCircle, Edit2, AlertCircle, ArrowLeft, Printer, Package, Download, MessageSquare, RefreshCw, AlertTriangle, Camera, Barcode, TrendingUp, Star, Lightbulb, ChevronRight } from 'lucide-react';
+import { Check, Plus, Trash2, FileOutput, Share2, FileText, Calendar, MapPin, X, User, Loader2, Search, FlaskConical, MessageCircle, Edit2, AlertCircle, ArrowLeft, Printer, Package, Download, MessageSquare, RefreshCw, AlertTriangle, Camera, Barcode, TrendingUp, Star, Lightbulb, ChevronRight, CreditCard, Wallet } from 'lucide-react';
 import BarcodeScanner from './BarcodeScanner';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
@@ -37,7 +37,15 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         hapticFeedback,
         activeTeamMember,
         teamMembers,
-        t
+        t,
+        accounts,
+        addTransaction,
+        deleteTransaction,
+        transactions,
+        payments,
+        addPayment,
+        updatePayment,
+        deletePayment
     } = useAppViewModel();
     const isSales = activeTeamMember?.role === 'SALES';
     const farmerLabel = 'Çiftçi';
@@ -76,6 +84,156 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         return () => window.removeEventListener('popstate', handlePop);
     }, [contextPrescriptions, initialFarmerId]);
 
+    const handleEditPayment = (payment: any) => {
+        setEditingPayment(payment);
+        setPaymentAmount(payment.amount.toString());
+        setPaymentNote(payment.note || '');
+        setSelectedAccountId(payment.accountId || '');
+        setPaymentMethod(payment.method);
+        setSelectedPaymentFarmerId(payment.farmerId);
+        setPaymentDate(payment.dueDate || payment.date.split('T')[0]);
+        setIsPaymentModalOpen(true);
+    };
+
+    const handleDeletePayment = async (id: string) => {
+        setConfirmModal({
+            isOpen: true,
+            title: 'Ödeme Kaydı Silinecek',
+            message: 'Bu ödeme kaydını silmek istediğinize emin misiniz?',
+            onConfirm: async () => {
+                await deletePayment(id);
+                showToast('Ödeme kaydı silindi', 'success');
+            }
+        });
+    };
+
+    const handleSendReceiptButton = async (payment: any) => {
+        hapticFeedback('medium');
+        const farmer = farmerMap[payment.farmerId];
+        const farmerName = farmer?.fullName || 'Sayın Müşterimiz';
+        const dateStr = new Date(payment.date).toLocaleDateString('tr-TR');
+        const amountStr = formatCurrency(payment.amount, userProfile?.currency || 'TRY');
+        const paymentTypeStr = payment.method === 'CHECK' ? 'Çek' : 
+                            payment.method === 'TEDYE' ? 'Tediye' : 'Nakit/Diğer';
+                            
+        setIsProcessingPdf(true);
+        try {
+            const container = document.createElement('div');
+            container.style.position = 'absolute';
+            container.style.left = '-9999px';
+            container.style.top = '0';
+            container.innerHTML = `
+                <div id="receipt-print-${payment.id}" style="width: 400px; padding: 40px; background: white; color: #1c1917; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+                    <div style="text-align: center; margin-bottom: 30px;">
+                        <h2 style="margin: 0; font-size: 26px; font-weight: 900; color: #064e3b; text-transform: uppercase;">${userProfile?.companyName || 'ZİRAİ OTOMASYON'}</h2>
+                        <p style="margin: 5px 0 0; font-size: 14px; font-weight: 600; color: #57534e; letter-spacing: 2px;">TAHSİLAT MAKBUZU</p>
+                    </div>
+                    <div style="border-top: 2px dashed #d6d3d1; margin: 20px 0;"></div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 15px;">
+                        <span style="color: #78716c; font-weight: 600;">Tarih:</span>
+                        <strong style="color: #292524;">${dateStr}</strong>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 15px;">
+                        <span style="color: #78716c; font-weight: 600;">Müşteri:</span>
+                        <strong style="color: #292524;">${farmerName}</strong>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 15px;">
+                        <span style="color: #78716c; font-weight: 600;">Ödeme:</span>
+                        <strong style="color: #292524;">${paymentTypeStr}</strong>
+                    </div>
+                    ${payment.dueDate ? `
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 15px;">
+                        <span style="color: #78716c; font-weight: 600;">Vade:</span>
+                        <strong style="color: #292524;">${new Date(payment.dueDate).toLocaleDateString('tr-TR')}</strong>
+                    </div>` : ''}
+                    ${payment.note ? `
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 15px;">
+                        <span style="color: #78716c; font-weight: 600;">Not:</span>
+                        <strong style="color: #292524;">${payment.note}</strong>
+                    </div>` : ''}
+                    <div style="border-top: 2px dashed #d6d3d1; margin: 20px 0;"></div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px;">
+                        <span style="font-weight: 900; font-size: 18px; color: #292524;">TUTAR:</span>
+                        <strong style="font-size: 28px; color: #059669;">${amountStr}</strong>
+                    </div>
+                    <div style="text-align: center; margin-top: 40px; font-size: 12px; font-weight: 600; color: #a8a29e;">
+                        Bizi tercih ettiğiniz için teşekkür ederiz.
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(container);
+            
+            const elementToCapture = container.firstElementChild as HTMLElement;
+            const canvas = await html2canvas(elementToCapture, {
+                scale: 2, 
+                backgroundColor: '#ffffff',
+                useCORS: true,
+                logging: false
+            });
+            
+            document.body.removeChild(container);
+            
+            const imgData = canvas.toDataURL('image/jpeg', 0.95);
+            const pdf = new jsPDF({
+                orientation: 'p',
+                unit: 'px',
+                format: [canvas.width, canvas.height]
+            });
+            
+            pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+            const pdfBlob = pdf.output('blob');
+            
+            const charMap: {[key: string]: string} = {'Ğ':'G','ğ':'g','Ü':'U','ü':'u','Ş':'S','ş':'s','İ':'I','ı':'i','Ö':'O','ö':'o','Ç':'C','ç':'c'};
+            const safeName = farmerName
+                .replace(/[ĞğÜüŞşİıÖöÇç]/g, match => charMap[match])
+                .replace(/[^a-zA-Z0-9]/g, '_')
+                .replace(/_+/g, '_')
+                .replace(/^_|_$/g, '');
+            const fileName = `${safeName}_Tahsilat_Makbuzu.pdf`;
+            
+            const fallbackToWhatsApp = (phone?: string, text?: string) => {
+                const encodedMessage = encodeURIComponent(text || '');
+                let phoneParam = '';
+                if (phone) {
+                    let cleanPhone = phone.replace(/[^0-9]/g, '');
+                    if (cleanPhone.length === 10) {
+                        cleanPhone = '90' + cleanPhone;
+                    }
+                    phoneParam = cleanPhone.replace('+', '');
+                }
+                const whatsappUrl = phoneParam 
+                    ? `https://wa.me/${phoneParam}?text=${encodedMessage}` 
+                    : `https://wa.me/?text=${encodedMessage}`;
+                window.open(whatsappUrl, '_blank');
+            };
+
+            const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
+            let message = `Merhaba ${farmerName},\nTahsilat makbuzunuz ektedir.\n\nTutar: ${amountStr}\nBizi tercih ettiğiniz için teşekkür ederiz.\n${userProfile?.companyName || 'Zirai Otomasyon'}`;
+            const shareData = {
+                files: [file],
+                title: 'Tahsilat Makbuzu',
+                text: message
+            };
+            
+            if (navigator.canShare && navigator.canShare(shareData)) {
+                try {
+                    await navigator.share(shareData);
+                } catch (shareError) {
+                    console.log('Share canceled or failed', shareError);
+                    fallbackToWhatsApp(farmer?.phoneNumber, message);
+                }
+            } else {
+                pdf.save(fileName);
+                fallbackToWhatsApp(farmer?.phoneNumber, message);
+            }
+        } catch (e) {
+            console.error('PDF Error:', e);
+            showToast('Makbuz oluşturulamadı', 'error');
+        } finally {
+            setIsProcessingPdf(false);
+        }
+    };
+
     const changeViewMode = (mode: 'LIST' | 'FORM' | 'DETAIL', detailId?: string, replace = false) => {
         if (mode === viewMode) return;
         
@@ -101,12 +259,30 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     };
 
     const handleScan = (barcode: string) => {
+        // Play success tone
+        try {
+            const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(800, ctx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(1200, ctx.currentTime + 0.1);
+            gain.gain.setValueAtTime(0.5, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+            osc.start(ctx.currentTime);
+            osc.stop(ctx.currentTime + 0.1);
+            if (window.navigator?.vibrate) window.navigator.vibrate(50);
+        } catch (e) {}
+
         // Search in inventory first
         const invItem = contextInventory.find(item => item.barcode === barcode);
         if (invItem) {
             const p = pesticides.find(pest => pest.id === invItem.pesticideId);
             if (p) {
                 addItem(p);
+                showToast(`${p.name} listeye eklendi`, 'success');
                 return;
             }
         }
@@ -115,7 +291,25 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         const pesticide = pesticides.find(p => p.barcode === barcode);
         if (pesticide) {
             addItem(pesticide);
+            showToast(`${pesticide.name} listeye eklendi`, 'success');
         } else {
+            // Play error tone
+            try {
+                const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(200, ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(100, ctx.currentTime + 0.2);
+                gain.gain.setValueAtTime(0.5, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+                osc.start(ctx.currentTime);
+                osc.stop(ctx.currentTime + 0.2);
+                if (window.navigator?.vibrate) window.navigator.vibrate([100, 50, 100]);
+            } catch (e) {}
+
             showToast("Barkod bulunamadı: " + barcode, 'error');
         }
     };
@@ -155,14 +349,16 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     
     // Recommendations State
     const [recommendedIds, setRecommendedIds] = useState<string[]>(() => {
-        const saved = localStorage.getItem('crm_recommended_pesticides');
+        const saved = localStorage.getItem('mks_crm_recommended_pesticides_' + userProfile?.id);
         return saved ? JSON.parse(saved) : [];
     });
     const [showRecommendations, setShowRecommendations] = useState(false);
 
     useEffect(() => {
-        localStorage.setItem('crm_recommended_pesticides', safeStringify(recommendedIds));
-    }, [recommendedIds]);
+        if (userProfile?.id) {
+            localStorage.setItem('mks_crm_recommended_pesticides_' + userProfile?.id, safeStringify(recommendedIds));
+        }
+    }, [recommendedIds, userProfile?.id]);
 
     const toggleRecommendation = (id: string, e?: React.MouseEvent) => {
         if (e) e.stopPropagation();
@@ -194,7 +390,17 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     const [hasInitializedEdit, setHasInitializedEdit] = useState(false);
     const [hasInitializedFarmer, setHasInitializedFarmer] = useState(false);
     
-    const [filterMode, setFilterMode] = useState<'ALL' | 'PROCESSED' | 'UNPROCESSED'>('ALL');
+    const [filterMode, setFilterMode] = useState<'ALL' | 'PROCESSED' | 'UNPROCESSED' | 'PAYMENTS'>('ALL');
+    const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+    const [paymentAmount, setPaymentAmount] = useState('');
+    const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CHECK' | 'TEDYE'>('CASH');
+    const [selectedAccountId, setSelectedAccountId] = useState('');
+    const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+    const [paymentNote, setPaymentNote] = useState('');
+    const [isSavingPayment, setIsSavingPayment] = useState(false);
+    const [selectedPaymentFarmerId, setSelectedPaymentFarmerId] = useState('');
+    const [editingPayment, setEditingPayment] = useState<any>(null);
+    
     const [isProcessingPdf, setIsProcessingPdf] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const receiptRef = useRef<HTMLDivElement>(null);
@@ -618,7 +824,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                 engineerName: userProfile.fullName || original.engineerName,
                 prescriptionNo: customPrescriptionNo.trim() || original.prescriptionNo,
                 items: items,
-                totalAmount: totalAmount > 0 ? totalAmount : undefined,
+                totalAmount: totalAmount > 0 ? (prescriptionType === 'RETURN' ? -totalAmount : totalAmount) : undefined,
                 discountAmount: discountValue > 0 ? discountValue : undefined,
                 priceType: prescriptionPriceType,
                 type: prescriptionType,
@@ -631,6 +837,28 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
             
             // Re-process with new items unconditionally
             await dbService.processInventory(updatedPrescription);
+
+            // Clean up any old cash transactions for this prescription
+            const oldTx = transactions.find(t => t.relatedId === updatedPrescription.id);
+            if (oldTx) {
+                await deleteTransaction(oldTx.id);
+            }
+
+            if (updatedPrescription.priceType === 'CASH') {
+                const targetAccount = accounts.find(a => a.type === 'CASH');
+                if (targetAccount) {
+                    await addTransaction({
+                        accountId: targetAccount.id,
+                        type: updatedPrescription.type === 'RETURN' ? 'EXPENSE' : 'INCOME',
+                        amount: Math.abs(updatedPrescription.totalAmount || 0),
+                        date: updatedPrescription.date,
+                        description: updatedPrescription.type === 'RETURN' ? 'Peşin İade Kasadan Çıkış' : 'Peşin Satış Tahsilatı',
+                        category: 'Satış/İade',
+                        relatedId: updatedPrescription.id
+                    });
+                }
+            }
+
             await refreshStats();
 
             const finalUpdated = { ...updatedPrescription, isInventoryProcessed: true };
@@ -651,7 +879,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                 isOfficial: true,
                 isProcessed: false,
                 isInventoryProcessed: false,
-                totalAmount: totalAmount > 0 ? totalAmount : undefined,
+                totalAmount: totalAmount > 0 ? (prescriptionType === 'RETURN' ? -totalAmount : totalAmount) : undefined,
                 discountAmount: discountValue > 0 ? discountValue : undefined,
                 priceType: prescriptionPriceType,
                 type: prescriptionType,
@@ -662,6 +890,21 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
 
             await dbService.addPrescription(newPrescription);
             await dbService.processInventory(newPrescription);
+
+            if (newPrescription.priceType === 'CASH') {
+                const targetAccount = accounts.find(a => a.type === 'CASH');
+                if (targetAccount) {
+                    await addTransaction({
+                        accountId: targetAccount.id,
+                        type: newPrescription.type === 'RETURN' ? 'EXPENSE' : 'INCOME',
+                        amount: Math.abs(newPrescription.totalAmount || 0),
+                        date: newPrescription.date,
+                        description: newPrescription.type === 'RETURN' ? 'Peşin İade Kasadan Çıkış' : 'Peşin Satış Tahsilatı',
+                        category: 'Satış/İade',
+                        relatedId: newPrescription.id
+                    });
+                }
+            }
             
             const currentTypeLabel = newPrescription.type === 'RETURN' ? 'İade Faturası' : 'Satış Faturası';
             
@@ -769,14 +1012,14 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
             });
 
             const imgData = canvas.toDataURL('image/jpeg', 0.95);
-            const pdf = new jsPDF('p', 'mm', 'a5');
-            const pdfWidth = pdf.internal.pageSize.getWidth();
-            const pdfHeight = pdf.internal.pageSize.getHeight();
-            const imgWidth = canvas.width;
-            const imgHeight = canvas.height;
-            const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight);
             
-            pdf.addImage(imgData, 'JPEG', 0, 0, imgWidth * ratio, imgHeight * ratio);
+            const pdf = new jsPDF({
+                orientation: canvas.width > canvas.height ? 'l' : 'p',
+                unit: 'px',
+                format: [canvas.width, canvas.height]
+            });
+            
+            pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
             
             const pdfBlob = pdf.output('blob');
             
@@ -812,7 +1055,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
 
         } catch (error) {
             console.error("PDF Action Error:", error);
-            alert("PDF işleminde bir hata oluştu.");
+            showToast("PDF işleminde bir hata oluştu.", "error");
         } finally {
             setIsProcessingPdf(false);
         }
@@ -836,10 +1079,18 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
             
         const matchesFilter = filterMode === 'ALL' || 
             (filterMode === 'PROCESSED' && p.isProcessed) ||
-            (filterMode === 'UNPROCESSED' && !p.isProcessed);
+            (filterMode === 'UNPROCESSED' && !p.isProcessed) ||
+            filterMode === 'PAYMENTS';
             
         return matchesSearch && matchesFilter;
     });
+
+    const filteredPaymentsForList = filterMode === 'PAYMENTS' ? payments.filter(p => {
+        const search = prescriptionSearchTerm.toLocaleLowerCase('tr-TR');
+        if (!search) return true;
+        const farmer = farmerMap[p.farmerId];
+        return farmer?.fullName && farmer.fullName.toLocaleLowerCase('tr-TR').includes(search);
+    }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()) : [];
 
     const trToEn = (text: string) => {
         if (!text) return '';
@@ -859,24 +1110,19 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         }).format(amount);
     };
 
-    const generatePrescriptionReportPDF = () => {
+    const generatePrescriptionReportPDF = async () => {
         setIsGeneratingReport(true);
-        setTimeout(() => {
+        setTimeout(async () => {
             try {
-                const doc = new jsPDF();
-                
-                doc.setFont("helvetica", "bold");
-                doc.setFontSize(22);
-                doc.setTextColor(59, 130, 246);
-                doc.text(trToEn(userProfile?.companyName || "FATURA RAPORU"), 14, 22);
-                
-                doc.setFontSize(10);
-                doc.setTextColor(100, 100, 100);
-                doc.setFont("helvetica", "normal");
-                doc.text(`Tarih Araligi: ${format(new Date(reportStartDate), 'dd.MM.yyyy')} - ${format(new Date(reportEndDate), 'dd.MM.yyyy')}`, 14, 30);
-                doc.text(`Olusturulma: ${format(new Date(), 'dd.MM.yyyy HH:mm')}`, 14, 35);
-                
-                let currentY = 45;
+                const container = document.createElement('div');
+                container.style.position = 'absolute';
+                container.style.left = '-9999px';
+                container.style.top = '0';
+                container.style.width = '800px';
+                container.style.backgroundColor = '#ffffff';
+                container.style.padding = '40px';
+                container.style.color = '#1c1917';
+                container.style.fontFamily = 'system-ui, -apple-system, sans-serif';
 
                 const start = new Date(reportStartDate);
                 start.setHours(0, 0, 0, 0);
@@ -891,132 +1137,178 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                 let totalSales = 0;
                 let totalReturns = 0;
 
-                doc.setFontSize(12);
-                doc.setFont("helvetica", "bold");
-                doc.setTextColor(0, 0, 0);
-                doc.text(trToEn(reportTypeSelection === 'DETAILED' ? "FATURA LISTESI (DETAYLI)" : "FATURA LISTESI (ÖZET)"), 14, currentY);
+                let htmlContent = `
+                    <div style="margin-bottom: 30px;">
+                        <h1 style="font-size: 26px; font-weight: 800; margin: 0 0 8px 0; color: #3b82f6; text-transform: uppercase;">
+                            ${userProfile?.companyName || "FATURA RAPORU"}
+                        </h1>
+                        <h2 style="font-size: 18px; font-weight: 700; margin: 0 0 4px 0; color: #1c1917;">
+                            ${reportTypeSelection === 'SUMMARY' ? 'Fatura Listesi (Özet)' : 'Fatura Listesi (Detaylı)'}
+                        </h2>
+                        <p style="font-size: 13px; margin: 0; color: #78716c;">
+                            Tarih Aralığı: ${format(start, 'dd.MM.yyyy')} - ${format(end, 'dd.MM.yyyy')} &nbsp;&bull;&nbsp; Oluşturulma: ${format(new Date(), 'dd.MM.yyyy HH:mm')}
+                        </p>
+                    </div>
+                `;
 
                 if (reportTypeSelection === 'SUMMARY') {
-                    const tableData = filtered.map(p => {
-                        const farmer = contextFarmers.find(f => f.id === p.farmerId);
-                        const netAmount = p.totalAmount || 0;
-                        
-                        if (p.type === 'RETURN') {
-                            totalReturns += netAmount;
-                        } else {
-                            totalSales += netAmount;
-                        }
+                    htmlContent += `
+                        <table style="width: 100%; border-collapse: collapse; font-size: 11px; text-align: left; margin-bottom: 40px;">
+                            <thead>
+                                <tr style="background-color: #3b82f6; color: white;">
+                                    <th style="padding: 10px; border-bottom: 2px solid #2563eb; border-top-left-radius: 6px;">Tarih</th>
+                                    <th style="padding: 10px; border-bottom: 2px solid #2563eb;">Müşteri</th>
+                                    <th style="padding: 10px; border-bottom: 2px solid #2563eb;">Fatura No</th>
+                                    <th style="padding: 10px; border-bottom: 2px solid #2563eb;">Tür</th>
+                                    <th style="padding: 10px; border-bottom: 2px solid #2563eb;">Vade</th>
+                                    <th style="padding: 10px; border-bottom: 2px solid #2563eb; border-top-right-radius: 6px; text-align: right;">Tutar</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                    `;
 
-                        return [
-                            format(new Date(p.date || Date.now()), 'dd.MM.yyyy'),
-                            trToEn(farmer?.fullName || '-'),
-                            p.prescriptionNo || '-',
-                            p.type === 'RETURN' ? 'Iade' : 'Satis',
-                            p.dueDate ? format(new Date(p.dueDate), 'dd.MM.yyyy') : '-',
-                            pdfCurrency(netAmount)
-                        ];
-                    });
+                    if (filtered.length === 0) {
+                        htmlContent += `<tr><td colspan="6" style="padding: 15px; text-align: center; color: #78716c;">Seçili tarihte kayıt yok.</td></tr>`;
+                    } else {
+                        filtered.forEach((p, i) => {
+                            const farmer = contextFarmers.find(f => f.id === p.farmerId);
+                            const netAmount = p.totalAmount || 0;
+                            
+                            if (p.type === 'RETURN') totalReturns += netAmount;
+                            else totalSales += netAmount;
 
-                    autoTable(doc, {
-                        startY: currentY + 5,
-                        head: [['Tarih', 'Musteri', 'Fatura No', 'Tur', 'Vade', 'Tutar']],
-                        body: tableData.length > 0 ? tableData : [['Secili tarihte kayit yok.', '', '', '', '', '']],
-                        theme: 'grid',
-                        styles: { font: 'helvetica', fontSize: 9 },
-                        headStyles: { fillColor: [59, 130, 246] },
-                        columnStyles: { 5: { halign: 'right' } }
-                    });
-                } else {
-                    const tableBody: any[] = [];
-                    filtered.forEach(p => {
-                        const farmer = contextFarmers.find(f => f.id === p.farmerId);
-                        const pDate = format(new Date(p.date || Date.now()), 'dd.MM.yyyy');
-                        const vDate = p.dueDate ? ` | Vade: ${format(new Date(p.dueDate), 'dd.MM.yyyy')}` : '';
-                        const netAmount = p.totalAmount || 0;
-                        
-                        if (p.type === 'RETURN') {
-                            totalReturns += netAmount;
-                        } else {
-                            totalSales += netAmount;
-                        }
-                        
-                        // Invoice Header Row
-                        tableBody.push([
-                            { 
-                                content: `${pDate} | ${trToEn(farmer?.fullName || '-')} | Fatura No: ${p.prescriptionNo || '-'} | Tur: ${p.type === 'RETURN' ? 'Iade' : 'Satis'}${vDate}`, 
-                                colSpan: 4, 
-                                styles: { fillColor: [245, 245, 245], fontStyle: 'bold', textColor: [0,0,0] } 
-                            },
-                            {
-                                content: pdfCurrency(netAmount),
-                                styles: { fillColor: [245, 245, 245], fontStyle: 'bold', textColor: [0,0,0], halign: 'right' } 
-                            }
-                        ]);
-                        
-                        // Invoice Items
-                        p.items.forEach(item => {
-                            tableBody.push([
-                                '', // indent
-                                trToEn(item.pesticideName),
-                                item.quantity ? `${item.quantity}` : '-',
-                                item.unitPrice ? pdfCurrency(item.unitPrice) : '-',
-                                item.totalPrice ? pdfCurrency(item.totalPrice) : '-'
-                            ]);
+                            const bg = i % 2 === 0 ? '#fafaf9' : '#ffffff';
+                            const typeColor = p.type === 'RETURN' ? '#ef4444' : '#10b981';
+                            
+                            htmlContent += `
+                                <tr style="background-color: ${bg}; border-bottom: 1px solid #e7e5e4;">
+                                    <td style="padding: 10px;">${format(new Date(p.date || Date.now()), 'dd.MM.yyyy')}</td>
+                                    <td style="padding: 10px; font-weight: 600;">${farmer?.fullName || '-'}</td>
+                                    <td style="padding: 10px; font-family: monospace;">${p.prescriptionNo || '-'}</td>
+                                    <td style="padding: 10px; color: ${typeColor}; font-weight: bold;">${p.type === 'RETURN' ? 'İade' : 'Satış'}</td>
+                                    <td style="padding: 10px;">${p.dueDate ? format(new Date(p.dueDate), 'dd.MM.yyyy') : '-'}</td>
+                                    <td style="padding: 10px; text-align: right; font-family: monospace; font-size: 12px; font-weight: 600;">${formatCurrency(netAmount, userProfile?.currency || 'TRY')}</td>
+                                </tr>
+                            `;
                         });
+                    }
+                    htmlContent += `</tbody></table>`;
+                } else {
+                    htmlContent += `
+                        <table style="width: 100%; border-collapse: collapse; font-size: 11px; text-align: left; margin-bottom: 40px;">
+                            <thead>
+                                <tr style="background-color: #3b82f6; color: white;">
+                                    <th style="padding: 10px; border-bottom: 2px solid #2563eb; border-top-left-radius: 6px; width: 40%;">Müşteri / Ürün Adı</th>
+                                    <th style="padding: 10px; border-bottom: 2px solid #2563eb; text-align: center;">Miktar</th>
+                                    <th style="padding: 10px; border-bottom: 2px solid #2563eb; text-align: right;">Birim Fiyat</th>
+                                    <th style="padding: 10px; border-bottom: 2px solid #2563eb; border-top-right-radius: 6px; text-align: right;">Tutar</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                    `;
 
-                        // Discount Row
-                        if (p.discountAmount && p.discountAmount > 0) {
-                            tableBody.push([
-                                '', 
-                                { content: 'İskonto (Indirim)', styles: { fontStyle: 'bold', textColor: [220, 38, 38] } },
-                                '', 
-                                '', 
-                                { content: `-${pdfCurrency(p.discountAmount)}`, styles: { fontStyle: 'bold', textColor: [220, 38, 38], halign: 'right' } }
-                            ]);
-                        }
-                    });
+                    if (filtered.length === 0) {
+                        htmlContent += `<tr><td colspan="4" style="padding: 15px; text-align: center; color: #78716c;">Seçili tarihte kayıt yok.</td></tr>`;
+                    } else {
+                        filtered.forEach(p => {
+                            const farmer = contextFarmers.find(f => f.id === p.farmerId);
+                            const netAmount = p.totalAmount || 0;
+                            
+                            if (p.type === 'RETURN') totalReturns += netAmount;
+                            else totalSales += netAmount;
 
-                    autoTable(doc, {
-                        startY: currentY + 5,
-                        head: [['', 'Urun Adi', 'Miktar', 'Birim Fiyat', 'Tutar']],
-                        body: tableBody.length > 0 ? tableBody : [['', 'Secili tarihte kayit yok.', '', '', '']],
-                        theme: 'grid',
-                        styles: { font: 'helvetica', fontSize: 9 },
-                        headStyles: { fillColor: [59, 130, 246] },
-                        columnStyles: { 2: { halign: 'center' }, 3: { halign: 'right' }, 4: { halign: 'right' } }
-                    });
+                            const vDate = p.dueDate ? ` | Vade: ${format(new Date(p.dueDate), 'dd.MM.yyyy')}` : '';
+                            const typeStr = p.type === 'RETURN' ? 'İade' : 'Satış';
+
+                            htmlContent += `
+                                <tr style="background-color: #f1f5f9; border-top: 2px solid #cbd5e1; border-bottom: 1px solid #cbd5e1;">
+                                    <td colspan="3" style="padding: 10px; font-weight: bold; color: #0f172a;">
+                                        ${format(new Date(p.date || Date.now()), 'dd.MM.yyyy')} | ${farmer?.fullName || '-'} | Fatura No: ${p.prescriptionNo || '-'} | Tür: ${typeStr}${vDate}
+                                    </td>
+                                    <td style="padding: 10px; text-align: right; font-weight: bold; font-family: monospace; font-size: 12px; color: #0f172a;">
+                                        ${formatCurrency(netAmount, userProfile?.currency || 'TRY')}
+                                    </td>
+                                </tr>
+                            `;
+
+                            p.items.forEach(item => {
+                                htmlContent += `
+                                    <tr style="border-bottom: 1px solid #f1f5f9;">
+                                        <td style="padding: 8px 10px 8px 20px;">${item.pesticideName}</td>
+                                        <td style="padding: 8px 10px; text-align: center;">${item.quantity || '-'}</td>
+                                        <td style="padding: 8px 10px; text-align: right; font-family: monospace;">${item.unitPrice ? formatCurrency(item.unitPrice, userProfile?.currency || 'TRY') : '-'}</td>
+                                        <td style="padding: 8px 10px; text-align: right; font-family: monospace; font-weight: 600;">${item.totalPrice ? formatCurrency(item.totalPrice, userProfile?.currency || 'TRY') : '-'}</td>
+                                    </tr>
+                                `;
+                            });
+
+                            if (p.discountAmount && p.discountAmount > 0) {
+                                htmlContent += `
+                                    <tr style="border-bottom: 1px solid #f1f5f9; background-color: #fef2f2;">
+                                        <td style="padding: 8px 10px 8px 20px; font-weight: bold; color: #dc2626;">İskonto (İndirim)</td>
+                                        <td style="padding: 8px 10px;"></td>
+                                        <td style="padding: 8px 10px;"></td>
+                                        <td style="padding: 8px 10px; text-align: right; font-family: monospace; font-weight: bold; color: #dc2626;">-${formatCurrency(p.discountAmount, userProfile?.currency || 'TRY')}</td>
+                                    </tr>
+                                `;
+                            }
+                        });
+                    }
+                    htmlContent += `</tbody></table>`;
                 }
 
-                currentY = (doc as any).lastAutoTable.finalY + 15;
+                htmlContent += `
+                    <div style="page-break-inside: avoid; width: 300px; margin-left: auto;">
+                        <h3 style="font-size: 14px; font-weight: 800; margin: 0 0 10px 0; color: #1c1917; text-transform: uppercase;">Özet</h3>
+                        <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                            <tbody>
+                                <tr style="border-bottom: 1px solid #e7e5e4;">
+                                    <td style="padding: 8px; color: #57534e;">Toplam Satış Tutarı</td>
+                                    <td style="padding: 8px; text-align: right; font-family: monospace; font-weight: bold;">${formatCurrency(totalSales, userProfile?.currency || 'TRY')}</td>
+                                </tr>
+                                <tr style="border-bottom: 1px solid #e7e5e4;">
+                                    <td style="padding: 8px; color: #57534e;">Toplam İade Tutarı</td>
+                                    <td style="padding: 8px; text-align: right; font-family: monospace; font-weight: bold; color: #ef4444;">${formatCurrency(totalReturns, userProfile?.currency || 'TRY')}</td>
+                                </tr>
+                                <tr style="background-color: #10b981; color: white;">
+                                    <td style="padding: 10px; border-bottom-left-radius: 6px; font-weight: bold;">NET TOPLAM</td>
+                                    <td style="padding: 10px; border-bottom-right-radius: 6px; text-align: right; font-family: monospace; font-weight: bold; font-size: 14px;">${formatCurrency(totalSales - totalReturns, userProfile?.currency || 'TRY')}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                `;
 
-                // Summary
-                doc.setFontSize(12);
-                doc.setFont("helvetica", "bold");
-                doc.text(trToEn("OZET"), 14, currentY);
+                container.innerHTML = htmlContent;
+                document.body.appendChild(container);
 
-                autoTable(doc, {
-                    startY: currentY + 5,
-                    head: [['Kalem', 'Tutar']],
-                    body: [
-                        ['Toplam Satis Tutari', pdfCurrency(totalSales)],
-                        ['Toplam Iade Tutari', pdfCurrency(totalReturns)],
-                        ['Net Toplam', pdfCurrency(totalSales - totalReturns)]
-                    ],
-                    theme: 'grid',
-                    styles: { font: 'helvetica', fontSize: 10 },
-                    headStyles: { fillColor: [16, 185, 129] },
-                    columnStyles: { 1: { halign: 'right' } }
+                const canvas = await html2canvas(container, {
+                    scale: 2,
+                    backgroundColor: '#ffffff',
+                    logging: false
                 });
 
-                doc.save(`Fatura_Raporu_${format(new Date(), 'yyyyMMdd_HHmm')}.pdf`);
+                document.body.removeChild(container);
+                
+                const imgData = canvas.toDataURL('image/jpeg', 0.95);
+                const pdf = new jsPDF({
+                    orientation: canvas.width > canvas.height ? 'l' : 'p',
+                    unit: 'px',
+                    format: [canvas.width, canvas.height]
+                });
+                
+                pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+                pdf.save(`Fatura_Raporu_${format(new Date(), 'yyyyMMdd_HHmm')}.pdf`);
+                
                 setIsGeneratingReport(false);
                 setIsReportModalOpen(false);
-            } catch (error) {
-                console.error(error);
+                showToast("PDF başarıyla oluşturuldu.", "success");
+            } catch (error: any) {
+                console.error("Report PDF Error:", error?.message || error);
                 setIsGeneratingReport(false);
-                alert("PDF oluşturulurken bir hata oluştu.");
+                showToast("PDF oluşturulurken bir hata oluştu.", "error");
             }
-        }, 500);
+        }, 100);
     };
 
     if (viewMode === 'LIST') {
@@ -1094,6 +1386,17 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                             <div className={`w-1.5 h-1.5 rounded-full ${filterMode === 'PROCESSED' ? 'bg-white' : 'bg-blue-500'}`}></div>
                             {t('prescription.filter_processed')}
                         </button>
+                        <button 
+                            onClick={() => setFilterMode('PAYMENTS')}
+                            className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${
+                                filterMode === 'PAYMENTS' 
+                                ? 'bg-amber-600 text-white shadow-lg shadow-amber-900/20 scale-[1.02]' 
+                                : 'text-stone-500 hover:text-stone-300'
+                            }`}
+                        >
+                            <div className={`w-1.5 h-1.5 rounded-full ${filterMode === 'PAYMENTS' ? 'bg-white' : 'bg-amber-500'}`}></div>
+                            Tahsilatlar
+                        </button>
                     </div>
 
                     <div className="space-y-3">
@@ -1108,6 +1411,67 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                 onAction={canCreatePrescription && !prescriptionSearchTerm ? () => changeViewMode('FORM') : undefined}
                                 actionIcon={Plus}
                             />
+                        ) : filterMode === 'PAYMENTS' ? (
+                            filteredPaymentsForList.map(p => {
+                                const farmer = farmerMap[p.farmerId];
+                                const dateObj = new Date(p.date);
+                                const isCheckOrTedye = p.method === 'CHECK' || p.method === 'TEDYE';
+                                return (
+                                    <div 
+                                        key={p.id}
+                                        className="bg-stone-900/80 backdrop-blur-xl p-2.5 rounded-2xl shadow-xl border border-white/10 hover:border-emerald-500/30 transition-all relative overflow-hidden group active:scale-[0.98]"
+                                    >
+                                        <div className="flex justify-between items-start mb-2">
+                                            <div className="flex items-center space-x-3">
+                                                <div className="w-8 h-8 rounded-lg flex items-center justify-center font-bold border shadow-inner shrink-0 bg-emerald-900/20 text-emerald-500 border-emerald-500/20">
+                                                    <CreditCard size={16} />
+                                                </div>
+                                                <div className="min-w-0">
+                                                    <div className="flex items-center gap-1.5">
+                                                        <h3 className="font-black text-stone-100 text-sm leading-tight truncate tracking-tight">{farmer?.fullName || 'Bilinmeyen Çiftçi'}</h3>
+                                                    </div>
+                                                    <div className="flex items-center gap-2 mt-0.5">
+                                                        <span className="text-[8px] text-stone-400 font-bold flex items-center bg-stone-800/50 px-1.5 py-0.5 rounded">
+                                                            <User size={8} className="mr-1" />
+                                                            {p.createdById ? (teamMembers.find(m => m.id === p.createdById)?.fullName || 'Yönetici') : 'Yönetici'}
+                                                        </span>
+                                                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all items-center">
+                                                            <button onClick={(e) => { e.stopPropagation(); handleEditPayment(p); }} className="p-1 text-stone-500 hover:text-emerald-500">
+                                                                <Edit2 size={12}/>
+                                                            </button>
+                                                            <button onClick={(e) => { e.stopPropagation(); handleDeletePayment(p.id); }} className="p-1 text-stone-500 hover:text-rose-500 transition-all">
+                                                                <Trash2 size={12}/>
+                                                            </button>
+                                                        </div>
+                                                        <button 
+                                                            onClick={(e) => { e.stopPropagation(); handleSendReceiptButton(p); }}
+                                                            className="px-1.5 py-0.5 text-[8px] font-black uppercase text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 rounded hover:bg-emerald-500/20 transition-all shadow-sm flex items-center justify-center cursor-pointer"
+                                                        >
+                                                            MAKBUZ
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="flex flex-col items-end gap-1.5 shrink-0 ml-2">
+                                                <div className="flex items-center gap-1.5">
+                                                    <span className={`text-[9px] font-black font-mono px-1.5 py-0.5 rounded border shadow-sm bg-emerald-950/50 text-emerald-400 border-emerald-500/20`}>
+                                                        {formatCurrency(p.amount, userProfile?.currency || 'TRY')}
+                                                    </span>
+                                                    <span className="text-[8px] font-black text-stone-400 flex items-center bg-stone-950/50 px-1.5 py-0.5 rounded border border-white/5 shadow-sm uppercase tracking-widest">
+                                                        <Calendar size={8} className="mr-1" />
+                                                        {dateObj.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })}
+                                                    </span>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-[8px] font-black text-stone-400 uppercase tracking-widest">
+                                                        {p.method === 'CASH' ? 'Nakit' : p.method === 'CARD' ? 'Kredi Kartı' : p.method === 'CHECK' ? 'Çek' : p.method === 'TEDYE' ? 'Tediye' : 'Diğer'}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })
                         ) : (
                             filteredPrescriptions.map(p => {
                                 const farmer = farmerMap[p.farmerId];
@@ -1152,9 +1516,9 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                                     >
                                                         <TrendingUp size={14} />
                                                     </button>
-                                                    {p.totalAmount && p.totalAmount > 0 && (
+                                                    {p.totalAmount !== undefined && p.totalAmount !== null && Math.abs(p.totalAmount) > 0 && (
                                                         <span className={`text-[9px] font-black font-mono px-1.5 py-0.5 rounded border shadow-sm ${p.type === 'RETURN' ? 'bg-amber-950/50 text-amber-400 border-amber-500/20' : 'bg-emerald-950/50 text-emerald-400 border-emerald-500/20'}`}>
-                                                            {p.type === 'RETURN' ? '-' : ''}{formatCurrency(p.totalAmount, userProfile?.currency || 'TRY')}
+                                                            {p.type === 'RETURN' ? '-' : ''}{formatCurrency(Math.abs(p.totalAmount), userProfile?.currency || 'TRY')}
                                                         </span>
                                                     )}
                                                     <span className="text-[8px] font-black text-stone-400 flex items-center bg-stone-950/50 px-1.5 py-0.5 rounded border border-white/5 shadow-sm uppercase tracking-widest">
@@ -1198,6 +1562,20 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
 
                 {canCreatePrescription && (
                     <div className="fixed bottom-32 right-6 md:bottom-10 md:right-10 z-50 flex flex-col gap-2 shadow-2xl">
+                        <button 
+                            onClick={() => {
+                                setIsPaymentModalOpen(true);
+                                setSelectedPaymentFarmerId('');
+                                setPaymentAmount('');
+                                setPaymentNote('');
+                                setPaymentDate(new Date().toISOString().split('T')[0]);
+                                setPaymentMethod('CASH');
+                                setEditingPayment(null);
+                            }}
+                            className="bg-emerald-800 text-emerald-100 px-6 py-3 rounded-full shadow-lg shadow-emerald-900/20 hover:bg-emerald-700 transition-all transform hover:scale-105 flex items-center justify-center gap-2 font-bold text-sm border border-emerald-900"
+                        >
+                            <CreditCard size={18} /> Tahsilat Faturası
+                        </button>
                         <button 
                             onClick={() => { resetForm('RETURN'); changeViewMode('FORM'); }}
                             className="bg-amber-500 text-stone-900 px-6 py-3 rounded-full shadow-lg shadow-amber-500/20 hover:bg-amber-400 transition-all transform hover:scale-105 flex items-center justify-center gap-2 font-bold text-sm border border-stone-900"
@@ -1512,7 +1890,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                         </div>
                         
                         <div className="min-h-[250px] relative z-10">
-                            {detailPrescription.totalAmount && detailPrescription.totalAmount > 0 ? (
+                            {detailPrescription.totalAmount !== undefined && detailPrescription.totalAmount !== null && Math.abs(detailPrescription.totalAmount) > 0 ? (
                                 <table className="w-full text-sm">
                                     <thead className="text-stone-400 uppercase text-[9px] font-black tracking-widest border-b-2 border-stone-200">
                                         <tr>
@@ -1962,6 +2340,18 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                     <h2 className="text-2xl font-bold mb-4 text-stone-100 text-center">
                         {editingId ? `${currentPrescriptionLabel} Düzenle: İlaçlar` : 'İlaç Seç'}
                     </h2>
+
+                    <div className="mb-6 flex gap-2">
+                        <button
+                            onClick={() => setIsScanning(true)}
+                            className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-stone-950 font-black rounded-xl p-3 flex flex-col items-center justify-center gap-2 shadow-lg shadow-emerald-900/20 active:scale-95 transition-all group"
+                        >
+                            <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-950 group-hover:scale-110 transition-transform">
+                                <Barcode size={24} />
+                            </div>
+                            <span>Kamerayla Hızlı Ekle (POS)</span>
+                        </button>
+                    </div>
                     
                     <div className="bg-stone-900 rounded-2xl shadow-sm border border-white/5 flex items-center p-1 mb-6">
                         <Search className="text-stone-500 ml-3" size={18} />
@@ -2476,6 +2866,184 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                 </div>
                             );
                         })()}
+                    </div>
+                </div>
+            )}
+
+            {/* Payment Modal */}
+            {isPaymentModalOpen && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+                    <div className="bg-stone-900 rounded-3xl w-full max-w-md p-5 shadow-2xl relative border border-white/10 animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+                        <button 
+                            onClick={() => {
+                                setIsPaymentModalOpen(false);
+                                setEditingPayment(null);
+                                setPaymentAmount('');
+                            }} 
+                            className="absolute top-3 right-3 p-1.5 bg-stone-800 rounded-full text-stone-400 hover:text-stone-200 z-10"
+                        >
+                            <X size={16} />
+                        </button>
+                        <div className="text-center mb-6 shrink-0">
+                            <div className="w-12 h-12 bg-emerald-900/30 text-emerald-500 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                                <Wallet size={24} />
+                            </div>
+                            <h2 className="text-base font-bold text-stone-100">Tahsilat Faturası</h2>
+                            <p className="text-xs text-stone-400 mt-1">Çiftçiden ödeme tahsil et</p>
+                        </div>
+                        
+                        <div className="space-y-4 overflow-y-auto pr-2 pb-4 no-scrollbar">
+                            <div>
+                                <label className="block text-stone-400 text-[10px] font-black uppercase tracking-widest mb-1.5 ml-1">Çiftçi Seçimi <span className="text-rose-500">*</span></label>
+                                <select 
+                                    className="w-full bg-stone-950 text-white px-4 py-3 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500/50 border border-white/5 font-medium appearance-none"
+                                    value={selectedPaymentFarmerId}
+                                    onChange={(e) => setSelectedPaymentFarmerId(e.target.value)}
+                                >
+                                    <option value="" disabled>Çiftçi Seçin...</option>
+                                    {contextFarmers.map(f => (
+                                        <option key={f.id} value={f.id}>{f.fullName}</option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="col-span-2 sm:col-span-1">
+                                    <label className="block text-stone-400 text-[10px] font-black uppercase tracking-widest mb-1.5 ml-1">Tutar ({getCurrencySymbol(userProfile?.currency || 'TRY')}) <span className="text-rose-500">*</span></label>
+                                    <input 
+                                        type="number" 
+                                        value={paymentAmount}
+                                        onChange={(e) => setPaymentAmount(e.target.value)}
+                                        placeholder="0.00"
+                                        className="w-full bg-stone-950 text-emerald-400 px-4 py-3 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500/50 border border-white/5 font-mono text-lg font-black"
+                                    />
+                                </div>
+                                <div className="col-span-2 sm:col-span-1">
+                                    <label className="block text-stone-400 text-[10px] font-black uppercase tracking-widest mb-1.5 ml-1">Kasa/Banka</label>
+                                    <select 
+                                        className="w-full bg-stone-950 text-white px-4 py-3 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500/50 border border-white/5 font-medium appearance-none"
+                                        value={selectedAccountId}
+                                        onChange={(e) => setSelectedAccountId(e.target.value)}
+                                    >
+                                        <option value="">Seçiniz (Opsiyonel)</option>
+                                        {accounts.map(a => (
+                                            <option key={a.id} value={a.id}>{a.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
+                            
+                            <div>
+                                <label className="block text-stone-400 text-[10px] font-black uppercase tracking-widest mb-1.5 ml-1">Ödeme Yöntemi <span className="text-rose-500">*</span></label>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {[
+                                        { id: 'CASH', label: 'Nakit' },
+                                        { id: 'CHECK', label: 'Çek' },
+                                        { id: 'TEDYE', label: 'Tediye' }
+                                    ].map(method => (
+                                        <button 
+                                            key={method.id}
+                                            onClick={() => setPaymentMethod(method.id as any)}
+                                            className={`py-3 rounded-xl text-[9px] font-black uppercase tracking-widest border transition-all ${paymentMethod === method.id ? 'bg-emerald-600 border-emerald-500 text-white' : 'bg-stone-950 border-stone-800 text-stone-500'}`}
+                                        >
+                                            {method.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-stone-400 text-[10px] font-black uppercase tracking-widest mb-1.5 ml-1">
+                                    {(paymentMethod === 'CHECK' || paymentMethod === 'TEDYE') ? 'Vade Tarihi' : 'İşlem Tarihi'}
+                                </label>
+                                <input 
+                                    type="date"
+                                    value={paymentDate}
+                                    onChange={(e) => setPaymentDate(e.target.value)}
+                                    className="w-full bg-stone-950 text-white px-4 py-3 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500/50 border border-white/5 font-medium"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-stone-400 text-[10px] font-black uppercase tracking-widest mb-1.5 ml-1">Açıklama (Opsiyonel)</label>
+                                <textarea 
+                                    value={paymentNote}
+                                    onChange={(e) => setPaymentNote(e.target.value)}
+                                    placeholder="Makbuz notu..."
+                                    className="w-full bg-stone-950 text-white px-4 py-3 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500/50 border border-white/5 font-medium resize-none h-20"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="pt-4 mt-2 border-t border-white/5 shrink-0 flex gap-3">
+                            <button 
+                                onClick={() => {
+                                    setIsPaymentModalOpen(false);
+                                    setEditingPayment(null);
+                                    setPaymentAmount('');
+                                }}
+                                className="flex-1 py-3.5 bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-2xl font-bold text-sm transition-all"
+                            >
+                                İptal
+                            </button>
+                            <button 
+                                disabled={isSavingPayment || !paymentAmount || !selectedPaymentFarmerId}
+                                onClick={async () => {
+                                    setIsSavingPayment(true);
+                                    try {
+                                        const parsedAmount = parseFloat(paymentAmount.replace(/,/g, ''));
+                                        if (isNaN(parsedAmount) || parsedAmount <= 0) {
+                                            showToast('Geçerli bir tutar giriniz', 'error');
+                                            setIsSavingPayment(false);
+                                            return;
+                                        }
+
+                                        if (editingPayment) {
+                                            await updatePayment({
+                                                ...editingPayment,
+                                                amount: parsedAmount,
+                                                note: paymentNote,
+                                                method: paymentMethod,
+                                                dueDate: (paymentMethod === 'CHECK' || paymentMethod === 'TEDYE') ? paymentDate : undefined,
+                                                accountId: selectedAccountId || undefined,
+                                                farmerId: selectedPaymentFarmerId
+                                            });
+                                            showToast('Tahsilat güncellendi', 'success');
+                                        } else {
+                                            await addPayment({
+                                                farmerId: selectedPaymentFarmerId,
+                                                amount: parsedAmount,
+                                                date: new Date().toISOString(),
+                                                method: paymentMethod,
+                                                dueDate: (paymentMethod === 'CHECK' || paymentMethod === 'TEDYE') ? paymentDate : undefined,
+                                                note: paymentNote,
+                                                accountId: selectedAccountId || undefined,
+                                                createdById: activeTeamMember?.id
+                                            });
+                                            showToast('Tahsilat kaydedildi', 'success');
+                                        }
+
+                                        hapticFeedback('success');
+                                        setIsPaymentModalOpen(false);
+                                        setPaymentAmount('');
+                                        setPaymentNote('');
+                                        setSelectedPaymentFarmerId('');
+                                        setEditingPayment(null);
+                                    } catch (e) {
+                                        showToast('Tahsilat kaydedilemedi', 'error');
+                                    } finally {
+                                        setIsSavingPayment(false);
+                                    }
+                                }}
+                                className={`flex-1 py-3.5 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${
+                                    isSavingPayment || !paymentAmount || !selectedPaymentFarmerId
+                                    ? 'bg-emerald-900/50 text-emerald-700 cursor-not-allowed' 
+                                    : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20 active:scale-95'
+                                }`}
+                            >
+                                {isSavingPayment ? <Loader2 size={18} className="animate-spin" /> : <><Check size={18} /> Kaydet</>}
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}

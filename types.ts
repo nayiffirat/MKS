@@ -20,6 +20,39 @@ export interface Message {
   timestamp: string;
 }
 
+export interface SiloTransaction {
+  id: string;
+  type: 'BUY' | 'SELL' | 'PAYMENT_IN' | 'PAYMENT_OUT';
+  product: string;
+  person: string;
+  date: string;
+  quantity: number;
+  unitPrice: number;
+  totalAmount: number;
+  dueDate?: string;
+  paymentType?: 'CASH' | 'TERM';
+  plateNumber?: string;
+  driverPhone?: string;
+  transportCost?: number;
+  transportPayer?: 'US' | 'THEM';
+  commissionRate?: number;
+  commissionAmount?: number;
+  note?: string;
+  documentUrl?: string;
+  createdById?: string;
+  deletedAt?: string;
+}
+
+export interface SiloContact {
+  id: string;
+  name: string;
+  phone?: string;
+  address?: string;
+  type: 'BUYER' | 'SELLER' | 'BOTH';
+  createdById?: string;
+  deletedAt?: string;
+}
+
 export interface AgriCity {
   name: string;
   lat: number;
@@ -102,6 +135,9 @@ export enum PesticideCategory {
   HERBICIDE = 'Herbisit (Ot)',
   FUNGICIDE = 'Fungisit (Mantar)',
   FERTILIZER = 'Gübre / Besleme',
+  NEMATICIDE = 'Nematod',
+  GRANULAR_FERTILIZER = 'Granül Gübre',
+  SEED = 'Tohum',
   GROWTH_REGULATOR = 'Bitki Gelişim Düzenleyici (BGD)',
   OTHER = 'Diğer'
 }
@@ -192,6 +228,7 @@ export interface AppNotification {
 export interface UserProfile {
   id?: string;
   email?: string;
+  password?: string;
   createdAt?: string;
   lastLoginAt?: string;
   fullName: string;
@@ -201,7 +238,7 @@ export interface UserProfile {
   selectedCity?: AgriCity;
   lastSyncTime?: string;
   highContrastMode?: boolean;
-  theme?: 'DEFAULT' | 'TECHNICAL' | 'ORGANIC' | 'MINIMAL' | 'BARBIE';
+  theme?: 'DEFAULT' | 'TECHNICAL' | 'ORGANIC' | 'MINIMAL' | 'BARBIE' | 'APPLE';
   assistantVoice?: 'male' | 'female';
   currency?: 'TRY' | 'USD' | 'EUR';
   role?: 'admin' | 'user';
@@ -359,7 +396,7 @@ export interface Plant {
   deletedAt?: string;
 }
 
-export type ViewState = 'DASHBOARD' | 'FARMERS' | 'PESTICIDES' | 'PRESCRIPTIONS' | 'VISITS' | 'CONTACT' | 'SETTINGS' | 'NOTIFICATIONS' | 'PROFILE' | 'STATISTICS' | 'REMINDERS' | 'INVENTORY' | 'DEBT_TRACKING' | 'MAP' | 'PRODUCER_PORTAL' | 'COMPATIBILITY_CHECK' | 'SUPPLIERS' | 'PAYMENTS' | 'EXPENSES' | 'KASA' | 'CALCULATOR' | 'RECENT_TRANSACTIONS' | 'REPORTS' | 'ADMIN_PANEL' | 'TEAM' | 'MESSAGES' | 'PERFORMANCE' | 'TRASH' | 'LAND_DETAIL' | 'NEWS_DETAIL' | 'NEWS' | 'FINDEKS' | 'PLANTS' | 'AI_ASSISTANT' | 'SMART_STOCK';
+export type ViewState = 'DASHBOARD' | 'FARMERS' | 'PESTICIDES' | 'PRESCRIPTIONS' | 'VISITS' | 'CONTACT' | 'SETTINGS' | 'NOTIFICATIONS' | 'PROFILE' | 'STATISTICS' | 'REMINDERS' | 'INVENTORY' | 'DEBT_TRACKING' | 'MAP' | 'PRODUCER_PORTAL' | 'COMPATIBILITY_CHECK' | 'SUPPLIERS' | 'PAYMENTS' | 'EXPENSES' | 'KASA' | 'CALCULATOR' | 'RECENT_TRANSACTIONS' | 'REPORTS' | 'ADMIN_PANEL' | 'TEAM' | 'MESSAGES' | 'PERFORMANCE' | 'TRASH' | 'LAND_DETAIL' | 'NEWS_DETAIL' | 'NEWS' | 'FINDEKS' | 'PLANTS' | 'AI_ASSISTANT' | 'SMART_STOCK' | 'SILO' | 'MKS_MUHENDISIM';
 
 export type UIScale = 'SMALL' | 'MEDIUM' | 'LARGE';
 

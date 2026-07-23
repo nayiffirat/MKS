@@ -5,10 +5,11 @@ import {
     Package, CreditCard, ArrowUpRight, ArrowDownRight, 
     Search, Phone, MapPin, Calendar, DollarSign, 
     AlertCircle, CheckCircle2, FlaskConical, Info, X, User, RefreshCcw,
-    Receipt, Save, Barcode, Download, ArrowDownLeft, FileText
+    Receipt, Save, Barcode, Download, ArrowDownLeft, FileText, Wallet
 } from 'lucide-react';
 import BarcodeScanner from './BarcodeScanner';
 import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
 import autoTable from 'jspdf-autotable';
 import { format } from 'date-fns';
 import { useAppViewModel } from '../context/AppContext';
@@ -163,13 +164,15 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
 
         // If it's a cash purchase, automatically add a payment
         if (newPurchase.paymentType === 'CASH') {
+            const targetAccount = accounts.find(a => a.type === 'CASH') || accounts.find(a => a.name.includes('Nakit')) || accounts[0];
             await addSupplierPayment({
                 supplierId: targetSupplierId,
                 amount: totalAmount,
                 date,
                 method: 'CASH',
                 note: newPurchase.receiptNo ? `Peşin Alım - Fiş No: ${newPurchase.receiptNo}` : 'Peşin Alım Ödemesi',
-                createdById: activeTeamMember?.id
+                createdById: activeTeamMember?.id,
+                accountId: targetAccount?.id
             });
         }
         
@@ -178,66 +181,66 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
         showToast(newPurchase.paymentType === 'CASH' ? 'Peşin alım ve ödeme kaydedildi' : 'Alım başarıyla kaydedildi ve depoya aktarıldı', 'success');
     };
 
-    const generateSupplierReportPDF = () => {
+    const generateSupplierReportPDF = async () => {
         setIsGeneratingReport(true);
-        setTimeout(() => {
+        setTimeout(async () => {
             try {
-                const doc = new jsPDF();
-                let currentY = 20;
+                const container = document.createElement('div');
+                container.style.position = 'absolute';
+                container.style.left = '-9999px';
+                container.style.top = '0';
+                container.style.width = '800px';
+                container.style.backgroundColor = '#ffffff';
+                container.style.padding = '40px';
+                container.style.color = '#1c1917';
+                container.style.fontFamily = 'system-ui, -apple-system, sans-serif';
 
-                const addPageIfNeeded = (requiredSpace: number) => {
-                    if (currentY + requiredSpace > 280) {
-                        doc.addPage();
-                        currentY = 20;
-                    }
-                };
-
-                doc.setFont("helvetica", "bold");
-                doc.setFontSize(22);
-                doc.setTextColor(16, 185, 129);
-                doc.text(trToEn(userProfile?.companyName || "BAYI").toUpperCase(), 14, currentY);
-                currentY += 8;
-                
-                doc.setFontSize(14);
-                doc.text(trToEn("TEDARIKCI ISLEM RAPORU"), 14, currentY);
-                currentY += 6;
-                
-                doc.setFontSize(10);
-                doc.setTextColor(100, 100, 100);
-                doc.setFont("helvetica", "normal");
-                
-                let dateStr = 'Tumu';
+                let dateStr = 'Tüm Zamanlar';
                 if (reportOptions.dateRange === 'THIS_MONTH') dateStr = 'Bu Ay';
-                if (reportOptions.dateRange === 'LAST_MONTH') dateStr = 'Gecen Ay';
-                if (reportOptions.dateRange === 'THIS_YEAR') dateStr = 'Bu Yil';
-                
-                doc.text(`Tarih Araligi: ${dateStr}`, 14, currentY);
-                currentY += 5;
-                doc.text(`Olusturulma: ${format(new Date(), 'dd.MM.yyyy HH:mm')}`, 14, currentY);
-                currentY += 15;
+                if (reportOptions.dateRange === 'LAST_MONTH') dateStr = 'Geçen Ay';
+                if (reportOptions.dateRange === 'THIS_YEAR') dateStr = 'Bu Yıl';
+
+                let htmlContent = `
+                    <div style="margin-bottom: 30px;">
+                        <h1 style="font-size: 26px; font-weight: 800; margin: 0 0 8px 0; color: #10b981; text-transform: uppercase;">
+                            ${userProfile?.companyName || "BAYİ"}
+                        </h1>
+                        <h2 style="font-size: 18px; font-weight: 700; margin: 0 0 4px 0; color: #1c1917;">Tedarikçi İşlem Raporu</h2>
+                        <p style="font-size: 13px; margin: 0; color: #78716c;">
+                            Tarih Aralığı: ${dateStr} &nbsp;&bull;&nbsp; Oluşturulma: ${format(new Date(), 'dd.MM.yyyy HH:mm')}
+                        </p>
+                    </div>
+                `;
 
                 const suppliersToReport = reportOptions.supplierId === 'ALL' 
                     ? suppliers 
                     : suppliers.filter(s => s.id === reportOptions.supplierId);
 
-                const now = new Date();
-                
+                let start = new Date(0);
+                let end = new Date();
+
+                if (reportOptions.dateRange !== 'ALL_TIME') {
+                    const now = new Date();
+                    if (reportOptions.dateRange === 'THIS_MONTH') {
+                        start = new Date(now.getFullYear(), now.getMonth(), 1);
+                    } else if (reportOptions.dateRange === 'LAST_MONTH') {
+                        start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+                        end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+                    } else if (reportOptions.dateRange === 'THIS_YEAR') {
+                        start = new Date(now.getFullYear(), 0, 1);
+                    }
+                }
+
                 suppliersToReport.forEach((supplier, index) => {
-                    addPageIfNeeded(40);
-                    
                     const ledger: any[] = [];
-                    // Fetch from supplierPurchases and myPayments
                     
                     supplierPurchases.filter(p => !p.deletedAt && p.supplierId === supplier.id).forEach(p => {
                         const pDate = new Date(p.date);
-                        // Apply date filter
-                        if (reportOptions.dateRange === 'THIS_MONTH' && (pDate.getMonth() !== now.getMonth() || pDate.getFullYear() !== now.getFullYear())) return;
-                        if (reportOptions.dateRange === 'LAST_MONTH' && (pDate.getMonth() !== (now.getMonth() - 1 === -1 ? 11 : now.getMonth() - 1) || pDate.getFullYear() !== (now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear()))) return;
-                        if (reportOptions.dateRange === 'THIS_YEAR' && pDate.getFullYear() !== now.getFullYear()) return;
+                        if (pDate < start || pDate > end) return;
 
                         ledger.push({
                             date: pDate,
-                            type: p.type === 'RETURN' ? 'Alis Iade' : 'Alis Faturasi',
+                            type: p.type === 'RETURN' ? 'Alış İadesi' : 'Alış Faturası',
                             docNo: p.receiptNo || '-',
                             amount: p.totalAmount || p.items.reduce((acc, i) => acc + (i.quantity * (i.buyingPrice || 0)), 0) || 0,
                             isDebtToUs: p.type !== 'RETURN'
@@ -246,13 +249,11 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
 
                     myPayments.filter(p => !p.deletedAt && p.status !== 'CANCELLED' && p.supplierId === supplier.id).forEach(p => {
                         const pDate = new Date(p.issueDate);
-                        if (reportOptions.dateRange === 'THIS_MONTH' && (pDate.getMonth() !== now.getMonth() || pDate.getFullYear() !== now.getFullYear())) return;
-                        if (reportOptions.dateRange === 'LAST_MONTH' && (pDate.getMonth() !== (now.getMonth() - 1 === -1 ? 11 : now.getMonth() - 1) || pDate.getFullYear() !== (now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear()))) return;
-                        if (reportOptions.dateRange === 'THIS_YEAR' && pDate.getFullYear() !== now.getFullYear()) return;
+                        if (pDate < start || pDate > end) return;
 
                         ledger.push({
                             date: pDate,
-                            type: 'Odeme',
+                            type: 'Ödeme',
                             docNo: '-',
                             amount: p.amount,
                             isDebtToUs: false
@@ -261,40 +262,83 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
 
                     ledger.sort((a, b) => a.date.getTime() - b.date.getTime());
 
+                    htmlContent += `
+                        <div style="margin-bottom: 30px; page-break-inside: avoid;">
+                            <h3 style="font-size: 15px; font-weight: 700; margin: 0 0 10px 0; color: #1c1917; padding-bottom: 5px; border-bottom: 2px solid #e7e5e4;">
+                                ${index + 1}. Tedarikçi: ${supplier.name} <span style="color: #78716c; font-weight: 400; font-size: 13px; margin-left: 10px;">Tel: ${supplier.phoneNumber || '-'}</span>
+                            </h3>
+                            <table style="width: 100%; border-collapse: collapse; font-size: 11px; text-align: left;">
+                                <thead>
+                                    <tr style="background-color: #8b5cf6; color: white;">
+                                        <th style="padding: 8px 10px; border-bottom: 2px solid #7c3aed; border-top-left-radius: 6px;">Tarih</th>
+                                        <th style="padding: 8px 10px; border-bottom: 2px solid #7c3aed;">İşlem Türü</th>
+                                        <th style="padding: 8px 10px; border-bottom: 2px solid #7c3aed;">Belge No</th>
+                                        <th style="padding: 8px 10px; border-bottom: 2px solid #7c3aed; text-align: right;">Firmaya Borçlandık</th>
+                                        <th style="padding: 8px 10px; border-bottom: 2px solid #7c3aed; text-align: right;">Firmaya Ödedik</th>
+                                        <th style="padding: 8px 10px; border-bottom: 2px solid #7c3aed; border-top-right-radius: 6px; text-align: right;">Bakiye</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                    `;
+
                     let currentBalance = 0;
-                    const body = ledger.map(l => {
-                        if (l.isDebtToUs) currentBalance -= l.amount;
-                        else currentBalance += l.amount;
-                        
-                        return [
-                            format(l.date, 'dd.MM.yyyy'),
-                            trToEn(l.type),
-                            trToEn(l.docNo),
-                            l.isDebtToUs ? pdfCurrency(l.amount) : '', 
-                            !l.isDebtToUs ? pdfCurrency(l.amount) : '', 
-                            pdfCurrency(Math.abs(currentBalance)) + (currentBalance < 0 ? ' (Bize Borclu)' : ' (Bize Alacak)')
-                        ];
-                    });
-
-                    doc.setFontSize(11);
-                    doc.setFont("helvetica", "bold");
-                    doc.setTextColor(0, 0, 0);
-                    doc.text(`${index + 1}. Tedarikci: ` + trToEn(supplier.name) + ` - Tel: ${supplier.phoneNumber || '-'}`, 14, currentY);
-                    currentY += 5;
-
-                    autoTable(doc, {
-                        startY: currentY,
-                        head: [['Tarih', 'Islem Turu', 'Belge No', 'Firmaya Borclandik', 'Firmaya Odedik', 'Bakiye']],
-                        body: body.length > 0 ? body : [['(Secili tarihte islem yok)', '', '', '', '', pdfCurrency(0)]],
-                        theme: 'grid',
-                        styles: { font: 'helvetica', fontSize: 8 },
-                        headStyles: { fillColor: [139, 92, 246] },
-                        columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' } }
-                    });
-                    currentY = (doc as any).lastAutoTable.finalY + 10;
+                    
+                    if (ledger.length === 0) {
+                        htmlContent += `
+                            <tr>
+                                <td colspan="6" style="padding: 15px; text-align: center; color: #78716c; background-color: #fafaf9;">Belirtilen tarih aralığında işlem bulunmamaktadır.</td>
+                            </tr>
+                        `;
+                    } else {
+                        ledger.forEach((l, i) => {
+                            if (l.isDebtToUs) currentBalance -= l.amount;
+                            else currentBalance += l.amount;
+                            
+                            const bg = i % 2 === 0 ? '#fafaf9' : '#ffffff';
+                            const balanceStr = formatCurrency(Math.abs(currentBalance), userProfile?.currency || 'TRY');
+                            const statusStr = currentBalance < 0 ? '<span style="color:#ef4444;font-size:10px;margin-left:4px;">(Bize Borçlu)</span>' : '<span style="color:#10b981;font-size:10px;margin-left:4px;">(Hesap Alacaklı)</span>';
+                            
+                            htmlContent += `
+                                <tr style="background-color: ${bg}; border-bottom: 1px solid #e7e5e4;">
+                                    <td style="padding: 8px 10px; white-space: nowrap;">${format(l.date, 'dd.MM.yyyy')}</td>
+                                    <td style="padding: 8px 10px;">${l.type}</td>
+                                    <td style="padding: 8px 10px;">${l.docNo}</td>
+                                    <td style="padding: 8px 10px; text-align: right; color: #ef4444; font-family: monospace;">${l.isDebtToUs ? formatCurrency(l.amount, userProfile?.currency || 'TRY') : '-'}</td>
+                                    <td style="padding: 8px 10px; text-align: right; color: #10b981; font-family: monospace;">${!l.isDebtToUs ? formatCurrency(l.amount, userProfile?.currency || 'TRY') : '-'}</td>
+                                    <td style="padding: 8px 10px; text-align: right; font-weight: bold; font-family: monospace;">${balanceStr} ${statusStr}</td>
+                                </tr>
+                            `;
+                        });
+                    }
+                    
+                    htmlContent += `
+                                </tbody>
+                            </table>
+                        </div>
+                    `;
                 });
 
-                doc.save(`Tedarikci_Raporu_${format(new Date(), 'yyyyMMdd_HHmm')}.pdf`);
+                container.innerHTML = htmlContent;
+                document.body.appendChild(container);
+
+                const canvas = await html2canvas(container, {
+                    scale: 2,
+                    backgroundColor: '#ffffff',
+                    logging: false
+                });
+
+                document.body.removeChild(container);
+                
+                const imgData = canvas.toDataURL('image/jpeg', 0.95);
+                const pdf = new jsPDF({
+                    orientation: canvas.width > canvas.height ? 'l' : 'p',
+                    unit: 'px',
+                    format: [canvas.width, canvas.height]
+                });
+                
+                pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+                pdf.save(`Tedarikci_Raporu_${format(new Date(), 'yyyyMMdd_HHmm')}.pdf`);
+                
                 setIsGeneratingReport(false);
                 setIsReportModalOpen(false);
             } catch(e) {
@@ -302,7 +346,7 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
                 setIsGeneratingReport(false);
                 showToast('Rapor oluşturulurken hata!', 'error');
             }
-        }, 500);
+        }, 100);
     };
 
     const handleAddReturn = async (manualSupplierId?: string) => {
@@ -497,7 +541,7 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
                 addSupplierPurchase={addSupplierPurchase}
                 updateSupplierPurchase={updateSupplierPurchase}
                 softDeleteSupplierPurchase={softDeleteSupplierPurchase}
-                deleteSupplierPayment={softDeleteSupplierPayment}
+                softDeleteSupplierPayment={softDeleteSupplierPayment}
                 handleEditPayment={handleEditPayment}
                 handleClosePayment={handleClosePayment}
                 editingPayment={editingPayment}
@@ -616,20 +660,11 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
                             </div>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-3">
-                            <div className="bg-stone-950/50 p-3 rounded-2xl border border-white/5">
-                                <span className="text-[9px] text-stone-500 font-black uppercase tracking-widest block mb-1">Toplam Alım</span>
-                                <span className="text-stone-200 font-black font-mono text-sm">
-                                    {formatCurrency(Math.round(supplier.totalDebt), userProfile?.currency || 'TRY')}
-                                </span>
-                            </div>
-                            <div className={`p-3 rounded-2xl border ${supplier.balance < 0 ? 'bg-rose-500/5 border-rose-500/10' : 'bg-emerald-500/5 border-emerald-500/10'}`}>
-                                <span className="text-[9px] text-stone-500 font-black uppercase tracking-widest block mb-1">Bakiye</span>
-                                <span className={`font-black font-mono text-sm ${supplier.balance < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                                    {formatCurrency(Math.round(Math.abs(supplier.balance)), userProfile?.currency || 'TRY')}
-                                    {supplier.balance < 0 && <span className="text-[8px] ml-1 opacity-60 font-sans">(Borç)</span>}
-                                </span>
-                            </div>
+                        <div className="flex gap-2">
+                            <a href={`tel:${supplier.phoneNumber}`} onClick={e => e.stopPropagation()} className="flex items-center gap-1.5 flex-1 justify-center py-2.5 bg-stone-900 border border-white/5 rounded-xl text-stone-300 font-bold text-[11px] hover:bg-stone-800 transition-colors">
+                                <Phone size={12} />
+                                Ara
+                            </a>
                         </div>
                     </div>
                 ))}
@@ -949,6 +984,10 @@ const SupplierDetailView = ({
         onConfirm: () => {}
     });
 
+    const totalAlinan = purchases.reduce((acc, p) => acc + (p.totalAmount > 0 ? p.totalAmount : 0), 0);
+    const totalOdenen = purchases.reduce((acc, p) => acc + (p.totalAmount < 0 ? Math.abs(p.totalAmount) : 0), 0) + payments.reduce((acc: any, p: any) => acc + (p.amount || 0), 0);
+    const kalanBakiye = totalAlinan - totalOdenen;
+
     const loadData = async () => {
         setIsLoading(true);
         const [purchList, payList] = await Promise.all([
@@ -973,117 +1012,195 @@ const SupplierDetailView = ({
     };
 
     const generateReport = () => {
-        const doc = new jsPDF();
-        const currency = userProfile?.currency || 'TRY';
-        
-        // Filter transactions by date
-        const start = new Date(reportOptions.startDate);
-        start.setHours(0, 0, 0, 0);
-        const end = new Date(reportOptions.endDate);
-        end.setHours(23, 59, 59, 999);
-
-        const filteredPurchases = purchases.filter(p => {
-            const date = new Date(p.date);
-            return date >= start && date <= end;
-        });
-        const filteredPayments = payments.filter((p: any) => {
-            const date = new Date(p.date);
-            return date >= start && date <= end;
-        });
-
-        // Header
-        doc.setFontSize(20);
-        doc.setTextColor(40);
-        doc.text("TEDARIKÇI CARI HESAP EKSTRESI", 105, 20, { align: 'center' });
-        
-        doc.setFontSize(10);
-        doc.setTextColor(100);
-        doc.text(`Rapor Aralığı: ${new Date(reportOptions.startDate).toLocaleDateString('tr-TR')} - ${new Date(reportOptions.endDate).toLocaleDateString('tr-TR')}`, 195, 10, { align: 'right' });
-        doc.text(`Oluşturma: ${new Date().toLocaleDateString('tr-TR')}`, 195, 15, { align: 'right' });
-
-        // Supplier Info
-        doc.setFontSize(12);
-        doc.setTextColor(0);
-        doc.text(`Tedarikçi: ${supplier.name}`, 14, 35);
-        if (supplier.phoneNumber) doc.text(`Telefon: ${supplier.phoneNumber}`, 14, 42);
-        if (supplier.address) doc.text(`Adres: ${supplier.address}`, 14, 49);
-
-        // Summary Box (Recalculate based on filtered data)
-        const totalDebt = filteredPurchases.reduce((acc, p) => acc + (p.totalAmount > 0 ? p.totalAmount : 0), 0);
-        const totalCredit = filteredPurchases.reduce((acc, p) => acc + (p.totalAmount < 0 ? Math.abs(p.totalAmount) : 0), 0) + filteredPayments.reduce((acc, p) => acc + p.amount, 0);
-        const periodBalance = totalCredit - totalDebt;
-
-        doc.setDrawColor(200);
-        doc.setFillColor(245, 245, 245);
-        doc.roundedRect(14, 55, 182, 25, 3, 3, 'FD');
-        
-        doc.setFontSize(10);
-        doc.setTextColor(100);
-        doc.text("Dönem Borç", 30, 63);
-        doc.text("Dönem Ödeme", 90, 63);
-        doc.text("Dönem Bakiye", 150, 63);
-
-        doc.setFontSize(12);
-        doc.setTextColor(0);
-        doc.text(formatCurrency(totalDebt, currency), 30, 72);
-        doc.text(formatCurrency(totalCredit, currency), 90, 72);
-        doc.setTextColor(periodBalance < 0 ? 200 : 0, periodBalance < 0 ? 0 : 150, 0);
-        doc.text(formatCurrency(Math.abs(periodBalance), currency) + (periodBalance < 0 ? " (Borç)" : " (Alacak)"), 150, 72);
-
-        // Table Data
-        const allTransactions = [
-            ...filteredPurchases.map(p => ({
-                date: p.date,
-                type: p.totalAmount < 0 ? (p.note?.includes('SATIŞ') ? 'SATIŞ' : 'İADE') : 'ALIM',
-                desc: reportOptions.type === 'DETAILED' 
-                    ? (p.items || []).map(i => `${i.pesticideName} (${i.quantity} ${i.unit})`).join(', ') + (p.note ? ` - ${p.note}` : '')
-                    : p.note || (p.receiptNo ? `Fiş No: ${p.receiptNo}` : '-'),
-                debt: p.totalAmount > 0 ? p.totalAmount : 0,
-                credit: p.totalAmount < 0 ? Math.abs(p.totalAmount) : 0
-            })),
-            ...filteredPayments.map(p => {
-                let type = 'ÖDEME';
-                let method = (p as any).method || '';
-                if ((p as any).type === 'CHECK') {
-                    type = 'ÇEK';
-                    method = 'Çek';
-                } else if ((p as any).type === 'PROMISSORY') {
-                    type = 'SENET';
-                    method = 'Senet';
-                }
+        setTimeout(async () => {
+            try {
+                const currency = userProfile?.currency || 'TRY';
                 
-                return {
-                    date: p.date,
-                    type,
-                    desc: `${method}${p.note ? ` - ${p.note}` : ''}`,
-                    debt: 0,
-                    credit: p.amount
-                };
-            })
-        ].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+                // Filter transactions by date
+                const start = new Date(reportOptions.startDate);
+                start.setHours(0, 0, 0, 0);
+                const end = new Date(reportOptions.endDate);
+                end.setHours(23, 59, 59, 999);
 
-        autoTable(doc, {
-            startY: 90,
-            head: [['Tarih', 'İşlem Tipi', 'Açıklama', 'Borç', 'Alacak']],
-            body: allTransactions.map(t => [
-                new Date(t.date).toLocaleDateString('tr-TR'),
-                t.type,
-                t.desc,
-                t.debt > 0 ? formatCurrency(t.debt, currency) : '-',
-                t.credit > 0 ? formatCurrency(t.credit, currency) : '-'
-            ]),
-            headStyles: { fillColor: [31, 41, 55], textColor: [255, 255, 255], fontStyle: 'bold' },
-            alternateRowStyles: { fillColor: [249, 250, 251] },
-            margin: { top: 90 },
-            styles: { fontSize: 8, cellPadding: 2 },
-            columnStyles: {
-                2: { cellWidth: 80 } // Description column wider
+                const filteredPurchases = purchases.filter(p => {
+                    const date = new Date(p.date);
+                    return date >= start && date <= end;
+                });
+                const filteredPayments = payments.filter((p: any) => {
+                    const date = new Date(p.date);
+                    return date >= start && date <= end;
+                });
+
+                const totalDebt = filteredPurchases.reduce((acc, p) => acc + (p.totalAmount > 0 ? p.totalAmount : 0), 0);
+                const totalCredit = filteredPurchases.reduce((acc, p) => acc + (p.totalAmount < 0 ? Math.abs(p.totalAmount) : 0), 0) + filteredPayments.reduce((acc: any, p: any) => acc + (p.amount || 0), 0);
+                const periodBalance = totalCredit - totalDebt;
+
+                const allTransactions = [
+                    ...filteredPurchases.map(p => ({
+                        date: new Date(p.date),
+                        type: p.totalAmount < 0 ? (p.note?.includes('SATIŞ') ? 'Satış' : 'İade') : 'Alım',
+                        desc: reportOptions.type === 'DETAILED' 
+                            ? (p.items || []).map(i => `${i.pesticideName} (${i.quantity} ${i.unit})`).join(', ') + (p.note ? ` - ${p.note}` : '')
+                            : p.note || (p.receiptNo ? `Fiş No: ${p.receiptNo}` : '-'),
+                        debt: p.totalAmount > 0 ? p.totalAmount : 0,
+                        credit: p.totalAmount < 0 ? Math.abs(p.totalAmount) : 0
+                    })),
+                    ...filteredPayments.map((p: any) => {
+                        let type = 'Ödeme';
+                        let method = p.method || '';
+                        if (p.type === 'CHECK') {
+                            type = 'Çek';
+                            method = 'Çek';
+                        } else if (p.type === 'PROMISSORY') {
+                            type = 'Senet';
+                            method = 'Senet';
+                        } else if (p.type === 'MY_PAYMENT') {
+                            type = 'Ödeme';
+                            method = p.type === 'CHECK' ? 'Müşteri Çeki' : (p.type === 'PROMISSORY_NOTE' ? 'Müşteri Senedi' : 'Cari Ödemesi');
+                        }
+                        
+                        return {
+                            date: new Date(p.date),
+                            type,
+                            desc: `${method}${p.note ? ` - ${p.note}` : ''}`,
+                            debt: 0,
+                            credit: p.amount
+                        };
+                    })
+                ].sort((a, b) => a.date.getTime() - b.date.getTime());
+
+
+                const container = document.createElement('div');
+                container.style.position = 'absolute';
+                container.style.left = '-9999px';
+                container.style.top = '0';
+                container.style.width = '800px';
+                container.style.backgroundColor = '#ffffff';
+                container.style.padding = '40px';
+                container.style.color = '#1c1917';
+                container.style.fontFamily = 'system-ui, -apple-system, sans-serif';
+
+                let htmlContent = `
+                    <div style="margin-bottom: 30px;">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px;">
+                            <div>
+                                <h1 style="font-size: 26px; font-weight: 800; margin: 0 0 8px 0; color: #10b981; text-transform: uppercase;">
+                                    ${userProfile?.companyName || "MKS SİSTEMİ"}
+                                </h1>
+                                <h2 style="font-size: 18px; font-weight: 700; margin: 0 0 4px 0; color: #1c1917;">Tedarikçi Cari Hesap Ekstresi</h2>
+                            </div>
+                            <div style="text-align: right; color: #78716c; font-size: 11px;">
+                                <p style="margin: 0 0 4px 0;"><strong>Tarih:</strong> ${format(new Date(), 'dd.MM.yyyy HH:mm')}</p>
+                                <p style="margin: 0;"><strong>Sorumlu:</strong> ${userProfile?.fullName || 'Sistem'}</p>
+                            </div>
+                        </div>
+
+                        <div style="background-color: #fafaf9; border: 1px solid #e7e5e4; border-radius: 8px; padding: 16px; margin-bottom: 24px; display: flex; justify-content: space-between;">
+                            <div>
+                                <h3 style="font-size: 16px; font-weight: 700; margin: 0 0 8px 0; color: #1c1917;">${supplier.name}</h3>
+                                ${supplier.phoneNumber ? `<p style="margin: 0 0 4px 0; font-size: 12px; color: #57534e;"><strong>Tel:</strong> ${supplier.phoneNumber}</p>` : ''}
+                                ${supplier.address ? `<p style="margin: 0; font-size: 12px; color: #57534e;"><strong>Adres:</strong> ${supplier.address}</p>` : ''}
+                            </div>
+                            <div style="text-align: right; font-size: 12px; color: #57534e;">
+                                <p style="margin: 0 0 4px 0;"><strong>Rapor Aralığı:</strong> ${format(start, 'dd.MM.yyyy')} - ${format(end, 'dd.MM.yyyy')}</p>
+                                <p style="margin: 0;"><strong>Rapor Türü:</strong> ${reportOptions.type === 'DETAILED' ? 'Detaylı Kırılımlı' : 'Genel Özet'}</p>
+                            </div>
+                        </div>
+
+                        <div style="display: flex; gap: 16px; margin-bottom: 30px;">
+                            <div style="flex: 1; padding: 16px; background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 8px;">
+                                <div style="font-size: 10px; font-weight: 700; color: #dc2626; text-transform: uppercase; margin-bottom: 4px;">Dönem Alınan / Borç</div>
+                                <div style="font-size: 18px; font-weight: 800; color: #b91c1c; font-family: monospace;">${formatCurrency(totalDebt, currency)}</div>
+                            </div>
+                            <div style="flex: 1; padding: 16px; background-color: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px;">
+                                <div style="font-size: 10px; font-weight: 700; color: #059669; text-transform: uppercase; margin-bottom: 4px;">Dönem Ödenen / İade / Satış</div>
+                                <div style="font-size: 18px; font-weight: 800; color: #047857; font-family: monospace;">${formatCurrency(totalCredit, currency)}</div>
+                            </div>
+                            <div style="flex: 1; padding: 16px; background-color: ${periodBalance < 0 ? '#ecfdf5' : (periodBalance > 0 ? '#fef2f2' : '#f3f4f6')}; border: 1px solid ${periodBalance < 0 ? '#a7f3d0' : (periodBalance > 0 ? '#fecaca' : '#e5e7eb')}; border-radius: 8px;">
+                                <div style="font-size: 10px; font-weight: 700; color: ${periodBalance < 0 ? '#059669' : (periodBalance > 0 ? '#dc2626' : '#4b5563')}; text-transform: uppercase; margin-bottom: 4px;">Dönem Bakiyesi</div>
+                                <div style="display: flex; justify-content: space-between; align-items: flex-end;">
+                                    <div style="font-size: 18px; font-weight: 800; color: ${periodBalance < 0 ? '#047857' : (periodBalance > 0 ? '#b91c1c' : '#374151')}; font-family: monospace;">
+                                        ${formatCurrency(Math.abs(periodBalance), currency)}
+                                    </div>
+                                    <div style="font-size: 11px; font-weight: 700; color: ${periodBalance < 0 ? '#059669' : (periodBalance > 0 ? '#dc2626' : '#4b5563')};">
+                                        ${periodBalance < 0 ? '(Alacaklı Geçiş)' : (periodBalance > 0 ? '(Borçlu Geçiş)' : '(Bakiye Yok)')}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <table style="width: 100%; border-collapse: collapse; font-size: 11px; text-align: left;">
+                            <thead>
+                                <tr style="background-color: #1f2937; color: white;">
+                                    <th style="padding: 10px; border-bottom: 2px solid #1f2937; border-top-left-radius: 6px;">Tarih</th>
+                                    <th style="padding: 10px; border-bottom: 2px solid #1f2937;">İşlem Türü</th>
+                                    <th style="padding: 10px; border-bottom: 2px solid #1f2937;">Açıklama</th>
+                                    <th style="padding: 10px; border-bottom: 2px solid #1f2937; text-align: right;">Borç (Alınan)</th>
+                                    <th style="padding: 10px; border-bottom: 2px solid #1f2937; border-top-right-radius: 6px; text-align: right;">Alacak (Ödenen)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+
+                if (allTransactions.length === 0) {
+                    htmlContent += `
+                        <tr>
+                            <td colspan="5" style="padding: 20px; text-align: center; color: #78716c; background-color: #fafaf9; border-bottom: 1px solid #e7e5e4;">
+                                Belirtilen tarih aralığında işlem bulunmamaktadır.
+                            </td>
+                        </tr>
+                    `;
+                } else {
+                    allTransactions.forEach((t, i) => {
+                        const bg = i % 2 === 0 ? '#fafaf9' : '#ffffff';
+                        htmlContent += `
+                            <tr style="background-color: ${bg}; border-bottom: 1px solid #e7e5e4;">
+                                <td style="padding: 10px; white-space: nowrap; color: #3f3f46;">${format(t.date, 'dd.MM.yyyy')}</td>
+                                <td style="padding: 10px; font-weight: 600; color: #3f3f46;">${t.type}</td>
+                                <td style="padding: 10px; color: #52525b;">${t.desc}</td>
+                                <td style="padding: 10px; text-align: right; color: #dc2626; font-family: monospace; font-weight: 600;">${t.debt > 0 ? formatCurrency(t.debt, currency) : '-'}</td>
+                                <td style="padding: 10px; text-align: right; color: #059669; font-family: monospace; font-weight: 600;">${t.credit > 0 ? formatCurrency(t.credit, currency) : '-'}</td>
+                            </tr>
+                        `;
+                    });
+                }
+
+                htmlContent += `
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+
+                container.innerHTML = htmlContent;
+                document.body.appendChild(container);
+
+                const canvas = await html2canvas(container, {
+                    scale: 2,
+                    backgroundColor: '#ffffff',
+                    logging: false
+                });
+
+                document.body.removeChild(container);
+                
+                const imgData = canvas.toDataURL('image/jpeg', 0.95);
+                
+                const doc = new jsPDF({
+                    orientation: canvas.width > canvas.height ? 'l' : 'p',
+                    unit: 'px',
+                    format: [canvas.width, canvas.height]
+                });
+                
+                doc.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+                doc.save(`${supplier.name.replace(/\s+/g, '_')}_Ekstre_${reportOptions.type}.pdf`);
+                
+                showToast('Rapor başarıyla oluşturuldu', 'success');
+                setIsReportModalOpen(false);
+
+            } catch(e) {
+                console.error(e);
+                showToast('Rapor oluşturulurken hata!', 'error');
             }
-        });
-
-        doc.save(`${supplier.name.replace(/\s+/g, '_')}_Ekstre_${reportOptions.type}.pdf`);
-        showToast('Rapor başarıyla oluşturuldu', 'success');
-        setIsReportModalOpen(false);
+        }, 100);
     };
 
     React.useEffect(() => {
@@ -1216,20 +1333,35 @@ const SupplierDetailView = ({
                 </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-                <div className="bg-stone-900 border border-white/5 p-4 rounded-3xl">
-                    <span className="text-[10px] text-stone-500 font-black uppercase tracking-widest block mb-1">Toplam Alım</span>
-                    <div className="text-xl font-black text-stone-100 font-mono">
-                        {formatCurrency(Math.round(supplier.totalDebt), userProfile?.currency || 'TRY')}
+            <div className="grid grid-cols-3 gap-2 mb-4">
+                <div className="bg-stone-900 border border-white/5 p-3 sm:p-4 rounded-[1.5rem] flex flex-col justify-between relative overflow-hidden">
+                    <div className="absolute top-0 right-0 p-3 sm:p-4 opacity-5 text-emerald-500">
+                        <Package size={24} />
+                    </div>
+                    <span className="text-[9px] sm:text-[10px] text-stone-500 font-black uppercase tracking-widest block mb-1">Toplam Alınan</span>
+                    <div className="text-sm sm:text-lg lg:text-xl font-black text-stone-100 font-mono tracking-tight">
+                        {formatCurrency(Math.round(totalAlinan), userProfile?.currency || 'TRY')}
                     </div>
                 </div>
-                <div className={`p-4 rounded-3xl border ${supplier.balance < 0 ? 'bg-rose-500/5 border-rose-500/10' : 'bg-emerald-500/5 border-emerald-500/10'}`}>
-                    <span className="text-[10px] text-stone-500 font-black uppercase tracking-widest block mb-1">Bakiye</span>
-                    <div className={`text-xl font-black font-mono ${supplier.balance < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                        {formatCurrency(Math.round(Math.abs(supplier.balance)), userProfile?.currency || 'TRY')}
+                <div className="bg-stone-900 border border-white/5 p-3 sm:p-4 rounded-[1.5rem] flex flex-col justify-between relative overflow-hidden">
+                    <div className="absolute top-0 right-0 p-3 sm:p-4 opacity-5 text-blue-500">
+                        <ArrowDownRight size={24} />
                     </div>
-                    <span className="text-[8px] font-bold uppercase tracking-wider opacity-60">
-                        {supplier.balance < 0 ? 'Ödenecek Borç' : 'Alacaklı'}
+                    <span className="text-[9px] sm:text-[10px] text-stone-500 font-black uppercase tracking-widest block mb-1">Ödenen/ İade/ Satış</span>
+                    <div className="text-sm sm:text-lg lg:text-xl font-black text-stone-100 font-mono tracking-tight">
+                        {formatCurrency(Math.round(totalOdenen), userProfile?.currency || 'TRY')}
+                    </div>
+                </div>
+                <div className={`p-3 sm:p-4 rounded-[1.5rem] border flex flex-col justify-between relative overflow-hidden ${kalanBakiye < 0 ? 'bg-emerald-500/5 border-emerald-500/10' : (kalanBakiye > 0 ? 'bg-rose-500/5 border-rose-500/10' : 'bg-stone-900 border-white/5')}`}>
+                    <div className="absolute top-0 right-0 p-3 sm:p-4 opacity-5">
+                        <Wallet size={24} />
+                    </div>
+                    <span className="text-[9px] sm:text-[10px] text-stone-500 font-black uppercase tracking-widest block mb-1">Kalan Bakiye</span>
+                    <div className={`text-sm sm:text-lg lg:text-xl font-black font-mono tracking-tight ${kalanBakiye < 0 ? 'text-emerald-400' : (kalanBakiye > 0 ? 'text-rose-400' : 'text-stone-400')}`}>
+                         {formatCurrency(Math.round(Math.abs(kalanBakiye)), userProfile?.currency || 'TRY')}
+                    </div>
+                    <span className={`text-[7px] sm:text-[8px] font-bold uppercase tracking-wider opacity-60 absolute bottom-2 right-3 ${kalanBakiye < 0 ? 'text-emerald-500' : (kalanBakiye > 0 ? 'text-rose-500' : 'text-stone-500')}`}>
+                        {kalanBakiye < 0 ? 'Alacaklı' : (kalanBakiye > 0 ? 'Ödenecek Borç' : 'Borç Yok')}
                     </span>
                 </div>
             </div>
@@ -1647,6 +1779,16 @@ const SupplierDetailView = ({
                                         className="px-3 py-1.5 bg-stone-800 border border-white/5 rounded-lg text-[10px] font-bold text-stone-400 hover:bg-stone-700 hover:text-white transition-all"
                                     >
                                         Son 30 Gün
+                                    </button>
+                                    <button 
+                                        onClick={() => setReportOptions({
+                                            ...reportOptions, 
+                                            startDate: '2020-01-01',
+                                            endDate: new Date().toISOString().split('T')[0]
+                                        })}
+                                        className="px-3 py-1.5 bg-stone-800 border border-white/5 rounded-lg text-[10px] font-bold text-stone-400 hover:bg-stone-700 hover:text-white transition-all"
+                                    >
+                                        Tüm Zamanlar
                                     </button>
                                 </div>
                             </div>

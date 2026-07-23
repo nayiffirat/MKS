@@ -15,7 +15,7 @@ interface RemindersScreenProps {
 }
 
 export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initialAddMode, initialFilter }) => {
-    const { reminders, addReminder, toggleReminder, deleteReminder, editReminder, farmers, userProfile, t, language } = useAppViewModel();
+    const { reminders, addReminder, toggleReminder, deleteReminder, editReminder, farmers, userProfile, t, language, showToast } = useAppViewModel();
     const farmerLabel = t('label.farmer');
     const farmerPluralLabel = t('label.farmers');
     const [isAddModalOpen, setIsAddModalOpen] = useState(initialAddMode || false);
@@ -89,7 +89,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
             resetForm();
         } catch (error) {
             console.error("Reminder save error:", error);
-            alert(t('reminders.error.save'));
+            showToast(t('reminders.error.save'), 'error');
         }
     };
 

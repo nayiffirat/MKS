@@ -3,7 +3,7 @@ import {
     Search, Plus, Package, DollarSign, TrendingUp, 
     Trash2, Edit2, Save, X, AlertCircle, Filter,
     ArrowUpRight, ArrowDownRight, BarChart3, PieChart, FlaskConical,
-    History, User, Calendar, List, Download, Eye, EyeOff, Camera, Barcode, Truck, RefreshCw, ChevronRight, ClipboardCheck
+    History, User, Calendar, List, Download, Eye, EyeOff, Camera, Barcode, Truck, RefreshCw, ChevronRight, ClipboardCheck, ArrowRight, ShoppingCart, Share2
 } from 'lucide-react';
 import BarcodeScanner from './BarcodeScanner';
 import { 
@@ -12,12 +12,15 @@ import {
 } from 'recharts';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import html2canvas from 'html2canvas';
 import { dbService } from '../services/db';
 import { auth } from '../services/firebase';
 import { InventoryItem, Pesticide, PesticideCategory } from '../types';
 import { useAppViewModel } from '../context/AppContext';
 import { formatCurrency, getCurrencySuffix } from '../utils/currency';
 import { ConfirmationModal } from './ConfirmationModal';
+import { PesticideOCRScanner } from './PesticideOCRScanner';
+import { SmartOrderModal } from './SmartOrderModal';
 
 export const InventoryScreen: React.FC<{ 
     onNavigateToPrescription?: (id: string) => void;
@@ -60,6 +63,45 @@ export const InventoryScreen: React.FC<{
     const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
 
     // Modal States
+    const [isRebuildModalOpen, setIsRebuildModalOpen] = useState(false);
+    const [rebuildState, setRebuildState] = useState<'IDLE' | 'ANALYZING' | 'RESULT' | 'REPAIRING'>('IDLE');
+    const [mismatches, setMismatches] = useState<{pesticideId: string, pesticideName: string, currentQty: number, calculatedQty: number, purchasedQty: number, soldQty: number, adjustedQty: number}[]>([]);
+    const [selectedMismatches, setSelectedMismatches] = useState<Set<string>>(new Set());
+    const [isSmartOrderModalOpen, setIsSmartOrderModalOpen] = useState(false);
+
+    const handleAnalyzeInventory = async () => {
+        setRebuildState('ANALYZING');
+        try {
+            const results = await dbService.analyzeInventoryBalances();
+            setMismatches(results);
+            setSelectedMismatches(new Set(results.map(r => r.pesticideId)));
+            setRebuildState('RESULT');
+        } catch (error) {
+            console.error("Analysis error:", error);
+            showToast("Stoklar analiz edilirken hata oluştu.", "error");
+            setIsRebuildModalOpen(false);
+            setRebuildState('IDLE');
+        }
+    };
+
+    const handleRepairInventory = async () => {
+        setRebuildState('REPAIRING');
+        try {
+            const selectedFixes = mismatches.filter(m => selectedMismatches.has(m.pesticideId));
+            await dbService.applyInventoryFixes(selectedFixes.map(m => ({
+                pesticideId: m.pesticideId,
+                quantity: m.calculatedQty
+            })));
+            showToast("Seçilen stoklar kusursuz bir şekilde onarıldı.", "success");
+            setTimeout(() => {
+                window.location.reload();
+            }, 1000);
+        } catch (error) {
+            console.error("Repair error:", error);
+            showToast("Stoklar onarılırken hata oluştu.", "error");
+            setRebuildState('RESULT');
+        }
+    };
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -83,39 +125,39 @@ export const InventoryScreen: React.FC<{
     const [purchaseHistory, setPurchaseHistory] = useState<{ id: string; targetId: string; name: string; date: string; price: number; quantity: string; isReturn: boolean; type: 'SALE' | 'PURCHASE' }[]>([]);
 
     useEffect(() => {
-        const fetchPurchaseHistory = async () => {
-            if (!selectedDetailItem) {
-                setPurchaseHistory([]);
-                return;
-            }
-            
-            const history: { id: string; targetId: string; name: string; date: string; price: number; quantity: string; isReturn: boolean; type: 'SALE' | 'PURCHASE' }[] = [];
-            
-            for (const supplier of suppliers) {
-                const purchases = await dbService.getSupplierPurchases(supplier.id);
-                purchases.filter(p => !p.deletedAt).forEach(p => {
-                    const item = p.items.find(i => i.pesticideId === selectedDetailItem.pesticideId);
-                    if (item) {
-                        const qty = parseFloat(item.quantity?.toString().replace(',', '.') || '0') || 0;
-                        history.push({
-                            id: p.id,
-                            targetId: supplier.id,
-                            name: supplier.name,
-                            date: p.date,
-                            price: item.buyingPrice || 0,
-                            quantity: Math.abs(qty).toString(),
-                            isReturn: qty < 0,
-                            type: 'PURCHASE'
-                        });
-                    }
+        if (!selectedDetailItem) {
+            setPurchaseHistory([]);
+            return;
+        }
+        
+        const history: { id: string; targetId: string; name: string; date: string; price: number; quantity: string; isReturn: boolean; type: 'SALE' | 'PURCHASE' }[] = [];
+        
+        supplierPurchases.filter(p => !p.deletedAt).forEach(p => {
+            const item = p.items.find(i => i.pesticideId === selectedDetailItem.pesticideId);
+            if (item) {
+                const supplier = suppliers.find(s => s.id === p.supplierId);
+                const supplierName = supplier ? supplier.name : 'Bilinmeyen Tedarikçi';
+                const qtyStr = String(item.quantity || '0').replace(',', '.');
+                const parsedQty = parseFloat(qtyStr) || 0;
+                
+                const isReturn = p.type === 'RETURN' || parsedQty < 0;
+                const effectiveQty = Math.abs(parsedQty);
+
+                history.push({
+                    id: p.id,
+                    targetId: p.supplierId,
+                    name: supplierName,
+                    date: p.date,
+                    price: item.buyingPrice || 0,
+                    quantity: effectiveQty.toString(),
+                    isReturn: isReturn,
+                    type: 'PURCHASE'
                 });
             }
-            
-            setPurchaseHistory(history);
-        };
+        });
         
-        fetchPurchaseHistory();
-    }, [selectedDetailItem, suppliers]);
+        setPurchaseHistory(history);
+    }, [selectedDetailItem, supplierPurchases, suppliers]);
 
     const [isScanning, setIsScanning] = useState(false);
     
@@ -228,13 +270,15 @@ export const InventoryScreen: React.FC<{
         const map = new Map<string, number>();
         supplierPurchases.filter(p => !p.deletedAt).forEach(purchase => {
             purchase.items.forEach(item => {
-                const qty = parseFloat(item.quantity.toString().replace(',', '.')) || 0;
+                const qtyStr = String(item.quantity || '0').replace(',', '.');
+                const qty = parseFloat(qtyStr) || 0;
+                if (isNaN(qty) || qty === 0) return;
+
+                const isReturnOrSale = purchase.type === 'RETURN' || purchase.note?.startsWith('SATIŞ') || qty < 0;
+                const effectiveQty = isReturnOrSale ? -Math.abs(qty) : Math.abs(qty);
+
                 const current = map.get(item.pesticideId) || 0;
-                if (purchase.type === 'RETURN') {
-                    map.set(item.pesticideId, current - qty);
-                } else {
-                    map.set(item.pesticideId, current + qty);
-                }
+                map.set(item.pesticideId, current + effectiveQty);
             });
         });
         return map;
@@ -704,274 +748,400 @@ export const InventoryScreen: React.FC<{
             .replace(/ç/g, 'c').replace(/Ç/g, 'C');
     };
 
-    const generateInventoryPDF = (type: 'CUSTOMER' | 'INTERNAL' | 'FULL') => {
-        const doc = new jsPDF();
+    const generateInventoryPDF = async (type: 'CUSTOMER' | 'INTERNAL' | 'FULL') => {
+        setIsListMenuOpen(false);
         const dateStr = new Date().toLocaleDateString('tr-TR');
         const timeStr = new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
         const engineerName = userProfile.fullName || 'Ziraat Mühendisi';
         
-        // --- CORPORATE HEADER ---
-        // Emerald Header Bar
-        doc.setFillColor(16, 185, 129);
-        doc.rect(0, 0, 210, 40, 'F');
-        
-        doc.setTextColor(255, 255, 255);
-        doc.setFontSize(24);
-        doc.setFont('helvetica', 'bold');
-        doc.text(tr('MÜHENDİS KAYIT SİSTEMİ'), 14, 20);
-        
-        doc.setFontSize(10);
-        doc.setFont('helvetica', 'normal');
-        doc.text(tr('Dijital Tarim ve Stok Yönetim Sistemi'), 14, 28);
-        
-        // Right side header info
-        doc.setFontSize(9);
-        doc.text(tr(`Tarih: ${dateStr} ${timeStr}`), 196, 15, { align: 'right' });
-        doc.text(tr(`Rapor No: #INV-${Math.floor(Math.random() * 10000)}`), 196, 22, { align: 'right' });
-        doc.text(tr(`Sorumlu: ${engineerName}`), 196, 29, { align: 'right' });
+        try {
+            const container = document.createElement('div');
+            container.style.position = 'absolute';
+            container.style.left = '-9999px';
+            container.style.top = '0';
+            container.style.width = '800px';
+            container.style.backgroundColor = '#ffffff';
+            container.style.padding = '40px';
+            container.style.color = '#1c1917';
+            container.style.fontFamily = 'system-ui, -apple-system, sans-serif';
 
-        // --- REPORT TITLE ---
-        doc.setTextColor(40, 40, 40);
-        doc.setFontSize(16);
-        doc.setFont('helvetica', 'bold');
-        
-        let title = '';
-        let head: string[][] = [];
-        let body: any[] = [];
-        
-        const sortedInventory = [...filteredInventory].sort((a, b) => a.category.localeCompare(b.category));
-
-        if (type === 'CUSTOMER') {
-            title = 'MUSTERI FIYAT LISTESI';
-            head = [[tr('Ürün Adı'), tr('Kategori'), tr('Birim'), tr('Satış Fiyatı')]];
-            body = sortedInventory.map(item => [
-                tr(item.pesticideName),
-                tr(item.category),
-                tr(item.unit),
-                `${formatCurrency(item.sellingPrice, userProfile?.currency || 'TRY')}`
-            ]);
-        } else if (type === 'INTERNAL') {
-            title = 'IC STOK VE MALIYET LISTESI';
-            head = [[tr('Ürün Adı'), tr('Kategori'), tr('Stok'), tr('Birim'), tr('Alış Fiyatı (Vadeli)'), tr('Alış Fiyatı (Peşin)')]];
-            body = sortedInventory.map(item => [
-                tr(item.pesticideName),
-                tr(item.category),
-                Number(item.quantity).toString(),
-                tr(item.unit),
-                `${formatCurrency(item.buyingPrice, userProfile?.currency || 'TRY')}`,
-                `${formatCurrency(item.cashBuyingPrice || 0, userProfile?.currency || 'TRY')}`
-            ]);
-        } else {
-            title = 'TAM STOK VE FINANSAL RAPOR';
-            head = [[tr('Ürün Adı'), tr('Kategori'), tr('Stok'), tr('Alış (V/P)'), tr('Satış (V/P)'), tr('Toplam Maliyet (V/P)')]];
-            body = sortedInventory.map(item => [
-                tr(item.pesticideName),
-                tr(item.category),
-                `${item.quantity} ${tr(item.unit)}`,
-                `${formatCurrency(item.buyingPrice, userProfile?.currency || 'TRY')} / ${formatCurrency(item.cashBuyingPrice || 0, userProfile?.currency || 'TRY')}`,
-                `${formatCurrency(item.sellingPrice, userProfile?.currency || 'TRY')} / ${formatCurrency(item.cashPrice || 0, userProfile?.currency || 'TRY')}`,
-                `${formatCurrency(item.quantity * item.buyingPrice, userProfile?.currency || 'TRY')} / ${formatCurrency(item.quantity * (item.cashBuyingPrice || 0), userProfile?.currency || 'TRY')}`
-            ]);
-        }
-
-        doc.text(tr(title), 14, 55);
-        
-        // Horizontal line under title
-        doc.setDrawColor(16, 185, 129);
-        doc.setLineWidth(0.5);
-        doc.line(14, 58, 60, 58);
-
-        // --- TABLE ---
-        autoTable(doc, {
-            startY: 65,
-            head: head,
-            body: body,
-            theme: 'grid',
-            headStyles: { 
-                fillColor: [16, 185, 129], 
-                textColor: 255,
-                fontSize: 9,
-                fontStyle: 'bold',
-                halign: 'center'
-            },
-            styles: { 
-                fontSize: 8, 
-                cellPadding: 4,
-                font: 'helvetica',
-                textColor: [60, 60, 60],
-                lineColor: [230, 230, 230]
-            },
-            columnStyles: {
-                0: { fontStyle: 'bold', textColor: [20, 20, 20] }
-            },
-            alternateRowStyles: { fillColor: [250, 252, 251] },
-            margin: { left: 14, right: 14 }
-        });
-
-        // --- SUMMARY BOXES (For Internal and Full) ---
-        if (type !== 'CUSTOMER') {
-            const finalY = (doc as any).lastAutoTable.finalY + 15;
-            const totalCost = sortedInventory.reduce((acc, i) => acc + (i.quantity * i.buyingPrice), 0);
-            const totalCashCost = sortedInventory.reduce((acc, i) => acc + (i.quantity * (i.cashBuyingPrice || 0)), 0);
-            const totalRevenue = sortedInventory.reduce((acc, i) => acc + (i.quantity * i.sellingPrice), 0);
-            const totalCashRevenue = sortedInventory.reduce((acc, i) => acc + (i.quantity * (i.cashPrice || 0)), 0);
+            const sortedInventory = [...filteredInventory].sort((a, b) => a.category.localeCompare(b.category));
             
-            // Summary Box Background
-            doc.setFillColor(245, 247, 246);
-            doc.roundedRect(14, finalY, 182, type === 'FULL' ? 45 : 25, 3, 3, 'F');
+            let title = '';
+            let columns = '';
             
-            doc.setFontSize(10);
-            doc.setFont('helvetica', 'bold');
-            doc.setTextColor(100, 100, 100);
-            doc.text(tr('FINANSAL OZET'), 20, finalY + 8);
-            
-            doc.setFontSize(11);
-            doc.setTextColor(40, 40, 40);
-            doc.text(tr(`Toplam Stok Maliyeti (Vadeli / Peşin):`), 20, finalY + 16);
-            doc.text(`${formatCurrency(totalCost, userProfile?.currency || 'TRY')} / ${formatCurrency(totalCashCost, userProfile?.currency || 'TRY')}`, 190, finalY + 16, { align: 'right' });
-            
-            if (type === 'FULL') {
-                doc.text(tr(`Toplam Potansiyel Ciro (Vadeli / Peşin):`), 20, finalY + 23);
-                doc.text(`${formatCurrency(totalRevenue, userProfile?.currency || 'TRY')} / ${formatCurrency(totalCashRevenue, userProfile?.currency || 'TRY')}`, 190, finalY + 23, { align: 'right' });
-                
-                doc.setDrawColor(220, 220, 220);
-                doc.line(20, finalY + 26, 190, finalY + 26);
-                
-                doc.setFontSize(12);
-                doc.setTextColor(16, 185, 129);
-                doc.text(tr(`Tahmini Net Kar (Vadeli / Peşin):`), 20, finalY + 31);
-                doc.text(`${formatCurrency(totalRevenue - totalCost, userProfile?.currency || 'TRY')} / ${formatCurrency(totalCashRevenue - totalCashCost, userProfile?.currency || 'TRY')}`, 190, finalY + 31, { align: 'right' });
+            if (type === 'CUSTOMER') {
+                title = 'MÜŞTERİ FİYAT LİSTESİ';
+                columns = `
+                    <th style="padding: 10px; border-bottom: 2px solid #059669; border-top-left-radius: 6px;">Ürün Adı</th>
+                    <th style="padding: 10px; border-bottom: 2px solid #059669;">Kategori</th>
+                    <th style="padding: 10px; border-bottom: 2px solid #059669;">Birim</th>
+                    <th style="padding: 10px; border-bottom: 2px solid #059669; border-top-right-radius: 6px; text-align: right;">Satış Fiyatı</th>
+                `;
+            } else if (type === 'INTERNAL') {
+                title = 'İÇ STOK VE MALİYET LİSTESİ';
+                columns = `
+                    <th style="padding: 10px; border-bottom: 2px solid #059669; border-top-left-radius: 6px;">Ürün Adı</th>
+                    <th style="padding: 10px; border-bottom: 2px solid #059669;">Kategori</th>
+                    <th style="padding: 10px; border-bottom: 2px solid #059669; text-align: center;">Stok</th>
+                    <th style="padding: 10px; border-bottom: 2px solid #059669;">Birim</th>
+                    <th style="padding: 10px; border-bottom: 2px solid #059669; text-align: right;">Alış Fiyatı (Vadeli)</th>
+                    <th style="padding: 10px; border-bottom: 2px solid #059669; border-top-right-radius: 6px; text-align: right;">Alış Fiyatı (Peşin)</th>
+                `;
+            } else {
+                title = 'TAM STOK VE FİNANSAL RAPOR';
+                columns = `
+                    <th style="padding: 10px; border-bottom: 2px solid #059669; border-top-left-radius: 6px;">Ürün Adı</th>
+                    <th style="padding: 10px; border-bottom: 2px solid #059669;">Kategori</th>
+                    <th style="padding: 10px; border-bottom: 2px solid #059669; text-align: center;">Stok</th>
+                    <th style="padding: 10px; border-bottom: 2px solid #059669; text-align: right;">Alış (V/P)</th>
+                    <th style="padding: 10px; border-bottom: 2px solid #059669; text-align: right;">Satış (V/P)</th>
+                    <th style="padding: 10px; border-bottom: 2px solid #059669; border-top-right-radius: 6px; text-align: right;">Toplam Maliyet (V/P)</th>
+                `;
             }
-        }
 
-        // --- FOOTER ---
-        const pageCount = (doc as any).internal.getNumberOfPages();
-        for (let i = 1; i <= pageCount; i++) {
-            doc.setPage(i);
-            doc.setFontSize(8);
-            doc.setTextColor(150, 150, 150);
-            doc.text(
-                tr(`Mühendis Kayıt Sistemi - Profesyonel Stok Yönetim Raporu | Sayfa ${i} / ${pageCount}`),
-                105,
-                285,
-                { align: 'center' }
-            );
-            doc.text(
-                tr('Bu belge dijital olarak olusturulmustur.'),
-                105,
-                290,
-                { align: 'center' }
-            );
-        }
+            let htmlContent = `
+                <div style="margin-bottom: 30px;">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 3px solid #10b981; padding-bottom: 15px; margin-bottom: 20px;">
+                        <div>
+                            <h1 style="font-size: 28px; font-weight: 900; margin: 0 0 5px 0; color: #1c1917; text-transform: uppercase;">MÜHENDİS KAYIT SİSTEMİ</h1>
+                            <h2 style="font-size: 16px; font-weight: 600; margin: 0; color: #10b981;">Dijital Tarım ve Stok Yönetim Sistemi</h2>
+                        </div>
+                        <div style="text-align: right; color: #57534e; font-size: 12px;">
+                            <div style="font-weight: bold; margin-bottom: 3px;">Rapor No: #INV-${Math.floor(Math.random() * 10000)}</div>
+                            <div style="margin-bottom: 3px;">Tarih: ${dateStr} ${timeStr}</div>
+                            <div>Sorumlu: ${engineerName}</div>
+                        </div>
+                    </div>
 
-        doc.save(`MKS_Depo_Raporu_${type}_${dateStr.replace(/\./g, '_')}.pdf`);
-        setIsListMenuOpen(false);
-        showToast('Kurumsal PDF Raporu oluşturuldu', 'success');
+                    <h3 style="font-size: 20px; font-weight: 800; color: #292524; margin: 0 0 15px 0;">${title}</h3>
+                    
+                    <table style="width: 100%; border-collapse: collapse; font-size: 11px; text-align: left;">
+                        <thead>
+                            <tr style="background-color: #10b981; color: white;">
+                                ${columns}
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+
+            sortedInventory.forEach((item, i) => {
+                const bg = i % 2 === 0 ? '#fafaf9' : '#ffffff';
+                htmlContent += `<tr style="background-color: ${bg}; border-bottom: 1px solid #e7e5e4;">`;
+                
+                if (type === 'CUSTOMER') {
+                    htmlContent += `
+                        <td style="padding: 10px; font-weight: 600;">${item.pesticideName}</td>
+                        <td style="padding: 10px;">${item.category}</td>
+                        <td style="padding: 10px;">${item.unit}</td>
+                        <td style="padding: 10px; text-align: right; font-family: monospace; font-weight: bold; font-size: 13px;">${formatCurrency(item.sellingPrice, userProfile?.currency || 'TRY')}</td>
+                    `;
+                } else if (type === 'INTERNAL') {
+                    htmlContent += `
+                        <td style="padding: 10px; font-weight: 600;">${item.pesticideName}</td>
+                        <td style="padding: 10px;">${item.category}</td>
+                        <td style="padding: 10px; text-align: center; font-weight: bold;">${item.quantity}</td>
+                        <td style="padding: 10px;">${item.unit}</td>
+                        <td style="padding: 10px; text-align: right; font-family: monospace; color: #ef4444;">${formatCurrency(item.buyingPrice, userProfile?.currency || 'TRY')}</td>
+                        <td style="padding: 10px; text-align: right; font-family: monospace; color: #10b981;">${formatCurrency(item.cashBuyingPrice || 0, userProfile?.currency || 'TRY')}</td>
+                    `;
+                } else {
+                    htmlContent += `
+                        <td style="padding: 10px; font-weight: 600;">${item.pesticideName}</td>
+                        <td style="padding: 10px;">${item.category}</td>
+                        <td style="padding: 10px; text-align: center; font-weight: bold;">${item.quantity} ${item.unit}</td>
+                        <td style="padding: 10px; text-align: right; font-family: monospace; font-size: 10px;">
+                            <span style="color:#ef4444">${formatCurrency(item.buyingPrice, userProfile?.currency || 'TRY')}</span> / 
+                            <span style="color:#10b981">${formatCurrency(item.cashBuyingPrice || 0, userProfile?.currency || 'TRY')}</span>
+                        </td>
+                        <td style="padding: 10px; text-align: right; font-family: monospace; font-size: 10px;">
+                            <span>${formatCurrency(item.sellingPrice, userProfile?.currency || 'TRY')}</span> / 
+                            <span>${formatCurrency(item.cashPrice || 0, userProfile?.currency || 'TRY')}</span>
+                        </td>
+                        <td style="padding: 10px; text-align: right; font-family: monospace; font-size: 10px;">
+                            <span style="color:#ef4444">${formatCurrency(item.quantity * item.buyingPrice, userProfile?.currency || 'TRY')}</span> / 
+                            <span style="color:#10b981">${formatCurrency(item.quantity * (item.cashBuyingPrice || 0), userProfile?.currency || 'TRY')}</span>
+                        </td>
+                    `;
+                }
+                htmlContent += `</tr>`;
+            });
+            
+            htmlContent += `</tbody></table></div>`;
+
+            if (type !== 'CUSTOMER') {
+                const totalCost = sortedInventory.reduce((acc, i) => acc + (i.quantity * i.buyingPrice), 0);
+                const totalCashCost = sortedInventory.reduce((acc, i) => acc + (i.quantity * (i.cashBuyingPrice || 0)), 0);
+                const totalRevenue = sortedInventory.reduce((acc, i) => acc + (i.quantity * i.sellingPrice), 0);
+                const totalCashRevenue = sortedInventory.reduce((acc, i) => acc + (i.quantity * (i.cashPrice || 0)), 0);
+
+                htmlContent += `
+                    <div style="background-color: #f8faf9; border: 1px solid #d1d5db; border-radius: 8px; padding: 20px; width: 400px; margin-left: auto; page-break-inside: avoid;">
+                        <h4 style="font-size: 14px; font-weight: 800; color: #1c1917; margin: 0 0 10px 0; text-transform: uppercase;">FİNANSAL ÖZET</h4>
+                        <table style="width: 100%; font-size: 11px;">
+                            <tr>
+                                <td style="padding: 5px 0; color: #57534e;">Toplam Stok Maliyeti (Vadeli / Peşin):</td>
+                                <td style="text-align: right; font-weight: bold; font-family: monospace;">${formatCurrency(totalCost, userProfile?.currency || 'TRY')} / ${formatCurrency(totalCashCost, userProfile?.currency || 'TRY')}</td>
+                            </tr>
+                `;
+                
+                if (type === 'FULL') {
+                    htmlContent += `
+                            <tr>
+                                <td style="padding: 5px 0; color: #57534e;">Toplam Potansiyel Ciro (Vadeli / Peşin):</td>
+                                <td style="text-align: right; font-weight: bold; font-family: monospace;">${formatCurrency(totalRevenue, userProfile?.currency || 'TRY')} / ${formatCurrency(totalCashRevenue, userProfile?.currency || 'TRY')}</td>
+                            </tr>
+                            <tr><td colspan="2"><hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 5px 0;"></td></tr>
+                            <tr>
+                                <td style="padding: 5px 0; color: #10b981; font-weight: 700; font-size: 12px;">Tahmini Net Kar (Vadeli / Peşin):</td>
+                                <td style="text-align: right; font-weight: 700; font-family: monospace; font-size: 12px; color: #10b981;">
+                                    ${formatCurrency(totalRevenue - totalCost, userProfile?.currency || 'TRY')} / ${formatCurrency(totalCashRevenue - totalCashCost, userProfile?.currency || 'TRY')}
+                                </td>
+                            </tr>
+                    `;
+                }
+                htmlContent += `</table></div>`;
+            }
+
+            container.innerHTML = htmlContent;
+            document.body.appendChild(container);
+
+            const canvas = await html2canvas(container, {
+                scale: 2,
+                backgroundColor: '#ffffff',
+                logging: false
+            });
+
+            document.body.removeChild(container);
+            
+            const imgData = canvas.toDataURL('image/jpeg', 0.95);
+            const pdf = new jsPDF({
+                orientation: canvas.width > canvas.height ? 'l' : 'p',
+                unit: 'px',
+                format: [canvas.width, canvas.height]
+            });
+            
+            pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+            pdf.save(`MKS_Depo_Raporu_${type}_${dateStr.replace(/\./g, '_')}.pdf`);
+            
+            showToast('Kurumsal PDF Raporu oluşturuldu', 'success');
+        } catch (error) {
+            console.error(error);
+            showToast('PDF oluşturulurken hata!', 'error');
+        }
     };
 
-    const generateItemReport = (item: InventoryItem) => {
-        const doc = new jsPDF();
-        
-        // --- HEADER ---
-        doc.setFillColor(16, 185, 129);
-        doc.rect(0, 0, 210, 40, 'F');
-        
-        doc.setTextColor(255, 255, 255);
-        doc.setFontSize(24);
-        doc.setFont('helvetica', 'bold');
-        doc.text(tr('URUN DETAY RAPORU'), 14, 25);
-        
-        doc.setFontSize(10);
-        doc.setFont('helvetica', 'normal');
+    const generateItemReport = async (item: InventoryItem) => {
         const dateStr = new Date().toLocaleDateString('tr-TR');
-        doc.text(tr(`Tarih: ${dateStr}`), 196, 25, { align: 'right' });
+        const timeStr = new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
 
-        // --- ITEM DETAILS ---
-        doc.setTextColor(40, 40, 40);
-        doc.setFontSize(14);
-        doc.setFont('helvetica', 'bold');
-        doc.text(tr(item.pesticideName), 14, 55);
+        const history: { id: string; targetId: string; name: string; date: string; price: number; quantity: string; isReturn: boolean; type: 'SALE' | 'PURCHASE' | 'ADJUSTMENT' }[] = [];
+
+        // Purchase history for this item
+        supplierPurchases.filter(p => !p.deletedAt).forEach(p => {
+            const purchaseItem = p.items.find(i => i.pesticideId === item.pesticideId);
+            if (purchaseItem) {
+                const supplier = suppliers.find(s => s.id === p.supplierId);
+                const supplierName = supplier ? supplier.name : 'Bilinmeyen Tedarikçi';
+                const qtyStr = String(purchaseItem.quantity || '0').replace(',', '.');
+                const parsedQty = parseFloat(qtyStr) || 0;
+                
+                const isReturn = p.type === 'RETURN' || parsedQty < 0;
+                const effectiveQty = Math.abs(parsedQty);
+
+                history.push({
+                    id: p.id,
+                    targetId: p.supplierId,
+                    name: supplierName,
+                    date: p.date,
+                    price: purchaseItem.buyingPrice || 0,
+                    quantity: effectiveQty.toString(),
+                    isReturn: isReturn,
+                    type: 'PURCHASE'
+                });
+            }
+        });
+
+        // Sales history for this item
+        prescriptions.filter(p => !p.deletedAt).forEach(p => {
+            const saleItem = p.items.find(i => i.pesticideId === item.pesticideId);
+            if (saleItem) {
+                const qty = parseFloat(saleItem.quantity?.toString().replace(',', '.') || '0') || 0;
+                const isReturn = p.type === 'RETURN';
+                const qtyMultiplier = isReturn ? 1 : -1;
+                const impact = qty * qtyMultiplier;
+                history.push({
+                    id: p.id,
+                    targetId: p.farmerId,
+                    name: farmerMap[p.farmerId] || `Bilinmeyen ${farmerLabel}`,
+                    date: p.date,
+                    price: saleItem.unitPrice || 0,
+                    quantity: Math.abs(qty).toString(),
+                    isReturn: impact > 0,
+                    type: 'SALE'
+                });
+            }
+        });
+
+        // Adjustments history
+        const adjustmentsHistory = (item?.adjustments || []).map((adj, idx) => ({
+            id: `adj-${idx}`,
+            index: idx,
+            targetId: 'manual',
+            name: adj.note || 'Depomdan',
+            date: adj.date,
+            price: 0,
+            quantity: Math.abs(adj.amount).toString(),
+            isReturn: adj.amount < 0,
+            type: 'ADJUSTMENT' as const
+        }));
+
+        const localHistory = [...history, ...adjustmentsHistory].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
         
-        doc.setFontSize(10);
-        doc.setFont('helvetica', 'normal');
-        doc.text(tr(`Kategori: ${item.category}`), 14, 62);
-        doc.text(tr(`Mevcut Stok: ${Number(item.quantity).toString()} ${item.unit}`), 14, 68);
+        let totalPurchasesQty = 0;
+        let totalSalesQty = 0;
+
+        localHistory.forEach(h => {
+             const qty = parseFloat(h.quantity) || 0;
+             if (h.type === 'PURCHASE') {
+                 if (h.isReturn) {
+                     totalPurchasesQty -= qty;
+                 } else {
+                     totalPurchasesQty += qty;
+                 }
+             } else if (h.type === 'SALE') {
+                 if (h.isReturn) {
+                     totalSalesQty -= qty; // Return from customer = less net sales
+                 } else {
+                     totalSalesQty += qty;
+                 }
+             }
+        });
         
-        doc.text(tr(`Vadeli Alış: ${formatCurrency(item.buyingPrice, userProfile?.currency || 'TRY')}`), 105, 62);
-        doc.text(tr(`Peşin Alış: ${formatCurrency(item.cashBuyingPrice || 0, userProfile?.currency || 'TRY')}`), 105, 68);
-        
-        doc.text(tr(`Vadeli Satış: ${formatCurrency(item.sellingPrice, userProfile?.currency || 'TRY')}`), 150, 62);
-        doc.text(tr(`Peşin Satış: ${formatCurrency(item.cashPrice || 0, userProfile?.currency || 'TRY')}`), 150, 68);
+        try {
+            const container = document.createElement('div');
+            container.style.position = 'absolute';
+            container.style.left = '-9999px';
+            container.style.top = '0';
+            container.style.width = '800px';
+            container.style.backgroundColor = '#ffffff';
+            container.style.padding = '40px';
+            container.style.color = '#1c1917';
+            container.style.fontFamily = 'system-ui, -apple-system, sans-serif';
 
-        // Horizontal line
-        doc.setDrawColor(200, 200, 200);
-        doc.line(14, 75, 196, 75);
+            let htmlContent = `
+                <div style="margin-bottom: 30px;">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 3px solid #10b981; padding-bottom: 15px; margin-bottom: 20px;">
+                        <div>
+                            <h1 style="font-size: 28px; font-weight: 900; margin: 0 0 5px 0; color: #1c1917; text-transform: uppercase;">MÜHENDİS KAYIT SİSTEMİ</h1>
+                            <h2 style="font-size: 16px; font-weight: 600; margin: 0; color: #10b981;">Ürün Detay Raporu</h2>
+                        </div>
+                        <div style="text-align: right; color: #57534e; font-size: 12px;">
+                            <div style="margin-bottom: 3px;">Tarih: ${dateStr} ${timeStr}</div>
+                            <div>Sorumlu: ${userProfile.fullName || 'Ziraat Mühendisi'}</div>
+                        </div>
+                    </div>
 
-        // --- HISTORY TABLE ---
-        doc.setFontSize(12);
-        doc.setFont('helvetica', 'bold');
-        doc.text(tr('ISLEM GECMISI'), 14, 85);
+                    <div style="background-color: #f8faf9; border: 1px solid #d1d5db; border-radius: 8px; padding: 20px; display: flex; justify-content: space-between;">
+                        <div>
+                            <h3 style="font-size: 20px; font-weight: 800; color: #10b981; margin: 0 0 10px 0;">${item.pesticideName}</h3>
+                            <div style="color: #57534e; font-size: 12px; margin-bottom: 5px;">Kategori: <span style="font-weight: 600; color: #1c1917;">${item.category}</span></div>
+                            <div style="color: #57534e; font-size: 12px; margin-bottom: 5px;">Mevcut Stok: <span style="font-weight: 800; color: #1c1917; font-size: 14px;">${Number(item.quantity).toString()} ${item.unit}</span></div>
+                            <div style="color: #57534e; font-size: 12px; margin-bottom: 5px;">Toplam Alınan: <span style="font-weight: 700; color: #10b981;">${totalPurchasesQty} ${item.unit}</span></div>
+                            <div style="color: #57534e; font-size: 12px;">Toplam Satılan: <span style="font-weight: 700; color: #3b82f6;">${totalSalesQty} ${item.unit}</span></div>
+                        </div>
+                        <div style="display: flex; gap: 30px;">
+                            <div>
+                                <div style="color: #57534e; font-size: 11px; margin-bottom: 5px;">Vadeli Alış: <span style="font-family: monospace; font-weight: bold; color: #ef4444;">${formatCurrency(item.buyingPrice, userProfile?.currency || 'TRY')}</span></div>
+                                <div style="color: #57534e; font-size: 11px;">Peşin Alış: <span style="font-family: monospace; font-weight: bold; color: #10b981;">${formatCurrency(item.cashBuyingPrice || 0, userProfile?.currency || 'TRY')}</span></div>
+                            </div>
+                            <div>
+                                <div style="color: #57534e; font-size: 11px; margin-bottom: 5px;">Vadeli Satış: <span style="font-family: monospace; font-weight: bold; color: #ef4444;">${formatCurrency(item.sellingPrice, userProfile?.currency || 'TRY')}</span></div>
+                                <div style="color: #57534e; font-size: 11px;">Peşin Satış: <span style="font-family: monospace; font-weight: bold; color: #10b981;">${formatCurrency(item.cashPrice || 0, userProfile?.currency || 'TRY')}</span></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
 
-        const head = [[tr('Tarih'), tr('İşlem Tipi'), tr('Kişi / Kurum'), tr('Miktar'), tr('Birim Fiyat'), tr('Toplam')]];
-        const body = combinedHistory.map(h => {
-            const isReturn = h.isReturn;
-            let typeStr = h.type === 'SALE' ? (isReturn ? 'Satış İadesi' : 'Satış') : (isReturn ? 'Alış İadesi' : 'Alış');
-            const total = Number(h.quantity) * h.price;
+                <h4 style="font-size: 16px; font-weight: 800; color: #1c1917; margin: 0 0 10px 0;">İŞLEM GEÇMİŞİ</h4>
+                <table style="width: 100%; border-collapse: collapse; font-size: 11px; text-align: left;">
+                    <thead>
+                        <tr style="background-color: #10b981; color: white;">
+                            <th style="padding: 10px; border-bottom: 2px solid #059669; border-top-left-radius: 6px;">Tarih</th>
+                            <th style="padding: 10px; border-bottom: 2px solid #059669;">İşlem Tipi</th>
+                            <th style="padding: 10px; border-bottom: 2px solid #059669;">Kişi / Kurum</th>
+                            <th style="padding: 10px; border-bottom: 2px solid #059669; text-align: right;">Miktar</th>
+                            <th style="padding: 10px; border-bottom: 2px solid #059669; text-align: right;">Birim Fiyat</th>
+                            <th style="padding: 10px; border-bottom: 2px solid #059669; border-top-right-radius: 6px; text-align: right;">Toplam</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            if (localHistory.length === 0) {
+                htmlContent += `<tr><td colspan="6" style="padding: 20px; text-align: center; color: #78716c;">Bu ürün için henüz işlem geçmişi bulunmamaktadır.</td></tr>`;
+            } else {
+                localHistory.forEach((h, i) => {
+                    const bg = i % 2 === 0 ? '#fafaf9' : '#ffffff';
+                    const isReturn = h.isReturn;
+                    
+                    let typeStr = '';
+                    let typeColor = '';
+                    
+                    if (h.type === 'ADJUSTMENT') {
+                        typeStr = 'Manuel Düzeltme';
+                        typeColor = isReturn ? '#d97706' : '#d97706'; // Amber-600
+                    } else if (h.type === 'SALE') {
+                        typeStr = isReturn ? 'Satış İadesi' : 'Satış';
+                        typeColor = isReturn ? '#dc2626' : '#10b981'; // Red / Emerald
+                    } else {
+                        typeStr = isReturn ? 'Alış İadesi' : 'Alış';
+                        typeColor = isReturn ? '#10b981' : '#dc2626'; // Emerald / Red
+                    }
+
+                    const total = Number(h.quantity) * h.price;
+
+                    htmlContent += `
+                        <tr style="background-color: ${bg}; border-bottom: 1px solid #e7e5e4;">
+                            <td style="padding: 10px;">${new Date(h.date).toLocaleDateString('tr-TR')}</td>
+                            <td style="padding: 10px; font-weight: bold; color: ${typeColor};">${typeStr}</td>
+                            <td style="padding: 10px; font-weight: 600;">${h.name}</td>
+                            <td style="padding: 10px; text-align: right; font-weight: bold;">${isReturn ? '-' : (h.type === 'ADJUSTMENT' && !isReturn ? '+' : '')}${Number(h.quantity)} ${item.unit}</td>
+                            <td style="padding: 10px; text-align: right; font-family: monospace;">${h.type === 'ADJUSTMENT' ? '-' : formatCurrency(h.price, userProfile?.currency || 'TRY')}</td>
+                            <td style="padding: 10px; text-align: right; font-family: monospace; font-weight: bold;">${h.type === 'ADJUSTMENT' ? '-' : formatCurrency(total, userProfile?.currency || 'TRY')}</td>
+                        </tr>
+                    `;
+                });
+            }
+
+            htmlContent += `</tbody></table>`;
+
+            container.innerHTML = htmlContent;
+            document.body.appendChild(container);
+
+            const canvas = await html2canvas(container, {
+                scale: 2,
+                backgroundColor: '#ffffff',
+                logging: false
+            });
+
+            document.body.removeChild(container);
             
-            return [
-                new Date(h.date).toLocaleDateString('tr-TR'),
-                tr(typeStr),
-                tr(h.name),
-                `${isReturn ? '-' : ''}${h.quantity} ${tr(item.unit)}`,
-                formatCurrency(h.price, userProfile?.currency || 'TRY'),
-                formatCurrency(total, userProfile?.currency || 'TRY')
-            ];
-        });
-
-        autoTable(doc, {
-            startY: 90,
-            head: head,
-            body: body,
-            theme: 'grid',
-            headStyles: { 
-                fillColor: [16, 185, 129], 
-                textColor: 255,
-                fontSize: 9,
-                fontStyle: 'bold',
-                halign: 'center'
-            },
-            styles: { 
-                fontSize: 8, 
-                cellPadding: 4,
-                font: 'helvetica',
-                textColor: [60, 60, 60]
-            },
-            columnStyles: {
-                1: { fontStyle: 'bold' },
-                3: { halign: 'right' },
-                4: { halign: 'right' },
-                5: { halign: 'right', fontStyle: 'bold' }
-            },
-            alternateRowStyles: { fillColor: [250, 252, 251] },
-            margin: { left: 14, right: 14 }
-        });
-
-        // --- FOOTER ---
-        const pageCount = (doc as any).internal.getNumberOfPages();
-        for (let i = 1; i <= pageCount; i++) {
-            doc.setPage(i);
-            doc.setFontSize(8);
-            doc.setTextColor(150, 150, 150);
-            doc.text(
-                tr(`Mühendis Kayıt Sistemi - Ürün Detay Raporu | Sayfa ${i} / ${pageCount}`),
-                105,
-                285,
-                { align: 'center' }
-            );
+            const imgData = canvas.toDataURL('image/jpeg', 0.95);
+            const pdf = new jsPDF({
+                orientation: canvas.width > canvas.height ? 'l' : 'p',
+                unit: 'px',
+                format: [canvas.width, canvas.height]
+            });
+            
+            pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+            pdf.save(`MKS_Urun_Raporu_${item.pesticideName.replace(/[^a-zA-Z0-9]/g, '_')}_${dateStr.replace(/\./g, '_')}.pdf`);
+            
+            showToast('Ürün detay raporu oluşturuldu', 'success');
+        } catch (error) {
+            console.error(error);
+            showToast('PDF oluşturulurken hata!', 'error');
         }
-
-        doc.save(`MKS_Urun_Raporu_${tr(item.pesticideName).replace(/\s+/g, '_')}_${dateStr.replace(/\./g, '_')}.pdf`);
-        showToast('Ürün detay raporu oluşturuldu', 'success');
     };
 
     // Sales History for Detail View
@@ -991,6 +1161,9 @@ export const InventoryScreen: React.FC<{
             const item = p.items.find(i => i.pesticideId === selectedDetailItem.pesticideId);
             if (item) {
                 const qty = parseFloat(item.quantity?.toString().replace(',', '.') || '0') || 0;
+                const isReturn = p.type === 'RETURN';
+                const qtyMultiplier = isReturn ? 1 : -1;
+                const impact = qty * qtyMultiplier;
                 history.push({
                     id: p.id,
                     targetId: p.farmerId,
@@ -998,7 +1171,7 @@ export const InventoryScreen: React.FC<{
                     date: p.date,
                     price: item.unitPrice || 0,
                     quantity: Math.abs(qty).toString(),
-                    isReturn: qty < 0,
+                    isReturn: impact > 0,
                     type: 'SALE'
                 });
             }
@@ -1287,27 +1460,48 @@ export const InventoryScreen: React.FC<{
             {activeTab === 'LIST' && (
                 <div className="space-y-4 animate-in slide-in-from-bottom-2 duration-300">
                     {/* Search & Filter */}
-                    <div className="flex gap-2 mb-4">
-                        <div className="flex-[4] bg-stone-900/80 border border-white/10 rounded-xl flex items-center px-3 shadow-sm focus-within:border-emerald-500/50 transition-all">
-                            <Search className="text-stone-500" size={16} />
+                    <div className="flex flex-col gap-2 mb-4">
+                        <div className="flex gap-2">
+                            <select 
+                                className="flex-1 bg-stone-900/80 border border-white/10 rounded-xl px-3 py-2 text-stone-400 text-xs font-bold outline-none cursor-pointer hover:text-stone-200 transition-colors min-w-0"
+                                value={categoryFilter}
+                                onChange={(e) => setCategoryFilter(e.target.value)}
+                            >
+                                <option value="ALL">Tüm Kategoriler</option>
+                                {Object.values(PesticideCategory).map(cat => (
+                                    <option key={cat} value={cat}>{cat}</option>
+                                ))}
+                            </select>
+                            <button
+                                onClick={() => {
+                                    setIsRebuildModalOpen(true);
+                                    handleAnalyzeInventory();
+                                }}
+                                className="flex-1 bg-orange-950/30 border border-orange-500/20 text-orange-400 hover:bg-orange-900/50 hover:text-orange-300 transition-all rounded-xl px-2 py-2 flex items-center justify-center gap-1.5 min-w-0 group"
+                                title="Stokları Onar"
+                            >
+                                <RefreshCw size={14} className="group-hover:rotate-180 transition-transform duration-500 shrink-0" />
+                                <span className="text-xs font-bold truncate">Depoyu Onar</span>
+                            </button>
+                            <button
+                                onClick={() => setIsSmartOrderModalOpen(true)}
+                                className="flex-1 bg-emerald-950/30 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-900/50 hover:text-emerald-300 transition-all rounded-xl px-2 py-2 flex items-center justify-center gap-1.5 min-w-0 group"
+                                title="Akıllı Sipariş Listesi"
+                            >
+                                <ShoppingCart size={14} className="group-hover:scale-110 transition-transform duration-500 shrink-0" />
+                                <span className="text-xs font-bold truncate">Sipariş Listesi</span>
+                            </button>
+                        </div>
+                        <div className="w-full bg-stone-900/80 border border-white/10 rounded-xl flex items-center px-3 py-0.5 shadow-sm focus-within:border-emerald-500/50 transition-all">
+                            <Search className="text-stone-500 shrink-0" size={18} />
                             <input 
                                 type="text"
                                 placeholder="Ürün ara..."
-                                className="w-full bg-transparent p-2 text-stone-200 outline-none text-xs font-medium placeholder-stone-600"
+                                className="w-full bg-transparent p-2.5 text-stone-200 outline-none text-sm font-medium placeholder-stone-600"
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
                             />
                         </div>
-                        <select 
-                            className="flex-1 bg-stone-900/80 border border-white/10 rounded-xl px-2 text-stone-400 text-[10px] font-bold outline-none cursor-pointer hover:text-stone-200 transition-colors min-w-[100px]"
-                            value={categoryFilter}
-                            onChange={(e) => setCategoryFilter(e.target.value)}
-                        >
-                            <option value="ALL">Tüm Kategoriler</option>
-                            {Object.values(PesticideCategory).map(cat => (
-                                <option key={cat} value={cat}>{cat}</option>
-                            ))}
-                        </select>
                     </div>
 
                     {/* Inventory List */}
@@ -1394,7 +1588,20 @@ export const InventoryScreen: React.FC<{
                                         </div>
                                     </div>
 
-                                    {/* Date removed for space saving */}
+                                    {/* Action row at bottom */}
+                                    <div className="mt-3 flex justify-end">
+                                        <button 
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                generateItemReport(item);
+                                            }}
+                                            className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 p-1.5 rounded-lg border border-emerald-500/20 transition-colors flex items-center justify-center gap-1.5"
+                                            title="PDF Raporu İndir"
+                                        >
+                                            <Download size={12} />
+                                            <span className="text-[9px] font-bold uppercase">Rapor PDF</span>
+                                        </button>
+                                    </div>
                                 </div>
                             ))
                         ) : (
@@ -1690,8 +1897,22 @@ export const InventoryScreen: React.FC<{
                         <div className="p-6 space-y-4">
                             <div className="space-y-4">
                                 <div className="space-y-2">
-                                    <div className="flex justify-between items-center">
+                                    <div className="flex justify-between items-center mb-1">
                                         <label className="text-xs font-bold text-stone-500 uppercase tracking-widest">Ürün Adı</label>
+                                        <PesticideOCRScanner 
+                                            onScanSuccess={(data) => {
+                                                setProductName(data.productName);
+                                                if (Object.values(PesticideCategory).includes(data.category as PesticideCategory)) {
+                                                    setFormData(prev => ({ ...prev, category: data.category as PesticideCategory }));
+                                                }
+                                                // search if it existing
+                                                const existingPest = pesticides.find(p => p.name.toLocaleLowerCase('tr-TR') === data.productName.toLocaleLowerCase('tr-TR'));
+                                                if (existingPest) {
+                                                    setSelectedPesticide(existingPest);
+                                                }
+                                            }}
+                                            onError={(err) => showToast(err, 'error')}
+                                        />
                                     </div>
                                     <div className="relative">
                                         <Package className="absolute left-3 top-3 text-stone-500" size={16} />
@@ -2068,18 +2289,26 @@ export const InventoryScreen: React.FC<{
                                     <div className="flex justify-between items-center text-[11px]">
                                         <span className="text-stone-500">Toplam Satışlar (-)</span>
                                         <span className="text-blue-400 font-bold">-{
-                                            prescriptions.filter(p => !p.deletedAt && p.type !== 'RETURN').reduce((acc, p) => {
+                                            prescriptions.filter(p => !p.deletedAt).reduce((acc, p) => {
+                                                const isReturn = p.type === 'RETURN';
                                                 const item = p.items.find(i => i.pesticideId === selectedDetailItem.pesticideId);
-                                                return acc + (item?.quantity ? (parseFloat(item.quantity.toString()) || 0) : 0);
+                                                const qty = item?.quantity ? parseFloat(item.quantity.toString().replace(',', '.')) || 0 : 0;
+                                                const qtyMultiplier = isReturn ? 1 : -1;
+                                                const impact = qty * qtyMultiplier;
+                                                return impact < 0 ? acc + Math.abs(impact) : acc;
                                             }, 0)
                                         }</span>
                                     </div>
                                     <div className="flex justify-between items-center text-[11px]">
                                         <span className="text-stone-500">Müşteri İadeleri (+)</span>
                                         <span className="text-stone-300 font-bold">+{
-                                            prescriptions.filter(p => !p.deletedAt && p.type === 'RETURN').reduce((acc, p) => {
+                                            prescriptions.filter(p => !p.deletedAt).reduce((acc, p) => {
+                                                const isReturn = p.type === 'RETURN';
                                                 const item = p.items.find(i => i.pesticideId === selectedDetailItem.pesticideId);
-                                                return acc + (item?.quantity ? (parseFloat(item.quantity.toString()) || 0) : 0);
+                                                const qty = item?.quantity ? parseFloat(item.quantity.toString().replace(',', '.')) || 0 : 0;
+                                                const qtyMultiplier = isReturn ? 1 : -1;
+                                                const impact = qty * qtyMultiplier;
+                                                return impact > 0 ? acc + impact : acc;
                                             }, 0)
                                         }</span>
                                     </div>
@@ -2501,6 +2730,196 @@ export const InventoryScreen: React.FC<{
                 title={confirmModal.title}
                 message={confirmModal.message}
                 variant="danger"
+            />
+
+            {isRebuildModalOpen && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-[#1c1c1c] border border-stone-800 rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col font-sans">
+                        <div className="p-6 border-b border-stone-800/50 flex items-center justify-between bg-stone-900/50">
+                            <div>
+                                <h3 className="text-xl font-bold text-stone-100 mb-1 flex items-center gap-2">
+                                    <RefreshCw size={20} className="text-orange-500" />
+                                    Depo Onarım Uzmanı
+                                </h3>
+                                <p className="text-xs text-stone-400 font-medium">Stok uyuşmazlıkları tespit edilip düzeltilir.</p>
+                            </div>
+                            {rebuildState !== 'ANALYZING' && rebuildState !== 'REPAIRING' && (
+                                <button
+                                    onClick={() => {
+                                        setIsRebuildModalOpen(false);
+                                        setRebuildState('IDLE');
+                                    }}
+                                    className="p-2 bg-stone-900 hover:bg-stone-800 text-stone-400 hover:text-stone-200 rounded-xl transition-colors shrink-0"
+                                >
+                                    <X size={20} />
+                                </button>
+                            )}
+                        </div>
+
+                        <div className="p-6 max-h-[60vh] overflow-y-auto">
+                            {rebuildState === 'ANALYZING' && (
+                                <div className="flex flex-col items-center justify-center py-10 space-y-4">
+                                    <RefreshCw size={40} className="text-orange-500 animate-spin" />
+                                    <div className="text-center">
+                                        <div className="font-bold text-stone-200">Veritabanı Analiz Ediliyor</div>
+                                        <div className="text-xs text-stone-500 mt-1">Geçmiş fişler taranıyor...</div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {rebuildState === 'RESULT' && (
+                                <div className="space-y-4">
+                                    {mismatches.length === 0 ? (
+                                        <div className="flex flex-col items-center justify-center py-10 space-y-4">
+                                            <div className="w-16 h-16 rounded-full bg-emerald-950/50 border border-emerald-500/20 flex items-center justify-center">
+                                                <ClipboardCheck size={32} className="text-emerald-500" />
+                                            </div>
+                                            <div className="text-center">
+                                                <div className="font-bold text-emerald-400 text-lg">Kusursuz!</div>
+                                                <div className="text-sm text-stone-400 mt-2 max-w-[280px]">
+                                                    Deponuzdaki tüm ürünlerin stok miktarı ile geçmiş işlemleri (alım, satım, iade) birebir eşleşiyor. Onarılacak bir ürün bulunamadı.
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-3">
+                                            <div className="p-3 bg-orange-950/30 border border-orange-500/20 rounded-xl flex items-start gap-3">
+                                                <AlertCircle size={18} className="text-orange-400 shrink-0 mt-0.5" />
+                                                <div>
+                                                    <div className="text-sm font-bold text-orange-400">Onarım Gerekli</div>
+                                                    <div className="text-xs text-orange-400/80 mt-1">
+                                                        Geçmiş işlemlere göre hesaplanan tutarlarla mevcut stoklar uyuşmuyor. Aşağıdaki ürünlerin stok miktarları kusursuz hale getirilecektir.
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <div className="space-y-2 mt-4">
+                                                <div className="flex items-center gap-2 mb-2 px-1">
+                                                    <input 
+                                                        type="checkbox" 
+                                                        checked={selectedMismatches.size === mismatches.length && mismatches.length > 0}
+                                                        onChange={(e) => {
+                                                            if (e.target.checked) {
+                                                                setSelectedMismatches(new Set(mismatches.map(m => m.pesticideId)));
+                                                            } else {
+                                                                setSelectedMismatches(new Set());
+                                                            }
+                                                        }}
+                                                        className="w-4 h-4 rounded border-stone-600 bg-stone-800 text-orange-500 focus:ring-orange-500 focus:ring-offset-stone-900 transition-all"
+                                                    />
+                                                    <span className="text-xs text-stone-400 font-bold">Tümünü Seç</span>
+                                                </div>
+                                                {mismatches.map((item, idx) => (
+                                                    <div key={idx} className="p-3 bg-stone-900 border border-stone-800 rounded-xl flex flex-col group hover:border-stone-700 transition-colors cursor-pointer" onClick={() => {
+                                                        const newSet = new Set(selectedMismatches);
+                                                        if (newSet.has(item.pesticideId)) newSet.delete(item.pesticideId);
+                                                        else newSet.add(item.pesticideId);
+                                                        setSelectedMismatches(newSet);
+                                                    }}>
+                                                        <div className="flex justify-between items-center">
+                                                            <div className="flex items-center gap-3 pr-4 overflow-hidden">
+                                                                <input 
+                                                                    type="checkbox" 
+                                                                    checked={selectedMismatches.has(item.pesticideId)}
+                                                                    onChange={(e) => {}}
+                                                                    className="shrink-0 w-4 h-4 rounded border-stone-600 bg-stone-800 text-orange-500 focus:ring-orange-500 focus:ring-offset-stone-900 transition-all pointer-events-none"
+                                                                />
+                                                                <div className="font-medium text-sm text-stone-200 truncate" title={item.pesticideName}>
+                                                                    {item.pesticideName}
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex items-center gap-3 shrink-0">
+                                                                <div className="flex flex-col items-end">
+                                                                    <span className="text-[10px] text-stone-500 font-bold uppercase">Mevcut</span>
+                                                                    <span className="text-xs font-bold text-red-400 line-through">{item.currentQty}</span>
+                                                                </div>
+                                                                <ArrowRight size={14} className="text-stone-600 shrink-0" />
+                                                                <div className="flex flex-col items-end">
+                                                                    <span className="text-[10px] text-emerald-500/70 font-bold uppercase">Olması Gereken</span>
+                                                                    <span className="text-sm font-black text-emerald-400">{item.calculatedQty}</span>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        
+                                                        <div className="mt-2.5 flex items-center gap-6 border-t border-stone-800 pt-2.5">
+                                                            <div className="flex items-center gap-1.5 flex-1">
+                                                                <div className="shrink-0 w-2 h-2 rounded-full bg-emerald-500/30"></div>
+                                                                <div className="flex flex-col shrink-0 min-w-0">
+                                                                    <span className="text-[9px] text-stone-500 font-bold uppercase leading-tight truncate">Alınan</span>
+                                                                    <span className="text-xs font-black text-emerald-400">+{item.purchasedQty}</span>
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex items-center gap-1.5 flex-1">
+                                                                <div className="shrink-0 w-2 h-2 rounded-full bg-red-500/30"></div>
+                                                                <div className="flex flex-col shrink-0 min-w-0">
+                                                                    <span className="text-[9px] text-stone-500 font-bold uppercase leading-tight truncate">Satılan</span>
+                                                                    <span className="text-xs font-black text-red-400">-{item.soldQty}</span>
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex items-center gap-1.5 flex-1">
+                                                                <div className="shrink-0 w-2 h-2 rounded-full bg-blue-500/30"></div>
+                                                                <div className="flex flex-col shrink-0 min-w-0">
+                                                                    <span className="text-[9px] text-stone-500 font-bold uppercase leading-tight truncate">Net Düzeltme</span>
+                                                                    <span className="text-xs font-black text-blue-400">
+                                                                        {item.adjustedQty > 0 ? '+' : ''}{item.adjustedQty}
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {rebuildState === 'REPAIRING' && (
+                                <div className="flex flex-col items-center justify-center py-10 space-y-4">
+                                    <RefreshCw size={40} className="text-orange-500 animate-spin" />
+                                    <div className="text-center">
+                                        <div className="font-bold text-stone-200">Kusursuz Bir Şekilde Onarılıyor</div>
+                                        <div className="text-xs text-stone-500 mt-1">Lütfen bekleyin...</div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {rebuildState === 'RESULT' && (
+                            <div className="p-6 bg-stone-900/50 border-t border-stone-800/50 flex justify-end gap-3">
+                                <button
+                                    onClick={() => {
+                                        setIsRebuildModalOpen(false);
+                                        setRebuildState('IDLE');
+                                    }}
+                                    className="px-5 py-2.5 bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-xl font-bold text-sm transition-colors"
+                                >
+                                    Kapat
+                                </button>
+                                {mismatches.length > 0 && (
+                                    <button
+                                        onClick={handleRepairInventory}
+                                        disabled={selectedMismatches.size === 0}
+                                        className="px-6 py-2.5 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 disabled:cursor-not-allowed text-stone-950 rounded-xl font-black text-sm shadow-xl shadow-orange-600/20 active:scale-95 transition-all flex items-center gap-2"
+                                    >
+                                        <RefreshCw size={16} />
+                                        {selectedMismatches.size === mismatches.length ? 'Tümünü Onar' : 'Seçilileri Onar'}
+                                    </button>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            <SmartOrderModal 
+                isOpen={isSmartOrderModalOpen}
+                onClose={() => setIsSmartOrderModalOpen(false)}
+                inventory={inventory}
+                suppliers={suppliers}
+                supplierPurchases={supplierPurchases}
+                showToast={showToast}
             />
 
         </div>

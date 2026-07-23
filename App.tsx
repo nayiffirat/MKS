@@ -26,7 +26,7 @@ import { Kasa } from './components/Kasa';
 import { Suppliers } from './components/Suppliers';
 import { Payments } from './components/Payments';
 import { ProducerPortal } from './components/ProducerPortal';
-import { Findeks } from './components/Findeks';
+import { MKSMuhendisim } from './components/MKSMuhendisim';
 import { Calculator } from './components/Calculator';
 import { RecentTransactions } from './components/RecentTransactions';
 import { Reports } from './components/Reports';
@@ -35,6 +35,7 @@ import { News } from './components/News';
 import { Plants } from './components/Plants';
 import { AIAssistant } from './components/AIAssistant';
 import { SmartStock } from './components/SmartStock';
+import { SiloScreen } from './components/SiloScreen';
 import { SubscriptionLock } from './components/SubscriptionLock';
 import { MapComponent } from './components/MapComponent';
 import { AppProvider, useAppViewModel } from './context/AppContext';
@@ -396,9 +397,11 @@ function MainApp() {
         case 'NEWS': return <News onBack={() => window.history.back()} />;
         case 'ADMIN_PANEL': return isAdmin ? <AdminPanel onBack={() => window.history.back()} /> : <Dashboard onNavigate={handleNavigate} />;
         case 'PLANTS': return <Plants onNavigate={handleNavigate} />;
-        case 'FINDEKS': return <Findeks onBack={() => window.history.back()} />;
+        case 'FINDEKS': return <MKSMuhendisim onBack={() => window.history.back()} />;
+        case 'MKS_MUHENDISIM': return <MKSMuhendisim onBack={() => window.history.back()} />;
         case 'AI_ASSISTANT': return <AIAssistant onBack={() => window.history.back()} />;
         case 'SMART_STOCK': return <SmartStock onBack={() => window.history.back()} />;
+        case 'SILO': return <SiloScreen onBack={() => window.history.back()} />;
         default: return <Dashboard onNavigate={handleNavigate} />;
     }
   };
@@ -439,13 +442,22 @@ function MainApp() {
   );
 }
 
+function AppProviderWrapper({ children }: { children: React.ReactNode }) {
+  const { currentUser } = useAuth();
+  return (
+    <AppProvider key={currentUser ? currentUser.uid : 'guest'}>
+      {children}
+    </AppProvider>
+  );
+}
+
 export default function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
-          <AppProvider>
+          <AppProviderWrapper>
                <MainApp />
-          </AppProvider>
+          </AppProviderWrapper>
       </AuthProvider>
     </ErrorBoundary>
   )

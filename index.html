@@ -271,6 +271,76 @@
         box-shadow: 0 2px 0 #c41271 !important;
       }
       
+      /* 5. APPLE (iOS/macOS Style) */
+      [data-theme="APPLE"] {
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif !important;
+        background-color: #000000 !important;
+        color: #FFFFFF !important;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+      [data-theme="APPLE"] .bg-stone-900,
+      [data-theme="APPLE"] .bg-stone-900\/60,
+      [data-theme="APPLE"] .bg-stone-950\/40,
+      [data-theme="APPLE"] .bg-stone-900\/50,
+      [data-theme="APPLE"] .bg-stone-800 {
+        background-color: rgba(28, 28, 30, 0.75) !important; /* iOS system gray 6 dark */
+        backdrop-filter: blur(25px) saturate(200%) !important;
+        -webkit-backdrop-filter: blur(25px) saturate(200%) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4) !important;
+      }
+      [data-theme="APPLE"] .bg-stone-950 {
+        background-color: #000000 !important;
+      }
+      [data-theme="APPLE"] .rounded-2xl,
+      [data-theme="APPLE"] .rounded-3xl,
+      [data-theme="APPLE"] .rounded-[2.5rem],
+      [data-theme="APPLE"] .rounded-xl {
+        border-radius: 20px !important;
+      }
+      [data-theme="APPLE"] .text-stone-100,
+      [data-theme="APPLE"] .text-stone-200,
+      [data-theme="APPLE"] .text-stone-300 {
+        color: #FFFFFF !important;
+      }
+      [data-theme="APPLE"] .text-stone-400,
+      [data-theme="APPLE"] .text-stone-500,
+      [data-theme="APPLE"] .text-stone-600 {
+        color: rgba(235, 235, 245, 0.6) !important; /* iOS system gray dark */
+      }
+      [data-theme="APPLE"] .border-white\/5,
+      [data-theme="APPLE"] .border-stone-800,
+      [data-theme="APPLE"] .border-stone-700 {
+        border-color: rgba(255, 255, 255, 0.1) !important;
+      }
+      [data-theme="APPLE"] .text-emerald-400,
+      [data-theme="APPLE"] .text-emerald-500 {
+        color: #0A84FF !important; /* iOS Blue */
+      }
+      [data-theme="APPLE"] .bg-emerald-500,
+      [data-theme="APPLE"] .bg-emerald-600,
+      [data-theme="APPLE"] .bg-emerald-700,
+      [data-theme="APPLE"] .bg-blue-600,
+      [data-theme="APPLE"] .bg-indigo-600,
+      [data-theme="APPLE"] .bg-rose-600 {
+        background-color: #0A84FF !important;
+        color: #FFFFFF !important;
+        box-shadow: none !important;
+        border: none !important;
+      }
+      [data-theme="APPLE"] button:active {
+        transform: scale(0.96) !important;
+        opacity: 0.8 !important;
+        transition: transform 0.1s ease-out, opacity 0.1s ease-out !important;
+      }
+      [data-theme="APPLE"] nav, [data-theme="APPLE"] .fixed.bottom-0 {
+        background-color: rgba(0, 0, 0, 0.6) !important;
+        -webkit-backdrop-filter: blur(25px) saturate(200%) !important;
+        backdrop-filter: blur(25px) saturate(200%) !important;
+        border-top: 1px solid rgba(255,255,255,0.1) !important;
+      }
+
       /* Yüksek Kontrast Modu */
       .high-contrast {
         background-color: #000000 !important;

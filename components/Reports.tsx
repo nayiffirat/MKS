@@ -6,6 +6,7 @@ import autoTable from 'jspdf-autotable';
 import { format } from 'date-fns';
 import { tr } from 'date-fns/locale';
 import { formatCurrency } from '../utils/currency';
+import html2canvas from 'html2canvas';
 
 export const Reports: React.FC = () => {
   const { 
@@ -59,288 +60,255 @@ export const Reports: React.FC = () => {
     }).format(amount);
   };
 
+  const generateTableHtml = (title: string, headers: string[], rows: any[][], footers?: any[][], headerColor = '#1f2937') => {
+      let html = `<div style="margin-bottom: 32px; page-break-inside: avoid;">`;
+      if (title) {
+          html += `<h3 style="font-size: 16px; font-weight: 700; margin: 0 0 12px 0; color: #1c1917; border-bottom: 2px solid #e7e5e4; padding-bottom: 8px;">${title}</h3>`;
+      }
+      
+      html += `<table style="width: 100%; border-collapse: collapse; font-size: 11px; text-align: left; margin-bottom: 8px;">
+                  <thead>
+                      <tr style="background-color: ${headerColor}; color: white;">`;
+      
+      headers.forEach((h, i) => {
+          const isRight = h.toLowerCase().includes('bakiye') || h.toLowerCase().includes('tutar') || h.toLowerCase().includes('maliyet') || h.toLowerCase().includes('fiyat');
+          html += `<th style="padding: 10px; border-bottom: 2px solid ${headerColor}; ${i === 0 ? 'border-top-left-radius: 6px;' : ''} ${i === headers.length - 1 ? 'border-top-right-radius: 6px;' : ''} ${isRight ? 'text-align: right;' : ''}">${h}</th>`;
+      });
+      
+      html += `    </tr>
+                  </thead>
+                  <tbody>`;
+
+      if (rows.length === 0) {
+          html += `<tr><td colspan="${headers.length}" style="padding: 20px; text-align: center; color: #78716c; background-color: #fafaf9; border-bottom: 1px solid #e7e5e4;">Veri bulunamadı.</td></tr>`;
+      } else {
+          rows.forEach((row, i) => {
+              const bg = i % 2 === 0 ? '#fafaf9' : '#ffffff';
+              html += `<tr style="background-color: ${bg}; border-bottom: 1px solid #e7e5e4;">`;
+              row.forEach((cell, j) => {
+                  const isRight = headers[j].toLowerCase().includes('bakiye') || headers[j].toLowerCase().includes('tutar') || headers[j].toLowerCase().includes('maliyet') || headers[j].toLowerCase().includes('fiyat');
+                  const isBold = typeof cell === 'string' && (cell.includes('BORÇ') || cell.includes('ALACAK') || cell.includes('ALACAKLI') || cell.includes('BORÇLU'));
+                  const color = cell === 'ALACAKLI HESAP' || cell === 'ALACAKLIYIZ' ? '#059669' : (cell === 'BORÇLU HESAP (BİZE)' || cell === 'BORÇLUYUZ (TEDARİKÇİYE)' ? '#dc2626' : '#3f3f46');
+                  html += `<td style="padding: 10px; color: ${color}; ${isRight ? 'text-align: right; font-family: monospace; font-weight: 600;' : ''} ${isBold ? 'font-weight: 700;' : ''}">${cell}</td>`;
+              });
+              html += `</tr>`;
+          });
+      }
+
+      html += `</tbody>`;
+
+      if (footers && footers.length > 0) {
+          html += `<tfoot style="background-color: #f3f4f6; font-weight: bold;">`;
+          footers.forEach(row => {
+              html += `<tr>`;
+              row.forEach((cell, j) => {
+                  const isRight = j > 0;
+                  html += `<td style="padding: 10px; border-top: 2px solid #e5e7eb; color: #1f2937; ${isRight ? 'text-align: right; font-family: monospace;' : ''}">${cell}</td>`;
+              });
+              html += `</tr>`;
+          });
+          html += `</tfoot>`;
+      }
+
+      html += `</table></div>`;
+      return html;
+  };
+
+  const generatePdfFromHtml = async (title: string, subtitle: string, htmlContent: string, fileName: string) => {
+      try {
+          const container = document.createElement('div');
+          container.style.position = 'absolute';
+          container.style.left = '-9999px';
+          container.style.top = '0';
+          container.style.width = '800px';
+          container.style.backgroundColor = '#ffffff';
+          container.style.padding = '40px';
+          container.style.color = '#1c1917';
+          container.style.fontFamily = 'system-ui, -apple-system, sans-serif';
+
+          let baseHtml = `
+              <div style="margin-bottom: 30px;">
+                  <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px;">
+                      <div>
+                          <h1 style="font-size: 26px; font-weight: 800; margin: 0 0 8px 0; color: #10b981; text-transform: uppercase;">
+                              ${userProfile?.companyName || "MKS SİSTEMİ"}
+                          </h1>
+                          <h2 style="font-size: 18px; font-weight: 700; margin: 0 0 4px 0; color: #1c1917;">${title}</h2>
+                          ${subtitle ? `<p style="margin: 0; font-size: 13px; color: #57534e;">${subtitle}</p>` : ''}
+                      </div>
+                      <div style="text-align: right; color: #78716c; font-size: 11px;">
+                          <p style="margin: 0 0 4px 0;"><strong>Tarih:</strong> ${format(new Date(), 'dd.MM.yyyy HH:mm')}</p>
+                          <p style="margin: 0;"><strong>Oluşturan:</strong> ${userProfile?.fullName || 'Sistem'}</p>
+                      </div>
+                  </div>
+              </div>
+              ${htmlContent}
+          `;
+
+          container.innerHTML = baseHtml;
+          document.body.appendChild(container);
+
+          const canvas = await html2canvas(container, {
+              scale: 2,
+              backgroundColor: '#ffffff',
+              logging: false
+          });
+
+          document.body.removeChild(container);
+          
+          const imgData = canvas.toDataURL('image/jpeg', 0.95);
+          
+          const doc = new jsPDF({
+              orientation: canvas.width > canvas.height ? 'l' : 'p',
+              unit: 'px',
+              format: [canvas.width, canvas.height]
+          });
+          
+          doc.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+          doc.save(fileName);
+      } catch(e) {
+          console.error("PDF Oluşturma Hatası", e);
+      }
+  };
+
+  const addCorporateHeader = (doc: any, title: string) => {
+    doc.setFillColor(16, 185, 129);
+    doc.rect(0, 0, 210, 40, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(22);
+    doc.setFont("helvetica", "bold");
+    doc.text(trToEn(userProfile?.companyName || "MKS SISTEMI"), 14, 22);
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.text(trToEn(title), 14, 30);
+    doc.text(trToEn(`Tarih: ${format(new Date(), 'dd.MM.yyyy HH:mm')}`), 196, 22, { align: 'right' });
+    doc.text(trToEn(`Sorumlu: ${userProfile?.fullName || 'Ziraat Muhendisi'}`), 196, 30, { align: 'right' });
+    doc.setTextColor(0, 0, 0);
+  };
+
   const generateBayiRaporuPDF = () => {
     setGenerating('BAYI_RAPORU');
     setTimeout(() => {
-      try {
-        const doc = new jsPDF();
-        
-        // --- 1. HEADER ---
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(22);
-        doc.setTextColor(16, 185, 129); // Emerald 500
-        doc.text(trToEn(userProfile?.companyName || "BAYI RAPORU"), 14, 22);
-        
-        doc.setFontSize(10);
-        doc.setTextColor(100, 100, 100);
-        doc.setFont("helvetica", "normal");
-        doc.text(`Olusturulma: ${format(new Date(), 'dd.MM.yyyy HH:mm')}`, 14, 30);
-        
-        let currentY = 40;
+        let htmlContent = '';
 
-        // --- 2. KASA & BANKA DURUMU ---
-        doc.setFontSize(12);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(0, 0, 0);
-        doc.text(trToEn("1. KASA VE BANKA DURUMU"), 14, currentY);
-        
+        // 1. Kasa ve Banka
         const accountData = accounts.map(acc => [
-            trToEn(acc.name),
-            trToEn(acc.type === 'CASH' ? 'Nakit Kasa' : 'Banka Hesabi'),
-            pdfCurrency(acc.balance)
+            acc.name,
+            acc.type === 'CASH' ? 'Nakit Kasa' : 'Banka Hesabı',
+            formatCurrency(acc.balance, userProfile?.currency || 'TRY')
         ]);
         const totalBalance = accounts.reduce((acc, curr) => acc + curr.balance, 0);
-        
-        autoTable(doc, {
-            startY: currentY + 5,
-            head: [['Hesap Adi', 'Tur', 'Bakiye']],
-            body: accountData,
-            theme: 'grid',
-            styles: { font: 'helvetica', fontSize: 9 },
-            headStyles: { fillColor: [16, 185, 129] },
-            foot: [['', 'TOPLAM VARLIK:', pdfCurrency(totalBalance)]],
-            footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' },
-            columnStyles: { 2: { halign: 'right' } }
-        });
-        currentY = (doc as any).lastAutoTable.finalY + 15;
+        htmlContent += generateTableHtml('1. KASA VE BANKA DURUMU', ['Hesap Adı', 'Tür', 'Bakiye'], accountData, [['', 'TOPLAM VARLIK', formatCurrency(totalBalance, userProfile?.currency || 'TRY')]], '#10b981'); // Emerald
 
-        // --- 3. CIFTCI (MUSTERI) BAKIYELERI ---
-        doc.setFontSize(12);
-        doc.setFont("helvetica", "bold");
-        doc.text(trToEn(`2. ${farmerPluralLabel.toLocaleUpperCase('en-US')} BAKIYE DURUMU (Tum Zamanlar Kümülatif)`), 14, currentY);
-        
+        // 2. Çiftçi
         let totalReceivable = 0;
         let totalPayableToFarmers = 0;
-        
         const farmerData = farmers.map(farmer => {
-            // Tam bakiye (kümülatif): Tarih filtresi sadece rapor gorselinde degisek, gercek cari filtrelemesi hesap karmasasi yaratabilir. 
-            // Ancak, tum islemleri bastan sona aliyoruz.
-            const totalPaid = payments.filter(p => p.farmerId === farmer.id).reduce((acc, p) => acc + p.amount, 0) + 
-                              myPayments.filter(p => p.farmerId === farmer.id && !p.deletedAt && p.status !== 'CANCELLED').reduce((acc, p) => acc + p.amount, 0);
-            const totalDebt = prescriptions.filter(p => p.farmerId === farmer.id).reduce((acc, p) => acc + (p.totalAmount || 0), 0) + 
-                              manualDebts.filter(d => d.farmerId === farmer.id && !d.id.startsWith('turnover-')).reduce((acc, d) => acc + d.amount, 0);
-            
+            const totalPaid = payments.filter(p => p.farmerId === farmer.id && !p.deletedAt).reduce((acc, p) => acc + p.amount, 0) + 
+                              myPayments.filter(p => p.farmerId === farmer.id && !p.deletedAt && p.status !== 'CANCELLED' && !p.relatedId).reduce((acc, p) => acc + p.amount, 0);
+            const totalDebt = prescriptions.filter(p => p.farmerId === farmer.id && !p.deletedAt && p.priceType !== 'CASH').reduce((acc, p) => {
+                const amt = Number(p.totalAmount) || 0;
+                const isReturn = p.type === 'RETURN' || amt < 0;
+                return acc + (isReturn ? -Math.abs(amt) : Math.abs(amt));
+            }, 0) + 
+                              manualDebts.filter(d => d.farmerId === farmer.id && !d.deletedAt && !d.id.startsWith('turnover-')).reduce((acc, d) => acc + d.amount, 0);
             const balance = totalPaid - totalDebt;
             return { name: farmer.fullName, phone: farmer.phoneNumber, balance };
-        }).filter(f => f.balance !== 0); // Sadece bakiyesi olanlar
+        }).filter(f => f.balance !== 0);
 
         const formattedFarmerData = farmerData.map(f => {
             if (f.balance < 0) totalReceivable += Math.abs(f.balance);
             if (f.balance > 0) totalPayableToFarmers += Math.abs(f.balance);
-            
             return [
-                trToEn(f.name),
-                trToEn(f.phone || '-'),
-                pdfCurrency(Math.abs(f.balance)),
-                f.balance >= 0 ? 'ALACAKLI HESAP' : 'BORCLU HESAP (BIZE)'
+                f.name,
+                f.phone || '-',
+                formatCurrency(Math.abs(f.balance), userProfile?.currency || 'TRY'),
+                f.balance >= 0 ? 'ALACAKLI HESAP' : 'BORÇLU HESAP (BİZE)'
             ];
         });
+        htmlContent += generateTableHtml(`2. ${farmerPluralLabel.toLocaleUpperCase('tr-TR')} BAKİYE DURUMU (Tüm Zamanlar Kümülatif)`, ['Müşteri Adı', 'Telefon', 'Bakiye', 'Durum'], formattedFarmerData, [
+            ['', 'TOPLAM MÜŞTERİ ALACAĞIMIZ', formatCurrency(totalReceivable, userProfile?.currency || 'TRY'), ''],
+            ['', 'TOPLAM MÜŞTERİ BORCUMUZ', formatCurrency(totalPayableToFarmers, userProfile?.currency || 'TRY'), '']
+        ], '#3b82f6'); // Blue
 
-        autoTable(doc, {
-            startY: currentY + 5,
-            head: [['Musteri Adi', 'Telefon', 'Bakiye', 'Durum']],
-            body: formattedFarmerData.length > 0 ? formattedFarmerData : [['Borclu/Alacakli musteri yok', '', '', '']],
-            theme: 'grid',
-            styles: { font: 'helvetica', fontSize: 9 },
-            headStyles: { fillColor: [59, 130, 246] }, // Blue
-            foot: [
-                ['', 'TOPLAM MUSTERI ALACAGIMIZ:', pdfCurrency(totalReceivable), ''],
-                ['', 'TOPLAM MUSTERI BORCUMUZ:', pdfCurrency(totalPayableToFarmers), '']
-            ],
-            footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' },
-            columnStyles: { 2: { halign: 'right' }, 3: { halign: 'center' } }
-        });
-        currentY = (doc as any).lastAutoTable.finalY + 15;
-
-        // --- 4. TEDARIKCI BAKIYELERI ---
-        doc.setFontSize(12);
-        doc.setFont("helvetica", "bold");
-        doc.text(trToEn("3. TEDARIKCI BAKIYE DURUMU (Tum Zamanlar)"), 14, currentY);
-        
+        // 3. Tedarikçi
         let totalSupplierDebt = 0;
         let totalSupplierReceivable = 0;
-        
         const supplierData = suppliers.filter(s => s.balance !== 0).map(supplier => {
             if (supplier.balance < 0) totalSupplierDebt += Math.abs(supplier.balance);
             if (supplier.balance > 0) totalSupplierReceivable += supplier.balance;
-            
             return [
-                trToEn(supplier.name),
-                trToEn(supplier.phoneNumber || '-'),
-                pdfCurrency(Math.abs(supplier.balance)),
-                supplier.balance < 0 ? 'BORCLUYUZ (TEDARIKCIYE)' : 'ALACAKLIYIZ'
+                supplier.name,
+                supplier.phoneNumber || '-',
+                formatCurrency(Math.abs(supplier.balance), userProfile?.currency || 'TRY'),
+                supplier.balance < 0 ? 'BORÇLUYUZ (TEDARİKÇİYE)' : 'ALACAKLIYIZ'
             ];
         });
+        htmlContent += generateTableHtml('3. TEDARİKÇİ BAKİYE DURUMU (Tüm Zamanlar Kümülatif)', ['Tedarikçi Adı', 'Telefon', 'Bakiye', 'Durum'], supplierData, [
+            ['', 'TOPLAM TEDARİKÇİ BORCUMUZ', formatCurrency(totalSupplierDebt, userProfile?.currency || 'TRY'), '']
+        ], '#f59e0b'); // Amber
 
-        autoTable(doc, {
-            startY: currentY + 5,
-            head: [['Tedarikci Adi', 'Telefon', 'Bakiye', 'Durum']],
-            body: supplierData.length > 0 ? supplierData : [['Kayitli bakiye yok', '', '', '']],
-            theme: 'grid',
-            styles: { font: 'helvetica', fontSize: 9 },
-            headStyles: { fillColor: [245, 158, 11] }, // Amber 500
-            foot: [
-                ['', 'TOPLAM TEDARIKCI BORCUMUZ:', pdfCurrency(totalSupplierDebt), '']
-            ],
-            footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' },
-            columnStyles: { 2: { halign: 'right' }, 3: { halign: 'center' } }
-        });
-        currentY = (doc as any).lastAutoTable.finalY + 15;
-
-        // --- 5. STOK DURUMU ---
-        doc.setFontSize(12);
-        doc.setFont("helvetica", "bold");
-        doc.text(trToEn("4. DEPO / STOK DURUMU"), 14, currentY);
-        
+        // 4. Stok Durumu
         let totalInventoryBuyingValue = 0;
-        let totalInventorySellingValue = 0;
-
         const inventoryData = inventory.filter(i => i.quantity > 0).map(item => {
             const buyingValue = item.quantity * item.buyingPrice;
-            const sellingValue = item.quantity * item.sellingPrice;
             totalInventoryBuyingValue += buyingValue;
-            totalInventorySellingValue += sellingValue;
-            
             return [
-                trToEn(item.pesticideName),
-                trToEn(item.category),
+                item.pesticideName,
+                item.category,
                 `${item.quantity} ${item.unit}`,
-                pdfCurrency(item.buyingPrice),
-                pdfCurrency(buyingValue)
+                formatCurrency(item.buyingPrice, userProfile?.currency || 'TRY'),
+                formatCurrency(buyingValue, userProfile?.currency || 'TRY')
             ];
         });
+        htmlContent += generateTableHtml('4. DEPO / STOK DURUMU', ['Ürün Adı', 'Kategori', 'Miktar', 'Birim Maliyet', 'Toplam Maliyet'], inventoryData, [
+            ['', '', 'DEPO TOPLAM MALİYETİ', '', formatCurrency(totalInventoryBuyingValue, userProfile?.currency || 'TRY')]
+        ], '#8b5cf6'); // Violet
 
-        autoTable(doc, {
-            startY: currentY + 5,
-            head: [['Urun Adi', 'Kategori', 'Miktar', 'Birim Maliyet', 'Toplam Maliyet']],
-            body: inventoryData.length > 0 ? inventoryData : [['Depoda urun yok', '', '', '', '']],
-            theme: 'grid',
-            styles: { font: 'helvetica', fontSize: 9 },
-            headStyles: { fillColor: [139, 92, 246] }, // Violet 500
-            foot: [
-                ['', '', 'DEPO TOPLAM MALIYETI:', '', pdfCurrency(totalInventoryBuyingValue)]
-            ],
-            footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' },
-            columnStyles: { 2: { halign: 'center' }, 3: { halign: 'right' }, 4: { halign: 'right' } }
-        });
-        currentY = (doc as any).lastAutoTable.finalY + 15;
-
-        // --- 6. DONEMSEL GELIR / GIDER (All Time) ---
-        doc.setFontSize(12);
-        doc.setFont("helvetica", "bold");
-        doc.text(trToEn("5. GENEL GELIR / GIDER (Tum Zamanlar)"), 14, currentY);
-        
-        const filteredPayments = [
-            ...payments,
-            ...myPayments.filter(p => !p.deletedAt && p.status !== 'CANCELLED')
-        ];
-        const filteredExpenses = expenses;
-
+        // 5. Finansal Özet
+        const filteredPayments = [...payments, ...myPayments.filter(p => !p.deletedAt && p.status !== 'CANCELLED')];
         const totalIncome = filteredPayments.reduce((acc, p) => acc + p.amount, 0);
-        const totalExpense = filteredExpenses.reduce((acc, e) => acc + e.amount, 0);
+        const totalExpense = expenses.reduce((acc, e) => acc + e.amount, 0);
         const netProfit = totalIncome - totalExpense;
 
-        autoTable(doc, {
-            startY: currentY + 5,
-            head: [['Kalem', 'Tutar']],
-            body: [
-                ['Toplam Tahsilatlar (Giren Nakit)', pdfCurrency(totalIncome)],
-                ['Toplam Giderler ve Odemeler (Cikan Nakit)', pdfCurrency(totalExpense)],
-                ['Tum Zamanlar NET NAKIT FARKI', pdfCurrency(netProfit)]
-            ],
-            theme: 'grid',
-            styles: { font: 'helvetica', fontSize: 10 },
-            headStyles: { fillColor: [225, 29, 72] }, // Rose 600
-            columnStyles: { 1: { halign: 'right' } }
+        const financialData = [
+            ['Toplam Tahsilatlar (Giren Nakit)', formatCurrency(totalIncome, userProfile?.currency || 'TRY')],
+            ['Toplam Giderler ve Ödemeler (Çıkan Nakit)', formatCurrency(totalExpense, userProfile?.currency || 'TRY')],
+            ['Tüm Zamanlar NET NAKİT FARKI', formatCurrency(netProfit, userProfile?.currency || 'TRY')]
+        ];
+        htmlContent += generateTableHtml('5. GENEL GELİR / GİDER (Tüm Zamanlar Kümülatif)', ['Kalem', 'Tutar'], financialData, [], '#e11d48'); // Rose
+
+        generatePdfFromHtml('GENEL BAYİ RAPORU', 'İşletmenizin (kasa, müşteri, tedarikçi, depo vs.) tüm genel durumu.', htmlContent, `Bayi_Genel_Raporu_${format(new Date(), 'yyyyMMdd_HHmm')}.pdf`).then(() => {
+            setGenerating(null);
         });
-        
-        doc.save(`Bayi_Raporu_${format(new Date(), 'yyyyMMdd_HHmm')}.pdf`);
-        setGenerating(null);
-      } catch (e) {
-        console.error(e);
-        setGenerating(null);
-      }
     }, 500);
   };
 
   const generateDetailedBayiRaporuPDF = () => {
     setGenerating('DETAILED_BAYI_RAPORU');
     setTimeout(() => {
-      try {
-        const doc = new jsPDF();
-        
-        let currentY = 20;
+        let htmlContent = '';
 
-        const addPageIfNeeded = (requiredSpace: number) => {
-            if (currentY + requiredSpace > 280) {
-                doc.addPage();
-                currentY = 20;
-            }
-        };
-        
-        // --- 1. HEADER ---
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(22);
-        doc.setTextColor(16, 185, 129);
-        doc.text(trToEn(userProfile?.companyName || "BAYI RAPORU"), 14, currentY);
-        currentY += 8;
-        
-        doc.setFontSize(14);
-        doc.text(trToEn("DETAYLI TUM VERI DOKUMU"), 14, currentY);
-        currentY += 6;
-        
-        doc.setFontSize(10);
-        doc.setTextColor(100, 100, 100);
-        doc.setFont("helvetica", "normal");
-        doc.text(`Olusturulma: ${format(new Date(), 'dd.MM.yyyy HH:mm')}`, 14, currentY);
-        currentY += 15;
-
-        // --- 2. KASA & BANKA DURUMU ---
-        doc.setFontSize(14);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(0, 0, 0);
-        doc.text(trToEn("1. HESAPLAR / KASA & BANKA"), 14, currentY);
-        currentY += 5;
-        
+        // 1. Kasa ve Banka
         const accountData = accounts.map(acc => [
-            trToEn(acc.name),
-            trToEn(acc.type === 'CASH' ? 'Nakit Kasa' : 'Banka Hesabi'),
-            pdfCurrency(acc.balance)
+            acc.name,
+            acc.type === 'CASH' ? 'Nakit Kasa' : 'Banka Hesabı',
+            formatCurrency(acc.balance, userProfile?.currency || 'TRY')
         ]);
         const totalBalance = accounts.reduce((acc, curr) => acc + curr.balance, 0);
+        htmlContent += generateTableHtml('1. HESAPLAR / KASA & BANKA', ['Hesap Adı', 'Tür', 'Bakiye'], accountData, [['', 'TOPLAM VARLIK', formatCurrency(totalBalance, userProfile?.currency || 'TRY')]], '#10b981'); // Emerald
+
+        // 2. Müşteriler (Çiftçiler)
+        htmlContent += `<h3 style="font-size: 16px; font-weight: 700; margin: 32px 0 12px 0; color: #1c1917; border-bottom: 2px solid #e7e5e4; padding-bottom: 8px;">2. ${farmerPluralLabel.toLocaleUpperCase('tr-TR')} DETAYLI HESAP DÖKÜMÜ</h3>`;
         
-        autoTable(doc, {
-            startY: currentY,
-            head: [['Hesap Adi', 'Tur', 'Bakiye']],
-            body: accountData.length > 0 ? accountData : [['Hesap Yok', '', '']],
-            theme: 'grid',
-            styles: { font: 'helvetica', fontSize: 9 },
-            headStyles: { fillColor: [16, 185, 129] },
-            foot: [['', 'TOPLAM VARLIK:', pdfCurrency(totalBalance)]],
-            footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' },
-            columnStyles: { 2: { halign: 'right' } }
-        });
-        currentY = (doc as any).lastAutoTable.finalY + 15;
-
-        // --- 3. TUM CIFTCI (MUSTERI) ISLEMLERI ---
-        addPageIfNeeded(30);
-        doc.setFontSize(14);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(0, 0, 0);
-        doc.text(trToEn(`2. ${farmerPluralLabel.toLocaleUpperCase('en-US')} DETAYLI HESAP DOKUMU`), 14, currentY);
-        currentY += 5;
-
         farmers.forEach((farmer, index) => {
-            addPageIfNeeded(40);
-            
-            // Collect ledger items
             const ledger: any[] = [];
             
             prescriptions.filter(p => !p.deletedAt && p.farmerId === farmer.id).forEach(p => {
                 const isDebt = p.type !== 'RETURN';
                 ledger.push({
                     date: new Date(p.date || Date.now()),
-                    type: isDebt ? 'Satis Faturasi' : 'Iade Faturasi',
+                    type: isDebt ? 'Satış Faturası' : 'İade Faturası',
                     docNo: p.prescriptionNo || '-',
                     amount: p.totalAmount || 0,
                     isDebt: isDebt
@@ -350,7 +318,7 @@ export const Reports: React.FC = () => {
             payments.filter(p => !p.deletedAt && p.farmerId === farmer.id).forEach(p => {
                 ledger.push({
                     date: new Date(p.date),
-                    type: 'Tahsilat (Bize Odenen)',
+                    type: 'Tahsilat (Bize Ödenen)',
                     docNo: '-',
                     amount: p.amount,
                     isDebt: false
@@ -360,7 +328,7 @@ export const Reports: React.FC = () => {
             myPayments.filter(p => !p.deletedAt && p.status !== 'CANCELLED' && p.farmerId === farmer.id).forEach(p => {
                 ledger.push({
                     date: new Date(p.issueDate),
-                    type: 'Musteri Odemesi (Bizden cikan)',
+                    type: 'Müşteri Ödemesi (Bizden Çıkan)',
                     docNo: '-',
                     amount: p.amount,
                     isDebt: true
@@ -370,7 +338,7 @@ export const Reports: React.FC = () => {
             manualDebts.filter(d => d.farmerId === farmer.id && !d.id.startsWith('turnover-')).forEach(d => {
                 ledger.push({
                     date: new Date(d.date),
-                    type: 'Bakiye Eklentisi (Borc)',
+                    type: 'Bakiye Eklentisi (Borç)',
                     docNo: '-',
                     amount: d.amount,
                     isDebt: true
@@ -396,48 +364,27 @@ export const Reports: React.FC = () => {
                 
                 return [
                     format(l.date, 'dd.MM.yyyy'),
-                    trToEn(l.type),
-                    trToEn(l.docNo),
-                    l.isDebt ? pdfCurrency(l.amount) : '', 
-                    !l.isDebt ? pdfCurrency(l.amount) : '',
-                    pdfCurrency(Math.abs(currentBalance)) + (currentBalance < 0 ? ' (Borclu)' : ' (Alacakli)')
+                    l.type,
+                    l.docNo,
+                    l.isDebt ? formatCurrency(l.amount, userProfile?.currency || 'TRY') : '', 
+                    !l.isDebt ? formatCurrency(l.amount, userProfile?.currency || 'TRY') : '',
+                    formatCurrency(Math.abs(currentBalance), userProfile?.currency || 'TRY') + (currentBalance < 0 ? ' (Bize Borçlu)' : ' (Bizden Alacaklı)')
                 ];
             });
 
-            doc.setFontSize(11);
-            doc.setFont("helvetica", "bold");
-            doc.text(`${index + 1}. Musteri: ` + trToEn(farmer.fullName) + ` - Tel: ${farmer.phoneNumber || '-'}`, 14, currentY);
-            currentY += 5;
-
-            autoTable(doc, {
-                startY: currentY,
-                head: [['Tarih', 'Islem Turu', 'Belge Numarasi', 'Bize Borclandi', 'Bize Odedi', 'Bakiye Durumu']],
-                body: body.length > 0 ? body : [['(Hic islem yok)', '', '', '', '', pdfCurrency(0)]],
-                theme: 'grid',
-                styles: { font: 'helvetica', fontSize: 8 },
-                headStyles: { fillColor: [59, 130, 246] },
-                columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' } }
-            });
-            currentY = (doc as any).lastAutoTable.finalY + 10;
+            htmlContent += generateTableHtml(`${index + 1}. Müşteri: ${farmer.fullName} ${farmer.phoneNumber ? `| Tel: ${farmer.phoneNumber}` : ''}`, ['Tarih', 'İşlem Türü', 'Belge No', 'Bize Borçlandı', 'Bize Ödedi', 'Bakiye Durumu'], body, [], '#3b82f6');
         });
 
-        // --- 4. TEDARIKCILER ===
-        addPageIfNeeded(30);
-        doc.setFontSize(14);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(0, 0, 0);
-        doc.text(trToEn("3. TEDARIKCI DETAYLI HESAP DOKUMU"), 14, currentY);
-        currentY += 5;
+        // 3. Tedarikçiler
+        htmlContent += `<h3 style="font-size: 16px; font-weight: 700; margin: 32px 0 12px 0; color: #1c1917; border-bottom: 2px solid #e7e5e4; padding-bottom: 8px;">3. TEDARİKÇİ DETAYLI HESAP DÖKÜMÜ</h3>`;
 
         suppliers.forEach((supplier, index) => {
-            addPageIfNeeded(40);
-            
             const ledger: any[] = [];
             
             supplierPurchases.filter(p => !p.deletedAt && p.supplierId === supplier.id).forEach(p => {
                 ledger.push({
                     date: new Date(p.date),
-                    type: p.type === 'RETURN' ? 'Alis Iade' : 'Alis Faturasi',
+                    type: p.type === 'RETURN' ? 'Alış İade' : 'Alış Faturası',
                     docNo: p.receiptNo || '-',
                     amount: p.totalAmount || p.items.reduce((acc, i) => acc + (i.quantity * (i.buyingPrice || 0)), 0) || 0,
                     isDebtToUs: p.type !== 'RETURN'
@@ -447,7 +394,7 @@ export const Reports: React.FC = () => {
             myPayments.filter(p => !p.deletedAt && p.status !== 'CANCELLED' && p.supplierId === supplier.id).forEach(p => {
                 ledger.push({
                     date: new Date(p.issueDate),
-                    type: 'Tedarikciye Odeme',
+                    type: 'Tedarikçiye Ödeme',
                     docNo: '-',
                     amount: p.amount,
                     isDebtToUs: false
@@ -463,340 +410,185 @@ export const Reports: React.FC = () => {
                 
                 return [
                     format(l.date, 'dd.MM.yyyy'),
-                    trToEn(l.type),
-                    trToEn(l.docNo),
-                    l.isDebtToUs ? pdfCurrency(l.amount) : '', 
-                    !l.isDebtToUs ? pdfCurrency(l.amount) : '', 
-                    pdfCurrency(Math.abs(currentBalance)) + (currentBalance < 0 ? ' (Bize Borclu)' : ' (Bize Alacak)')
+                    l.type,
+                    l.docNo,
+                    l.isDebtToUs ? formatCurrency(l.amount, userProfile?.currency || 'TRY') : '', 
+                    !l.isDebtToUs ? formatCurrency(l.amount, userProfile?.currency || 'TRY') : '', 
+                    formatCurrency(Math.abs(currentBalance), userProfile?.currency || 'TRY') + (currentBalance < 0 ? ' (Bize Borçlu)' : ' (Bize Alacaklı)')
                 ];
             });
 
-            doc.setFontSize(11);
-            doc.setFont("helvetica", "bold");
-            doc.text(`${index + 1}. Tedarikci: ` + trToEn(supplier.name) + ` - Tel: ${supplier.phoneNumber || '-'}`, 14, currentY);
-            currentY += 5;
-
-            autoTable(doc, {
-                startY: currentY,
-                head: [['Tarih', 'Islem Turu', 'Belge Numarasi', 'Firmaya Borclandik', 'Firmaya Odedik', 'Bakiye Durumu']],
-                body: body.length > 0 ? body : [['(Hic islem yok)', '', '', '', '', pdfCurrency(0)]],
-                theme: 'grid',
-                styles: { font: 'helvetica', fontSize: 8 },
-                headStyles: { fillColor: [245, 158, 11] },
-                columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' } }
-            });
-            currentY = (doc as any).lastAutoTable.finalY + 10;
+            htmlContent += generateTableHtml(`${index + 1}. Tedarikçi: ${supplier.name} ${supplier.phoneNumber ? `| Tel: ${supplier.phoneNumber}` : ''}`, ['Tarih', 'İşlem Türü', 'Belge No', 'Borçlandık', 'Ödedik', 'Bakiye Durumu'], body, [], '#f59e0b');
         });
 
-        // --- 5. STOK DURUMU ---
-        addPageIfNeeded(40);
-        doc.setFontSize(14);
-        doc.setFont("helvetica", "bold");
-        doc.text(trToEn("4. TUM DEPO / STOK DURUMU"), 14, currentY);
-        currentY += 5;
-        
+        // 4. Stok durumu
         let totalInventoryBuyingValue = 0;
         const inventoryData = inventory.map(item => {
             const buyingValue = item.quantity * item.buyingPrice;
             totalInventoryBuyingValue += buyingValue;
-            
             return [
-                trToEn(item.pesticideName),
-                trToEn(item.category),
+                item.pesticideName,
+                item.category,
                 `${item.quantity} ${item.unit}`,
-                pdfCurrency(item.buyingPrice),
-                pdfCurrency(buyingValue)
+                formatCurrency(item.buyingPrice, userProfile?.currency || 'TRY'),
+                formatCurrency(buyingValue, userProfile?.currency || 'TRY')
             ];
         });
+        htmlContent += generateTableHtml('4. TÜM DEPO / STOK DURUMU', ['Ürün Adı', 'Kategori', 'Miktar', 'Alış Birim Maliyet', 'Alış Toplam Maliyet'], inventoryData, [
+            ['', '', 'TOPLAM DEPO MALİYETİ', '', formatCurrency(totalInventoryBuyingValue, userProfile?.currency || 'TRY')]
+        ], '#8b5cf6'); // Violet
 
-        autoTable(doc, {
-            startY: currentY,
-            head: [['Urun Adi', 'Kategori', 'Miktar', 'Alis Birim Maliyet', 'Alis Toplam Maliyet']],
-            body: inventoryData.length > 0 ? inventoryData : [['Depoda urun yok', '', '', '', '']],
-            theme: 'grid',
-            styles: { font: 'helvetica', fontSize: 8 },
-            headStyles: { fillColor: [139, 92, 246] },
-            foot: [['', '', 'TOPLAM DEPO MALIYETI:', '', pdfCurrency(totalInventoryBuyingValue)]],
-            footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' },
-            columnStyles: { 2: { halign: 'center' }, 3: { halign: 'right' }, 4: { halign: 'right' } }
-        });
-        currentY = (doc as any).lastAutoTable.finalY + 15;
-
-        // --- 6. GIDERLER ---
-        addPageIfNeeded(40);
-        doc.setFontSize(14);
-        doc.setFont("helvetica", "bold");
-        doc.text(trToEn("5. TUM GIDERLER DOKUMU"), 14, currentY);
-        currentY += 5;
-        
+        // 5. Giderler
         let totalExpenseAmount = 0;
         const expenseData = [...expenses].sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime()).map(e => {
             totalExpenseAmount += e.amount;
             return [
                 format(new Date(e.date), 'dd.MM.yyyy'),
-                trToEn(e.category),
-                trToEn(e.note || '-'),
-                pdfCurrency(e.amount)
+                e.category,
+                e.note || '-',
+                formatCurrency(e.amount, userProfile?.currency || 'TRY')
             ];
         });
+        htmlContent += generateTableHtml('5. TÜM GİDERLER DÖKÜMÜ', ['Tarih', 'Gider Kategorisi', 'Açıklama', 'Tutar'], expenseData, [
+            ['', '', 'TOPLAM GİDER', formatCurrency(totalExpenseAmount, userProfile?.currency || 'TRY')]
+        ], '#e11d48'); // Rose
 
-        autoTable(doc, {
-            startY: currentY,
-            head: [['Tarih', 'Gider Kategorisi', 'Aciklama', 'Tutar']],
-            body: expenseData.length > 0 ? expenseData : [['Gider kaydi yok', '', '', '']],
-            theme: 'grid',
-            styles: { font: 'helvetica', fontSize: 8 },
-            headStyles: { fillColor: [225, 29, 72] },
-            foot: [['', '', 'TOPLAM GIDER:', pdfCurrency(totalExpenseAmount)]],
-            footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' },
-            columnStyles: { 3: { halign: 'right' } }
+        generatePdfFromHtml('DETAYLI TÜM VERİ DÖKÜMÜ', 'Tüm dükkan verisinin detaylı hesap hareketi.', htmlContent, `Ayrintili_Rapor_${format(new Date(), 'yyyyMMdd_HHmm')}.pdf`).then(() => {
+            setGenerating(null);
         });
-
-        doc.save(`Detayli_Bayi_Raporu_${format(new Date(), 'yyyyMMdd_HHmm')}.pdf`);
-        setGenerating(null);
-      } catch (e) {
-        console.error(e);
-        setGenerating(null);
-      }
     }, 500);
   };
 
   const generateFarmerBalancesPDF = () => {
     setGenerating('FARMER_BALANCES');
     setTimeout(() => {
-      try {
-      const doc = new jsPDF();
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(16);
-      doc.text(trToEn("Ciftci Bakiye Raporu"), 14, 20);
-      
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
-      doc.text(`Donem: ${format(new Date(startDate), 'dd.MM.yyyy')} - ${format(new Date(endDate), 'dd.MM.yyyy')}`, 14, 28);
+        const tableData = farmers.map(farmer => {
+            const fPayments = payments.filter(p => p.farmerId === farmer.id && !p.deletedAt && isWithinRange(p.date));
+            const fMyPayments = myPayments.filter(p => p.farmerId === farmer.id && !p.deletedAt && p.status !== 'CANCELLED' && !p.relatedId && isWithinRange(p.issueDate));
+            const fPrescriptions = prescriptions.filter(p => p.farmerId === farmer.id && !p.deletedAt && isWithinRange(p.date));
+            const fManualDebts = manualDebts.filter(d => d.farmerId === farmer.id && !d.deletedAt && isWithinRange(d.date));
+            
+            const totalPaid = fPayments.reduce((acc, p) => acc + p.amount, 0) + fMyPayments.reduce((acc, p) => acc + p.amount, 0);
+            const totalDebt = fPrescriptions.filter(p => p.priceType !== 'CASH').reduce((acc, p) => {
+                const amt = Number(p.totalAmount) || 0;
+                const isReturn = p.type === 'RETURN' || amt < 0;
+                return acc + (isReturn ? -Math.abs(amt) : Math.abs(amt));
+            }, 0) + fManualDebts.filter(d => !d.id.startsWith('turnover-')).reduce((acc, d) => acc + d.amount, 0);
+            
+            const balance = totalPaid - totalDebt;
+            const status = balance >= 0 ? 'ALACAK' : 'BORÇ';
 
-      const tableData = farmers.map(farmer => {
-        const fPayments = payments.filter(p => p.farmerId === farmer.id && isWithinRange(p.date));
-        const fMyPayments = myPayments.filter(p => p.farmerId === farmer.id && !p.deletedAt && p.status !== 'CANCELLED' && isWithinRange(p.issueDate));
-        const fPrescriptions = prescriptions.filter(p => p.farmerId === farmer.id && isWithinRange(p.date));
-        const fManualDebts = manualDebts.filter(d => d.farmerId === farmer.id && isWithinRange(d.date));
-        
-        const totalPaid = fPayments.reduce((acc, p) => acc + p.amount, 0) + 
-                         fMyPayments.reduce((acc, p) => acc + p.amount, 0);
-        const totalDebt = fPrescriptions.reduce((acc, p) => acc + (p.totalAmount || 0), 0) + 
-                          fManualDebts.filter(d => !d.id.startsWith('turnover-')).reduce((acc, d) => acc + d.amount, 0);
-        
-        const balance = totalPaid - totalDebt;
-        const status = balance >= 0 ? 'ALACAK' : 'BORC';
+            return [
+                farmer.fullName,
+                farmer.village || '-',
+                farmer.phoneNumber || '-',
+                formatCurrency(Math.abs(balance), userProfile?.currency || 'TRY'),
+                status
+            ];
+        });
 
-        return [
-          trToEn(farmer.fullName),
-          trToEn(farmer.village || '-'),
-          trToEn(farmer.phoneNumber || '-'),
-          pdfCurrency(Math.abs(balance)),
-          status
-        ];
-      });
-
-      autoTable(doc, {
-        startY: 35,
-        head: [['Ciftci Adi', 'Koy', 'Telefon', 'Bakiye', 'Durum']],
-        body: tableData,
-        theme: 'grid',
-        styles: { font: 'helvetica', fontSize: 9 },
-        headStyles: { fillColor: [16, 185, 129] }, // Emerald 500
-        alternateRowStyles: { fillColor: [245, 245, 245] },
-        columnStyles: {
-            3: { halign: 'right' },
-            4: { halign: 'center' }
-        }
-      });
-
-      doc.save(`Ciftci_Bakiye_Raporu_${format(new Date(), 'yyyyMMdd')}.pdf`);
-      setGenerating(null);
-    } catch (e) {
-      console.error(e);
-      setGenerating(null);
-    }
+        const htmlContent = generateTableHtml('ÇİFTÇİ BAKİYE ÖZETİ', ['Çiftçi Adı', 'Köy', 'Telefon', 'Bakiye', 'Durum'], tableData, [], '#10b981'); // Emerald
+        generatePdfFromHtml(
+            `${farmerPluralLabel.toLocaleUpperCase('tr-TR')} BAKİYE RAPORU`,
+            `Dönem: ${format(new Date(startDate), 'dd.MM.yyyy')} - ${format(new Date(endDate), 'dd.MM.yyyy')}`,
+            htmlContent, 
+            `Ciftci_Bakiye_Raporu_${format(new Date(), 'yyyyMMdd')}.pdf`
+        ).then(() => setGenerating(null));
     }, 500);
   };
 
   const generateInventoryPDF = () => {
     setGenerating('INVENTORY');
     setTimeout(() => {
-      try {
-      const doc = new jsPDF();
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(16);
-      doc.text(trToEn("Stok Durum Raporu"), 14, 20);
-      
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
-      doc.text(`Tarih: ${format(new Date(), 'dd.MM.yyyy HH:mm')}`, 14, 28);
+        const tableData = inventory.map(item => {
+            return [
+                item.pesticideName,
+                item.category,
+                `${item.quantity} ${item.unit}`,
+                formatCurrency(item.buyingPrice, userProfile?.currency || 'TRY'),
+                formatCurrency(item.sellingPrice, userProfile?.currency || 'TRY')
+            ];
+        });
 
-      const tableData = inventory.map(item => {
-        return [
-          trToEn(item.pesticideName),
-          trToEn(item.category),
-          `${item.quantity} ${item.unit}`,
-          pdfCurrency(item.buyingPrice),
-          pdfCurrency(item.sellingPrice)
-        ];
-      });
-
-      autoTable(doc, {
-        startY: 35,
-        head: [['Urun Adi', 'Kategori', 'Miktar', 'Alis Fiyati', 'Satis Fiyati']],
-        body: tableData,
-        theme: 'grid',
-        styles: { font: 'helvetica', fontSize: 9 },
-        headStyles: { fillColor: [16, 185, 129] },
-        alternateRowStyles: { fillColor: [245, 245, 245] },
-        columnStyles: {
-            2: { halign: 'center' },
-            3: { halign: 'right' },
-            4: { halign: 'right' }
-        }
-      });
-
-      doc.save(`Stok_Raporu_${format(new Date(), 'yyyyMMdd')}.pdf`);
-      setGenerating(null);
-    } catch (e) {
-      console.error(e);
-      setGenerating(null);
-    }
+        const htmlContent = generateTableHtml('STOK DURUM LİSTESİ', ['Ürün Adı', 'Kategori', 'Miktar', 'Alış Fiyatı', 'Satış Fiyatı'], tableData, [], '#8b5cf6'); // Violet
+        generatePdfFromHtml(
+            'STOK DURUM RAPORU',
+            `Tarih: ${format(new Date(), 'dd.MM.yyyy HH:mm')}`,
+            htmlContent, 
+            `Stok_Raporu_${format(new Date(), 'yyyyMMdd')}.pdf`
+        ).then(() => setGenerating(null));
     }, 500);
   };
 
   const generateExpensePDF = () => {
     setGenerating('EXPENSES');
     setTimeout(() => {
-      try {
-      const doc = new jsPDF();
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(16);
-      doc.text(trToEn("Gider Raporu"), 14, 20);
-      
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
-      doc.text(`Donem: ${format(new Date(startDate), 'dd.MM.yyyy')} - ${format(new Date(endDate), 'dd.MM.yyyy')}`, 14, 28);
+        const filteredExpenses = expenses.filter(exp => isWithinRange(exp.date));
+        const sortedExpenses = [...filteredExpenses].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-      const filteredExpenses = expenses.filter(exp => isWithinRange(exp.date));
-      const sortedExpenses = [...filteredExpenses].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        const tableData = sortedExpenses.map(exp => {
+            return [
+                format(new Date(exp.date), 'dd.MM.yyyy'),
+                exp.title,
+                exp.category,
+                formatCurrency(exp.amount, userProfile?.currency || 'TRY')
+            ];
+        });
 
-      const tableData = sortedExpenses.map(exp => {
-        return [
-          format(new Date(exp.date), 'dd.MM.yyyy'),
-          trToEn(exp.title),
-          trToEn(exp.category),
-          pdfCurrency(exp.amount)
-        ];
-      });
+        const totalExpense = filteredExpenses.reduce((acc, curr) => acc + curr.amount, 0);
 
-      const totalExpense = filteredExpenses.reduce((acc, curr) => acc + curr.amount, 0);
-
-      autoTable(doc, {
-        startY: 35,
-        head: [['Tarih', 'Aciklama', 'Kategori', 'Tutar']],
-        body: tableData,
-        theme: 'grid',
-        styles: { font: 'helvetica', fontSize: 9 },
-        headStyles: { fillColor: [225, 29, 72] }, // Rose 600
-        alternateRowStyles: { fillColor: [245, 245, 245] },
-        foot: [['', '', 'TOPLAM GIDER:', pdfCurrency(totalExpense)]],
-        footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' },
-        columnStyles: {
-            0: { halign: 'center' },
-            3: { halign: 'right' }
-        }
-      });
-
-      doc.save(`Gider_Raporu_${format(new Date(), 'yyyyMMdd')}.pdf`);
-      setGenerating(null);
-    } catch (e) {
-      console.error(e);
-      setGenerating(null);
-    }
+        const htmlContent = generateTableHtml('GİDER DÖKÜMÜ', ['Tarih', 'Açıklama', 'Kategori', 'Tutar'], tableData, [
+            ['', '', 'TOPLAM GİDER', formatCurrency(totalExpense, userProfile?.currency || 'TRY')]
+        ], '#e11d48'); // Rose
+        
+        generatePdfFromHtml(
+            'GİDER RAPORU',
+            `Dönem: ${format(new Date(startDate), 'dd.MM.yyyy')} - ${format(new Date(endDate), 'dd.MM.yyyy')}`,
+            htmlContent, 
+            `Gider_Raporu_${format(new Date(), 'yyyyMMdd')}.pdf`
+        ).then(() => setGenerating(null));
     }, 500);
   };
 
   const generateFinancialSummaryPDF = () => {
     setGenerating('FINANCIAL');
     setTimeout(() => {
-      try {
-      const doc = new jsPDF();
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(16);
-      doc.text(trToEn("Finansal Ozet Raporu"), 14, 20);
-      
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
-      doc.text(`Donem: ${format(new Date(startDate), 'dd.MM.yyyy')} - ${format(new Date(endDate), 'dd.MM.yyyy')}`, 14, 28);
+        let htmlContent = '';
 
-      // Kasa Durumu
-      let currentY = 40;
-      doc.setFont("helvetica", "bold");
-      doc.text(trToEn("1. Kasa ve Banka Durumu"), 14, currentY);
-      
-      const accountData = accounts.map(acc => [
-        trToEn(acc.name),
-        trToEn(acc.type === 'CASH' ? 'Nakit Kasa' : 'Banka Hesabi'),
-        pdfCurrency(acc.balance)
-      ]);
+        // 1. Kasa ve Banka
+        const accountData = accounts.map(acc => [
+            acc.name,
+            acc.type === 'CASH' ? 'Nakit Kasa' : 'Banka Hesabı',
+            formatCurrency(acc.balance, userProfile?.currency || 'TRY')
+        ]);
+        const totalBalance = accounts.reduce((acc, curr) => acc + curr.balance, 0);
+        htmlContent += generateTableHtml('1. KASA VE BANKA DURUMU', ['Hesap Adı', 'Tür', 'Bakiye'], accountData, [['', 'TOPLAM VARLIK', formatCurrency(totalBalance, userProfile?.currency || 'TRY')]], '#10b981'); // Emerald
 
-      const totalBalance = accounts.reduce((acc, curr) => acc + curr.balance, 0);
+        // 2. Genel Özet
+        const filteredPayments = [
+            ...payments.filter(p => isWithinRange(p.date)),
+            ...myPayments.filter(p => !p.deletedAt && p.status !== 'CANCELLED' && isWithinRange(p.issueDate))
+        ];
+        const filteredExpenses = expenses.filter(e => isWithinRange(e.date));
 
-      autoTable(doc, {
-        startY: currentY + 5,
-        head: [['Hesap Adi', 'Tur', 'Bakiye']],
-        body: accountData,
-        theme: 'grid',
-        styles: { font: 'helvetica', fontSize: 9 },
-        headStyles: { fillColor: [16, 185, 129] },
-        foot: [['', 'TOPLAM VARLIK:', pdfCurrency(totalBalance)]],
-        footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' },
-        columnStyles: {
-            2: { halign: 'right' }
-        }
-      });
+        const totalIncome = filteredPayments.reduce((acc, p) => acc + p.amount, 0);
+        const totalExpense = filteredExpenses.reduce((acc, e) => acc + e.amount, 0);
+        const netProfit = totalIncome - totalExpense;
 
-      currentY = (doc as any).lastAutoTable.finalY + 15;
+        const financialData = [
+            ['Toplam Tahsilat (Gelir)', formatCurrency(totalIncome, userProfile?.currency || 'TRY')],
+            ['Toplam Gider', formatCurrency(totalExpense, userProfile?.currency || 'TRY')],
+            ['Net Durum', formatCurrency(netProfit, userProfile?.currency || 'TRY')]
+        ];
+        
+        htmlContent += generateTableHtml('2. GELİR / GİDER ÖZETİ (Seçili Dönem)', ['Kalem', 'Tutar'], financialData, [], '#3b82f6'); // Blue
 
-      // Genel Ozet
-      const filteredPayments = [
-          ...payments.filter(p => isWithinRange(p.date)),
-          ...myPayments.filter(p => !p.deletedAt && p.status !== 'CANCELLED' && isWithinRange(p.issueDate))
-      ];
-      const filteredExpenses = expenses.filter(e => isWithinRange(e.date));
-
-      const totalIncome = filteredPayments.reduce((acc, p) => acc + p.amount, 0);
-      const totalExpense = filteredExpenses.reduce((acc, e) => acc + e.amount, 0);
-      const netProfit = totalIncome - totalExpense;
-
-      doc.setFont("helvetica", "bold");
-      doc.text(trToEn("2. Gelir / Gider Ozeti (Secili Donem)"), 14, currentY);
-
-      autoTable(doc, {
-        startY: currentY + 5,
-        head: [['Kalem', 'Tutar']],
-        body: [
-          ['Toplam Tahsilat (Gelir)', pdfCurrency(totalIncome)],
-          ['Toplam Gider', pdfCurrency(totalExpense)],
-          ['Net Durum', pdfCurrency(netProfit)]
-        ],
-        theme: 'grid',
-        styles: { font: 'helvetica', fontSize: 10 },
-        headStyles: { fillColor: [59, 130, 246] }, // Blue 500
-        columnStyles: {
-            1: { halign: 'right' }
-        }
-      });
-
-      doc.save(`Finansal_Ozet_${format(new Date(), 'yyyyMMdd')}.pdf`);
-      setGenerating(null);
-    } catch (e) {
-      console.error(e);
-      setGenerating(null);
-    }
+        generatePdfFromHtml(
+            'FİNANSAL ÖZET RAPORU',
+            `Dönem: ${format(new Date(startDate), 'dd.MM.yyyy')} - ${format(new Date(endDate), 'dd.MM.yyyy')}`,
+            htmlContent, 
+            `Finansal_Ozet_${format(new Date(), 'yyyyMMdd')}.pdf`
+        ).then(() => setGenerating(null));
     }, 500);
   };
 

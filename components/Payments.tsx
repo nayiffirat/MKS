@@ -6,7 +6,7 @@ import {
     CreditCard, Calendar, CheckCircle2, AlertCircle, 
     Search, Filter, Plus, Trash2, Clock, 
     ArrowLeft, ChevronRight, Check, X, DollarSign,
-    TrendingDown, TrendingUp, CalendarClock, Wallet
+    TrendingDown, TrendingUp, CalendarClock, Wallet, Share2
 } from 'lucide-react';
 import { formatCurrency } from '../utils/currency';
 import { ConfirmationModal } from './ConfirmationModal';
@@ -93,6 +93,67 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
             console.error('Add payment error:', error);
             showToast('Ödeme eklenirken bir hata oluştu', 'error');
         }
+    };
+
+    const handleSendReceipt = (payment: MyPayment) => {
+        hapticFeedback('medium');
+        
+        const farmerObj = farmers.find(f => f.id === payment.farmerId);
+        const farmerName = payment.farmerName || farmerObj?.fullName || 'Sayın Müşterimiz';
+        
+        const dateStr = new Date(payment.dueDate).toLocaleDateString('tr-TR');
+        const amountStr = formatCurrency(payment.amount, userProfile?.currency || 'TRY');
+        const paymentTypeStr = payment.type === 'CHECK' ? 'Çek' : 
+                            payment.type === 'TEDYE' ? 'Tediye' : 
+                            payment.type === 'PROMISSORY_NOTE' ? 'Senet' : 
+                            payment.type === 'CARD_INSTALLMENT' ? 'Kart Taksidi' :
+                            payment.type === 'DEFERRED_CARD' ? 'Ötelemeli Kart' : 'Nakit/Diğer';
+                            
+        const statusStr = payment.status === 'PAID' ? 'Tahsil Edildi' : 'Tahsilat Bekleniyor';
+        
+        let message = `Merhaba ${farmerName},\n\n`;
+        message += `Tahsilat makbuzunuz aşağıdadır:\n`;
+        message += `---------------------------------\n`;
+        message += `Vade Tarihi: ${dateStr}\n`;
+        message += `Tutar: ${amountStr}\n`;
+        message += `Ödeme Tipi: ${paymentTypeStr}\n`;
+        message += `Durum: ${statusStr}\n`;
+        if (payment.note) {
+            message += `Not: ${payment.note}\n`;
+        }
+        message += `---------------------------------\n`;
+        message += `Bizi tercih ettiğiniz için teşekkür ederiz.`;
+
+        // Send via WhatsApp or Web Share
+        if (navigator.share) {
+            navigator.share({
+                title: 'Tahsilat Makbuzu',
+                text: message
+            }).catch((err) => {
+                console.log('Ekran paylaşımı iptal edildi veya desteklenmiyor', err);
+                fallbackToWhatsApp(farmerObj?.phoneNumber, message);
+            });
+        } else {
+            fallbackToWhatsApp(farmerObj?.phoneNumber, message);
+        }
+    };
+
+    const fallbackToWhatsApp = (phone: string | undefined, message: string) => {
+        const encodedMessage = encodeURIComponent(message);
+        let phoneParam = '';
+        if (phone) {
+            let cleanPhone = phone.replace(/[^0-9+]/g, '');
+            if (cleanPhone.startsWith('0')) {
+                cleanPhone = '9' + cleanPhone;
+            } else if (!cleanPhone.startsWith('+') && cleanPhone.length === 10) {
+                cleanPhone = '90' + cleanPhone;
+            }
+            phoneParam = cleanPhone.replace('+', ''); // wa.me needs number without +
+        }
+        const whatsappUrl = phoneParam 
+            ? `https://wa.me/${phoneParam}?text=${encodedMessage}` 
+            : `https://wa.me/?text=${encodedMessage}`;
+        window.open(whatsappUrl, '_blank');
     };
 
     const getLedColor = (payment: MyPayment) => {
@@ -351,6 +412,14 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
                                             ? (payment.farmerId || payment.farmerName ? 'TAHSİL EDİLDİ' : 'ÖDENDİ') 
                                             : (payment.farmerId || payment.farmerName ? 'TAHSİL EDİLDİ İŞARETLE' : 'ÖDENDİ İŞARETLE')}
                                     </button>
+                                    {(payment.farmerId || payment.farmerName) && (
+                                        <button 
+                                            onClick={() => handleSendReceipt(payment)}
+                                            className="px-4 py-2 bg-emerald-500/10 text-emerald-500 font-bold text-xs uppercase tracking-widest rounded-xl hover:bg-emerald-500/20 transition-all border border-emerald-500/20 flex flex-col items-center justify-center"
+                                        >
+                                            MAKBUZ
+                                        </button>
+                                    )}
                                     <button 
                                         onClick={() => handleDelete(payment.id)}
                                         className="p-2 bg-stone-800 text-stone-500 rounded-xl hover:bg-rose-500/10 hover:text-rose-500 transition-all border border-white/5"

@@ -208,9 +208,9 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
         try {
             const result = await dbService.backupAllData();
             updateUserProfile({ ...userProfile, lastSyncTime: result.timestamp });
-            alert("Tüm veriler başarıyla Firebase'e yedeklendi.");
+            showToast("Tüm veriler başarıyla Firebase'e yedeklendi.", 'success');
         } catch (error) {
-            alert("Yedekleme hatası: " + (error as any).message);
+            showToast("Yedekleme hatası: " + (error as any).message, 'error');
         } finally {
             setIsSyncing(false);
         }
