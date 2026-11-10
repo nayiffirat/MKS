@@ -26,6 +26,7 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
     const [activeTab, setActiveTab] = useState<'RECEIVABLES' | 'PAYABLES'>('RECEIVABLES');
     const [paymentToDelete, setPaymentToDelete] = useState<string | null>(null);
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+    const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
     const [newPayment, setNewPayment] = useState({
         type: 'CHECK' as MyPayment['type'],
         amount: '',
@@ -37,6 +38,7 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
     });
 
     const handleAddPayment = async () => {
+        if (isSubmittingPayment) return;
         if (!newPayment.amount || (!newPayment.targetId && !newPayment.targetName)) {
             showToast('Lütfen tüm alanları doldurun', 'error');
             return;
@@ -76,6 +78,7 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
         }
 
         try {
+            setIsSubmittingPayment(true);
             await addMyPayment(paymentData);
             showToast('Ödeme kaydı eklendi', 'success');
             hapticFeedback('success');
@@ -92,6 +95,8 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
         } catch (error) {
             console.error('Add payment error:', error);
             showToast('Ödeme eklenirken bir hata oluştu', 'error');
+        } finally {
+            setIsSubmittingPayment(false);
         }
     };
 
@@ -365,18 +370,34 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
                                                     {payment.farmerId || payment.farmerName ? 'MÜŞTERİ ALACAĞI' : 'TEDARİKÇİ ÖDEMESİ'}
                                                 </span>
                                                 <span className="w-1 h-1 rounded-full bg-stone-700"></span>
-                                                <span className="text-[9px] font-black text-stone-500 uppercase tracking-widest">
+                                                <span className="text-[9px] font-black text-amber-400 uppercase tracking-widest">
                                                     {payment.type === 'CHECK' ? 'ÇEK' : 
                                                      payment.type === 'TEDYE' ? 'TEDYE' : 
                                                      payment.type === 'PROMISSORY_NOTE' ? 'SENET' : 
                                                      payment.type === 'CARD_INSTALLMENT' ? 'KART TAKSİDİ' :
-                                                     payment.type === 'DEFERRED_CARD' ? 'ÖTELEMELİ KART' : 'DİĞER'}
+                                                     payment.type === 'DEFERRED_CARD' ? 'KREDİ KARTI BLOKE' : 'DİĞER'}
                                                 </span>
                                                 <span className="w-1 h-1 rounded-full bg-stone-700"></span>
                                                 <span className="text-[9px] font-black text-stone-500 uppercase tracking-widest">
                                                     {new Date(payment.dueDate).toLocaleDateString('tr-TR')}
                                                 </span>
                                             </div>
+                                            {payment.type === 'DEFERRED_CARD' && (
+                                                <div className="mt-1.5 flex flex-wrap gap-1 items-center">
+                                                    <span className="px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-bold">
+                                                        📅 Bloke Kalkış Tarihi: {new Date(payment.dueDate).toLocaleDateString('tr-TR')}
+                                                    </span>
+                                                    {payment.status === 'PAID' ? (
+                                                        <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 text-[9px] font-bold border border-emerald-500/30">
+                                                            ✓ Bloke Kalktı (Otomatik Tahsil Edildi)
+                                                        </span>
+                                                    ) : (
+                                                        <span className="px-2 py-0.5 rounded-md bg-stone-800 text-stone-400 text-[9px] font-bold">
+                                                            ⏳ Bloke Bekliyor
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                     <div className="text-right">
@@ -558,10 +579,11 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
                                 İptal
                             </button>
                             <button
+                                disabled={isSubmittingPayment}
                                 onClick={handleAddPayment}
-                                className="flex-1 py-4 bg-emerald-600 text-white rounded-2xl font-bold text-sm active:scale-95 transition-all shadow-lg shadow-emerald-900/20"
+                                className="flex-1 py-4 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-2xl font-bold text-sm active:scale-95 transition-all shadow-lg shadow-emerald-900/20"
                             >
-                                Kaydet
+                                {isSubmittingPayment ? 'Kaydediliyor...' : 'Kaydet'}
                             </button>
                         </div>
                     </div>

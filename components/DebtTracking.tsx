@@ -1,17 +1,21 @@
 
 import React, { useState, useMemo } from 'react';
 import { useAppViewModel } from '../context/AppContext';
-import { Search, ChevronRight, MessageCircle, AlertCircle, Filter, Calendar, User, ArrowUpRight, ArrowDownRight, TrendingUp, TrendingDown, Clock, Search as SearchIcon, Phone, FileText, Plus, X, Trash2, History, Send } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { Search, ChevronRight, MessageCircle, AlertCircle, Filter, Calendar, User, ArrowUpRight, ArrowDownRight, TrendingUp, TrendingDown, Clock, Search as SearchIcon, Phone, FileText, Plus, X, Trash2, History, Send, Sparkles } from 'lucide-react';
 import { formatCurrency } from '../utils/currency';
 import { Farmer, CollectionLog } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
+import { DebtReminderModal } from './DebtReminderModal';
 
 export const DebtTracking: React.FC = () => {
   const { farmers, prescriptions, stats, userProfile, t, farmerLabel, collectionLogs, addCollectionLog, deleteCollectionLog, plants } = useAppViewModel();
+  const { currentUser } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<'ALL' | 'OVERDUE' | 'HIGH_DEBT'>('ALL');
   const [selectedFarmerId, setSelectedFarmerId] = useState<string | null>(null);
   const [isLogModalOpen, setIsLogModalOpen] = useState(false);
+  const [isBulkMessageModalOpen, setIsBulkMessageModalOpen] = useState(false);
 
   // New log form state
   const [newLog, setNewLog] = useState<Partial<CollectionLog>>({
@@ -136,6 +140,30 @@ export const DebtTracking: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Bulk WhatsApp Banner Button */}
+      <button
+        onClick={() => setIsBulkMessageModalOpen(true)}
+        className="w-full bg-gradient-to-r from-emerald-900/60 via-emerald-800/40 to-stone-900 border border-emerald-500/30 hover:border-emerald-500/60 rounded-[2rem] p-4 shadow-xl flex items-center justify-between group transition-all active:scale-[0.99]"
+      >
+        <div className="flex items-center gap-3.5">
+          <div className="w-11 h-11 rounded-2xl bg-[#25D366]/20 text-[#25D366] flex items-center justify-center border border-[#25D366]/30 shadow-inner group-hover:scale-105 transition-transform">
+            <MessageCircle size={22} />
+          </div>
+          <div className="text-left">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-bold text-white">Toplu WhatsApp Mesaj Gönder</h3>
+              <span className="text-[9px] bg-[#25D366]/20 text-[#25D366] font-bold px-2 py-0.5 rounded-full border border-[#25D366]/30 uppercase">
+                Şablonlu
+              </span>
+            </div>
+            <p className="text-[10px] text-stone-400">Tüm borçlu veya seçilen üreticilere özelleştirilmiş WhatsApp mesajı ve portal linki iletin</p>
+          </div>
+        </div>
+        <div className="w-8 h-8 rounded-full bg-stone-800/80 text-stone-300 flex items-center justify-center group-hover:bg-[#25D366] group-hover:text-white transition-colors shrink-0">
+          <ChevronRight size={18} />
+        </div>
+      </button>
 
       {/* Filters & Search */}
       <div className="space-y-3">
@@ -424,6 +452,26 @@ export const DebtTracking: React.FC = () => {
           </div>
         )}
       </AnimatePresence>
+
+      <DebtReminderModal
+        isOpen={isBulkMessageModalOpen}
+        onClose={() => setIsBulkMessageModalOpen(false)}
+        farmersWithDebt={farmers.map(f => ({ ...f, overallBalance: f.balance || 0 }))}
+        allFarmers={farmers}
+        currency={(userProfile?.currency as 'TRY' | 'USD' | 'EUR') || 'TRY'}
+        farmerLabel={farmerLabel}
+        engineerId={currentUser?.uid || ''}
+        companyName={userProfile?.companyName || 'MKS Mühendisim'}
+        onLogReminderSent={async (farmerId, note) => {
+          await addCollectionLog({
+            farmerId,
+            date: new Date().toISOString().split('T')[0],
+            type: 'WP_MESSAGE',
+            status: 'REMINDED',
+            note
+          });
+        }}
+      />
     </div>
   );
 };

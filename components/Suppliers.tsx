@@ -1,11 +1,12 @@
+import { createMultiPagePdf } from '../utils/pdfHelper';
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
     Truck, Plus, Trash2, Edit2, ChevronRight, ChevronLeft, 
-    Package, CreditCard, ArrowUpRight, ArrowDownRight, 
+    Package, CreditCard, ArrowUpRight, ArrowDownRight, ArrowLeft, 
     Search, Phone, MapPin, Calendar, DollarSign, 
     AlertCircle, CheckCircle2, FlaskConical, Info, X, User, RefreshCcw,
-    Receipt, Save, Barcode, Download, ArrowDownLeft, FileText, Wallet
+    Receipt, Save, Barcode, Download, ArrowDownLeft, FileText, Wallet, AlertTriangle
 } from 'lucide-react';
 import BarcodeScanner from './BarcodeScanner';
 import { jsPDF } from 'jspdf';
@@ -16,9 +17,11 @@ import { useAppViewModel } from '../context/AppContext';
 import { dbService } from '../services/db';
 import { Supplier, SupplierPurchase, SupplierPayment, PesticideCategory, InventoryItem } from '../types';
 import { formatCurrency, getCurrencySuffix } from '../utils/currency';
+import { validateTcOrVkn } from '../utils/tcNoValidator';
 import { ConfirmationModal } from './ConfirmationModal';
 import { ListSkeleton } from './Skeleton';
 import { EmptyState } from './EmptyState';
+import { turkishMatchesAny } from '../utils/search';
 
 const trToEn = (str: string) => {
     return str.replace(/Ğ/g, 'G')
@@ -101,7 +104,7 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
     });
 
     // Form States
-    const [newSupplier, setNewSupplier] = useState({ name: '', phoneNumber: '', address: '' });
+    const [newSupplier, setNewSupplier] = useState({ name: '', phoneNumber: '', tcNo: '', address: '' });
     const [newPayment, setNewPayment] = useState({ amount: '', method: 'CASH' as any, note: '', dueDate: new Date().toISOString().split('T')[0], accountId: '', installments: 1, producerCardMonths: 0, type: 'PAY' as 'PAY' | 'RECEIVE' });
     const [newPurchase, setNewPurchase] = useState<{
         items: { pesticideId: string, pesticideName: string, quantity: number, unit: string, buyingPrice: number, sellingPrice?: number }[],
@@ -123,21 +126,35 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
     // New Pesticide Form (Inside Purchase)
     const [isAddingNewPesticide, setIsAddingNewPesticide] = useState(false);
     const [newPesticide, setNewPesticide] = useState({ name: '', category: PesticideCategory.OTHER, unit: 'Adet' });
+    const [isSavingPurchase, setIsSavingPurchase] = useState(false);
+    const isSavingPurchaseRef = useRef(false);
 
     const filteredSuppliers = useMemo(() => {
-        return suppliers.filter(s => s.name.toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR')));
+        return suppliers.filter(s => 
+            turkishMatchesAny([s.name, s.phoneNumber, s.tcNo, s.address], searchTerm)
+        );
     }, [suppliers, searchTerm]);
 
     const handleAddSupplier = async () => {
         if (!newSupplier.name) return;
+        const tcCheck = validateTcOrVkn(newSupplier.tcNo);
+        if (!tcCheck.isValid) {
+            showToast(tcCheck.message, 'error');
+            return;
+        }
         await addSupplier(newSupplier);
         setIsAddModalOpen(false);
-        setNewSupplier({ name: '', phoneNumber: '', address: '' });
+        setNewSupplier({ name: '', phoneNumber: '', tcNo: '', address: '' });
         showToast('Tedarikçi başarıyla eklendi', 'success');
     };
 
     const handleUpdateSupplier = async () => {
         if (!editingSupplier || !editingSupplier.name) return;
+        const tcCheck = validateTcOrVkn(editingSupplier.tcNo);
+        if (!tcCheck.isValid) {
+            showToast(tcCheck.message, 'error');
+            return;
+        }
         await updateSupplier(editingSupplier);
         setIsEditModalOpen(false);
         setEditingSupplier(null);
@@ -145,40 +162,49 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
     };
 
     const handleAddPurchase = async (manualSupplierId?: string) => {
+        if (isSavingPurchase || isSavingPurchaseRef.current) return;
         const targetSupplierId = manualSupplierId || selectedSupplier?.id;
         if (!targetSupplierId || newPurchase.items.length === 0) return;
         
-        const totalAmount = newPurchase.items.reduce((acc, item) => acc + (item.buyingPrice * item.quantity), 0);
-        const date = new Date().toISOString();
-        
-        await addSupplierPurchase({
-            supplierId: targetSupplierId,
-            date,
-            type: 'PURCHASE',
-            receiptNo: newPurchase.receiptNo,
-            items: newPurchase.items,
-            totalAmount,
-            note: newPurchase.note,
-            createdById: activeTeamMember?.id
-        });
+        isSavingPurchaseRef.current = true;
+        setIsSavingPurchase(true);
 
-        // If it's a cash purchase, automatically add a payment
-        if (newPurchase.paymentType === 'CASH') {
-            const targetAccount = accounts.find(a => a.type === 'CASH') || accounts.find(a => a.name.includes('Nakit')) || accounts[0];
-            await addSupplierPayment({
+        try {
+            const totalAmount = newPurchase.items.reduce((acc, item) => acc + (item.buyingPrice * item.quantity), 0);
+            const date = new Date().toISOString();
+            
+            await addSupplierPurchase({
                 supplierId: targetSupplierId,
-                amount: totalAmount,
                 date,
-                method: 'CASH',
-                note: newPurchase.receiptNo ? `Peşin Alım - Fiş No: ${newPurchase.receiptNo}` : 'Peşin Alım Ödemesi',
-                createdById: activeTeamMember?.id,
-                accountId: targetAccount?.id
+                type: 'PURCHASE',
+                receiptNo: newPurchase.receiptNo,
+                items: newPurchase.items,
+                totalAmount,
+                note: newPurchase.note,
+                createdById: activeTeamMember?.id
             });
+
+            // If it's a cash purchase, automatically add a payment
+            if (newPurchase.paymentType === 'CASH') {
+                const targetAccount = accounts.find(a => a.type === 'CASH') || accounts.find(a => a.name.includes('Nakit')) || accounts[0];
+                await addSupplierPayment({
+                    supplierId: targetSupplierId,
+                    amount: totalAmount,
+                    date,
+                    method: 'CASH',
+                    note: newPurchase.receiptNo ? `Peşin Alım - Fiş No: ${newPurchase.receiptNo}` : 'Peşin Alım Ödemesi',
+                    createdById: activeTeamMember?.id,
+                    accountId: targetAccount?.id
+                });
+            }
+            
+            setIsPurchaseModalOpen(false);
+            setNewPurchase({ items: [], note: '', receiptNo: '', paymentType: 'TERM' });
+            showToast(newPurchase.paymentType === 'CASH' ? 'Peşin alım ve ödeme kaydedildi' : 'Alım başarıyla kaydedildi ve depoya aktarıldı', 'success');
+        } finally {
+            isSavingPurchaseRef.current = false;
+            setIsSavingPurchase(false);
         }
-        
-        setIsPurchaseModalOpen(false);
-        setNewPurchase({ items: [], note: '', receiptNo: '', paymentType: 'TERM' });
-        showToast(newPurchase.paymentType === 'CASH' ? 'Peşin alım ve ödeme kaydedildi' : 'Alım başarıyla kaydedildi ve depoya aktarıldı', 'success');
     };
 
     const generateSupplierReportPDF = async () => {
@@ -238,12 +264,19 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
                         const pDate = new Date(p.date);
                         if (pDate < start || pDate > end) return;
 
+                        let txType = 'Alış Faturası';
+                        if (p.type === 'SALE' || p.note?.includes('SATIŞ')) {
+                            txType = 'Tedarikçiye Satış';
+                        } else if (p.type === 'RETURN' || p.note?.includes('İADE')) {
+                            txType = 'Alış İadesi';
+                        }
+
                         ledger.push({
                             date: pDate,
-                            type: p.type === 'RETURN' ? 'Alış İadesi' : 'Alış Faturası',
+                            type: txType,
                             docNo: p.receiptNo || '-',
-                            amount: p.totalAmount || p.items.reduce((acc, i) => acc + (i.quantity * (i.buyingPrice || 0)), 0) || 0,
-                            isDebtToUs: p.type !== 'RETURN'
+                            amount: Math.abs(p.totalAmount || p.items.reduce((acc, i) => acc + (i.quantity * (i.buyingPrice || 0)), 0) || 0),
+                            isDebtToUs: !(p.type === 'RETURN' || p.type === 'SALE' || (p.totalAmount && p.totalAmount < 0))
                         });
                     });
 
@@ -329,14 +362,7 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
 
                 document.body.removeChild(container);
                 
-                const imgData = canvas.toDataURL('image/jpeg', 0.95);
-                const pdf = new jsPDF({
-                    orientation: canvas.width > canvas.height ? 'l' : 'p',
-                    unit: 'px',
-                    format: [canvas.width, canvas.height]
-                });
-                
-                pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+                const pdf = createMultiPagePdf(canvas);
                 pdf.save(`Tedarikci_Raporu_${format(new Date(), 'yyyyMMdd_HHmm')}.pdf`);
                 
                 setIsGeneratingReport(false);
@@ -386,6 +412,7 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
         await addSupplierPurchase({
             supplierId: targetSupplierId,
             date: new Date().toISOString(),
+            type: 'SALE',
             receiptNo: newSale.receiptNo,
             items: saleItems,
             totalAmount: -Math.abs(totalAmount),
@@ -400,41 +427,53 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
 
     const [editingPayment, setEditingPayment] = useState<SupplierPayment | null>(null);
 
+    const [isSavingPayment, setIsSavingPayment] = useState(false);
+    const isSavingPaymentRef = useRef(false);
+
     const handleAddPayment = async () => {
+        if (isSavingPayment || isSavingPaymentRef.current) return;
         if (!selectedSupplier || !newPayment.amount) return;
         
-        const parseFloatSafe = (val: string | number) => parseFloat(String(val).replace(',', '.')) || 0;
-        
-        if (editingPayment) {
-            await updateSupplierPayment({
-                ...editingPayment,
-                amount: parseFloatSafe(newPayment.amount),
-                method: newPayment.method,
-                dueDate: (newPayment.method === 'CHECK' || newPayment.method === 'PROMISSORY_NOTE') ? newPayment.dueDate : undefined,
-                note: newPayment.note,
-                accountId: newPayment.accountId || undefined
-            });
-            showToast('Ödeme güncellendi', 'success');
-        } else {
-            await addSupplierPayment({
-                supplierId: selectedSupplier.id,
-                amount: parseFloatSafe(newPayment.amount),
-                date: new Date().toISOString(),
-                method: newPayment.method,
-                dueDate: (newPayment.method === 'CHECK' || newPayment.method === 'PROMISSORY_NOTE') ? newPayment.dueDate : undefined,
-                note: newPayment.note,
-                accountId: newPayment.accountId || undefined,
-                createdById: activeTeamMember?.id,
-                installments: newPayment.method === 'CARD' ? newPayment.installments : undefined,
-                producerCardMonths: newPayment.method === 'CARD' ? newPayment.producerCardMonths : undefined,
-                type: newPayment.type
-            });
-            showToast('Ödeme kaydedildi', 'success');
+        isSavingPaymentRef.current = true;
+        setIsSavingPayment(true);
+
+        try {
+            const parseFloatSafe = (val: string | number) => parseFloat(String(val).replace(',', '.')) || 0;
+            
+            if (editingPayment) {
+                await updateSupplierPayment({
+                    ...editingPayment,
+                    amount: parseFloatSafe(newPayment.amount),
+                    method: newPayment.method,
+                    dueDate: (newPayment.method === 'CHECK' || newPayment.method === 'PROMISSORY_NOTE') ? newPayment.dueDate : undefined,
+                    note: newPayment.note,
+                    accountId: newPayment.accountId || undefined
+                });
+                showToast('Ödeme güncellendi', 'success');
+            } else {
+                await addSupplierPayment({
+                    supplierId: selectedSupplier.id,
+                    amount: parseFloatSafe(newPayment.amount),
+                    date: new Date().toISOString(),
+                    method: newPayment.method,
+                    dueDate: (newPayment.method === 'CHECK' || newPayment.method === 'PROMISSORY_NOTE') ? newPayment.dueDate : undefined,
+                    note: newPayment.note,
+                    accountId: newPayment.accountId || undefined,
+                    createdById: activeTeamMember?.id,
+                    installments: newPayment.method === 'CARD' ? newPayment.installments : undefined,
+                    producerCardMonths: newPayment.method === 'CARD' ? newPayment.producerCardMonths : undefined,
+                    type: newPayment.type
+                });
+                showToast('Ödeme kaydedildi', 'success');
+            }
+            
+            setIsPaymentModalOpen(false);
+            setEditingPayment(null);
+            setNewPayment({ amount: '', method: 'CASH', note: '', dueDate: new Date().toISOString().split('T')[0], accountId: '', installments: 1, producerCardMonths: 0, type: 'PAY' });
+        } finally {
+            isSavingPaymentRef.current = false;
+            setIsSavingPayment(false);
         }
-        
-        setIsPaymentModalOpen(false);
-        setEditingPayment(null);
-        setNewPayment({ amount: '', method: 'CASH', note: '', dueDate: new Date().toISOString().split('T')[0], accountId: '', installments: 1, producerCardMonths: 0, type: 'PAY' });
     };
 
     const handleEditPayment = (payment: SupplierPayment) => {
@@ -644,9 +683,13 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
                                 </div>
                                 <div>
                                     <h3 className="font-black text-stone-100 text-base tracking-tight">{supplier.name}</h3>
-                                    <div className="flex items-center gap-1.5 text-stone-500 text-[10px] font-bold uppercase tracking-widest mt-0.5">
-                                        <Phone size={10} />
-                                        {supplier.phoneNumber || 'Telefon Yok'}
+                                    <div className="flex items-center gap-2 text-stone-500 text-[10px] font-bold uppercase tracking-widest mt-0.5 flex-wrap">
+                                        <span className="flex items-center gap-1"><Phone size={10} />{supplier.phoneNumber || 'Telefon Yok'}</span>
+                                        {supplier.tcNo && (
+                                            <span className="text-stone-400 font-mono text-[10px] bg-stone-950/60 px-1.5 py-0.5 rounded border border-white/5">
+                                                TC: {supplier.tcNo}
+                                            </span>
+                                        )}
                                     </div>
                                 </div>
                             </div>
@@ -764,6 +807,30 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
                                 />
                             </div>
                             <div>
+                                <div className="flex justify-between items-center mb-1.5">
+                                    <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest ml-1 block">T.C. veya Vergi Kimlik No (VKN)</label>
+                                    {newSupplier.tcNo && newSupplier.tcNo.trim().length > 0 && (
+                                        <span className={`text-[10px] font-bold font-mono ${validateTcOrVkn(newSupplier.tcNo).isValid ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                            {newSupplier.tcNo.trim().length} Hane
+                                        </span>
+                                    )}
+                                </div>
+                                <input 
+                                    type="text"
+                                    maxLength={11}
+                                    className={`w-full bg-stone-950 border ${newSupplier.tcNo && newSupplier.tcNo.trim().length > 0 ? (validateTcOrVkn(newSupplier.tcNo).isValid ? 'border-emerald-500 text-emerald-300 bg-emerald-950/20 focus:border-emerald-500 ring-2 ring-emerald-500/20' : 'border-rose-500 text-rose-300 bg-rose-950/40 focus:border-rose-500 ring-2 ring-rose-500/20') : 'border-white/5 text-stone-100 focus:border-emerald-500/50'} rounded-2xl p-4 text-sm outline-none transition-all font-mono`}
+                                    placeholder="11 haneli T.C. veya 10 haneli VKN"
+                                    value={newSupplier.tcNo || ''}
+                                    onChange={(e) => setNewSupplier({...newSupplier, tcNo: e.target.value.replace(/[^0-9]/g, '')})}
+                                />
+                                {newSupplier.tcNo && newSupplier.tcNo.trim().length > 0 && (
+                                    <p className={`text-[10px] font-bold ${validateTcOrVkn(newSupplier.tcNo).isValid ? 'text-emerald-400 bg-emerald-950/40 border-emerald-500/30' : 'text-rose-400 bg-rose-950/50 border-rose-500/30'} mt-1.5 flex items-center gap-1.5 border p-2 rounded-xl`}>
+                                        {validateTcOrVkn(newSupplier.tcNo).isValid ? <CheckCircle2 size={12} className="shrink-0 text-emerald-400" /> : <AlertTriangle size={12} className="shrink-0 text-rose-400" />}
+                                        <span>{validateTcOrVkn(newSupplier.tcNo).message}</span>
+                                    </p>
+                                )}
+                            </div>
+                            <div>
                                 <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest ml-1 mb-1.5 block">Telefon</label>
                                 <input 
                                     type="tel" 
@@ -792,7 +859,8 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
                             </button>
                             <button 
                                 onClick={handleAddSupplier}
-                                className="flex-1 py-4 bg-emerald-600 text-white rounded-2xl font-bold text-sm active:scale-95 transition-all shadow-lg shadow-emerald-900/20"
+                                disabled={!newSupplier.name || !validateTcOrVkn(newSupplier.tcNo).isValid}
+                                className={`flex-1 py-4 rounded-2xl font-bold text-sm transition-all ${!validateTcOrVkn(newSupplier.tcNo).isValid ? 'bg-stone-800 text-stone-500 cursor-not-allowed opacity-60' : 'bg-emerald-600 text-white active:scale-95 shadow-lg shadow-emerald-900/20'}`}
                             >
                                 Kaydet
                             </button>
@@ -818,6 +886,30 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
                                     value={editingSupplier.name}
                                     onChange={(e) => setEditingSupplier({...editingSupplier, name: e.target.value})}
                                 />
+                            </div>
+                            <div>
+                                <div className="flex justify-between items-center mb-1.5">
+                                    <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest ml-1 block">T.C. veya Vergi Kimlik No (VKN)</label>
+                                    {editingSupplier.tcNo && editingSupplier.tcNo.trim().length > 0 && (
+                                        <span className={`text-[10px] font-bold font-mono ${validateTcOrVkn(editingSupplier.tcNo).isValid ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                            {editingSupplier.tcNo.trim().length} Hane
+                                        </span>
+                                    )}
+                                </div>
+                                <input 
+                                    type="text"
+                                    maxLength={11}
+                                    className={`w-full bg-stone-950 border ${editingSupplier.tcNo && editingSupplier.tcNo.trim().length > 0 ? (validateTcOrVkn(editingSupplier.tcNo).isValid ? 'border-emerald-500 text-emerald-300 bg-emerald-950/20 focus:border-emerald-500 ring-2 ring-emerald-500/20' : 'border-rose-500 text-rose-300 bg-rose-950/40 focus:border-rose-500 ring-2 ring-rose-500/20') : 'border-white/5 text-stone-100 focus:border-emerald-500/50'} rounded-2xl p-4 text-sm outline-none transition-all font-mono`}
+                                    placeholder="11 haneli T.C. veya 10 haneli VKN"
+                                    value={editingSupplier.tcNo || ''}
+                                    onChange={(e) => setEditingSupplier({...editingSupplier, tcNo: e.target.value.replace(/[^0-9]/g, '')})}
+                                />
+                                {editingSupplier.tcNo && editingSupplier.tcNo.trim().length > 0 && (
+                                    <p className={`text-[10px] font-bold ${validateTcOrVkn(editingSupplier.tcNo).isValid ? 'text-emerald-400 bg-emerald-950/40 border-emerald-500/30' : 'text-rose-400 bg-rose-950/50 border-rose-500/30'} mt-1.5 flex items-center gap-1.5 border p-2 rounded-xl`}>
+                                        {validateTcOrVkn(editingSupplier.tcNo).isValid ? <CheckCircle2 size={12} className="shrink-0 text-emerald-400" /> : <AlertTriangle size={12} className="shrink-0 text-rose-400" />}
+                                        <span>{validateTcOrVkn(editingSupplier.tcNo).message}</span>
+                                    </p>
+                                )}
                             </div>
                             <div>
                                 <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest ml-1 mb-1.5 block">Telefon</label>
@@ -846,7 +938,8 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
                             </button>
                             <button 
                                 onClick={handleUpdateSupplier}
-                                className="flex-1 py-4 bg-emerald-600 text-white rounded-2xl font-bold text-sm active:scale-95 transition-all shadow-lg shadow-emerald-900/20"
+                                disabled={!editingSupplier.name || !validateTcOrVkn(editingSupplier.tcNo).isValid}
+                                className={`flex-1 py-4 rounded-2xl font-bold text-sm transition-all ${!validateTcOrVkn(editingSupplier.tcNo).isValid ? 'bg-stone-800 text-stone-500 cursor-not-allowed opacity-60' : 'bg-emerald-600 text-white active:scale-95 shadow-lg shadow-emerald-900/20'}`}
                             >
                                 Güncelle
                             </button>
@@ -984,8 +1077,22 @@ const SupplierDetailView = ({
         onConfirm: () => {}
     });
 
-    const totalAlinan = purchases.reduce((acc, p) => acc + (p.totalAmount > 0 ? p.totalAmount : 0), 0);
-    const totalOdenen = purchases.reduce((acc, p) => acc + (p.totalAmount < 0 ? Math.abs(p.totalAmount) : 0), 0) + payments.reduce((acc: any, p: any) => acc + (p.amount || 0), 0);
+    const totalAlinan = purchases.reduce((acc, p) => {
+        const isSale = p.type === 'SALE' || p.note?.includes('SATIŞ');
+        const isReturn = p.type === 'RETURN' || (p.note?.includes('İADE') && !isSale);
+        if (isSale || isReturn) return acc;
+        return acc + (p.totalAmount > 0 ? p.totalAmount : 0);
+    }, 0);
+
+    const totalOdenen = purchases.reduce((acc, p) => {
+        const isSale = p.type === 'SALE' || p.note?.includes('SATIŞ');
+        const isReturn = p.type === 'RETURN' || (p.note?.includes('İADE') && !isSale);
+        if (isSale || isReturn || (p.totalAmount && p.totalAmount < 0)) {
+            return acc + Math.abs(p.totalAmount || 0);
+        }
+        return acc;
+    }, 0) + payments.reduce((acc: any, p: any) => acc + (p.amount || 0), 0);
+
     const kalanBakiye = totalAlinan - totalOdenen;
 
     const loadData = async () => {
@@ -1036,15 +1143,25 @@ const SupplierDetailView = ({
                 const periodBalance = totalCredit - totalDebt;
 
                 const allTransactions = [
-                    ...filteredPurchases.map(p => ({
-                        date: new Date(p.date),
-                        type: p.totalAmount < 0 ? (p.note?.includes('SATIŞ') ? 'Satış' : 'İade') : 'Alım',
-                        desc: reportOptions.type === 'DETAILED' 
-                            ? (p.items || []).map(i => `${i.pesticideName} (${i.quantity} ${i.unit})`).join(', ') + (p.note ? ` - ${p.note}` : '')
-                            : p.note || (p.receiptNo ? `Fiş No: ${p.receiptNo}` : '-'),
-                        debt: p.totalAmount > 0 ? p.totalAmount : 0,
-                        credit: p.totalAmount < 0 ? Math.abs(p.totalAmount) : 0
-                    })),
+                    ...filteredPurchases.map(p => {
+                        const receiptBadge = p.receiptNo ? `<span style="background-color: #18181b; color: #ffffff; font-family: monospace; font-weight: 800; padding: 2px 7px; border-radius: 4px; font-size: 11px; display: inline-block; margin-bottom: 3px;">Fatura/Fiş No: ${p.receiptNo}</span>` : '';
+                        const itemsStr = (p.items || []).map(i => `${i.pesticideName} <b style="background-color: #fef3c7; color: #78350f; border: 1px solid #fde68a; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-family: monospace;">(${i.quantity} ${i.unit})</b>`).join(', ');
+                        
+                        let descHtml = '';
+                        if (reportOptions.type === 'DETAILED') {
+                            descHtml = `${receiptBadge ? receiptBadge + '<br/>' : ''}${itemsStr}${p.note ? ` <span style="color:#71717a;">(${p.note})</span>` : ''}`;
+                        } else {
+                            descHtml = receiptBadge || p.note || '-';
+                        }
+
+                        return {
+                            date: new Date(p.date),
+                            type: (p.type === 'SALE' || p.note?.includes('SATIŞ')) ? 'Tedarikçiye Satış' : ((p.type === 'RETURN' || p.note?.includes('İADE')) ? 'Ürün İadesi' : 'Ürün Alımı'),
+                            desc: descHtml,
+                            debt: p.totalAmount > 0 ? p.totalAmount : 0,
+                            credit: p.totalAmount < 0 ? Math.abs(p.totalAmount) : 0
+                        };
+                    }),
                     ...filteredPayments.map((p: any) => {
                         let type = 'Ödeme';
                         let method = p.method || '';
@@ -1098,6 +1215,7 @@ const SupplierDetailView = ({
                         <div style="background-color: #fafaf9; border: 1px solid #e7e5e4; border-radius: 8px; padding: 16px; margin-bottom: 24px; display: flex; justify-content: space-between;">
                             <div>
                                 <h3 style="font-size: 16px; font-weight: 700; margin: 0 0 8px 0; color: #1c1917;">${supplier.name}</h3>
+                                ${supplier.tcNo ? `<p style="margin: 0 0 4px 0; font-size: 12px; color: #57534e;"><strong>T.C. No:</strong> ${supplier.tcNo}</p>` : ''}
                                 ${supplier.phoneNumber ? `<p style="margin: 0 0 4px 0; font-size: 12px; color: #57534e;"><strong>Tel:</strong> ${supplier.phoneNumber}</p>` : ''}
                                 ${supplier.address ? `<p style="margin: 0; font-size: 12px; color: #57534e;"><strong>Adres:</strong> ${supplier.address}</p>` : ''}
                             </div>
@@ -1182,15 +1300,7 @@ const SupplierDetailView = ({
 
                 document.body.removeChild(container);
                 
-                const imgData = canvas.toDataURL('image/jpeg', 0.95);
-                
-                const doc = new jsPDF({
-                    orientation: canvas.width > canvas.height ? 'l' : 'p',
-                    unit: 'px',
-                    format: [canvas.width, canvas.height]
-                });
-                
-                doc.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+                const doc = createMultiPagePdf(canvas);
                 doc.save(`${supplier.name.replace(/\s+/g, '_')}_Ekstre_${reportOptions.type}.pdf`);
                 
                 showToast('Rapor başarıyla oluşturuldu', 'success');
@@ -1267,20 +1377,31 @@ const SupplierDetailView = ({
 
     // Unique products purchased from this supplier
     const purchasedProducts = useMemo(() => {
-        const productMap = new Map<string, { id: string, name: string, totalQty: number, unit: string }>();
+        const productMap = new Map<string, { id: string, name: string, totalQty: number, returnedQty: number, soldQty: number, unit: string }>();
         purchases.forEach(p => {
+            const isSale = p.type === 'SALE' || p.note?.includes('SATIŞ');
+            const isReturn = p.type === 'RETURN' || (p.note?.includes('İADE') && !isSale);
+
             (p.items || []).forEach(item => {
-                const existing = productMap.get(item.pesticideId);
-                if (existing) {
-                    existing.totalQty += item.quantity;
+                const qty = Math.abs(item.quantity || 0);
+                const existing = productMap.get(item.pesticideId) || { 
+                    id: item.pesticideId, 
+                    name: item.pesticideName, 
+                    totalQty: 0,
+                    returnedQty: 0,
+                    soldQty: 0,
+                    unit: item.unit
+                };
+
+                if (isSale) {
+                    existing.soldQty += qty;
+                } else if (isReturn) {
+                    existing.returnedQty += qty;
                 } else {
-                    productMap.set(item.pesticideId, { 
-                        id: item.pesticideId, 
-                        name: item.pesticideName, 
-                        totalQty: item.quantity,
-                        unit: item.unit
-                    });
+                    existing.totalQty += qty;
                 }
+
+                productMap.set(item.pesticideId, existing);
             });
         });
         return Array.from(productMap.values());
@@ -1446,9 +1567,19 @@ const SupplierDetailView = ({
                                                 </div>
                                                 <div>
                                                     <h4 className="font-bold text-stone-200 text-sm">{product.name}</h4>
-                                                    <div className="flex items-center gap-2 mt-1">
+                                                    <div className="flex items-center gap-2 mt-1 flex-wrap">
                                                         <span className="text-[9px] font-bold text-stone-500 uppercase tracking-wider">Toplam Alınan:</span>
                                                         <span className="text-[10px] font-black text-stone-300 font-mono">{product.totalQty} {product.unit}</span>
+                                                        {product.returnedQty > 0 && (
+                                                            <span className="text-[9px] font-bold text-rose-400 bg-rose-950/60 px-1.5 py-0.5 rounded border border-rose-500/20">
+                                                                İade: {product.returnedQty} {product.unit}
+                                                            </span>
+                                                        )}
+                                                        {product.soldQty > 0 && (
+                                                            <span className="text-[9px] font-bold text-indigo-400 bg-indigo-950/60 px-1.5 py-0.5 rounded border border-indigo-500/20">
+                                                                Tedarikçiye Satış: {product.soldQty} {product.unit}
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </div>
                                             </div>
@@ -1487,15 +1618,15 @@ const SupplierDetailView = ({
                                     <div key={purchase.id} className="bg-stone-900/40 border border-white/5 rounded-2xl p-4">
                                         <div className="flex justify-between items-start mb-2">
                                             <div className="flex items-center gap-2">
-                                                <div className={`p-1.5 rounded-lg ${purchase.totalAmount < 0 ? (purchase.note?.startsWith('SATIŞ') ? 'bg-indigo-500/10 text-indigo-500' : 'bg-rose-500/10 text-rose-500') : 'bg-emerald-500/10 text-emerald-500'}`}>
-                                                    {purchase.totalAmount < 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
+                                                <div className={`p-1.5 rounded-lg ${purchase.type === 'SALE' || purchase.note?.includes('SATIŞ') ? 'bg-indigo-500/10 text-indigo-400' : ((purchase.type === 'RETURN' || purchase.note?.includes('İADE')) ? 'bg-rose-500/10 text-rose-400' : 'bg-emerald-500/10 text-emerald-400')}`}>
+                                                    {(purchase.type === 'SALE' || purchase.note?.includes('SATIŞ')) ? <ArrowUpRight size={14} /> : ((purchase.type === 'RETURN' || purchase.note?.includes('İADE')) ? <ArrowLeft size={14} /> : <ArrowDownRight size={14} />)}
                                                 </div>
                                                 <div className="flex flex-col">
                                                     <span className="text-[10px] font-black text-stone-300 uppercase tracking-wider">
-                                                        {purchase.totalAmount < 0 ? (purchase.note?.startsWith('SATIŞ') ? 'Tedarikçiye Satış' : 'Ürün İadesi') : 'Ürün Alımı'}
+                                                        {(purchase.type === 'SALE' || purchase.note?.includes('SATIŞ')) ? 'Tedarikçiye Satış' : ((purchase.type === 'RETURN' || purchase.note?.includes('İADE')) ? 'Ürün İadesi' : 'Ürün Alımı')}
                                                     </span>
                                                     {purchase.receiptNo && (
-                                                        <span className={`text-[8px] font-bold uppercase tracking-widest ${purchase.totalAmount < 0 ? (purchase.note?.startsWith('SATIŞ') ? 'text-indigo-500' : 'text-rose-500') : 'text-emerald-500'}`}>Fiş No: {purchase.receiptNo}</span>
+                                                        <span className={`text-[8px] font-bold uppercase tracking-widest ${(purchase.type === 'SALE' || purchase.note?.includes('SATIŞ')) ? 'text-indigo-400' : ((purchase.type === 'RETURN' || purchase.note?.includes('İADE')) ? 'text-rose-400' : 'text-emerald-400')}`}>Fiş No: {purchase.receiptNo}</span>
                                                     )}
                                                 </div>
                                             </div>
@@ -1525,15 +1656,15 @@ const SupplierDetailView = ({
                                         <div className="space-y-1.5 mb-3">
                                             {purchase.items.map((item, idx) => (
                                                 <div key={idx} className="flex justify-between text-[11px]">
-                                                    <span className="text-stone-400">{item.pesticideName} ({item.quantity} {item.unit})</span>
-                                                    <span className="text-stone-500 font-mono">{formatCurrency(item.buyingPrice * item.quantity, userProfile?.currency || 'TRY')}</span>
+                                                    <span className="text-stone-400">{item.pesticideName} ({Math.abs(item.quantity)} {item.unit})</span>
+                                                    <span className="text-stone-500 font-mono">{formatCurrency(Math.abs(item.buyingPrice * item.quantity), userProfile?.currency || 'TRY')}</span>
                                                 </div>
                                             ))}
                                         </div>
                                         <div className="pt-2 border-t border-white/5 flex justify-between items-center">
                                             <span className="text-[10px] font-black text-stone-500 uppercase tracking-widest">Toplam</span>
-                                            <span className={`text-sm font-black font-mono ${purchase.totalAmount < 0 ? 'text-emerald-400' : 'text-stone-100'}`}>
-                                                {purchase.totalAmount < 0 ? '+' : ''}{formatCurrency(Math.abs(purchase.totalAmount), userProfile?.currency || 'TRY')}
+                                            <span className={`text-sm font-black font-mono ${(purchase.type === 'SALE' || purchase.note?.includes('SATIŞ')) ? 'text-indigo-400' : ((purchase.type === 'RETURN' || purchase.note?.includes('İADE')) ? 'text-rose-400' : 'text-emerald-400')}`}>
+                                                {(purchase.type === 'SALE' || purchase.type === 'RETURN' || purchase.note?.includes('SATIŞ') || purchase.note?.includes('İADE') || purchase.totalAmount < 0) ? '+' : ''}{formatCurrency(Math.abs(purchase.totalAmount), userProfile?.currency || 'TRY')}
                                             </span>
                                         </div>
                                     </div>

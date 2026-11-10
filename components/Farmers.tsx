@@ -1,3 +1,4 @@
+import { createMultiPagePdf } from '../utils/pdfHelper';
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { dbService } from '../services/db';
@@ -6,7 +7,8 @@ import { useAuth } from '../context/AuthContext';
 import { ContactService, ContactInfo } from '../services/contact';
 import { Farmer, VisitLog, Prescription, ManualDebt, Payment, Pesticide } from '../types';
 import { COMMON_CROPS, CROP_PESTICIDE_COSTS, DEFAULT_PESTICIDE_COST, CROP_AGRONOMY_INTEL, DEFAULT_AGRONOMY } from '../constants';
-import { Search, Phone, MessageCircle, MapPin, Wheat, ChevronLeft, ChevronRight, Contact, Loader2, User, Ruler, FileText, Calendar, Navigation, Plus, X, ArrowLeft, Edit2, Trash2, CheckSquare, Square, Check, FlaskConical, Clock, ImageIcon, Upload, AlertCircle, MessageSquare, Share2, Save, Download, FileJson, RefreshCw, RefreshCcw, Wallet, History, CreditCard, TrendingDown, TrendingUp as TrendingUpIcon, Send, Copy, ClipboardList, AlertTriangle, Sprout, Info, Scale, ShieldAlert, ShieldCheck, Hammer, ClipboardCheck } from 'lucide-react';
+import { Search, Phone, MessageCircle, MapPin, Wheat, ChevronLeft, ChevronRight, Contact, Loader2, User, Ruler, FileText, Calendar, Navigation, Plus, X, ArrowLeft, Edit2, Trash2, CheckSquare, Square, Check, FlaskConical, Clock, ImageIcon, Upload, AlertCircle, MessageSquare, Share2, Save, Download, FileJson, RefreshCw, RefreshCcw, Wallet, History, CreditCard, TrendingDown, TrendingUp as TrendingUpIcon, Send, Copy, ClipboardList, AlertTriangle, Sprout, Info, Scale, ShieldAlert, ShieldCheck, Hammer, ClipboardCheck, CheckCircle2 } from 'lucide-react';
+import { validateTcOrVkn } from '../utils/tcNoValidator';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
@@ -15,6 +17,9 @@ import { ConfirmationModal } from './ConfirmationModal';
 import { ListSkeleton } from './Skeleton';
 import { EmptyState } from './EmptyState';
 import { DebtReminderModal } from './DebtReminderModal';
+import { FarmerFinancialAnalysisModal } from './FarmerFinancialAnalysisModal';
+import { RealisticStamp } from './RealisticStamp';
+import { turkishMatchesAny } from '../utils/search';
 
 interface FarmersProps {
   onBack: () => void;
@@ -43,6 +48,7 @@ interface FarmerModalProps {
         fullName: string;
         phoneNumber: string;
         village: string;
+        tcNo?: string;
         fields: { id: string; name: string; size: string; crop: string; plantingDate?: string; currentStage?: string; }[];
     };
     setData: (data: any) => void;
@@ -53,6 +59,11 @@ interface FarmerModalProps {
 
 const FarmerModal: React.FC<FarmerModalProps> = ({ isOpen, onClose, mode, isSaving, data, setData, onSave, onDelete, farmerLabel }) => {
     if (!isOpen) return null;
+
+    const tcNoVal = (data.tcNo || '').trim();
+    const tcValidation = validateTcOrVkn(data.tcNo);
+    const hasTcInput = tcNoVal.length > 0;
+    const isTcValid = tcValidation.isValid;
 
     const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const val = e.target.value;
@@ -92,6 +103,33 @@ const FarmerModal: React.FC<FarmerModalProps> = ({ isOpen, onClose, mode, isSavi
             <form onSubmit={onSave} className="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-4">
               <div className="space-y-2.5">
                 <div><label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Ad Soyad</label><input required type="text" value={data.fullName} onChange={e => setData({...data, fullName: e.target.value})} className="w-full p-2 bg-stone-950 border border-stone-800 rounded-xl outline-none font-medium text-white text-xs focus:border-emerald-500/50 transition-all" placeholder="İsim" /></div>
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">T.C. Kimlik Numarası</label>
+                    {hasTcInput && (
+                      <span className={`text-[9px] font-bold font-mono ${isTcValid ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {tcNoVal.length}/11 Hane
+                      </span>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    maxLength={11}
+                    value={data.tcNo || ''}
+                    onChange={e => {
+                      const val = e.target.value.replace(/[^0-9]/g, '');
+                      setData({ ...data, tcNo: val });
+                    }}
+                    className={`w-full p-2 bg-stone-950 border ${hasTcInput ? (isTcValid ? 'border-emerald-500 text-emerald-300 bg-emerald-950/20 focus:border-emerald-500 ring-2 ring-emerald-500/20' : 'border-rose-500 text-rose-300 bg-rose-950/40 focus:border-rose-500 ring-2 ring-rose-500/20') : 'border-stone-800 text-white focus:border-emerald-500/50'} rounded-xl outline-none font-medium text-xs transition-all font-mono`}
+                    placeholder="11 haneli T.C. Kimlik No"
+                  />
+                  {hasTcInput && (
+                    <p className={`text-[10px] font-bold ${isTcValid ? 'text-emerald-400 bg-emerald-950/40 border-emerald-500/30' : 'text-rose-400 bg-rose-950/50 border-rose-500/30'} mt-1.5 flex items-center gap-1.5 border p-2 rounded-lg`}>
+                      {isTcValid ? <CheckCircle2 size={12} className="shrink-0 text-emerald-400" /> : <AlertTriangle size={12} className="shrink-0 text-rose-400" />}
+                      <span>{tcValidation.message}</span>
+                    </p>
+                  )}
+                </div>
                 <div className="grid grid-cols-2 gap-2.5">
                     <div><label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Telefon</label><input required type="tel" value={data.phoneNumber} onChange={handlePhoneChange} className="w-full p-2 bg-stone-950 border border-stone-800 rounded-xl outline-none font-medium text-white text-xs focus:border-emerald-500/50 transition-all" /></div>
                     <div><label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Köy</label><input required type="text" value={data.village} onChange={e => setData({...data, village: e.target.value})} className="w-full p-2 bg-stone-950 border border-stone-800 rounded-xl outline-none font-medium text-white text-xs focus:border-emerald-500/50 transition-all" /></div>
@@ -189,7 +227,7 @@ const FarmerModal: React.FC<FarmerModalProps> = ({ isOpen, onClose, mode, isSavi
                         <Trash2 size={16} />
                     </button>
                 )}
-                <button disabled={isSaving} type="submit" className="flex-1 bg-emerald-700 text-white py-3.5 rounded-2xl font-bold text-xs shadow-xl shadow-emerald-900/20 flex justify-center items-center active:scale-95 transition-all border border-emerald-500/20">
+                <button disabled={isSaving || (hasTcInput && !isTcValid)} type="submit" className={`flex-1 ${(hasTcInput && !isTcValid) ? 'bg-stone-800 text-stone-500 border-stone-700 cursor-not-allowed opacity-60' : 'bg-emerald-700 text-white border-emerald-500/20 shadow-xl shadow-emerald-900/20 active:scale-95'} py-3.5 rounded-2xl font-bold text-xs flex justify-center items-center transition-all border`}>
                     {isSaving ? <Loader2 size={18} className="animate-spin" /> : `${farmerLabel}yi Kaydet`}
                 </button>
               </div>
@@ -213,6 +251,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
     prescriptions, 
     manualDebts, 
     myPayments,
+    plants,
     bulkAddFarmers, 
     addFarmer, 
     updateFarmer, 
@@ -257,6 +296,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   });
 
   const [isDebtReminderModalOpen, setIsDebtReminderModalOpen] = useState(false);
+  const [isFinancialAnalysisOpen, setIsFinancialAnalysisOpen] = useState(false);
 
   // Sync with prop
   useEffect(() => {
@@ -376,6 +416,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       fullName: '',
       phoneNumber: '+90 ',
       village: '',
+      tcNo: '',
       fields: [{ id: crypto.randomUUID() as string, name: '', size: '', crop: '', plantingDate: '', currentStage: '' }]
   });
   
@@ -400,11 +441,15 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentNote, setPaymentNote] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CHECK' | 'TEDYE'>('CASH');
+  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CARD' | 'CHECK' | 'TEDYE'>('CASH');
+  const [cardOption, setCardOption] = useState<'UNBLOCKED' | 'DAYS_15' | 'DAYS_30' | 'DAYS_45'>('UNBLOCKED');
+  const [commissionRate, setCommissionRate] = useState('4');
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedAccountId, setSelectedAccountId] = useState('');
   const [isSavingPayment, setIsSavingPayment] = useState(false);
+  const isSavingPaymentRef = useRef(false);
   const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
+  const [paymentCrop, setPaymentCrop] = useState('');
 
   // Manual Debt Modal State
   const [isManualDebtModalOpen, setIsManualDebtModalOpen] = useState(false);
@@ -413,11 +458,13 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const [debtNote, setDebtNote] = useState('');
   const [debtDate, setDebtDate] = useState(new Date().toISOString().split('T')[0]);
   const [isSavingDebt, setIsSavingDebt] = useState(false);
+  const isSavingDebtRef = useRef(false);
 
   // Return Modal State
   const [isReturnModalOpen, setIsReturnModalOpen] = useState(false);
   const [returnItems, setReturnItems] = useState<{ pesticideId: string, pesticideName: string, quantity: number, unitPrice: number }[]>([]);
   const [isSavingReturn, setIsSavingReturn] = useState(false);
+  const isSavingReturnRef = useRef(false);
   const [returnSearchTerm, setReturnSearchTerm] = useState('');
 
   // Report Modal State
@@ -513,23 +560,55 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()), 
   [payments, selectedFarmer]);
   
+  const currentYear = useMemo(() => new Date().getFullYear(), []);
+
   // Calculate available years for filtering
   const availableYears = useMemo(() => {
       const years = new Set<number>();
-      years.add(new Date().getFullYear());
-      
-      farmerPrescriptions.forEach(p => years.add(new Date(p.date).getFullYear()));
-      farmerPayments.forEach(p => years.add(new Date(p.date).getFullYear()));
-      farmerManualDebts.forEach(d => years.add(new Date(d.date).getFullYear()));
+      years.add(currentYear);
+      for (let y = currentYear; y >= currentYear - 4; y--) {
+          years.add(y);
+      }
+      farmerPrescriptions.forEach(p => {
+          const y = new Date(p.date).getFullYear();
+          if (!isNaN(y)) years.add(y);
+      });
+      farmerPayments.forEach(p => {
+          const y = new Date(p.date).getFullYear();
+          if (!isNaN(y)) years.add(y);
+      });
+      farmerManualDebts.forEach(d => {
+          const y = new Date(d.date).getFullYear();
+          if (!isNaN(y)) years.add(y);
+      });
       
       return Array.from(years).sort((a, b) => b - a);
-  }, [farmerPrescriptions, farmerPayments, farmerManualDebts]);
+  }, [currentYear, farmerPrescriptions, farmerPayments, farmerManualDebts]);
 
   const availableCrops = useMemo(() => {
-    if (!selectedFarmer?.fields) return [];
-    const crops = new Set(selectedFarmer.fields.map(f => f.crop).filter(Boolean));
-    return Array.from(crops).sort();
-  }, [selectedFarmer]);
+    if (!selectedFarmer) return [];
+    const crops = new Set<string>();
+
+    // 1. Farmer's fields
+    if (selectedFarmer.fields) {
+      selectedFarmer.fields.forEach(f => {
+        if (f.crop && f.crop.trim()) crops.add(f.crop.trim());
+      });
+    }
+
+    // 2. Farmer's prescriptions / sales
+    farmerPrescriptions.forEach(p => {
+      const c = (p.crop || p.cropName || (plants?.find(pl => pl.id === p.plantId)?.name))?.trim();
+      if (c) crops.add(c);
+    });
+
+    // 3. Farmer's payments with crop
+    farmerPayments.forEach(p => {
+      if (p.crop && p.crop.trim()) crops.add(p.crop.trim());
+    });
+
+    return Array.from(crops).sort((a, b) => a.localeCompare(b, 'tr'));
+  }, [selectedFarmer, farmerPrescriptions, farmerPayments, plants]);
 
   const reportItems = useMemo(() => {
     if (!selectedFarmer) return [];
@@ -538,17 +617,21 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
     return [
         ...farmerPrescriptions.map(p => {
             const isReturn = p.type === 'RETURN' || (p.totalAmount || 0) < 0;
+            const pCrop = p.crop || p.cropName || (plants?.find(pl => pl.id === p.plantId)?.name);
             return { 
                 ...p, 
                 type: p.priceType === 'CASH' ? 'CASH' : 'DEBT', 
                 label: p.priceType === 'CASH' ? 'Peşin Satış' : (isReturn ? 'İade Makbuzu' : `${prescriptionLabel} Satışı`),
-                note: p.prescriptionNo ? `Fatura No: ${p.prescriptionNo}` : ''
+                note: [
+                    p.prescriptionNo ? `Fatura No: ${p.prescriptionNo}` : '',
+                    pCrop ? `[Mahsul: ${pCrop}]` : ''
+                ].filter(Boolean).join(' ')
             };
         }),
         ...farmerPayments.map(p => ({ 
             ...p, 
             type: 'PAYMENT', 
-            label: 'Tahsilat' 
+            label: p.crop ? `Tahsilat (${p.crop})` : 'Tahsilat' 
         })),
         ...farmerMyPayments.map(p => ({ 
             ...p, 
@@ -575,20 +658,45 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
         }
 
         // Ürün Filtresi
-        if (reportCrop !== 'ALL' && (item as any).type !== 'PAYMENT' && (item as any).label !== 'Manuel Borç') {
-            const fIds = (item as any).fieldIds || ((item as any).fieldId ? [(item as any).fieldId] : []);
-            const farmerFields = selectedFarmer.fields || [];
-            const matchesCrop = fIds.some((fid: string) => {
-                const field = farmerFields.find(f => f.id === fid);
-                return field?.crop === reportCrop;
-            });
-            if (!matchesCrop) return false;
+        if (reportCrop !== 'ALL') {
+            const cropLower = reportCrop.toLowerCase().trim();
+
+            if ((item as any).type === 'DEBT' || (item as any).type === 'CASH') {
+                const itemCrop = ((item as any).crop || (item as any).cropName || 
+                    plants?.find(pl => pl.id === (item as any).plantId)?.name ||
+                    (() => {
+                        const fIds = (item as any).fieldIds || ((item as any).fieldId ? [(item as any).fieldId] : []);
+                        const farmerFields = selectedFarmer?.fields || [];
+                        const matchedField = farmerFields.find(f => fIds.includes(f.id));
+                        return matchedField?.crop;
+                    })() || '')?.trim();
+
+                if (itemCrop.toLowerCase() !== cropLower) {
+                    return false;
+                }
+            } else if ((item as any).type === 'PAYMENT') {
+                const paymentCrop = ((item as any).crop || (item as any).cropName || '')?.trim();
+                const paymentNote = ((item as any).note || '').toLowerCase();
+
+                if (paymentCrop) {
+                    if (paymentCrop.toLowerCase() !== cropLower) return false;
+                } else if (paymentNote.includes(cropLower)) {
+                    // Note explicitly matches this crop
+                } else {
+                    // If note mentions another known crop, exclude it
+                    const otherCrops = availableCrops.filter(c => c.toLowerCase().trim() !== cropLower);
+                    const isForOtherCrop = otherCrops.some(c => paymentNote.includes(c.toLowerCase().trim()));
+                    if (isForOtherCrop) {
+                        return false;
+                    }
+                }
+            }
         }
         
         return true;
     })
     .sort((a, b) => new Date((a as any).date).getTime() - new Date((b as any).date).getTime());
-  }, [farmerPrescriptions, farmerPayments, farmerManualDebts, myPayments, reportStartDate, reportEndDate, reportFieldId, reportCrop, selectedFarmer, prescriptionLabel]);
+  }, [farmerPrescriptions, farmerPayments, farmerManualDebts, myPayments, reportStartDate, reportEndDate, reportFieldId, reportCrop, selectedFarmer, prescriptionLabel, plants, availableCrops]);
 
   const reportTotalDebt = useMemo(() => reportItems.filter(item => {
       if (item.type !== 'DEBT') return false;
@@ -775,16 +883,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
             allowTaint: true
         });
 
-        const imgData = canvas.toDataURL('image/jpeg', 0.95);
-        
-        // Use pixel unit and set exact canvas size for one continuous beautiful PDF
-        const pdf = new jsPDF({
-            orientation: canvas.width > canvas.height ? 'l' : 'p',
-            unit: 'px',
-            format: [canvas.width, canvas.height]
-        });
-        
-        pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+        const pdf = createMultiPagePdf(canvas);
         
         // Türkçe karakterleri temizle ve ASCII'ye çevir
         const charMap: {[key: string]: string} = {'Ğ':'G','ğ':'g','Ü':'U','ü':'u','Ş':'S','ş':'s','İ':'I','ı':'i','Ö':'O','ö':'o','Ç':'C','ç':'c'};
@@ -891,12 +990,18 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
 
   const handleSaveFarmer = async (e: React.FormEvent) => {
       e.preventDefault();
+      const tcCheck = validateTcOrVkn(editFarmerData.tcNo);
+      if (!tcCheck.isValid) {
+          showToast(tcCheck.message, 'error');
+          return;
+      }
       setIsSavingFarmer(true);
       try {
           const farmerData = { 
               fullName: editFarmerData.fullName, 
               phoneNumber: editFarmerData.phoneNumber, 
               village: editFarmerData.village, 
+              tcNo: editFarmerData.tcNo,
               fields: (editFarmerData.fields || []).map(f => ({
                   ...f,
                   size: Number(f.size) || 0,
@@ -929,6 +1034,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           fullName: '', 
           phoneNumber: '+90 ', 
           village: '', 
+          tcNo: '',
           fields: [{ id: crypto.randomUUID() as string, name: '', size: '', crop: '', plantingDate: '', currentStage: '' }] 
       });
   };
@@ -940,6 +1046,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           fullName: selectedFarmer.fullName, 
           phoneNumber: selectedFarmer.phoneNumber, 
           village: selectedFarmer.village, 
+          tcNo: selectedFarmer.tcNo || '',
           fields: (selectedFarmer.fields || []).map(f => ({ 
               ...f, 
               size: f.size.toString(),
@@ -953,18 +1060,27 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const parseFloatSafe = (val: string | number) => parseFloat(String(val).replace(',', '.')) || 0;
 
   const handleSavePayment = async () => {
+      if (isSavingPayment || isSavingPaymentRef.current) return;
       if (!selectedFarmer || !paymentAmount) return;
+      isSavingPaymentRef.current = true;
       setIsSavingPayment(true);
       try {
           const parsedAmount = parseFloatSafe(paymentAmount);
+          const parsedCommRate = parseFloatSafe(commissionRate);
+
+          const targetAccountId = selectedAccountId || accounts.find(a => a.type === 'CASH')?.id || accounts[0]?.id;
+
           if (editingPayment) {
               await updatePayment({
                   ...editingPayment,
                   amount: parsedAmount,
                   note: paymentNote,
+                  crop: paymentCrop || undefined,
                   method: paymentMethod,
+                  cardOption: paymentMethod === 'CARD' ? cardOption : undefined,
+                  commissionRate: paymentMethod === 'CARD' ? parsedCommRate : undefined,
                   dueDate: (paymentMethod === 'CHECK' || paymentMethod === 'TEDYE') ? paymentDate : undefined,
-                  accountId: selectedAccountId || undefined
+                  accountId: targetAccountId || undefined
               });
               showToast('Ödeme güncellendi', 'success');
           } else {
@@ -973,9 +1089,12 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                   amount: parsedAmount,
                   date: new Date().toISOString(),
                   method: paymentMethod,
+                  crop: paymentCrop || undefined,
+                  cardOption: paymentMethod === 'CARD' ? cardOption : undefined,
+                  commissionRate: paymentMethod === 'CARD' ? parsedCommRate : undefined,
                   dueDate: (paymentMethod === 'CHECK' || paymentMethod === 'TEDYE') ? paymentDate : undefined,
                   note: paymentNote,
-                  accountId: selectedAccountId || undefined,
+                  accountId: targetAccountId || undefined,
                   createdById: activeTeamMember?.id
               });
               showToast('Ödeme kaydedildi', 'success');
@@ -985,13 +1104,17 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           setEditingPayment(null);
           setPaymentAmount('');
           setPaymentNote('');
+          setPaymentCrop('');
           setPaymentMethod('CASH');
+          setCardOption('UNBLOCKED');
+          setCommissionRate('4');
           setPaymentDate(new Date().toISOString().split('T')[0]);
           setSelectedAccountId('');
           await loadFarmerDetails();
       } catch (e) {
           showToast('İşlem başarısız', 'error');
       } finally {
+          isSavingPaymentRef.current = false;
           setIsSavingPayment(false);
       }
   };
@@ -1023,7 +1146,9 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   };
 
   const handleSaveReturn = async () => {
+      if (isSavingReturn || isSavingReturnRef.current) return;
       if (!selectedFarmer || returnItems.length === 0) return;
+      isSavingReturnRef.current = true;
       setIsSavingReturn(true);
       try {
           const totalAmount = returnItems.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
@@ -1043,7 +1168,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
               })),
               isOfficial: false,
               totalAmount: -totalAmount,
-              isProcessed: false,
+              isProcessed: true,
               isInventoryProcessed: false
           };
           
@@ -1057,6 +1182,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       } catch (error) {
           showToast('İade kaydedilirken hata oluştu', 'error');
       } finally {
+          isSavingReturnRef.current = false;
           setIsSavingReturn(false);
       }
   };
@@ -1065,6 +1191,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       setEditingPayment(payment);
       setPaymentAmount(payment.amount.toString());
       setPaymentNote(payment.note || '');
+      setPaymentCrop(payment.crop || '');
       setSelectedAccountId(payment.accountId || '');
       setIsPaymentModalOpen(true);
   };
@@ -1117,8 +1244,21 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                       <span style="font-weight: 900; font-size: 18px; color: #292524;">TUTAR:</span>
                       <strong style="font-size: 28px; color: #059669;">${amountStr}</strong>
                   </div>
-                  <div style="text-align: center; margin-top: 40px; font-size: 12px; font-weight: 600; color: #a8a29e;">
-                      Bizi tercih ettiğiniz için teşekkür ederiz.
+                  <div style="margin-top: 30px; border-top: 1px solid #e7e5e4; padding-top: 15px; display: flex; justify-content: space-between; align-items: flex-end;">
+                      <div style="font-size: 11px; font-weight: 600; color: #78716c;">
+                          Bizi tercih ettiğiniz için<br/>teşekkür ederiz.
+                      </div>
+                      <div style="border: 2px solid ${userProfile?.stampColor || '#1d4ed8'}; border-radius: 6px; padding: 6px 10px; transform: rotate(-2.5deg); color: ${userProfile?.stampColor || '#1d4ed8'}; font-size: 8px; text-align: center; max-width: 190px;">
+                          <div style="font-weight: 900; text-transform: uppercase; border-bottom: 1px solid ${userProfile?.stampColor || '#1d4ed8'}; padding-bottom: 2px; margin-bottom: 2px; font-size: 8.5px;">
+                              ${(userProfile?.stampTitle || userProfile?.companyName || 'ZİRAİ OTOMASYON').toUpperCase()}
+                          </div>
+                          <div style="font-weight: 800; font-size: 8px; margin-bottom: 1px;">
+                              ${userProfile?.stampSubTitle || userProfile?.fullName || 'Ziraat Mühendisi'}
+                          </div>
+                          <div style="font-size: 7.5px; opacity: 0.9;">
+                              ${userProfile?.stampTaxInfo || 'Resmi Dijital Onaylı Kaşe'}
+                          </div>
+                      </div>
                   </div>
               </div>
           `;
@@ -1134,14 +1274,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           
           document.body.removeChild(container);
           
-          const imgData = canvas.toDataURL('image/jpeg', 0.95);
-          const pdf = new jsPDF({
-              orientation: 'p',
-              unit: 'px',
-              format: [canvas.width, canvas.height]
-          });
-          
-          pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+          const pdf = createMultiPagePdf(canvas);
           const pdfBlob = pdf.output('blob');
           
           const charMap: {[key: string]: string} = {'Ğ':'G','ğ':'g','Ü':'U','ü':'u','Ş':'S','ş':'s','İ':'I','ı':'i','Ö':'O','ö':'o','Ç':'C','ç':'c'};
@@ -1196,7 +1329,9 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   };
 
   const handleSaveManualDebt = async () => {
+      if (isSavingDebt || isSavingDebtRef.current) return;
       if (!selectedFarmer || !debtAmount) return;
+      isSavingDebtRef.current = true;
       setIsSavingDebt(true);
       try {
           const parsedAmount = parseFloatSafe(debtAmount);
@@ -1228,6 +1363,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       } catch (e) {
           showToast('İşlem başarısız', 'error');
       } finally {
+          isSavingDebtRef.current = false;
           setIsSavingDebt(false);
       }
   };
@@ -1290,16 +1426,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
               logging: false,
               allowTaint: true
           });
-          const imgData = canvas.toDataURL('image/jpeg', 0.95);
-          
-          // Use pixel unit and set exact canvas size for one beautiful continuous scroll PDF
-          const pdf = new jsPDF({
-              orientation: canvas.width > canvas.height ? 'l' : 'p',
-              unit: 'px',
-              format: [canvas.width, canvas.height]
-          });
-          
-          pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+          const pdf = createMultiPagePdf(canvas);
           
           // Türkçe karakterleri temizle ve ASCII'ye çevir
           const charMap: {[key: string]: string} = {'Ğ':'G','ğ':'g','Ü':'U','ü':'u','Ş':'S','ş':'s','İ':'I','ı':'i','Ö':'O','ö':'o','Ç':'C','ç':'c'};
@@ -1455,7 +1582,9 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
     }).sort((a, b) => a.fullName.localeCompare(b.fullName, 'tr-TR'));
   }, [farmers, payments, myPayments, prescriptions, manualDebts]);
 
-  const filteredFarmers = farmersWithDebt.filter(f => f.fullName.toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR')) || f.village.toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR')));
+  const filteredFarmers = farmersWithDebt.filter(f => 
+    turkishMatchesAny([f.fullName, f.village, f.tcNo, f.phoneNumber], searchTerm)
+  );
 
   const downloadFarmersPdf = async () => {
       setIsGeneratingReport(true);
@@ -1479,6 +1608,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                 <thead>
                     <tr style="background-color: #10b981; color: white;">
                         <th style="padding: 12px; border-bottom: 2px solid #059669; border-top-left-radius: 8px;">Ad Soyad</th>
+                        <th style="padding: 12px; border-bottom: 2px solid #059669;">T.C. No</th>
                         <th style="padding: 12px; border-bottom: 2px solid #059669;">Telefon</th>
                         <th style="padding: 12px; border-bottom: 2px solid #059669;">Köy/Mevki</th>
                         <th style="padding: 12px; border-bottom: 2px solid #059669; border-top-right-radius: 8px; text-align: right;">Bakiye</th>
@@ -1495,6 +1625,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
               tableHtml += `
                 <tr style="background-color: ${bg}; border-bottom: 1px solid #e7e5e4;">
                     <td style="padding: 12px; font-weight: 600;">${f.fullName}</td>
+                    <td style="padding: 12px; font-family: monospace; color: #57534e;">${f.tcNo || '-'}</td>
                     <td style="padding: 12px; color: #57534e;">${f.phoneNumber || '-'}</td>
                     <td style="padding: 12px; color: #57534e;">${f.village || '-'}</td>
                     <td style="padding: 12px; text-align: right; font-family: monospace; font-size: 13px;">${balanceStr} ${statusStr}</td>
@@ -1518,15 +1649,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           
           document.body.removeChild(container);
           
-          const imgData = canvas.toDataURL('image/jpeg', 0.95);
-          
-          const pdf = new jsPDF({
-              orientation: canvas.width > canvas.height ? 'l' : 'p',
-              unit: 'px',
-              format: [canvas.width, canvas.height]
-          });
-          
-          pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+          const pdf = createMultiPagePdf(canvas);
           pdf.save('Ciftci_Cari_Listesi.pdf');
           showToast('Kurumsal PDF indirildi', 'success');
           
@@ -1587,7 +1710,9 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                             <h3 className="font-black text-lg text-stone-900 tracking-tight">
                                 {selectedPrescription.totalAmount && selectedPrescription.totalAmount < 0 ? 'İADE MAKBUZU' : 'ZİRAİ FATURA'}
                             </h3>
-                            <p className="text-[9px] text-stone-500 font-bold uppercase tracking-widest mt-1">No: {selectedPrescription.prescriptionNo}</p>
+                            <div className="mt-1.5 inline-block bg-stone-900 text-white font-mono text-xs font-black px-2.5 py-1 rounded-md tracking-wider">
+                                FATURA NO: {selectedPrescription.prescriptionNo}
+                            </div>
                             {(() => {
                                 const fIds = selectedPrescription.fieldIds || (selectedPrescription.fieldId ? [selectedPrescription.fieldId] : []);
                                 if (fIds.length === 0) return null;
@@ -1609,28 +1734,30 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                     <div className="min-h-[200px]">
                         {selectedPrescription.totalAmount && selectedPrescription.totalAmount !== 0 ? (
                             <table className="w-full text-xs">
-                                <thead className="bg-stone-50 text-stone-500 uppercase text-[8px] font-black tracking-widest border-b border-stone-100">
+                                <thead className="bg-stone-200 text-stone-900 uppercase text-[9px] font-black tracking-wider border-b border-stone-300">
                                     <tr>
                                         <th className="p-2 text-left w-[40%]">Ürün Adı</th>
-                                        <th className="p-2 text-center w-[15%]">Adet</th>
+                                        <th className="p-2 text-center w-[18%]">Adet</th>
                                         <th className="p-2 text-right w-[20%]">Birim Fiyat</th>
-                                        <th className="p-2 text-right w-[25%]">Toplam</th>
+                                        <th className="p-2 text-right w-[22%]">Toplam</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-stone-100">
+                                <tbody className="divide-y divide-stone-200">
                                     {selectedPrescription.items.map((item, idx) => (
-                                        <tr key={idx}>
+                                        <tr key={idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-stone-50/50'}>
                                             <td className="p-2">
-                                                <div className="font-bold text-stone-800">{item.pesticideName}</div>
+                                                <div className="font-bold text-stone-900 text-xs">{item.pesticideName}</div>
                                                 <div className="text-[9px] text-stone-500 font-mono mt-0.5">Doz: {item.dosage}</div>
                                             </td>
-                                            <td className="p-2 text-center font-bold text-stone-700">
-                                                {item.quantity ? item.quantity.toString().replace(/^-/, '') : '-'}
-                                            </td>
-                                            <td className="p-2 text-right font-mono text-stone-600">
-                                                {item.unitPrice ? formatCurrency(item.unitPrice, userProfile?.currency || 'TRY') : '-'}
+                                            <td className="p-2 text-center">
+                                                <span className="inline-block bg-amber-100 text-amber-950 font-black font-mono text-xs px-2 py-0.5 rounded border border-amber-300/80">
+                                                    {item.quantity ? item.quantity.toString().replace(/^-/, '') : '-'}
+                                                </span>
                                             </td>
                                             <td className="p-2 text-right font-mono font-bold text-stone-800">
+                                                {item.unitPrice ? formatCurrency(item.unitPrice, userProfile?.currency || 'TRY') : '-'}
+                                            </td>
+                                            <td className="p-2 text-right font-mono font-black text-stone-950">
                                                 {item.totalPrice ? formatCurrency(Math.abs(item.totalPrice), userProfile?.currency || 'TRY') : '-'}
                                             </td>
                                         </tr>
@@ -1694,15 +1821,14 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                         )}
                     </div>
 
-                    <div className="mt-8 pt-4 border-t-2 border-dashed border-stone-100 flex justify-between items-end">
+                    <div className="mt-8 pt-4 border-t border-stone-200 flex justify-between items-end">
                         <div className="text-[7px] text-stone-400 leading-relaxed">
                             Bu belge Mühendis Kayıt Sistemi<br/>
                             tarafından oluşturulmuştur.<br/>
                             <strong>MKS v3.1.2</strong>
                         </div>
-                        <div className="text-center">
-                            <div className="font-serif italic text-sm text-blue-900 mb-1">{selectedPrescription.engineerName}</div>
-                            <div className="text-[7px] text-stone-400 uppercase tracking-widest border-t border-stone-200 pt-1 font-bold">Dijital Onay / Kaşe</div>
+                        <div className="text-right flex flex-col items-end">
+                            <RealisticStamp profile={userProfile} engineerName={selectedPrescription.engineerName} size="xs" />
                         </div>
                     </div>
                 </div>
@@ -1775,7 +1901,10 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                             <div className="flex justify-between items-start mb-8 relative z-10">
                                 <div>
                                     <h1 className="text-3xl font-black uppercase tracking-tight mb-1">Cari Hesap Raporu</h1>
-                                    <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">{selectedFarmer.fullName}</p>
+                                    <p className="text-xs font-bold text-stone-700 uppercase tracking-widest">{selectedFarmer.fullName}</p>
+                                    {selectedFarmer.tcNo && (
+                                        <p className="text-[11px] font-mono font-bold text-stone-500 mt-0.5">T.C. No: {selectedFarmer.tcNo}</p>
+                                    )}
                                 </div>
                                 <div className="text-right">
                                     <p className="text-sm font-bold mb-1 text-stone-600">
@@ -1790,8 +1919,9 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                         </p>
                                     )}
                                     {reportCrop !== 'ALL' && (
-                                        <p className="text-xs font-bold text-emerald-600 mt-2 bg-emerald-50 px-2 py-0.5 rounded-full inline-block">
-                                            Filtre: {reportCrop} Ürünü
+                                        <p className="text-xs font-bold text-emerald-600 mt-2 bg-emerald-50 px-2.5 py-1 rounded-full inline-flex items-center gap-1.5 border border-emerald-200">
+                                            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                                            Ürün Bazlı Cari Rapor: {reportCrop}
                                         </p>
                                     )}
                                 </div>
@@ -1799,49 +1929,68 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
 
                             <div className="relative z-10">
                                 <table className="w-full mb-10">
-                                    <thead className="text-stone-400 uppercase text-[9px] font-black tracking-widest border-b-2 border-stone-200">
+                                    <thead className="bg-stone-200 text-stone-900 uppercase text-[10px] font-black tracking-wider border-b-2 border-stone-300">
                                         <tr className="text-left">
-                                            <th className="pb-3 w-[15%]">Tarih</th>
-                                            <th className="pb-3 w-[20%]">İşlem</th>
-                                            <th className="pb-3 w-[25%]">Açıklama</th>
-                                            <th className="pb-3 text-right w-[20%]">Borç</th>
-                                            <th className="pb-3 text-right w-[20%]">Alacak</th>
+                                            <th className="py-2.5 px-2 w-[15%]">Tarih</th>
+                                            <th className="py-2.5 px-2 w-[22%]">İşlem</th>
+                                            <th className="py-2.5 px-2 w-[23%]">Açıklama / Fatura No</th>
+                                            <th className="py-2.5 px-2 text-right w-[20%]">Borç</th>
+                                            <th className="py-2.5 px-2 text-right w-[20%]">Alacak</th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {reportItems.map((item, idx) => (
+                                        {reportItems.map((item, idx) => {
+                                            const pNo = (item as any).prescriptionNo || (item as any).receiptNo;
+                                            return (
                                             <React.Fragment key={idx}>
-                                                <tr className="border-b border-stone-100/60">
-                                                    <td className="py-3 text-xs font-mono text-stone-500">{new Date(item.date).toLocaleDateString('tr-TR')}</td>
-                                                    <td className="py-3 text-[11px] font-bold uppercase tracking-wide text-stone-700">{item.label}</td>
-                                                    <td className="py-3 text-xs text-stone-500">{(item as any).note || (item.type === 'CASH' ? `Tutar: ${formatCurrency(Math.abs((item as any).amount || (item as any).totalAmount), userProfile?.currency || 'TRY')}` : '-')}</td>
-                                                    <td className="py-3 text-sm text-right font-bold font-mono text-rose-600">
+                                                <tr className={`border-b border-stone-200 ${idx % 2 === 0 ? 'bg-white' : 'bg-stone-50/50'}`}>
+                                                    <td className="py-3 px-2 text-xs font-mono font-bold text-stone-800">{new Date(item.date).toLocaleDateString('tr-TR')}</td>
+                                                    <td className="py-3 px-2 text-xs font-black uppercase tracking-wide text-stone-900">{item.label}</td>
+                                                    <td className="py-3 px-2 text-xs text-stone-800 font-medium">
+                                                        {pNo ? (
+                                                            <div className="flex flex-col gap-0.5 items-start">
+                                                                <span className="bg-stone-900 text-white font-mono text-[10px] font-black px-2 py-0.5 rounded shadow-2xs">
+                                                                    Fatura No: {pNo}
+                                                                </span>
+                                                                {(item as any).note && !(item as any).note.includes(pNo) && (
+                                                                    <span className="text-stone-600 text-[11px]">{(item as any).note}</span>
+                                                                )}
+                                                            </div>
+                                                        ) : (
+                                                            (item as any).note || (item.type === 'CASH' ? `Tutar: ${formatCurrency(Math.abs((item as any).amount || (item as any).totalAmount), userProfile?.currency || 'TRY')}` : '-')
+                                                        )}
+                                                    </td>
+                                                    <td className="py-3 px-2 text-sm text-right font-black font-mono text-rose-700">
                                                         {item.type === 'DEBT' && ((item as any).totalAmount !== undefined ? (item as any).totalAmount >= 0 : (item as any).amount >= 0) && item.label !== 'İade Makbuzu' ? formatCurrency((item as any).amount || (item as any).totalAmount, userProfile?.currency || 'TRY') : '-'}
                                                     </td>
-                                                    <td className="py-3 text-sm text-right font-bold font-mono text-emerald-600">
+                                                    <td className="py-3 px-2 text-sm text-right font-black font-mono text-emerald-700">
                                                         {item.type === 'PAYMENT' ? formatCurrency((item as any).amount, userProfile?.currency || 'TRY') : (item.type === 'DEBT' && (((item as any).totalAmount !== undefined ? (item as any).totalAmount < 0 : (item as any).amount < 0) || item.label === 'İade Makbuzu') ? formatCurrency(Math.abs((item as any).amount || (item as any).totalAmount), userProfile?.currency || 'TRY') : '-')}
                                                     </td>
                                                 </tr>
                                                 {reportType === 'DETAILED' && (item as any).items && (
                                                     <tr>
-                                                        <td colSpan={5} className="bg-stone-50/50 p-0 border-b border-stone-200">
-                                                            <div className="px-6 py-3 ml-8 border-l-2 border-stone-200/50">
-                                                                <table className="w-full text-[10px]">
-                                                                    <thead className="text-stone-400 uppercase font-bold tracking-widest text-[8px] border-b border-stone-200/50">
+                                                        <td colSpan={5} className="bg-stone-100/70 p-0 border-b border-stone-200">
+                                                            <div className="px-6 py-2.5 ml-6 border-l-4 border-amber-500">
+                                                                <table className="w-full text-xs">
+                                                                    <thead className="bg-stone-300/80 text-stone-900 uppercase font-black tracking-wider text-[9px] border-b border-stone-300">
                                                                         <tr>
-                                                                            <th className="text-left pb-1 w-[45%]">Ürün Adı</th>
-                                                                            <th className="text-center pb-1 w-[20%]">Miktar</th>
-                                                                            <th className="text-right pb-1 w-[15%]">B. Fiyat</th>
-                                                                            <th className="text-right pb-1 w-[20%]">Toplam</th>
+                                                                            <th className="text-left p-1.5 w-[45%]">Ürün Adı</th>
+                                                                            <th className="text-center p-1.5 w-[20%]">Miktar / Adet</th>
+                                                                            <th className="text-right p-1.5 w-[15%]">B. Fiyat</th>
+                                                                            <th className="text-right p-1.5 w-[20%]">Toplam</th>
                                                                         </tr>
                                                                     </thead>
-                                                                    <tbody className="divide-y divide-stone-100/50">
+                                                                    <tbody className="divide-y divide-stone-200">
                                                                         {(item as any).items.map((subItem: any, sIdx: number) => (
-                                                                            <tr key={sIdx}>
-                                                                                <td className="py-1.5 font-bold text-stone-700">{subItem.pesticideName}</td>
-                                                                                <td className="py-1.5 text-center font-mono text-stone-500">{subItem.quantity} <span className="text-[8px]">{subItem.unit}</span></td>
-                                                                                <td className="py-1.5 text-right font-mono text-stone-500">{formatCurrency(subItem.unitPrice || 0, userProfile?.currency || 'TRY')}</td>
-                                                                                <td className="py-1.5 text-right font-bold font-mono text-stone-800">{formatCurrency((subItem.quantity || 0) * (subItem.unitPrice || 0), userProfile?.currency || 'TRY')}</td>
+                                                                            <tr key={sIdx} className={sIdx % 2 === 0 ? 'bg-white/80' : 'bg-stone-50'}>
+                                                                                <td className="py-2 px-1.5 font-bold text-stone-900 text-xs">{subItem.pesticideName}</td>
+                                                                                <td className="py-2 px-1.5 text-center">
+                                                                                    <span className="inline-block bg-amber-100 text-amber-950 font-black font-mono text-xs px-2 py-0.5 rounded border border-amber-300">
+                                                                                        {subItem.quantity} {subItem.unit || 'Adet'}
+                                                                                    </span>
+                                                                                </td>
+                                                                                <td className="py-2 px-1.5 text-right font-mono font-bold text-stone-800">{formatCurrency(subItem.unitPrice || 0, userProfile?.currency || 'TRY')}</td>
+                                                                                <td className="py-2 px-1.5 text-right font-black font-mono text-stone-950">{formatCurrency((subItem.quantity || 0) * (subItem.unitPrice || 0), userProfile?.currency || 'TRY')}</td>
                                                                             </tr>
                                                                         ))}
                                                                     </tbody>
@@ -1851,38 +2000,38 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                                     </tr>
                                                 )}
                                             </React.Fragment>
-                                        ))}
+                                            );
+                                        })}
                                     </tbody>
                                 </table>
 
                                 <div className="flex justify-end pt-4 border-t-2 border-dashed border-stone-300">
                                     <div className="w-80 space-y-2">
                                         <div className="flex justify-between items-center py-1">
-                                            <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">Dönem Toplam Alış</span>
+                                            <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">{reportCrop !== 'ALL' ? `${reportCrop} Toplam Alış` : 'Dönem Toplam Alış'}</span>
                                             <span className="text-sm font-bold font-mono text-rose-600">{formatCurrency(reportTotalDebt, userProfile?.currency || 'TRY')}</span>
                                         </div>
                                         <div className="flex justify-between items-center py-1 border-b border-stone-100/50 pb-2">
-                                            <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">Dönem Toplam Ödeme</span>
+                                            <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">{reportCrop !== 'ALL' ? `${reportCrop} Toplam Ödeme` : 'Dönem Toplam Ödeme'}</span>
                                             <span className="text-sm font-bold font-mono text-emerald-600">{formatCurrency(reportTotalPaid, userProfile?.currency || 'TRY')}</span>
                                         </div>
                                         <div className="flex justify-between items-center pt-2">
-                                            <span className="text-xs font-black text-stone-800 uppercase tracking-wider">Devreden Bakiye</span>
-                                            <span className={`text-xl font-black font-mono tracking-tight ${reportBalance > 0 ? 'text-rose-600' : reportBalance < 0 ? 'text-emerald-600' : 'text-stone-800'}`}>
-                                                {formatCurrency(Math.abs(reportBalance), userProfile?.currency || 'TRY')} {reportBalance > 0 ? '(B)' : reportBalance < 0 ? '(A)' : ''}
+                                            <span className="text-xs font-black text-stone-800 uppercase tracking-wider">{reportCrop !== 'ALL' ? `${reportCrop} Kalan Bakiye` : 'Devreden Bakiye'}</span>
+                                            <span className={`text-xl font-black font-mono tracking-tight ${reportBalance < 0 ? 'text-rose-600' : reportBalance > 0 ? 'text-emerald-600' : 'text-stone-800'}`}>
+                                                {formatCurrency(Math.abs(reportBalance), userProfile?.currency || 'TRY')} {reportBalance < 0 ? '(B)' : reportBalance > 0 ? '(A)' : ''}
                                             </span>
                                         </div>
                                     </div>
                                 </div>
 
-                                <div className="mt-12 pt-6 flex justify-between items-end">
+                                <div className="mt-8 pt-4 border-t border-stone-200 flex justify-between items-end">
                                     <div className="text-[9px] text-stone-400/80 font-mono leading-relaxed">
                                         Bu belge Mühendis Kayıt Sistemi<br/>
                                         tarafından oluşturulmuştur.<br/>
                                         <strong>v3.1.2</strong>
                                     </div>
-                                    <div className="text-center">
-                                        <div className="font-serif italic text-lg text-blue-900/80 mb-1">{userProfile?.fullName || 'Yönetici'}</div>
-                                        <div className="text-[8px] text-stone-400 uppercase tracking-widest border-t border-stone-200 pt-1.5 font-bold">Dijital Onay / Kaşe</div>
+                                    <div className="text-right flex flex-col items-end">
+                                        <RealisticStamp profile={userProfile} size="sm" />
                                     </div>
                                 </div>
                             </div>
@@ -1944,6 +2093,14 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                         <div className="flex items-center justify-between gap-2">
                             <h2 className="text-base font-black text-stone-100 truncate tracking-tight">{selectedFarmer.fullName}</h2>
                             <div className="flex items-center gap-1.5 shrink-0">
+                                <button 
+                                    onClick={() => setIsFinancialAnalysisOpen(true)} 
+                                    title="Finansal Analiz & Kârlılık"
+                                    className="p-1.5 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 rounded-lg transition-all active:scale-90 border border-emerald-500/20 flex items-center gap-1 px-2"
+                                >
+                                    <TrendingUpIcon size={12} />
+                                    <span className="text-[10px] font-black uppercase tracking-wider">Finans</span>
+                                </button>
                                 {canEditFarmer && (
                                     <button onClick={openEditModal} className="p-1.5 bg-stone-800/60 text-stone-400 rounded-lg hover:text-emerald-400 transition-all active:scale-90 border border-white/5">
                                         <Edit2 size={12} />
@@ -1956,8 +2113,14 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                 )}
                             </div>
                         </div>
-                        <div className="flex items-center text-stone-500 text-xs mt-0.5 font-bold">
-                            <MapPin size={10} className="mr-1 text-emerald-500/70"/> {selectedFarmer.village}
+                        <div className="flex items-center text-stone-500 text-xs mt-0.5 font-bold gap-3 flex-wrap">
+                            <span className="flex items-center"><MapPin size={10} className="mr-1 text-emerald-500/70"/> {selectedFarmer.village}</span>
+                            {selectedFarmer.tcNo && (
+                                <span className="flex items-center text-stone-300 font-mono text-[10px] bg-stone-800/80 px-2 py-0.5 rounded-md border border-white/5">
+                                    <CreditCard size={10} className="mr-1 text-blue-400" />
+                                    TC: {selectedFarmer.tcNo}
+                                </span>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -2106,16 +2269,61 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                 </div>
                             </div>
 
-                            <div className={`p-4 rounded-xl border flex items-center justify-between ${yearBalance >= 0 ? 'bg-emerald-900/20 border-emerald-500/20' : 'bg-rose-900/20 border-rose-500/20'}`}>
-                                <div>
-                                    <p className="text-[9px] text-stone-400 uppercase font-black mb-0.5">{selectedYear} Sonu Bakiye</p>
-                                    <p className={`text-xl font-black ${yearBalance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                        {formatCurrency(Math.round(Math.abs(yearBalance)), userProfile?.currency || 'TRY')}
-                                        <span className="text-xs font-bold ml-1">{yearBalance >= 0 ? 'Alacaklı' : 'Borçlu'}</span>
-                                    </p>
+                            {/* Yıl Seçimi ve Devir Alanı */}
+                            <div className="p-3 bg-stone-950/60 rounded-xl border border-white/10 space-y-2.5">
+                                <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-2">
+                                    <div className="flex items-center gap-2">
+                                        <Calendar size={16} className="text-emerald-400 shrink-0" />
+                                        <span className="text-xs font-black text-stone-200 uppercase tracking-wide">Yıl Seçimi & Devir</span>
+                                    </div>
+
+                                    <div className="flex items-center gap-1.5 bg-stone-900 border border-white/10 rounded-xl px-2.5 py-1.5 text-stone-300 text-xs font-bold shadow-sm">
+                                        <Calendar size={14} className="text-emerald-400 shrink-0" />
+                                        <select 
+                                            value={selectedYear}
+                                            onChange={(e) => setSelectedYear(Number(e.target.value))}
+                                            className="bg-transparent text-stone-200 text-xs font-bold outline-none cursor-pointer pr-1"
+                                        >
+                                            {availableYears.map(y => (
+                                                <option key={y} value={y} className="bg-stone-900 text-stone-200">
+                                                    {y} Yılı {y < currentYear ? '(Devir)' : '(Güncel)'}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
                                 </div>
-                                {yearBalance < 0 ? <TrendingDown size={24} className="text-rose-500 opacity-50" /> : <TrendingUpIcon size={24} className="text-emerald-500 opacity-50" />}
+
+                                <div className="pt-2 border-t border-white/5 flex items-center justify-between">
+                                    <div>
+                                        <span className="text-[10px] text-stone-400 font-bold block uppercase tracking-wider">
+                                            01.01.{selectedYear} Devir Bakiyesi
+                                        </span>
+                                        <span className="text-[9px] text-stone-500 block">Geçmiş yıllardan aktarılan açılış bakiyesi</span>
+                                    </div>
+                                    <span className={`text-sm font-black font-mono ${openingBalance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                        {openingBalance >= 0 ? '+' : ''}{formatCurrency(openingBalance, userProfile?.currency || 'TRY')}
+                                    </span>
+                                </div>
+
+                                {selectedYear < currentYear && (
+                                    <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-2 flex items-center gap-2 text-amber-300 text-[11px] font-medium">
+                                        <Calendar size={14} className="text-amber-400 shrink-0" />
+                                        <span>{selectedYear} Yılı devir kaydı ve geçmiş cari dökümü gösteriliyor.</span>
+                                    </div>
+                                )}
                             </div>
+
+                            {/* Detailed Financial & Profitability Analysis Action Button (Küçültülmüş) */}
+                            <button
+                                onClick={() => setIsFinancialAnalysisOpen(true)}
+                                className="w-full mt-2.5 px-3 py-2 bg-emerald-950/40 hover:bg-emerald-900/50 border border-emerald-500/20 rounded-xl flex items-center justify-between text-emerald-400 transition-all active:scale-[0.98] group shadow-sm"
+                            >
+                                <div className="flex items-center gap-2">
+                                    <TrendingUpIcon size={14} className="text-emerald-400 shrink-0 group-hover:scale-110 transition-transform" />
+                                    <span className="text-xs font-bold">Detaylı Finansal Analiz & Kârlılık</span>
+                                </div>
+                                <ChevronRight size={14} className="text-emerald-400/70 group-hover:translate-x-0.5 transition-transform" />
+                            </button>
                         </div>
 
                         {/* History */}
@@ -2320,22 +2528,86 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                             </div>
                             <div>
                                 <label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Ödeme Yöntemi</label>
-                                <div className="grid grid-cols-3 gap-2">
+                                <div className="grid grid-cols-4 gap-1.5">
                                     {[
                                         { id: 'CASH', label: 'Nakit' },
+                                        { id: 'CARD', label: 'K. Kartı' },
                                         { id: 'CHECK', label: 'Çek' },
                                         { id: 'TEDYE', label: 'Tediye' }
                                     ].map(method => (
                                         <button 
                                             key={method.id}
                                             onClick={() => setPaymentMethod(method.id as any)}
-                                            className={`py-3 rounded-xl text-[9px] font-black uppercase tracking-widest border transition-all ${paymentMethod === method.id ? 'bg-emerald-600 border-emerald-500 text-white' : 'bg-stone-950 border-stone-800 text-stone-500'}`}
+                                            className={`py-3 rounded-xl text-[9px] font-black uppercase tracking-widest border transition-all ${paymentMethod === method.id ? 'bg-emerald-600 border-emerald-500 text-white shadow-lg shadow-emerald-900/20' : 'bg-stone-950 border-stone-800 text-stone-500'}`}
                                         >
                                             {method.label}
                                         </button>
                                     ))}
                                 </div>
                             </div>
+
+                            {paymentMethod === 'CARD' && (
+                                <div className="p-3.5 bg-stone-950 border border-emerald-500/20 rounded-2xl space-y-3 animate-in fade-in duration-200">
+                                    <div>
+                                        <label className="text-[9px] font-bold text-stone-400 uppercase tracking-wider block mb-1">Bloke / Valör Seçeneği</label>
+                                        <div className="grid grid-cols-2 gap-1.5">
+                                            {[
+                                                { id: 'UNBLOCKED', label: 'Blokesiz (Anında)', desc: '%4 Komisyon' },
+                                                { id: 'DAYS_15', label: '15 Gün Bloke', desc: '%0 Komisyon' },
+                                                { id: 'DAYS_30', label: '30 Gün Bloke', desc: '%0 Komisyon' },
+                                                { id: 'DAYS_45', label: '45 Gün Bloke', desc: '%0 Komisyon' }
+                                            ].map(opt => (
+                                                <button
+                                                    key={opt.id}
+                                                    type="button"
+                                                    onClick={() => setCardOption(opt.id as any)}
+                                                    className={`p-2.5 rounded-xl border text-left transition-all ${cardOption === opt.id ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300' : 'bg-stone-900 border-stone-800 text-stone-400 hover:border-stone-700'}`}
+                                                >
+                                                    <div className="text-[10px] font-bold">{opt.label}</div>
+                                                    <div className="text-[8px] text-stone-500">{opt.desc}</div>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {cardOption === 'UNBLOCKED' ? (
+                                        <div className="space-y-2 pt-1 border-t border-white/5">
+                                            <div className="flex items-center justify-between gap-2">
+                                                <label className="text-[9px] font-bold text-stone-400 uppercase tracking-wider">Banka POS Komisyon Oranı (%)</label>
+                                                <input 
+                                                    type="number"
+                                                    step="0.1"
+                                                    value={commissionRate}
+                                                    onChange={e => setCommissionRate(e.target.value)}
+                                                    className="w-20 p-1.5 bg-stone-900 border border-stone-700 rounded-lg text-right text-xs font-bold text-emerald-400 outline-none focus:border-emerald-500"
+                                                />
+                                            </div>
+                                            {parseFloatSafe(paymentAmount) > 0 && (
+                                                <div className="bg-emerald-950/40 border border-emerald-500/20 p-2.5 rounded-xl text-[10px] space-y-1">
+                                                    <div className="flex justify-between text-stone-400">
+                                                        <span>Toplam Tahsilat:</span>
+                                                        <span className="font-bold text-white">{parseFloatSafe(paymentAmount).toLocaleString('tr-TR')} TL</span>
+                                                    </div>
+                                                    <div className="flex justify-between text-rose-400">
+                                                        <span>POS Komisyonu (%{commissionRate}):</span>
+                                                        <span className="font-bold">-{((parseFloatSafe(paymentAmount) * parseFloatSafe(commissionRate)) / 100).toLocaleString('tr-TR')} TL</span>
+                                                    </div>
+                                                    <div className="flex justify-between text-emerald-400 font-bold border-t border-emerald-500/20 pt-1">
+                                                        <span>Hesaba Geçiş (Net):</span>
+                                                        <span>{(parseFloatSafe(paymentAmount) - (parseFloatSafe(paymentAmount) * parseFloatSafe(commissionRate)) / 100).toLocaleString('tr-TR')} TL</span>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div className="bg-amber-950/30 border border-amber-500/20 p-2.5 rounded-xl text-[10px] text-amber-300/90 leading-relaxed">
+                                            <p className="font-bold text-amber-400 mb-0.5">ⓘ Bloke Süreci Bilgilendirmesi</p>
+                                            <p>Çiftçiden tüm tutar <strong>tahsil edilecek</strong> ve borcu kapanacaktır. Tutar komisyonsuz olarak <strong>{cardOption === 'DAYS_15' ? '15' : cardOption === 'DAYS_30' ? '30' : '45'} gün sonra ({new Date(Date.now() + (cardOption === 'DAYS_15' ? 15 : cardOption === 'DAYS_30' ? 30 : 45)*86400000).toLocaleDateString('tr-TR')})</strong> bloke kalkarak hesabınıza otomatik geçecektir.</p>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
                             {(paymentMethod === 'CHECK' || paymentMethod === 'TEDYE') && (
                                 <div className="animate-in slide-in-from-top-2 duration-300">
                                     <label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Vade Tarihi</label>
@@ -2360,6 +2632,19 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                     <option value="">Hesap Seçilmedi</option>
                                     {accounts.map(acc => (
                                         <option key={acc.id} value={acc.id}>{acc.name} ({new Intl.NumberFormat('tr-TR', { style: 'currency', currency: userProfile?.currency || 'TRY' }).format(acc.balance)})</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">İlgili Mahsul / Ürün (İsteğe Bağlı - Ürün Bazlı Ödeme)</label>
+                                <select 
+                                    value={paymentCrop}
+                                    onChange={e => setPaymentCrop(e.target.value)}
+                                    className="w-full h-[46px] px-4 bg-stone-950 border border-stone-800 rounded-2xl outline-none text-stone-200 text-xs focus:border-emerald-500/50 transition-all"
+                                >
+                                    <option value="">Genel Ödeme (Tüm Hesap)</option>
+                                    {availableCrops.map(crop => (
+                                        <option key={crop} value={crop}>{crop} Mahsulü İçin Ödeme</option>
                                     ))}
                                 </select>
                             </div>
@@ -2642,6 +2927,22 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
             {selectedPrescription && !isProcessingPdf && (
                 <div className="hidden"></div>
             )}
+
+            {selectedFarmer && (
+                <FarmerFinancialAnalysisModal
+                    isOpen={isFinancialAnalysisOpen}
+                    onClose={() => setIsFinancialAnalysisOpen(false)}
+                    farmer={selectedFarmer}
+                    farmerLabel={farmerLabel}
+                    prescriptions={farmerPrescriptions}
+                    payments={farmerPayments}
+                    manualDebts={farmerManualDebts}
+                    myPayments={myPayments}
+                    inventory={inventory}
+                    visits={farmerVisits}
+                    currency={userProfile?.currency}
+                />
+            )}
         </div>
     );
 }
@@ -2708,8 +3009,13 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                     <div className="w-8 h-8 rounded-lg bg-stone-800 text-stone-500 flex items-center justify-center font-bold text-xs group-hover:bg-emerald-900/30 group-hover:text-emerald-400 transition-colors border border-white/5 shadow-inner">{farmer.fullName.charAt(0)}</div>
                     <div>
                         <h3 className="font-bold text-stone-200 text-xs tracking-tight">{farmer.fullName}</h3>
-                        <div className="flex items-center space-x-1.5 mt-0.5">
+                        <div className="flex items-center space-x-1.5 mt-0.5 flex-wrap">
                              <span className="text-[8px] text-stone-500 flex items-center bg-stone-950/50 px-1 py-0.5 rounded border border-white/5 font-medium"><MapPin size={7} className="mr-1 text-emerald-500/70"/> {farmer.village}</span>
+                             {farmer.tcNo && (
+                                <span className="text-[8px] text-stone-400 bg-stone-950/50 px-1 py-0.5 rounded border border-white/5 font-mono">
+                                    TC: {farmer.tcNo}
+                                </span>
+                             )}
                              {farmer.fields && farmer.fields.length > 0 && (
                                 <span className="text-[8px] text-amber-500/80 bg-amber-900/10 px-1 py-0.5 rounded border border-amber-800/20 font-bold">
                                     {farmer.fields.length} Tarla
@@ -2727,6 +3033,18 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                             {farmer.overallBalance && farmer.overallBalance < 0 ? 'Borç' : 'Alacak'}
                         </div>
                     </div>
+                    <button 
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            changeFarmerSelection(farmer);
+                            setIsFinancialAnalysisOpen(true);
+                        }}
+                        title="Finansal Analiz & Kârlılık"
+                        className="p-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 rounded-lg transition-all border border-emerald-500/20 active:scale-95 flex items-center gap-1"
+                    >
+                        <TrendingUpIcon size={12} />
+                        <span className="text-[9px] font-bold hidden sm:inline">Finans</span>
+                    </button>
                     <button 
                         onClick={(e) => {
                             e.stopPropagation();
@@ -2910,9 +3228,11 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
         isOpen={isDebtReminderModalOpen}
         onClose={() => setIsDebtReminderModalOpen(false)}
         farmersWithDebt={farmersWithDebt}
+        allFarmers={farmers}
         currency={(userProfile?.currency as 'TRY' | 'USD' | 'EUR') || 'TRY'}
         farmerLabel={farmerLabel}
         engineerId={currentUser?.uid || ''}
+        companyName={userProfile?.companyName || 'MKS Mühendisim'}
       />
 
       <ConfirmationModal
@@ -2922,6 +3242,22 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
         title={confirmModal.title}
         message={confirmModal.message}
       />
+
+      {selectedFarmer && (
+        <FarmerFinancialAnalysisModal
+          isOpen={isFinancialAnalysisOpen}
+          onClose={() => setIsFinancialAnalysisOpen(false)}
+          farmer={selectedFarmer}
+          farmerLabel={farmerLabel}
+          prescriptions={farmerPrescriptions}
+          payments={farmerPayments}
+          manualDebts={farmerManualDebts}
+          myPayments={myPayments}
+          inventory={inventory}
+          visits={farmerVisits}
+          currency={userProfile?.currency}
+        />
+      )}
 
     </div>
   );

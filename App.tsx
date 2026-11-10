@@ -36,6 +36,7 @@ import { Plants } from './components/Plants';
 import { AIAssistant } from './components/AIAssistant';
 import { SmartStock } from './components/SmartStock';
 import { SiloScreen } from './components/SiloScreen';
+import { RegionalAlerts } from './components/RegionalAlerts';
 import { SubscriptionLock } from './components/SubscriptionLock';
 import { MapComponent } from './components/MapComponent';
 import { AppProvider, useAppViewModel } from './context/AppContext';
@@ -180,8 +181,23 @@ function MainApp() {
     
     initializeAppData();
     
+    // Auto-sync when reconnecting to the internet
+    const handleOnline = async () => {
+        if (currentUser && !loading) {
+            try {
+                await dbService.syncAllDataOnLogin(currentUser.uid);
+                await refreshStats();
+                await refreshNews();
+            } catch (err) {
+                console.warn("Online auto-sync error:", err);
+            }
+        }
+    };
+    window.addEventListener('online', handleOnline);
+
     return () => {
         if (cleanupSync) cleanupSync();
+        window.removeEventListener('online', handleOnline);
     };
   }, [currentUser, loading]);
 
@@ -397,11 +413,11 @@ function MainApp() {
         case 'NEWS': return <News onBack={() => window.history.back()} />;
         case 'ADMIN_PANEL': return isAdmin ? <AdminPanel onBack={() => window.history.back()} /> : <Dashboard onNavigate={handleNavigate} />;
         case 'PLANTS': return <Plants onNavigate={handleNavigate} />;
-        case 'FINDEKS': return <MKSMuhendisim onBack={() => window.history.back()} />;
         case 'MKS_MUHENDISIM': return <MKSMuhendisim onBack={() => window.history.back()} />;
         case 'AI_ASSISTANT': return <AIAssistant onBack={() => window.history.back()} />;
         case 'SMART_STOCK': return <SmartStock onBack={() => window.history.back()} />;
         case 'SILO': return <SiloScreen onBack={() => window.history.back()} />;
+        case 'REGIONAL_ALERTS': return <RegionalAlerts onBack={() => window.history.back()} />;
         default: return <Dashboard onNavigate={handleNavigate} />;
     }
   };

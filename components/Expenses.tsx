@@ -57,6 +57,8 @@ export const ExpensesScreen: React.FC<ExpensesProps> = ({ onBack }) => {
     return expenses.filter(e => e.category === selectedCategory);
   }, [expenses, selectedCategory]);
 
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   const handleOpenAddModal = () => {
     setNewExpense({
       title: '',
@@ -71,37 +73,47 @@ export const ExpensesScreen: React.FC<ExpensesProps> = ({ onBack }) => {
 
   const handleAddExpense = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newExpense.title || newExpense.amount <= 0) return;
+    if (isSubmitting || !newExpense.title || newExpense.amount <= 0) return;
 
-    await addExpense({
-        ...newExpense,
-        createdById: activeTeamMember?.id
-    });
-    await hapticFeedback('success');
-    setIsAddModalOpen(false);
-    setNewExpense({
-      title: '',
-      amount: 0,
-      date: new Date().toISOString().split('T')[0],
-      category: 'OTHER',
-      note: '',
-      accountId: ''
-    });
+    try {
+      setIsSubmitting(true);
+      await addExpense({
+          ...newExpense,
+          createdById: activeTeamMember?.id
+      });
+      await hapticFeedback('success');
+      setIsAddModalOpen(false);
+      setNewExpense({
+        title: '',
+        amount: 0,
+        date: new Date().toISOString().split('T')[0],
+        category: 'OTHER',
+        note: '',
+        accountId: ''
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleEditExpense = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingExpense || !editingExpense.title || editingExpense.amount <= 0) return;
+    if (isSubmitting || !editingExpense || !editingExpense.title || editingExpense.amount <= 0) return;
 
-    const updatedExpense = {
-      ...editingExpense,
-      date: new Date(editingExpense.date).toISOString()
-    };
+    try {
+      setIsSubmitting(true);
+      const updatedExpense = {
+        ...editingExpense,
+        date: new Date(editingExpense.date).toISOString()
+      };
 
-    await updateExpense(updatedExpense);
-    await hapticFeedback('success');
-    setEditingExpense(null);
-    setSelectedExpense(updatedExpense); // Update details view
+      await updateExpense(updatedExpense);
+      await hapticFeedback('success');
+      setEditingExpense(null);
+      setSelectedExpense(updatedExpense); // Update details view
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const [expenseToDelete, setExpenseToDelete] = useState<string | null>(null);
@@ -382,9 +394,10 @@ export const ExpensesScreen: React.FC<ExpensesProps> = ({ onBack }) => {
 
                   <button 
                     type="submit"
-                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 rounded-2xl shadow-lg shadow-emerald-900/20 transition-all active:scale-[0.98] mt-2"
+                    disabled={isSubmitting}
+                    className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold py-4 rounded-2xl shadow-lg shadow-emerald-900/20 transition-all active:scale-[0.98] mt-2 flex items-center justify-center"
                   >
-                    Gideri Kaydet
+                    {isSubmitting ? 'Kaydediliyor...' : 'Gideri Kaydet'}
                   </button>
                 </form>
               </div>
@@ -620,9 +633,10 @@ export const ExpensesScreen: React.FC<ExpensesProps> = ({ onBack }) => {
 
                   <button 
                     type="submit"
-                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 rounded-2xl shadow-lg shadow-emerald-900/20 transition-all active:scale-[0.98] mt-2"
+                    disabled={isSubmitting}
+                    className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold py-4 rounded-2xl shadow-lg shadow-emerald-900/20 transition-all active:scale-[0.98] mt-2 flex items-center justify-center"
                   >
-                    Değişiklikleri Kaydet
+                    {isSubmitting ? 'Kaydediliyor...' : 'Değişiklikleri Kaydet'}
                   </button>
                 </form>
               </div>

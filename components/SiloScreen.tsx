@@ -1,7 +1,9 @@
+import { createMultiPagePdf } from '../utils/pdfHelper';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { dbService } from '../services/db';
 import { SiloTransaction } from '../types';
-import { Plus, Trash2, ArrowLeft, TrendingUp, TrendingDown, Package, Edit2, Info, User, Download, Calendar, Wallet, ChevronRight, FileText, Paperclip, Search, X as XIcon, Camera } from 'lucide-react';
+import { Plus, Trash2, ArrowLeft, TrendingUp, TrendingDown, Package, Edit2, Info, User, Download, Calendar, Wallet, ChevronRight, FileText, Paperclip, Search, X as XIcon, Camera, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { validateTcOrVkn } from '../utils/tcNoValidator';
 import { formatCurrency } from '../utils/currency';
 import { useAppViewModel } from '../context/AppContext';
 import { jsPDF } from 'jspdf';
@@ -27,6 +29,7 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     const [editingContactId, setEditingContactId] = useState<string | null>(null);
     const [contactName, setContactName] = useState('');
     const [contactPhone, setContactPhone] = useState('');
+    const [contactTcNo, setContactTcNo] = useState('');
     const [contactAddress, setContactAddress] = useState('');
     const [contactType, setContactType] = useState<'BUYER'|'SELLER'|'BOTH'>('BUYER');
 
@@ -205,6 +208,11 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     const handleContactSave = async () => {
         if (!isAdmin) return window.alert("Sadece yöneticiler silom işlemlerine müdahale edebilir.");
         if (!contactName.trim()) return;
+        const tcCheck = validateTcOrVkn(contactTcNo);
+        if (!tcCheck.isValid) {
+            window.alert(tcCheck.message);
+            return;
+        }
         
         try {
             if (editingContactId) {
@@ -216,6 +224,7 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                         ...updatedContact,
                         name: finalName,
                         phone: contactPhone.trim(),
+                        tcNo: contactTcNo.trim(),
                         address: contactAddress.trim(),
                         type: contactType
                     };
@@ -233,6 +242,7 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                     id: String(Date.now()),
                     name: contactName.trim(),
                     phone: contactPhone.trim(),
+                    tcNo: contactTcNo.trim(),
                     address: contactAddress.trim(),
                     type: contactType,
                     createdById: activeTeamMember?.id
@@ -269,6 +279,7 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
              setEditingContactId(contact.id);
              setContactName(contact.name);
              setContactPhone(contact.phone || '');
+             setContactTcNo(contact.tcNo || '');
              setContactAddress(contact.address || '');
              setContactType(contact.type || 'BUYER');
              setIsContactModalOpen(true);
@@ -280,6 +291,7 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         setEditingContactId(null);
         setContactName('');
         setContactPhone('');
+        setContactTcNo('');
         setContactAddress('');
         setContactType('BUYER');
     };
@@ -559,14 +571,7 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             
             document.body.removeChild(container);
             
-            const imgData = canvas.toDataURL('image/jpeg', 0.95);
-            const pdf = new jsPDF({
-                orientation: 'p',
-                unit: 'px',
-                format: [canvas.width, canvas.height]
-            });
-            
-            pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+            const pdf = createMultiPagePdf(canvas);
             
             const charMap: {[key: string]: string} = {'Ğ':'G','ğ':'g','Ü':'U','ü':'u','Ş':'S','ş':'s','İ':'I','ı':'i','Ö':'O','ö':'o','Ç':'C','ç':'c'};
             const safeName = tx.person
@@ -697,16 +702,7 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             
             document.body.removeChild(container);
             
-            const imgData = canvas.toDataURL('image/jpeg', 0.95);
-            // Dynamic height based on transactions
-            const pageHeightInPx = canvas.height;
-            const pdf = new jsPDF({
-                orientation: 'p',
-                unit: 'px',
-                format: [canvas.width, pageHeightInPx]
-            });
-            
-            pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, pageHeightInPx);
+            const pdf = createMultiPagePdf(canvas);
             
             const charMap: {[key: string]: string} = {'Ğ':'G','ğ':'g','Ü':'U','ü':'u','Ş':'S','ş':'s','İ':'I','ı':'i','Ö':'O','ö':'o','Ç':'C','ç':'c'};
             const safeName = personName
@@ -1821,6 +1817,31 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                                     placeholder="Örn: Hasan Yılmaz"
                                 />
                             </div>
+
+                            <div>
+                                <div className="flex justify-between items-center mb-1.5">
+                                    <label className="text-xs font-black text-stone-500 uppercase tracking-widest block">T.C. Kimlik Numarası</label>
+                                    {contactTcNo.trim().length > 0 && (
+                                        <span className={`text-[10px] font-bold font-mono ${validateTcOrVkn(contactTcNo).isValid ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                            {contactTcNo.trim().length}/11 Hane
+                                        </span>
+                                    )}
+                                </div>
+                                <input 
+                                    type="text" 
+                                    maxLength={11}
+                                    value={contactTcNo} 
+                                    onChange={e => setContactTcNo(e.target.value.replace(/[^0-9]/g, ''))} 
+                                    className={`w-full bg-stone-950 border ${contactTcNo.trim().length > 0 ? (validateTcOrVkn(contactTcNo).isValid ? 'border-emerald-500 text-emerald-300 bg-emerald-950/20 focus:border-emerald-500 ring-2 ring-emerald-500/20' : 'border-rose-500 text-rose-300 bg-rose-950/40 focus:border-rose-500 ring-2 ring-rose-500/20') : 'border-stone-800 text-white focus:border-blue-500'} rounded-xl px-4 py-3 outline-none transition-all font-mono`}
+                                    placeholder="11 haneli T.C. Kimlik No"
+                                />
+                                {contactTcNo.trim().length > 0 && (
+                                    <p className={`text-[10px] font-bold ${validateTcOrVkn(contactTcNo).isValid ? 'text-emerald-400 bg-emerald-950/40 border-emerald-500/30' : 'text-rose-400 bg-rose-950/50 border-rose-500/30'} mt-1.5 flex items-center gap-1.5 border p-2 rounded-xl`}>
+                                        {validateTcOrVkn(contactTcNo).isValid ? <CheckCircle2 size={12} className="shrink-0 text-emerald-400" /> : <AlertTriangle size={12} className="shrink-0 text-rose-400" />}
+                                        <span>{validateTcOrVkn(contactTcNo).message}</span>
+                                    </p>
+                                )}
+                            </div>
                             
                             <div>
                                 <label className="text-xs font-black text-stone-500 uppercase tracking-widest mb-1.5 block">Telefon Numarası</label>
@@ -1861,8 +1882,8 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                             <button onClick={closeContactModal} className="flex-1 py-3 text-sm font-bold text-stone-400 hover:text-white hover:bg-stone-800 rounded-xl transition-all">İptal</button>
                             <button 
                                 onClick={handleContactSave}
-                                disabled={!contactName.trim()} 
-                                className="flex-1 py-3 text-sm font-bold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition-all shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:shadow-[0_0_30px_rgba(37,99,235,0.5)]"
+                                disabled={!contactName.trim() || !validateTcOrVkn(contactTcNo).isValid} 
+                                className="flex-1 py-3 text-sm font-bold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed disabled:bg-stone-800 disabled:text-stone-500 rounded-xl transition-all shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:shadow-[0_0_30px_rgba(37,99,235,0.5)]"
                             >{editingContactId ? 'Güncelle' : 'Kaydet'}</button>
                         </div>
                     </div>

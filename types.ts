@@ -47,6 +47,7 @@ export interface SiloContact {
   id: string;
   name: string;
   phone?: string;
+  tcNo?: string;
   address?: string;
   type: 'BUYER' | 'SELLER' | 'BOTH';
   createdById?: string;
@@ -80,6 +81,8 @@ export interface ManualDebt {
   deletedAt?: string;
 }
 
+export type CardSettlementOption = 'UNBLOCKED' | 'DAYS_15' | 'DAYS_30' | 'DAYS_45';
+
 export interface Payment {
   id: string;
   farmerId: string;
@@ -91,6 +94,13 @@ export interface Payment {
   accountId?: string; // Linked account (Cash or Bank)
   createdById?: string;
   deletedAt?: string;
+  cardOption?: CardSettlementOption;
+  commissionRate?: number;
+  commissionAmount?: number;
+  netAmount?: number;
+  unblockDate?: string;
+  isUnblocked?: boolean;
+  crop?: string;
 }
 
 export interface Account {
@@ -101,6 +111,7 @@ export interface Account {
   iban?: string;
   accountHolder?: string;
   bankLogo?: string;
+  deletedAt?: string;
 }
 
 export interface Transaction {
@@ -112,6 +123,9 @@ export interface Transaction {
   description: string;
   relatedId?: string;
   category?: string;
+  partyName?: string;
+  partyType?: 'FARMER' | 'SUPPLIER' | 'EXPENSE' | 'OTHER';
+  partyId?: string;
   deletedAt?: string;
 }
 
@@ -120,6 +134,7 @@ export interface Farmer {
   fullName: string;
   phoneNumber: string;
   village: string;
+  tcNo?: string;
   fields: Field[];
   avatarUrl?: string;
   totalDebt?: number; // Calculated or stored
@@ -186,6 +201,8 @@ export interface Prescription {
   fieldId?: string;
   fieldIds?: string[];
   plantId?: string;
+  crop?: string;
+  cropName?: string;
   date: string;
   type?: 'SALE' | 'RETURN'; // Differentiate between sales and returns
   prescriptionNo: string; // Explicit display number if different from ID
@@ -196,6 +213,7 @@ export interface Prescription {
   isInventoryProcessed?: boolean;
   totalAmount?: number;
   priceType?: 'CASH' | 'TERM';
+  accountId?: string;
   discountAmount?: number;
   dueDate?: string; // ISO String for term payment due date
   status?: 'PENDING' | 'APPROVED' | 'DELIVERED' | 'INVOICED';
@@ -238,7 +256,8 @@ export interface UserProfile {
   selectedCity?: AgriCity;
   lastSyncTime?: string;
   highContrastMode?: boolean;
-  theme?: 'DEFAULT' | 'TECHNICAL' | 'ORGANIC' | 'MINIMAL' | 'BARBIE' | 'APPLE';
+  colorMode?: 'DARK' | 'LIGHT';
+  theme?: 'DEFAULT' | 'TECHNICAL' | 'ORGANIC' | 'MINIMAL' | 'BARBIE' | 'APPLE' | 'LIGHT';
   assistantVoice?: 'male' | 'female';
   currency?: 'TRY' | 'USD' | 'EUR';
   role?: 'admin' | 'user';
@@ -247,6 +266,15 @@ export interface UserProfile {
   adminUsername?: string;
   adminPassword?: string;
   language?: Language;
+  // İşyeri Kaşesi (Official Business Stamp)
+  stampEnabled?: boolean;
+  stampTitle?: string;
+  stampSubTitle?: string;
+  stampTaxInfo?: string;
+  stampTradeInfo?: string;
+  stampAddressPhone?: string;
+  stampColor?: string;
+  stampShape?: 'RECTANGLE' | 'OVAL';
 }
 
 export interface InventoryItem {
@@ -272,6 +300,8 @@ export interface Supplier {
   id: string;
   name: string;
   phoneNumber: string;
+  tcNo?: string;
+  vkn?: string;
   address?: string;
   totalDebt: number; // Total amount purchased
   balance: number; // Current balance (negative means we owe money)
@@ -282,7 +312,7 @@ export interface SupplierPurchase {
   id: string;
   supplierId: string;
   date: string;
-  type?: 'PURCHASE' | 'RETURN';
+  type?: 'PURCHASE' | 'RETURN' | 'SALE';
   receiptNo?: string;
   items: {
     pesticideId: string;
@@ -332,6 +362,11 @@ export interface MyPayment {
   relatedId?: string;
   createdById?: string;
   deletedAt?: string;
+  cardOption?: CardSettlementOption;
+  unblockDate?: string;
+  commissionRate?: number;
+  commissionAmount?: number;
+  autoCollected?: boolean;
 }
 
 export interface TurnoverLog {

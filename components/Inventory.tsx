@@ -1,3 +1,4 @@
+import { createMultiPagePdf } from '../utils/pdfHelper';
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
     Search, Plus, Package, DollarSign, TrendingUp, 
@@ -62,11 +63,23 @@ export const InventoryScreen: React.FC<{
     const [searchTerm, setSearchTerm] = useState('');
     const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
 
+    // Year Selection
+    const currentYear = useMemo(() => new Date().getFullYear(), []);
+    const [selectedYear, setSelectedYear] = useState<number>(currentYear);
+    const yearsList = useMemo(() => {
+        const list = [];
+        for (let y = currentYear; y >= currentYear - 4; y--) {
+            list.push(y);
+        }
+        return list;
+    }, [currentYear]);
+
     // Modal States
     const [isRebuildModalOpen, setIsRebuildModalOpen] = useState(false);
     const [rebuildState, setRebuildState] = useState<'IDLE' | 'ANALYZING' | 'RESULT' | 'REPAIRING'>('IDLE');
     const [mismatches, setMismatches] = useState<{pesticideId: string, pesticideName: string, currentQty: number, calculatedQty: number, purchasedQty: number, soldQty: number, adjustedQty: number}[]>([]);
     const [selectedMismatches, setSelectedMismatches] = useState<Set<string>>(new Set());
+    const [rebuildSearchTerm, setRebuildSearchTerm] = useState('');
     const [isSmartOrderModalOpen, setIsSmartOrderModalOpen] = useState(false);
 
     const handleAnalyzeInventory = async () => {
@@ -90,15 +103,34 @@ export const InventoryScreen: React.FC<{
             const selectedFixes = mismatches.filter(m => selectedMismatches.has(m.pesticideId));
             await dbService.applyInventoryFixes(selectedFixes.map(m => ({
                 pesticideId: m.pesticideId,
-                quantity: m.calculatedQty
+                quantity: Number(m.calculatedQty) || 0
             })));
+            await refreshInventory();
+            await refreshStats();
             showToast("Seçilen stoklar kusursuz bir şekilde onarıldı.", "success");
-            setTimeout(() => {
-                window.location.reload();
-            }, 1000);
+            setRebuildState('RESULT');
+            setIsRebuildModalOpen(false);
+            if (hapticFeedback) hapticFeedback('success');
         } catch (error) {
             console.error("Repair error:", error);
             showToast("Stoklar onarılırken hata oluştu.", "error");
+            setRebuildState('RESULT');
+        }
+    };
+
+    const handleFullRebuild = async () => {
+        setRebuildState('REPAIRING');
+        try {
+            await dbService.rebuildInventoryBalances();
+            await refreshInventory();
+            await refreshStats();
+            showToast("Tüm depo bakiyeleri geçmiş fişlerden baştan sona kusursuzca yeniden hesaplandı.", "success");
+            setRebuildState('RESULT');
+            setIsRebuildModalOpen(false);
+            if (hapticFeedback) hapticFeedback('success');
+        } catch (error) {
+            console.error("Full rebuild error:", error);
+            showToast("Depo yeniden hesaplanırken hata oluştu.", "error");
             setRebuildState('RESULT');
         }
     };
@@ -122,6 +154,8 @@ export const InventoryScreen: React.FC<{
     const [isStockMenuOpen, setIsStockMenuOpen] = useState(false);
     const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
     const [selectedDetailItem, setSelectedDetailItem] = useState<InventoryItem | null>(null);
+    const [historySearchQuery, setHistorySearchQuery] = useState('');
+    const [historyTypeFilter, setHistoryTypeFilter] = useState<'ALL' | 'SALE' | 'PURCHASE' | 'ADJUSTMENT'>('ALL');
     const [purchaseHistory, setPurchaseHistory] = useState<{ id: string; targetId: string; name: string; date: string; price: number; quantity: string; isReturn: boolean; type: 'SALE' | 'PURCHASE' }[]>([]);
 
     useEffect(() => {
@@ -130,9 +164,16 @@ export const InventoryScreen: React.FC<{
             return;
         }
         
-        const history: { id: string; targetId: string; name: string; date: string; price: number; quantity: string; isReturn: boolean; type: 'SALE' | 'PURCHASE' }[] = [];
+        const history: { id: string; targetId: string; name: string; date: string; price: number; quantity: string; isReturn: boolean; isSupplierSale?: boolean; type: 'SALE' | 'PURCHASE' }[] = [];
         
-        supplierPurchases.filter(p => !p.deletedAt).forEach(p => {
+        supplierPurchases.filter(p => {
+            if (p.deletedAt) return false;
+            if (p.date) {
+                const year = new Date(p.date).getFullYear();
+                if (!isNaN(year) && year !== selectedYear) return false;
+            }
+            return true;
+        }).forEach(p => {
             const item = p.items.find(i => i.pesticideId === selectedDetailItem.pesticideId);
             if (item) {
                 const supplier = suppliers.find(s => s.id === p.supplierId);
@@ -140,7 +181,8 @@ export const InventoryScreen: React.FC<{
                 const qtyStr = String(item.quantity || '0').replace(',', '.');
                 const parsedQty = parseFloat(qtyStr) || 0;
                 
-                const isReturn = p.type === 'RETURN' || parsedQty < 0;
+                const isSale = p.type === 'SALE' || p.note?.includes('SATIŞ');
+                const isReturn = p.type === 'RETURN' || (p.note?.includes('İADE') && !isSale);
                 const effectiveQty = Math.abs(parsedQty);
 
                 history.push({
@@ -150,14 +192,15 @@ export const InventoryScreen: React.FC<{
                     date: p.date,
                     price: item.buyingPrice || 0,
                     quantity: effectiveQty.toString(),
-                    isReturn: isReturn,
-                    type: 'PURCHASE'
+                    isReturn: Boolean(isReturn),
+                    isSupplierSale: Boolean(isSale),
+                    type: isSale ? 'SALE' : 'PURCHASE'
                 });
             }
         });
         
         setPurchaseHistory(history);
-    }, [selectedDetailItem, supplierPurchases, suppliers]);
+    }, [selectedDetailItem, supplierPurchases, suppliers, selectedYear]);
 
     const [isScanning, setIsScanning] = useState(false);
     
@@ -268,13 +311,22 @@ export const InventoryScreen: React.FC<{
 
     const purchasedQuantityMap = useMemo(() => {
         const map = new Map<string, number>();
-        supplierPurchases.filter(p => !p.deletedAt).forEach(purchase => {
+        supplierPurchases.filter(p => {
+            if (p.deletedAt) return false;
+            if (p.date) {
+                const year = new Date(p.date).getFullYear();
+                if (!isNaN(year) && year !== selectedYear) return false;
+            }
+            return true;
+        }).forEach(purchase => {
             purchase.items.forEach(item => {
                 const qtyStr = String(item.quantity || '0').replace(',', '.');
                 const qty = parseFloat(qtyStr) || 0;
                 if (isNaN(qty) || qty === 0) return;
 
-                const isReturnOrSale = purchase.type === 'RETURN' || purchase.note?.startsWith('SATIŞ') || qty < 0;
+                const isSale = purchase.type === 'SALE' || purchase.note?.includes('SATIŞ');
+                const isReturn = purchase.type === 'RETURN' || (purchase.note?.includes('İADE') && !isSale);
+                const isReturnOrSale = isSale || isReturn || qty < 0;
                 const effectiveQty = isReturnOrSale ? -Math.abs(qty) : Math.abs(qty);
 
                 const current = map.get(item.pesticideId) || 0;
@@ -282,7 +334,24 @@ export const InventoryScreen: React.FC<{
             });
         });
         return map;
-    }, [supplierPurchases]);
+    }, [supplierPurchases, selectedYear]);
+
+    const getYearlyItemQuantity = (item: InventoryItem, year: number) => {
+        if (year === currentYear) return item.quantity;
+        const purchased = purchasedQuantityMap.get(item.pesticideId) || 0;
+        const sold = prescriptions.filter(p => !p.deletedAt && p.date && new Date(p.date).getFullYear() === year)
+            .reduce((acc, p) => {
+                const isReturn = p.type === 'RETURN';
+                const found = p.items.find(i => i.pesticideId === item.pesticideId);
+                const qty = found ? (parseFloat(String(found.quantity || '0').replace(',', '.')) || 0) : 0;
+                return isReturn ? acc - qty : acc + qty;
+            }, 0);
+        const adj = (item.adjustments || [])
+            .filter(a => a.date && new Date(a.date).getFullYear() === year)
+            .reduce((acc, a) => acc + (a.amount || 0), 0);
+        const yearNet = purchased - sold + adj;
+        return (purchased > 0 || sold > 0 || adj !== 0) ? yearNet : item.quantity;
+    };
 
     const filteredPesticides = useMemo(() => {
         if (!productName || selectedPesticide) return [];
@@ -365,7 +434,7 @@ export const InventoryScreen: React.FC<{
                         {
                             date: new Date().toISOString(),
                             amount: addQty,
-                            note: 'Depomdan Eklenen'
+                            note: 'Manuel Stok Girişi'
                         }
                     ];
                 }
@@ -397,7 +466,7 @@ export const InventoryScreen: React.FC<{
                 newItem.adjustments = [{
                     date: new Date().toISOString(),
                     amount: addQty,
-                    note: 'Depomdan'
+                    note: 'Manuel Stok Girişi'
                 }];
             }
             await addInventoryItem(newItem);
@@ -571,6 +640,8 @@ export const InventoryScreen: React.FC<{
 
     const openDetailModal = (item: InventoryItem) => {
         setSelectedDetailItem(item);
+        setHistorySearchQuery('');
+        setHistoryTypeFilter('ALL');
         setIsDetailModalOpen(true);
         hapticFeedback('light');
     };
@@ -734,6 +805,8 @@ export const InventoryScreen: React.FC<{
         setSelectedItem(null);
         setSelectedDetailItem(null);
         setSelectedSupplierId('');
+        setHistorySearchQuery('');
+        setHistoryTypeFilter('ALL');
     };
 
     // Helper for Turkish characters (jsPDF default fonts don't support them well without custom fonts)
@@ -840,7 +913,7 @@ export const InventoryScreen: React.FC<{
                     htmlContent += `
                         <td style="padding: 10px; font-weight: 600;">${item.pesticideName}</td>
                         <td style="padding: 10px;">${item.category}</td>
-                        <td style="padding: 10px; text-align: center; font-weight: bold;">${item.quantity}</td>
+                        <td style="padding: 10px; text-align: center;"><span style="background-color: #fef3c7; color: #78350f; border: 1px solid #fde68a; font-family: monospace; font-weight: 800; padding: 2px 7px; border-radius: 4px; font-size: 11px; display: inline-block;">${item.quantity}</span></td>
                         <td style="padding: 10px;">${item.unit}</td>
                         <td style="padding: 10px; text-align: right; font-family: monospace; color: #ef4444;">${formatCurrency(item.buyingPrice, userProfile?.currency || 'TRY')}</td>
                         <td style="padding: 10px; text-align: right; font-family: monospace; color: #10b981;">${formatCurrency(item.cashBuyingPrice || 0, userProfile?.currency || 'TRY')}</td>
@@ -849,7 +922,7 @@ export const InventoryScreen: React.FC<{
                     htmlContent += `
                         <td style="padding: 10px; font-weight: 600;">${item.pesticideName}</td>
                         <td style="padding: 10px;">${item.category}</td>
-                        <td style="padding: 10px; text-align: center; font-weight: bold;">${item.quantity} ${item.unit}</td>
+                        <td style="padding: 10px; text-align: center;"><span style="background-color: #fef3c7; color: #78350f; border: 1px solid #fde68a; font-family: monospace; font-weight: 800; padding: 2px 7px; border-radius: 4px; font-size: 11px; display: inline-block;">${item.quantity} ${item.unit}</span></td>
                         <td style="padding: 10px; text-align: right; font-family: monospace; font-size: 10px;">
                             <span style="color:#ef4444">${formatCurrency(item.buyingPrice, userProfile?.currency || 'TRY')}</span> / 
                             <span style="color:#10b981">${formatCurrency(item.cashBuyingPrice || 0, userProfile?.currency || 'TRY')}</span>
@@ -914,14 +987,7 @@ export const InventoryScreen: React.FC<{
 
             document.body.removeChild(container);
             
-            const imgData = canvas.toDataURL('image/jpeg', 0.95);
-            const pdf = new jsPDF({
-                orientation: canvas.width > canvas.height ? 'l' : 'p',
-                unit: 'px',
-                format: [canvas.width, canvas.height]
-            });
-            
-            pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+            const pdf = createMultiPagePdf(canvas);
             pdf.save(`MKS_Depo_Raporu_${type}_${dateStr.replace(/\./g, '_')}.pdf`);
             
             showToast('Kurumsal PDF Raporu oluşturuldu', 'success');
@@ -946,7 +1012,8 @@ export const InventoryScreen: React.FC<{
                 const qtyStr = String(purchaseItem.quantity || '0').replace(',', '.');
                 const parsedQty = parseFloat(qtyStr) || 0;
                 
-                const isReturn = p.type === 'RETURN' || parsedQty < 0;
+                const isSale = p.type === 'SALE' || p.note?.includes('SATIŞ');
+                const isReturn = p.type === 'RETURN' || (p.note?.includes('İADE') && !isSale);
                 const effectiveQty = Math.abs(parsedQty);
 
                 history.push({
@@ -956,8 +1023,8 @@ export const InventoryScreen: React.FC<{
                     date: p.date,
                     price: purchaseItem.buyingPrice || 0,
                     quantity: effectiveQty.toString(),
-                    isReturn: isReturn,
-                    type: 'PURCHASE'
+                    isReturn: Boolean(isReturn),
+                    type: isSale ? 'SALE' : 'PURCHASE'
                 });
             }
         });
@@ -988,7 +1055,7 @@ export const InventoryScreen: React.FC<{
             id: `adj-${idx}`,
             index: idx,
             targetId: 'manual',
-            name: adj.note || 'Depomdan',
+            name: adj.note || 'Manuel Stok Düzeltme',
             date: adj.date,
             price: 0,
             quantity: Math.abs(adj.amount).toString(),
@@ -1127,14 +1194,7 @@ export const InventoryScreen: React.FC<{
 
             document.body.removeChild(container);
             
-            const imgData = canvas.toDataURL('image/jpeg', 0.95);
-            const pdf = new jsPDF({
-                orientation: canvas.width > canvas.height ? 'l' : 'p',
-                unit: 'px',
-                format: [canvas.width, canvas.height]
-            });
-            
-            pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+            const pdf = createMultiPagePdf(canvas);
             pdf.save(`MKS_Urun_Raporu_${item.pesticideName.replace(/[^a-zA-Z0-9]/g, '_')}_${dateStr.replace(/\./g, '_')}.pdf`);
             
             showToast('Ürün detay raporu oluşturuldu', 'success');
@@ -1157,7 +1217,14 @@ export const InventoryScreen: React.FC<{
         
         const history: { id: string; targetId: string; name: string; date: string; price: number; quantity: string; isReturn: boolean; type: 'SALE' | 'PURCHASE' }[] = [];
         
-        prescriptions.filter(p => !p.deletedAt).forEach(p => {
+        prescriptions.filter(p => {
+            if (p.deletedAt) return false;
+            if (p.date) {
+                const year = new Date(p.date).getFullYear();
+                if (!isNaN(year) && year !== selectedYear) return false;
+            }
+            return true;
+        }).forEach(p => {
             const item = p.items.find(i => i.pesticideId === selectedDetailItem.pesticideId);
             if (item) {
                 const qty = parseFloat(item.quantity?.toString().replace(',', '.') || '0') || 0;
@@ -1178,14 +1245,20 @@ export const InventoryScreen: React.FC<{
         });
         
         return history;
-    }, [selectedDetailItem, prescriptions, farmerMap]);
+    }, [selectedDetailItem, prescriptions, farmerMap, selectedYear]);
 
     const combinedHistory = useMemo(() => {
-        const adjustmentsHistory = (selectedDetailItem?.adjustments || []).map((adj, idx) => ({
+        const adjustmentsHistory = (selectedDetailItem?.adjustments || []).filter(adj => {
+            if (adj.date) {
+                const year = new Date(adj.date).getFullYear();
+                if (!isNaN(year) && year !== selectedYear) return false;
+            }
+            return true;
+        }).map((adj, idx) => ({
             id: `adj-${idx}`,
             index: idx,
             targetId: 'manual',
-            name: adj.note || 'Depomdan',
+            name: adj.note || 'Manuel Stok Düzeltme',
             date: adj.date,
             price: 0,
             quantity: Math.abs(adj.amount).toString(),
@@ -1194,7 +1267,51 @@ export const InventoryScreen: React.FC<{
         }));
         
         return [...salesHistory, ...purchaseHistory, ...adjustmentsHistory].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    }, [salesHistory, purchaseHistory, selectedDetailItem]);
+    }, [salesHistory, purchaseHistory, selectedDetailItem, selectedYear]);
+
+    const salesCount = useMemo(() => combinedHistory.filter(i => i.type === 'SALE').length, [combinedHistory]);
+    const purchaseCount = useMemo(() => combinedHistory.filter(i => i.type === 'PURCHASE').length, [combinedHistory]);
+    const adjustmentCount = useMemo(() => combinedHistory.filter(i => i.type === 'ADJUSTMENT').length, [combinedHistory]);
+
+    const filteredCombinedHistory = useMemo(() => {
+        let list = combinedHistory;
+
+        if (historyTypeFilter !== 'ALL') {
+            list = list.filter(item => item.type === historyTypeFilter);
+        }
+
+        if (historySearchQuery.trim()) {
+            const query = historySearchQuery.trim().toLowerCase();
+            list = list.filter(item => {
+                const nameMatch = item.name.toLowerCase().includes(query);
+
+                const rawPriceStr = item.price.toString();
+                const formattedPriceStr = formatCurrency(item.price, userProfile?.currency || 'TRY').toLowerCase();
+                const priceMatch = rawPriceStr.includes(query) || formattedPriceStr.includes(query);
+
+                const qtyMatch = item.quantity.toString().includes(query);
+
+                let dateFormatted = '';
+                try {
+                    dateFormatted = new Date(item.date).toLocaleDateString('tr-TR');
+                } catch (e) {
+                    dateFormatted = item.date;
+                }
+                const dateMatch = dateFormatted.includes(query) || item.date.includes(query);
+
+                const typeLabel = item.type === 'SALE'
+                    ? (item.isReturn ? 'satış iade' : 'satış')
+                    : item.type === 'PURCHASE'
+                    ? (item.isReturn ? 'alım iade tedarikçi' : 'alım tedarikçi')
+                    : 'depomdan manuel düzeltme fark';
+                const typeMatch = typeLabel.toLowerCase().includes(query);
+
+                return nameMatch || priceMatch || qtyMatch || dateMatch || typeMatch;
+            });
+        }
+
+        return list;
+    }, [combinedHistory, historySearchQuery, historyTypeFilter, userProfile?.currency]);
 
     const profitabilityMetrics = useMemo(() => {
         if (!selectedDetailItem) return null;
@@ -1268,7 +1385,14 @@ export const InventoryScreen: React.FC<{
     const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
     const profitLossData = useMemo(() => {
-        const processed = prescriptions.filter(p => p.isInventoryProcessed && !p.deletedAt);
+        const processed = prescriptions.filter(p => {
+            if (!p.isInventoryProcessed || p.deletedAt) return false;
+            if (p.date) {
+                const year = new Date(p.date).getFullYear();
+                if (!isNaN(year) && year !== selectedYear) return false;
+            }
+            return true;
+        });
         
         let totalSoldCost = 0;
         let totalSoldRevenue = 0;
@@ -1308,7 +1432,7 @@ export const InventoryScreen: React.FC<{
             processedCount: processed.length,
             totalExpenses: stats.totalExpenses
         };
-    }, [inventory, prescriptions, stats.totalExpenses, accounts]);
+    }, [inventory, prescriptions, stats.totalExpenses, accounts, selectedYear]);
 
     return (
         <div className="p-4 pb-32 max-w-5xl mx-auto animate-in fade-in duration-500">
@@ -1461,7 +1585,7 @@ export const InventoryScreen: React.FC<{
                 <div className="space-y-4 animate-in slide-in-from-bottom-2 duration-300">
                     {/* Search & Filter */}
                     <div className="flex flex-col gap-2 mb-4">
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap sm:flex-nowrap gap-2">
                             <select 
                                 className="flex-1 bg-stone-900/80 border border-white/10 rounded-xl px-3 py-2 text-stone-400 text-xs font-bold outline-none cursor-pointer hover:text-stone-200 transition-colors min-w-0"
                                 value={categoryFilter}
@@ -1472,17 +1596,22 @@ export const InventoryScreen: React.FC<{
                                     <option key={cat} value={cat}>{cat}</option>
                                 ))}
                             </select>
-                            <button
-                                onClick={() => {
-                                    setIsRebuildModalOpen(true);
-                                    handleAnalyzeInventory();
-                                }}
-                                className="flex-1 bg-orange-950/30 border border-orange-500/20 text-orange-400 hover:bg-orange-900/50 hover:text-orange-300 transition-all rounded-xl px-2 py-2 flex items-center justify-center gap-1.5 min-w-0 group"
-                                title="Stokları Onar"
-                            >
-                                <RefreshCw size={14} className="group-hover:rotate-180 transition-transform duration-500 shrink-0" />
-                                <span className="text-xs font-bold truncate">Depoyu Onar</span>
-                            </button>
+
+                            <div className="flex items-center gap-1.5 bg-stone-900/80 border border-white/10 rounded-xl px-2.5 py-2 text-stone-300 text-xs font-bold shadow-sm">
+                                <Calendar size={14} className="text-emerald-400 shrink-0" />
+                                <select 
+                                    value={selectedYear}
+                                    onChange={(e) => setSelectedYear(Number(e.target.value))}
+                                    className="bg-transparent text-stone-200 text-xs font-bold outline-none cursor-pointer pr-1"
+                                >
+                                    {yearsList.map(y => (
+                                        <option key={y} value={y} className="bg-stone-900 text-stone-200">
+                                            {y} Yılı {y < currentYear ? '(Devir)' : '(Güncel)'}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
                             <button
                                 onClick={() => setIsSmartOrderModalOpen(true)}
                                 className="flex-1 bg-emerald-950/30 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-900/50 hover:text-emerald-300 transition-all rounded-xl px-2 py-2 flex items-center justify-center gap-1.5 min-w-0 group"
@@ -1504,15 +1633,27 @@ export const InventoryScreen: React.FC<{
                         </div>
                     </div>
 
+                    {selectedYear < currentYear && (
+                        <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-3.5 flex items-center gap-3 text-amber-300 text-xs font-bold shadow-sm animate-in fade-in duration-300">
+                            <Calendar size={18} className="text-amber-400 shrink-0" />
+                            <div>
+                                <span>{selectedYear} Yılı Stok Durumları ve Hareketleri Gösteriliyor</span>
+                                <p className="text-[10px] text-amber-400/70 font-normal mt-0.5">Devredilen geçmiş yıl stok verilerini görüntülüyorsunuz. Güncel envanter için {currentYear} yılını seçebilirsiniz.</p>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Inventory List */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {filteredInventory.length > 0 ? (
-                            filteredInventory.map(item => (
+                            filteredInventory.map(item => {
+                                const displayQty = getYearlyItemQuantity(item, selectedYear);
+                                return (
                                 <div 
                                     key={item.id} 
                                     onClick={() => openDetailModal(item)}
                                     className={`bg-stone-900/80 backdrop-blur border rounded-2xl p-4 shadow-sm transition-all group cursor-pointer active:scale-[0.98] relative overflow-hidden ${
-                                        item.quantity <= 0 
+                                        displayQty <= 0 
                                         ? 'border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.1)]' 
                                         : 'border-white/5 hover:border-emerald-500/30 hover:bg-stone-900'
                                     }`}
@@ -1524,14 +1665,14 @@ export const InventoryScreen: React.FC<{
                                             {purchasedQuantityMap.get(item.pesticideId) || 0} <span className="text-[7px] opacity-70 font-sans uppercase">ALINAN</span>
                                         </div>
                                         <div className={`px-3 py-1.5 font-black font-mono text-xs flex items-center gap-1.5 ${
-                                            item.quantity <= 0 
+                                            displayQty <= 0 
                                             ? 'bg-red-500 text-white' 
-                                            : (item.lowStockThreshold && item.quantity <= item.lowStockThreshold)
+                                            : (item.lowStockThreshold && displayQty <= item.lowStockThreshold)
                                             ? 'bg-amber-500 text-stone-950 animate-pulse'
                                             : 'bg-emerald-500 text-stone-950'
                                         }`}>
                                             <Package size={12} />
-                                            {Number(item.quantity).toString()} <span className="text-[8px] opacity-70 font-sans uppercase">KALAN</span>
+                                            {Number(displayQty).toString()} <span className="text-[8px] opacity-70 font-sans uppercase">KALAN</span>
                                         </div>
                                     </div>
 
@@ -1603,7 +1744,8 @@ export const InventoryScreen: React.FC<{
                                         </button>
                                     </div>
                                 </div>
-                            ))
+                                );
+                            })
                         ) : (
                             <div className="col-span-full text-center py-12 border-2 border-dashed border-stone-800 rounded-2xl text-stone-600">
                                 <Package size={48} className="mx-auto mb-4 opacity-20" />
@@ -2213,9 +2355,11 @@ export const InventoryScreen: React.FC<{
                             <div className="grid grid-cols-2 gap-3">
                                 <div className="bg-stone-950/50 p-4 rounded-2xl border border-white/5 space-y-2">
                                     <div>
-                                        <span className="text-[10px] text-stone-500 font-bold uppercase block mb-1">Mevcut Stok (Kalan)</span>
-                                        <span className={`${selectedDetailItem.quantity <= 0 ? 'text-red-400' : 'text-emerald-400'} font-black text-xl`}>
-                                            {selectedDetailItem.quantity} <span className="text-xs text-stone-600 font-sans">{selectedDetailItem.unit}</span>
+                                        <span className="text-[10px] text-stone-500 font-bold uppercase block mb-1">
+                                            {selectedYear === currentYear ? 'Mevcut Stok (Kalan)' : `${selectedYear} Yılı Stok`}
+                                        </span>
+                                        <span className={`${getYearlyItemQuantity(selectedDetailItem, selectedYear) <= 0 ? 'text-red-400' : 'text-emerald-400'} font-black text-xl`}>
+                                            {getYearlyItemQuantity(selectedDetailItem, selectedYear)} <span className="text-xs text-stone-600 font-sans">{selectedDetailItem.unit}</span>
                                         </span>
                                     </div>
                                     <div className="pt-2 border-t border-white/5">
@@ -2320,9 +2464,11 @@ export const InventoryScreen: React.FC<{
                                     </div>
                                 </div>
                                 <div className="pt-3 border-t border-white/5 flex justify-between items-center">
-                                    <span className="text-xs font-black text-stone-200">KAYITLI NET STOK</span>
+                                    <span className="text-xs font-black text-stone-200">
+                                        {selectedYear === currentYear ? 'KAYITLI NET STOK' : `${selectedYear} YILI NET STOK`}
+                                    </span>
                                     <span className="text-lg font-black text-emerald-400 font-mono tracking-tighter">
-                                        {selectedDetailItem.quantity} <span className="text-xs font-sans text-stone-600">{selectedDetailItem.unit}</span>
+                                        {getYearlyItemQuantity(selectedDetailItem, selectedYear)} <span className="text-xs font-sans text-stone-600">{selectedDetailItem.unit}</span>
                                     </span>
                                 </div>
                                 <div className="pt-2 border-t border-white/5 flex justify-between items-center">
@@ -2344,14 +2490,94 @@ export const InventoryScreen: React.FC<{
 
                             {/* Combined History */}
                             <div>
-                                <h4 className="text-xs font-black text-stone-500 uppercase tracking-widest mb-4 flex items-center gap-2">
-                                    <History size={14} className="text-blue-500" />
-                                    Hareket Geçmişi
-                                </h4>
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+                                    <h4 className="text-xs font-black text-stone-500 uppercase tracking-widest flex items-center gap-2">
+                                        <History size={14} className="text-blue-500" />
+                                        Hareket Geçmişi
+                                        <span className="text-[10px] bg-stone-800 text-stone-400 px-2 py-0.5 rounded-full font-bold font-mono">
+                                            {filteredCombinedHistory.length} / {combinedHistory.length}
+                                        </span>
+                                    </h4>
+
+                                    {/* Quick Filter Tabs */}
+                                    {combinedHistory.length > 0 && (
+                                        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
+                                            <button
+                                                type="button"
+                                                onClick={() => setHistoryTypeFilter('ALL')}
+                                                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all whitespace-nowrap ${
+                                                    historyTypeFilter === 'ALL'
+                                                        ? 'bg-blue-600 text-white shadow-sm'
+                                                        : 'bg-stone-900 text-stone-400 hover:text-stone-200 border border-stone-800'
+                                                }`}
+                                            >
+                                                Tümü ({combinedHistory.length})
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setHistoryTypeFilter('SALE')}
+                                                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all whitespace-nowrap ${
+                                                    historyTypeFilter === 'SALE'
+                                                        ? 'bg-blue-600 text-white shadow-sm'
+                                                        : 'bg-stone-900 text-stone-400 hover:text-stone-200 border border-stone-800'
+                                                }`}
+                                            >
+                                                Satışlar ({salesCount})
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setHistoryTypeFilter('PURCHASE')}
+                                                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all whitespace-nowrap ${
+                                                    historyTypeFilter === 'PURCHASE'
+                                                        ? 'bg-emerald-600 text-white shadow-sm'
+                                                        : 'bg-stone-900 text-stone-400 hover:text-stone-200 border border-stone-800'
+                                                }`}
+                                            >
+                                                Alımlar ({purchaseCount})
+                                            </button>
+                                            {adjustmentCount > 0 && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setHistoryTypeFilter('ADJUSTMENT')}
+                                                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all whitespace-nowrap ${
+                                                        historyTypeFilter === 'ADJUSTMENT'
+                                                            ? 'bg-amber-600 text-white shadow-sm'
+                                                            : 'bg-stone-900 text-stone-400 hover:text-stone-200 border border-stone-800'
+                                                    }`}
+                                                >
+                                                    Depom ({adjustmentCount})
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Movement Search Bar */}
+                                {combinedHistory.length > 0 && (
+                                    <div className="relative mb-3">
+                                        <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-500 pointer-events-none" />
+                                        <input
+                                            type="text"
+                                            value={historySearchQuery}
+                                            onChange={(e) => setHistorySearchQuery(e.target.value)}
+                                            placeholder="Kişi / tedarikçi adı, fiyat, miktar veya tarih ara..."
+                                            className="w-full bg-stone-950 border border-stone-800 focus:border-blue-500/50 rounded-xl pl-9 pr-9 py-2.5 text-xs text-stone-200 outline-none transition-all placeholder-stone-600 shadow-inner"
+                                        />
+                                        {historySearchQuery && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setHistorySearchQuery('')}
+                                                className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-500 hover:text-stone-300 p-0.5 rounded-full hover:bg-stone-800 transition-colors"
+                                            >
+                                                <X size={14} />
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
                                 
                                 <div className="space-y-2">
-                                    {combinedHistory.length > 0 ? (
-                                        combinedHistory.map((record, idx) => (
+                                    {filteredCombinedHistory.length > 0 ? (
+                                        filteredCombinedHistory.map((record, idx) => (
                                             <div 
                                                 key={idx} 
                                                 onClick={() => {
@@ -2371,25 +2597,25 @@ export const InventoryScreen: React.FC<{
                                             >
                                                 <div className="flex items-center gap-4">
                                                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-                                                        record.type === 'SALE' ? 'bg-stone-900 text-blue-500' : 
-                                                        record.type === 'PURCHASE' ? 'bg-stone-900 text-emerald-500' :
+                                                        record.type === 'SALE' ? ((record as any).isSupplierSale ? 'bg-indigo-500/10 text-indigo-400' : 'bg-stone-900 text-blue-500') : 
+                                                        record.type === 'PURCHASE' ? (record.isReturn ? 'bg-rose-500/10 text-rose-400' : 'bg-stone-900 text-emerald-500') :
                                                         'bg-stone-900 text-amber-500'
                                                     }`}>
-                                                        {record.type === 'SALE' ? <User size={18} /> : 
+                                                        {record.type === 'SALE' ? ((record as any).isSupplierSale ? <Truck size={18} /> : <User size={18} />) : 
                                                          record.type === 'PURCHASE' ? <Truck size={18} /> : 
                                                          <AlertCircle size={18} />}
                                                     </div>
                                                     <div>
-                                                        <div className="text-sm font-bold text-stone-200">
+                                                        <div className="text-sm font-bold text-stone-200 flex items-center gap-2">
                                                             {record.name}
-                                                            <span className={`ml-2 text-[9px] px-1.5 py-0.5 rounded-md ${
-                                                                record.type === 'SALE' ? 'bg-blue-500/10 text-blue-400' : 
-                                                                record.type === 'PURCHASE' ? 'bg-emerald-500/10 text-emerald-400' :
+                                                            <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-bold ${
+                                                                record.type === 'SALE' ? ((record as any).isSupplierSale ? 'bg-indigo-500/10 text-indigo-400' : 'bg-blue-500/10 text-blue-400') : 
+                                                                record.type === 'PURCHASE' ? (record.isReturn ? 'bg-rose-500/10 text-rose-400' : 'bg-emerald-500/10 text-emerald-400') :
                                                                 'bg-amber-500/10 text-amber-400'
                                                             }`}>
-                                                                {record.type === 'SALE' ? 'SATIŞ' : 
-                                                                 record.type === 'PURCHASE' ? 'ALIM' : 
-                                                                 'DEPOMDAN'}
+                                                                {record.type === 'SALE' ? ((record as any).isSupplierSale ? 'TEDARİKÇİYE SATIŞ' : 'SATIŞ') : 
+                                                                 record.type === 'PURCHASE' ? (record.isReturn ? 'ALIŞ İADESİ' : 'ALIM') : 
+                                                                 'MANUEL DÜZELTME'}
                                                             </span>
                                                         </div>
                                                         <div className="flex items-center gap-2 text-[10px] text-stone-500 mt-0.5">
@@ -2402,20 +2628,39 @@ export const InventoryScreen: React.FC<{
                                                     <div className="text-right">
                                                         <div className={`text-sm font-black font-mono ${
                                                             record.type === 'ADJUSTMENT' ? (record.isReturn ? 'text-rose-400' : 'text-amber-400') :
-                                                            (record.isReturn ? 'text-rose-400' : (record.type === 'SALE' ? 'text-blue-400' : 'text-emerald-400'))
+                                                            (record.isReturn ? 'text-rose-400' : (record.type === 'SALE' ? ((record as any).isSupplierSale ? 'text-indigo-400' : 'text-blue-400') : 'text-emerald-400'))
                                                         }`}>
-                                                            {record.type === 'ADJUSTMENT' ? (Number(record.quantity) > 0 ? '+' : '') : (record.isReturn ? '-' : '')}
+                                                            {record.type === 'ADJUSTMENT' ? (Number(record.quantity) > 0 ? '+' : '') : ((record.isReturn || record.type === 'SALE') ? '-' : '+')}
                                                             {record.type === 'ADJUSTMENT' ? record.quantity : formatCurrency(record.price, userProfile?.currency || 'TRY')}
                                                             {record.type === 'ADJUSTMENT' && ` ${selectedDetailItem.unit}`}
                                                         </div>
-                                                        <div className={`text-[10px] font-bold ${record.isReturn ? 'text-rose-500/80' : 'text-stone-600'}`}>
-                                                            {record.type === 'ADJUSTMENT' ? 'Fark' : (record.isReturn ? 'İADE: ' : 'Miktar: ') + record.quantity + ' ' + selectedDetailItem.unit}
+                                                        <div className={`text-[10px] font-bold ${record.isReturn ? 'text-rose-500/80' : ((record as any).isSupplierSale ? 'text-indigo-400/80' : 'text-stone-600')}`}>
+                                                            {record.type === 'ADJUSTMENT' ? 'Fark' : (record.isReturn ? 'İADE: ' : (record.type === 'SALE' ? 'SATIŞ: ' : 'Miktar: ')) + record.quantity + ' ' + selectedDetailItem.unit}
                                                         </div>
                                                     </div>
                                                     <ChevronRight size={16} className="text-stone-700 group-hover:text-stone-400 transition-colors" />
                                                 </div>
                                             </div>
                                         ))
+                                    ) : combinedHistory.length > 0 ? (
+                                        <div className="text-center py-8 bg-stone-950/40 rounded-2xl border border-dashed border-stone-800 p-6">
+                                            <Filter size={22} className="mx-auto text-stone-600 mb-2" />
+                                            <p className="text-xs font-bold text-stone-400">Aramanıza Uygun Hareket Bulunamadı</p>
+                                            <p className="text-[11px] text-stone-600 mt-1">
+                                                {historySearchQuery ? `"${historySearchQuery}" kriteri ile ` : ''}Seçili filtre ile eşleşen işlem yok.
+                                            </p>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setHistorySearchQuery('');
+                                                    setHistoryTypeFilter('ALL');
+                                                }}
+                                                className="mt-3 px-3 py-1.5 bg-stone-800 hover:bg-stone-700 text-blue-400 text-xs font-bold rounded-xl transition-colors inline-flex items-center gap-1.5"
+                                            >
+                                                <RefreshCw size={12} />
+                                                Filtreleri Temizle
+                                            </button>
+                                        </div>
                                     ) : (
                                         <div className="text-center py-10 bg-stone-950/30 rounded-2xl border border-dashed border-stone-800">
                                             <p className="text-xs text-stone-600">Bu ürün için henüz hiçbir hareket bulunmuyor.</p>
@@ -2498,7 +2743,7 @@ export const InventoryScreen: React.FC<{
                             <div className="text-center">
                                 <p className="text-[10px] font-bold text-stone-500 uppercase tracking-widest mb-1">Ürün / Hareket</p>
                                 <p className="text-sm font-black text-amber-400">{selectedDetailItem.pesticideName}</p>
-                                <p className="text-[10px] text-stone-500 mt-1 uppercase">{selectedDetailItem.adjustments?.[editingAdjustmentIdx]?.note || 'Depomdan'}</p>
+                                <p className="text-[10px] text-stone-500 mt-1 uppercase">{selectedDetailItem.adjustments?.[editingAdjustmentIdx]?.note || 'Manuel Stok Düzeltme'}</p>
                             </div>
                             
                             <div className="space-y-2">
@@ -2734,20 +2979,21 @@ export const InventoryScreen: React.FC<{
 
             {isRebuildModalOpen && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="bg-[#1c1c1c] border border-stone-800 rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col font-sans">
+                    <div className="bg-[#1c1c1c] border border-stone-800 rounded-3xl w-full max-w-xl overflow-hidden shadow-2xl flex flex-col font-sans">
                         <div className="p-6 border-b border-stone-800/50 flex items-center justify-between bg-stone-900/50">
                             <div>
                                 <h3 className="text-xl font-bold text-stone-100 mb-1 flex items-center gap-2">
                                     <RefreshCw size={20} className="text-orange-500" />
-                                    Depo Onarım Uzmanı
+                                    Depo Onarım Uzmanı & Düzeltme
                                 </h3>
-                                <p className="text-xs text-stone-400 font-medium">Stok uyuşmazlıkları tespit edilip düzeltilir.</p>
+                                <p className="text-xs text-stone-400 font-medium">Stok uyuşmazlıkları tespit edilir, hedeflenen stokları doğrudan düzenleyip onaylayabilirsiniz.</p>
                             </div>
                             {rebuildState !== 'ANALYZING' && rebuildState !== 'REPAIRING' && (
                                 <button
                                     onClick={() => {
                                         setIsRebuildModalOpen(false);
                                         setRebuildState('IDLE');
+                                        setRebuildSearchTerm('');
                                     }}
                                     className="p-2 bg-stone-900 hover:bg-stone-800 text-stone-400 hover:text-stone-200 rounded-xl transition-colors shrink-0"
                                 >
@@ -2756,13 +3002,13 @@ export const InventoryScreen: React.FC<{
                             )}
                         </div>
 
-                        <div className="p-6 max-h-[60vh] overflow-y-auto">
+                        <div className="p-6 max-h-[65vh] overflow-y-auto">
                             {rebuildState === 'ANALYZING' && (
                                 <div className="flex flex-col items-center justify-center py-10 space-y-4">
                                     <RefreshCw size={40} className="text-orange-500 animate-spin" />
                                     <div className="text-center">
                                         <div className="font-bold text-stone-200">Veritabanı Analiz Ediliyor</div>
-                                        <div className="text-xs text-stone-500 mt-1">Geçmiş fişler taranıyor...</div>
+                                        <div className="text-xs text-stone-500 mt-1">Geçmiş fişler ve faturalar taranıyor...</div>
                                     </div>
                                 </div>
                             )}
@@ -2776,72 +3022,114 @@ export const InventoryScreen: React.FC<{
                                             </div>
                                             <div className="text-center">
                                                 <div className="font-bold text-emerald-400 text-lg">Kusursuz!</div>
-                                                <div className="text-sm text-stone-400 mt-2 max-w-[280px]">
-                                                    Deponuzdaki tüm ürünlerin stok miktarı ile geçmiş işlemleri (alım, satım, iade) birebir eşleşiyor. Onarılacak bir ürün bulunamadı.
+                                                <div className="text-sm text-stone-400 mt-2 max-w-[320px]">
+                                                    Deponuzdaki tüm ürünlerin stok miktarları geçmiş alım, satım ve iadelerle birebir eşleşiyor.
                                                 </div>
                                             </div>
+                                            <button
+                                                onClick={handleFullRebuild}
+                                                className="mt-2 px-4 py-2 bg-stone-800 hover:bg-stone-700 text-orange-400 border border-orange-500/30 rounded-xl text-xs font-bold transition-all flex items-center gap-2"
+                                            >
+                                                <RefreshCw size={14} />
+                                                Tüm Depoyu Baştan Sıfırla & İşle
+                                            </button>
                                         </div>
                                     ) : (
                                         <div className="space-y-3">
                                             <div className="p-3 bg-orange-950/30 border border-orange-500/20 rounded-xl flex items-start gap-3">
                                                 <AlertCircle size={18} className="text-orange-400 shrink-0 mt-0.5" />
-                                                <div>
-                                                    <div className="text-sm font-bold text-orange-400">Onarım Gerekli</div>
+                                                <div className="flex-1">
+                                                    <div className="text-sm font-bold text-orange-400 flex items-center justify-between">
+                                                        <span>Onarım & Düzeltme Gerekli ({mismatches.length} Ürün)</span>
+                                                    </div>
                                                     <div className="text-xs text-orange-400/80 mt-1">
-                                                        Geçmiş işlemlere göre hesaplanan tutarlarla mevcut stoklar uyuşmuyor. Aşağıdaki ürünlerin stok miktarları kusursuz hale getirilecektir.
+                                                        Hesaplanan miktar otomatik dolmuştur. İsterseniz yeşil kutudan stok hedefini <strong>elle değiştirebilirsiniz</strong>.
                                                     </div>
                                                 </div>
                                             </div>
 
-                                            <div className="space-y-2 mt-4">
-                                                <div className="flex items-center gap-2 mb-2 px-1">
+                                            {/* Search and Selection Toolbar */}
+                                            <div className="flex items-center gap-2">
+                                                <div className="flex-1 relative">
+                                                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-500" />
                                                     <input 
-                                                        type="checkbox" 
-                                                        checked={selectedMismatches.size === mismatches.length && mismatches.length > 0}
-                                                        onChange={(e) => {
-                                                            if (e.target.checked) {
-                                                                setSelectedMismatches(new Set(mismatches.map(m => m.pesticideId)));
-                                                            } else {
-                                                                setSelectedMismatches(new Set());
-                                                            }
-                                                        }}
-                                                        className="w-4 h-4 rounded border-stone-600 bg-stone-800 text-orange-500 focus:ring-orange-500 focus:ring-offset-stone-900 transition-all"
+                                                        type="text"
+                                                        placeholder="Onarım listesinde ara..."
+                                                        value={rebuildSearchTerm}
+                                                        onChange={(e) => setRebuildSearchTerm(e.target.value)}
+                                                        className="w-full bg-stone-900 border border-stone-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-stone-200 placeholder-stone-500 outline-none focus:border-orange-500/50 transition-colors"
                                                     />
-                                                    <span className="text-xs text-stone-400 font-bold">Tümünü Seç</span>
                                                 </div>
-                                                {mismatches.map((item, idx) => (
-                                                    <div key={idx} className="p-3 bg-stone-900 border border-stone-800 rounded-xl flex flex-col group hover:border-stone-700 transition-colors cursor-pointer" onClick={() => {
-                                                        const newSet = new Set(selectedMismatches);
-                                                        if (newSet.has(item.pesticideId)) newSet.delete(item.pesticideId);
-                                                        else newSet.add(item.pesticideId);
-                                                        setSelectedMismatches(newSet);
-                                                    }}>
+                                                <button
+                                                    onClick={() => {
+                                                        if (selectedMismatches.size === mismatches.length) {
+                                                            setSelectedMismatches(new Set());
+                                                        } else {
+                                                            setSelectedMismatches(new Set(mismatches.map(m => m.pesticideId)));
+                                                        }
+                                                    }}
+                                                    className="px-3 py-1.5 bg-stone-900 border border-stone-800 hover:bg-stone-800 text-stone-300 rounded-xl text-xs font-bold transition-colors shrink-0"
+                                                >
+                                                    {selectedMismatches.size === mismatches.length ? 'Seçimi Temizle' : 'Tümünü Seç'}
+                                                </button>
+                                            </div>
+
+                                            <div className="space-y-2 mt-2">
+                                                {mismatches
+                                                    .filter(item => item.pesticideName.toLocaleLowerCase('tr-TR').includes(rebuildSearchTerm.toLocaleLowerCase('tr-TR')))
+                                                    .map((item, idx) => (
+                                                    <div 
+                                                        key={idx} 
+                                                        className={`p-3 bg-stone-900 border rounded-xl flex flex-col transition-colors ${selectedMismatches.has(item.pesticideId) ? 'border-orange-500/40 bg-orange-950/10' : 'border-stone-800 opacity-75'}`}
+                                                    >
                                                         <div className="flex justify-between items-center">
-                                                            <div className="flex items-center gap-3 pr-4 overflow-hidden">
+                                                            <div 
+                                                                className="flex items-center gap-3 pr-4 overflow-hidden cursor-pointer flex-1"
+                                                                onClick={() => {
+                                                                    const newSet = new Set(selectedMismatches);
+                                                                    if (newSet.has(item.pesticideId)) newSet.delete(item.pesticideId);
+                                                                    else newSet.add(item.pesticideId);
+                                                                    setSelectedMismatches(newSet);
+                                                                }}
+                                                            >
                                                                 <input 
                                                                     type="checkbox" 
                                                                     checked={selectedMismatches.has(item.pesticideId)}
-                                                                    onChange={(e) => {}}
+                                                                    onChange={() => {}}
                                                                     className="shrink-0 w-4 h-4 rounded border-stone-600 bg-stone-800 text-orange-500 focus:ring-orange-500 focus:ring-offset-stone-900 transition-all pointer-events-none"
                                                                 />
-                                                                <div className="font-medium text-sm text-stone-200 truncate" title={item.pesticideName}>
+                                                                <div className="font-semibold text-sm text-stone-200 truncate" title={item.pesticideName}>
                                                                     {item.pesticideName}
                                                                 </div>
                                                             </div>
-                                                            <div className="flex items-center gap-3 shrink-0">
+
+                                                            <div className="flex items-center gap-2 shrink-0">
                                                                 <div className="flex flex-col items-end">
-                                                                    <span className="text-[10px] text-stone-500 font-bold uppercase">Mevcut</span>
+                                                                    <span className="text-[9px] text-stone-500 font-bold uppercase">Mevcut</span>
                                                                     <span className="text-xs font-bold text-red-400 line-through">{item.currentQty}</span>
                                                                 </div>
                                                                 <ArrowRight size={14} className="text-stone-600 shrink-0" />
                                                                 <div className="flex flex-col items-end">
-                                                                    <span className="text-[10px] text-emerald-500/70 font-bold uppercase">Olması Gereken</span>
-                                                                    <span className="text-sm font-black text-emerald-400">{item.calculatedQty}</span>
+                                                                    <span className="text-[9px] text-emerald-500 font-bold uppercase flex items-center gap-1">
+                                                                        <Edit2 size={10} /> Yeni Stok
+                                                                    </span>
+                                                                    <input 
+                                                                        type="number"
+                                                                        step="any"
+                                                                        value={item.calculatedQty}
+                                                                        onChange={(e) => {
+                                                                            const val = parseFloat(e.target.value);
+                                                                            const newQty = isNaN(val) ? 0 : val;
+                                                                            setMismatches(prev => prev.map(m => m.pesticideId === item.pesticideId ? { ...m, calculatedQty: newQty } : m));
+                                                                        }}
+                                                                        onClick={(e) => e.stopPropagation()}
+                                                                        className="w-20 bg-stone-950 border border-emerald-500/40 focus:border-emerald-400 rounded-lg px-2 py-0.5 text-xs font-black text-emerald-400 text-right outline-none transition-colors"
+                                                                    />
                                                                 </div>
                                                             </div>
                                                         </div>
                                                         
-                                                        <div className="mt-2.5 flex items-center gap-6 border-t border-stone-800 pt-2.5">
+                                                        <div className="mt-2.5 flex items-center gap-4 border-t border-stone-800/80 pt-2">
                                                             <div className="flex items-center gap-1.5 flex-1">
                                                                 <div className="shrink-0 w-2 h-2 rounded-full bg-emerald-500/30"></div>
                                                                 <div className="flex flex-col shrink-0 min-w-0">
@@ -2852,23 +3140,22 @@ export const InventoryScreen: React.FC<{
                                                             <div className="flex items-center gap-1.5 flex-1">
                                                                 <div className="shrink-0 w-2 h-2 rounded-full bg-red-500/30"></div>
                                                                 <div className="flex flex-col shrink-0 min-w-0">
-                                                                    <span className="text-[9px] text-stone-500 font-bold uppercase leading-tight truncate">Satılan</span>
+                                                                    <span className="text-[9px] text-stone-500 font-bold uppercase leading-tight truncate">Satılan / İade</span>
                                                                     <span className="text-xs font-black text-red-400">-{item.soldQty}</span>
                                                                 </div>
                                                             </div>
                                                             <div className="flex items-center gap-1.5 flex-1">
                                                                 <div className="shrink-0 w-2 h-2 rounded-full bg-blue-500/30"></div>
                                                                 <div className="flex flex-col shrink-0 min-w-0">
-                                                                    <span className="text-[9px] text-stone-500 font-bold uppercase leading-tight truncate">Net Düzeltme</span>
+                                                                    <span className="text-[9px] text-stone-500 font-bold uppercase leading-tight truncate">Fark</span>
                                                                     <span className="text-xs font-black text-blue-400">
-                                                                        {item.adjustedQty > 0 ? '+' : ''}{item.adjustedQty}
+                                                                        {(item.calculatedQty - item.currentQty) > 0 ? '+' : ''}{(item.calculatedQty - item.currentQty).toFixed(2)}
                                                                     </span>
                                                                 </div>
                                                             </div>
                                                         </div>
                                                     </div>
                                                 ))}
-
                                             </div>
                                         </div>
                                     )}
@@ -2880,33 +3167,44 @@ export const InventoryScreen: React.FC<{
                                     <RefreshCw size={40} className="text-orange-500 animate-spin" />
                                     <div className="text-center">
                                         <div className="font-bold text-stone-200">Kusursuz Bir Şekilde Onarılıyor</div>
-                                        <div className="text-xs text-stone-500 mt-1">Lütfen bekleyin...</div>
+                                        <div className="text-xs text-stone-500 mt-1">Stok bakiyeleri güncelleniyor...</div>
                                     </div>
                                 </div>
                             )}
                         </div>
 
                         {rebuildState === 'RESULT' && (
-                            <div className="p-6 bg-stone-900/50 border-t border-stone-800/50 flex justify-end gap-3">
+                            <div className="p-6 bg-stone-900/50 border-t border-stone-800/50 flex flex-wrap items-center justify-between gap-3">
                                 <button
-                                    onClick={() => {
-                                        setIsRebuildModalOpen(false);
-                                        setRebuildState('IDLE');
-                                    }}
-                                    className="px-5 py-2.5 bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-xl font-bold text-sm transition-colors"
+                                    onClick={handleFullRebuild}
+                                    title="Tüm depoyu geçmiş işlem kayıtlarından baştan sona yeniden hesaplar"
+                                    className="px-3.5 py-2 bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-xl font-bold text-xs transition-colors flex items-center gap-1.5"
                                 >
-                                    Kapat
+                                    <RefreshCw size={14} className="text-orange-400" />
+                                    Tüm Depoyu Yeniden Hesapla
                                 </button>
-                                {mismatches.length > 0 && (
+                                <div className="flex items-center gap-2">
                                     <button
-                                        onClick={handleRepairInventory}
-                                        disabled={selectedMismatches.size === 0}
-                                        className="px-6 py-2.5 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 disabled:cursor-not-allowed text-stone-950 rounded-xl font-black text-sm shadow-xl shadow-orange-600/20 active:scale-95 transition-all flex items-center gap-2"
+                                        onClick={() => {
+                                            setIsRebuildModalOpen(false);
+                                            setRebuildState('IDLE');
+                                            setRebuildSearchTerm('');
+                                        }}
+                                        className="px-4 py-2 bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-xl font-bold text-xs transition-colors"
                                     >
-                                        <RefreshCw size={16} />
-                                        {selectedMismatches.size === mismatches.length ? 'Tümünü Onar' : 'Seçilileri Onar'}
+                                        Kapat
                                     </button>
-                                )}
+                                    {mismatches.length > 0 && (
+                                        <button
+                                            onClick={handleRepairInventory}
+                                            disabled={selectedMismatches.size === 0}
+                                            className="px-5 py-2 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 disabled:cursor-not-allowed text-stone-950 rounded-xl font-black text-xs shadow-xl shadow-orange-600/20 active:scale-95 transition-all flex items-center gap-1.5"
+                                        >
+                                            <RefreshCw size={14} />
+                                            {selectedMismatches.size === mismatches.length ? 'Tümünü Onar' : 'Seçilileri Onar'}
+                                        </button>
+                                    )}
+                                </div>
                             </div>
                         )}
                     </div>

@@ -9,6 +9,7 @@
         "fullName": { "type": "string" },
         "phoneNumber": { "type": "string" },
         "village": { "type": "string" },
+        "tcNo": { "type": "string" },
         "fields": { "type": "array" },
         "avatarUrl": { "type": "string" },
         "totalDebt": { "type": "number" },

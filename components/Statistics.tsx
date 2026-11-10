@@ -1,3 +1,4 @@
+import { createMultiPagePdf } from '../utils/pdfHelper';
 
 import React, { useState, useRef } from 'react';
 import { 
@@ -16,6 +17,7 @@ import { dbService } from '../services/db';
 import { useAppViewModel } from '../context/AppContext';
 import { Prescription } from '../types';
 import { formatCurrency } from '../utils/currency';
+import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
 
     type StatTab = 'OVERVIEW' | 'PROFIT_LOSS' | 'PESTICIDES' | 'VISITS' | 'CONSUMPTION' | 'SALES' | 'DEBTS' | 'RECEIVABLES' | 'INVENTORY' | 'LAND';
 
@@ -247,27 +249,7 @@ import { formatCurrency } from '../utils/currency';
             // Restore original style
             reportRef.current.style.cssText = originalStyle;
 
-            const imgData = canvas.toDataURL('image/png');
-            const pdf = new jsPDF('p', 'mm', 'a4');
-            
-            const imgWidth = 210; 
-            const pageHeight = 295; // Slightly less than 297 to avoid overflow
-            const imgHeight = (canvas.height * imgWidth) / canvas.width;
-            let heightLeft = imgHeight;
-
-            let position = 0;
-
-            // First page
-            pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
-            heightLeft -= pageHeight;
-
-            // Subsequent pages
-            while (heightLeft > 0) {
-                position = heightLeft - imgHeight;
-                pdf.addPage();
-                pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
-                heightLeft -= pageHeight;
-            }
+            const pdf = createMultiPagePdf(canvas);
 
             pdf.save(`MKS_Detayli_Analiz_Raporu_${new Date().toISOString().split('T')[0]}.pdf`);
         } catch (e) {
@@ -505,6 +487,9 @@ import { formatCurrency } from '../utils/currency';
             case 'PROFIT_LOSS':
                 return (
                     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        {/* Interactive Gelir-Gider Analiz Grafik Modülü */}
+                        <IncomeExpenseChartReport />
+
                         {/* Stats Grid */}
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div className="bg-stone-900 border border-white/5 p-5 rounded-2xl shadow-sm">

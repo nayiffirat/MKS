@@ -71,7 +71,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 // Track user ID for IndexedDB isolation
                 const lastUid = localStorage.getItem('lastUserId');
                 if (lastUid && lastUid !== user.uid) {
-                    console.log("Farklı bir kullanıcı algılandı. Veritabanı adı 'lastUserId' ile izole edilecek.");
+                    console.log("Farklı bir kullanıcı algılandı. Yerel veriler temizleniyor.");
+                    // Use fire-and-forget clear since we can't easily await here in the snapshot callback without blocking UI state, though actually it is async but inside onAuthStateChanged we can just let it run.
+                    await dbService.clearLocalData().catch(e => console.error("Kullanıcı değişimi temizlik hatası:", e));
                 }
                 localStorage.setItem('lastUserId', user.uid);
             }

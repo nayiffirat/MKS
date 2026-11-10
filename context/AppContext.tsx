@@ -172,7 +172,7 @@ interface AppContextType {
   transactions: Transaction[];
   addTransaction: (transaction: Omit<Transaction, 'id'>) => Promise<void>;
   deleteTransaction: (id: string) => Promise<void>;
-  performManualTurnover: () => Promise<void>;
+  performManualTurnover: () => Promise<{ success: boolean; year: number }>;
   isInitialized: boolean;
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
   hapticFeedback: (type?: 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error') => Promise<void>;
@@ -198,6 +198,7 @@ const DEFAULT_PROFILE: UserProfile = {
   companyName: '',
   title: '',
   highContrastMode: false,
+  colorMode: 'DARK',
   language: 'tr',
   theme: 'APPLE'
 };
@@ -307,12 +308,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   useEffect(() => {
-    if (userProfile.theme && userProfile.theme !== 'DEFAULT') {
-        document.documentElement.setAttribute('data-theme', userProfile.theme);
+    const activeTheme = userProfile.colorMode === 'LIGHT' || userProfile.theme === 'LIGHT'
+      ? 'LIGHT'
+      : (userProfile.theme && userProfile.theme !== 'DEFAULT' ? userProfile.theme : 'APPLE');
+      
+    if (activeTheme) {
+        document.documentElement.setAttribute('data-theme', activeTheme);
     } else {
         document.documentElement.removeAttribute('data-theme');
     }
-  }, [userProfile.theme]);
+  }, [userProfile.theme, userProfile.colorMode]);
 
   const refreshNotifications = async () => {
       const list = await dbService.getNotifications();
@@ -669,15 +674,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const addPrescription = async (pData: Omit<Prescription, 'id' | 'prescriptionNo'>) => {
     const id = `REC-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const accountsList = await dbService.getAccounts();
+    const defaultAcc = accountsList.find(a => a.type === 'CASH') || accountsList[0];
+    const targetAccId = pData.accountId || defaultAcc?.id;
+
     const prescription: Prescription = { 
         ...pData, 
         id, 
         prescriptionNo: id,
         createdById: activeTeamMember?.id,
-        isInventoryProcessed: false
+        isInventoryProcessed: false,
+        accountId: pData.priceType === 'CASH' ? targetAccId : undefined
     };
     await dbService.addPrescription(prescription);
     await dbService.processInventory(prescription);
+
+    if (prescription.priceType === 'CASH' && targetAccId) {
+        const allTxs = await dbService.getTransactions();
+        const existingTx = allTxs.find(t => t.relatedId === id);
+        if (!existingTx) {
+            const farmer = farmers.find(f => f.id === prescription.farmerId);
+            await dbService.addTransaction({
+                id: crypto.randomUUID(),
+                accountId: targetAccId,
+                type: prescription.type === 'RETURN' ? 'EXPENSE' : 'INCOME',
+                amount: Math.abs(prescription.totalAmount || 0),
+                date: prescription.date,
+                description: prescription.type === 'RETURN' ? 'Peşin İade Kasadan Çıkış' : 'Peşin Satış Tahsilatı',
+                category: 'Satış/İade',
+                relatedId: id,
+                partyName: farmer?.fullName,
+                partyType: 'FARMER',
+                partyId: prescription.farmerId
+            });
+        }
+    }
+
     await refreshPrescriptions();
     await refreshInventory();
     await refreshStats();
@@ -769,6 +801,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         dbService.getMessages(),
         dbService.getCollectionLogs()
     ]);
+
+    // --- AUTO UNBLOCK EXPIRED CARD PAYMENTS ---
+    const todayISO = now.toISOString().split('T')[0];
+    const accountsListForUnblock = await dbService.getAccounts();
+    const defaultAcc = accountsListForUnblock[0];
+
+    for (const p of myPaymentList) {
+      if (p.deletedAt) continue;
+      if ((p.type === 'DEFERRED_CARD' || p.cardOption) && p.status === 'PENDING') {
+        const dueDateStr = (p.unblockDate || p.dueDate || '').split('T')[0];
+        if (dueDateStr && todayISO >= dueDateStr) {
+          p.status = 'PAID';
+          p.autoCollected = true;
+          await dbService.updateMyPayment(p);
+
+          const accId = p.accountId || defaultAcc?.id;
+          if (accId) {
+            const allTxs = await dbService.getTransactions();
+            const existingTx = allTxs.find(t => t.relatedId === p.id);
+            if (!existingTx) {
+              const name = p.farmerName || 'Müşteri';
+              await dbService.addTransaction({
+                id: crypto.randomUUID(),
+                accountId: accId,
+                type: 'INCOME',
+                amount: p.amount,
+                date: now.toISOString(),
+                description: `${name} - Kredi Kartı Blokesi Kalktı (Otomatik Hesaba Aktarıldı)`,
+                relatedId: p.id,
+                category: 'Kredi Kartı Bloke Tahsilatı'
+              });
+            }
+          }
+
+          if (p.relatedId) {
+            const origP = rawPaymentList.find(orig => orig.id === p.relatedId);
+            if (origP) {
+              await dbService.updatePayment({
+                ...origP,
+                isUnblocked: true
+              });
+            }
+          }
+        }
+      }
+    }
 
     // --- PRESCRIPTIONS FILTERING & AUTO-DELETE ---
     const validPrescriptions: Prescription[] = [];
@@ -1003,29 +1081,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Add prescriptions to debt
     prescriptions.forEach(p => {
         if (p.priceType !== 'CASH') {
-            const isReturn = p.type === 'RETURN';
-            const multiplier = isReturn ? -1 : 1;
-            farmerDebts[p.farmerId] = (farmerDebts[p.farmerId] || 0) + ((p.totalAmount || 0) * multiplier);
+            const amt = Number(p.totalAmount) || 0;
+            const isReturn = p.type === 'RETURN' || amt < 0;
+            const netAmt = isReturn ? -Math.abs(amt) : Math.abs(amt);
+            farmerDebts[p.farmerId] = Math.round(((farmerDebts[p.farmerId] || 0) + netAmt + Number.EPSILON) * 100) / 100;
         }
     });
 
     // Add manual debts (Including turnover entries for individual balances)
     manualDebtList.forEach(d => {
         const amt = Number(d.amount) || 0;
-        farmerDebts[d.farmerId] = (farmerDebts[d.farmerId] || 0) + amt;
+        farmerDebts[d.farmerId] = Math.round(((farmerDebts[d.farmerId] || 0) + amt + Number.EPSILON) * 100) / 100;
     });
 
     // Subtract payments from debt
     paymentList.forEach(pay => {
         const amt = Number(pay.amount) || 0;
-        farmerDebts[pay.farmerId] = (farmerDebts[pay.farmerId] || 0) - amt;
+        farmerDebts[pay.farmerId] = Math.round(((farmerDebts[pay.farmerId] || 0) - amt + Number.EPSILON) * 100) / 100;
     });
 
     // Subtract myPayments (checks/notes) from farmer debt, only if independent
     myPaymentList.forEach(pay => {
         if (pay.farmerId && !pay.deletedAt && pay.status !== 'CANCELLED' && !pay.relatedId) {
             const amt = Number(pay.amount) || 0;
-            farmerDebts[pay.farmerId] = (farmerDebts[pay.farmerId] || 0) - amt;
+            farmerDebts[pay.farmerId] = Math.round(((farmerDebts[pay.farmerId] || 0) - amt + Number.EPSILON) * 100) / 100;
         }
     });
 
@@ -1038,7 +1117,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Update farmer objects with balance
     const updatedFarmerList = farmerList.map(f => ({
         ...f,
-        balance: -(farmerDebts[f.id] || 0) // Balance is negative if they owe money
+        balance: -(Math.round(((farmerDebts[f.id] || 0) + Number.EPSILON) * 100) / 100) // Balance is negative if they owe money
     }));
 
     if (syncedReminders) {
@@ -1076,9 +1155,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Toplam Satış Tutarı Hesapla (Satışlardan İadeleri Düşerek)
     const totalSales = prescriptions.reduce((acc, p) => {
-        const isReturn = p.type === 'RETURN';
-        const multiplier = isReturn ? -1 : 1;
-        return acc + ((p.totalAmount || 0) * multiplier);
+        const amt = Number(p.totalAmount) || 0;
+        const isReturn = p.type === 'RETURN' || amt < 0;
+        const netAmt = isReturn ? -Math.abs(amt) : Math.abs(amt);
+        return acc + netAmt;
     }, 0);
 
     // Toplam Gider Hesapla
@@ -1110,6 +1190,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setMessages(messageList);
     setCollectionLogs(collectionLogList);
     
+    // Reconcile and audit accounts & transactions to fix any discrepancies or duplicates
+    await dbService.reconcileAccountBalances();
+
     let accountList = await dbService.getAccounts();
     
     // Deduplicate "Nakit Kasam" if multiple were created due to race conditions
@@ -1208,11 +1291,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // 2. Delete all payments and their transactions
     const farmerPayments = await dbService.getPaymentsByFarmer(id);
     const allTransactions = await dbService.getTransactions();
+    const myPays = await dbService.getMyPayments();
     for (const p of farmerPayments) {
         const relatedTx = allTransactions.find(tx => tx.relatedId === p.id);
         if (relatedTx) {
             await dbService.deleteTransaction(relatedTx.id);
         }
+        
+        const relatedMyPays = myPays.filter(mp => mp.relatedId === p.id);
+        for (const mp of relatedMyPays) {
+            await dbService.deleteMyPayment(mp.id);
+        }
+
         await dbService.deletePayment(p.id);
     }
 
@@ -1398,7 +1488,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (target) {
       if (target.priceType === 'CASH') {
           const accountList = await dbService.getAccounts();
-          const targetAccount = accountList.find(a => a.type === 'CASH');
+          const targetAccount = target.accountId ? accountList.find(a => a.id === target.accountId) : accountList.find(a => a.type === 'CASH') || accountList[0];
           if (targetAccount) {
               const txId = crypto.randomUUID();
               await dbService.addTransaction({
@@ -1446,13 +1536,68 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const addPayment = async (paymentData: Omit<Payment, 'id'>) => {
     const paymentId = crypto.randomUUID();
-    const newPayment: Payment = { ...paymentData, id: paymentId, createdById: activeTeamMember?.id };
-    await dbService.addPayment(newPayment);
+    let newPayment: Payment = { ...paymentData, id: paymentId, createdById: activeTeamMember?.id };
     
     const farmer = farmers.find(f => f.id === newPayment.farmerId);
     const farmerName = farmer?.fullName || 'Bilinmeyen Çiftçi';
 
-    if (newPayment.method === 'CHECK' || newPayment.method === 'TEDYE') {
+    if (newPayment.method === 'CARD') {
+      if (newPayment.cardOption === 'UNBLOCKED' || !newPayment.cardOption) {
+        const commRate = newPayment.commissionRate !== undefined ? newPayment.commissionRate : 4;
+        const commAmount = (newPayment.amount * commRate) / 100;
+        const netAmt = newPayment.amount - commAmount;
+        
+        newPayment.cardOption = 'UNBLOCKED';
+        newPayment.commissionRate = commRate;
+        newPayment.commissionAmount = commAmount;
+        newPayment.netAmount = netAmt;
+        newPayment.isUnblocked = true;
+
+        if (newPayment.accountId) {
+          await dbService.addTransaction({
+            id: crypto.randomUUID(),
+            accountId: newPayment.accountId,
+            type: 'INCOME',
+            amount: netAmt,
+            date: newPayment.date,
+            description: `${farmerName} Kredi Kartı Tahsilatı (Net: ${netAmt.toLocaleString('tr-TR')} TL, %${commRate} POS Komisyonu: ${commAmount.toLocaleString('tr-TR')} TL)`,
+            relatedId: paymentId,
+            category: 'Çiftçi Ödemesi',
+            partyName: farmerName,
+            partyType: 'FARMER',
+            partyId: newPayment.farmerId
+          });
+        }
+      } else {
+        // Bloke günlü kart (15, 30, 45 Gün)
+        const days = newPayment.cardOption === 'DAYS_15' ? 15 : newPayment.cardOption === 'DAYS_30' ? 30 : 45;
+        const d = new Date(newPayment.date || Date.now());
+        d.setDate(d.getDate() + days);
+        const unblockDateStr = d.toISOString().split('T')[0];
+
+        newPayment.unblockDate = unblockDateStr;
+        newPayment.isUnblocked = false;
+        newPayment.commissionRate = 0;
+        newPayment.commissionAmount = 0;
+        newPayment.netAmount = newPayment.amount;
+
+        const dateFormatted = new Date(unblockDateStr).toLocaleDateString('tr-TR');
+        await addMyPayment({
+          farmerId: newPayment.farmerId,
+          farmerName,
+          amount: newPayment.amount,
+          issueDate: newPayment.date,
+          dueDate: unblockDateStr,
+          type: 'DEFERRED_CARD',
+          status: 'PENDING',
+          cardOption: newPayment.cardOption,
+          unblockDate: unblockDateStr,
+          note: `Kredi Kartı (${days} Gün Bloke) - Bloke Kalkış: ${dateFormatted}${newPayment.note ? ' - ' + newPayment.note : ''}`,
+          accountId: newPayment.accountId,
+          relatedId: paymentId
+        });
+      }
+    } else if (newPayment.method === 'CHECK' || newPayment.method === 'TEDYE') {
         await addMyPayment({
             farmerId: newPayment.farmerId,
             farmerName,
@@ -1474,10 +1619,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         date: newPayment.date,
         description: `${farmerName} ödemesi`,
         relatedId: paymentId,
-        category: 'Çiftçi Ödemesi'
+        category: 'Çiftçi Ödemesi',
+        partyName: farmerName,
+        partyType: 'FARMER',
+        partyId: newPayment.farmerId
       });
     }
     
+    await dbService.addPayment(newPayment);
     await refreshStats();
   };
 
@@ -1497,19 +1646,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 accountId: payment.accountId,
                 farmerName: farmer?.fullName || relatedMyPay.farmerName
             });
+        } else {
+            const farmer = farmers.find(f => f.id === payment.farmerId);
+            await addMyPayment({
+                farmerId: payment.farmerId,
+                farmerName: farmer?.fullName || 'Bilinmeyen Çiftçi',
+                amount: payment.amount,
+                issueDate: payment.date,
+                dueDate: payment.dueDate || payment.date,
+                type: payment.method === 'CHECK' ? 'CHECK' : 'TEDYE',
+                status: 'PENDING',
+                note: payment.note,
+                accountId: payment.accountId,
+                relatedId: payment.id
+            });
         }
     } else {
         const allTransactions = await dbService.getTransactions();
         const relatedTx = allTransactions.find(tx => tx.relatedId === payment.id);
+        const txAmount = (payment.method === 'CARD' && payment.netAmount !== undefined) ? payment.netAmount : payment.amount;
         if (relatedTx) {
             if (payment.accountId) {
                 const farmer = farmers.find(f => f.id === payment.farmerId);
                 await dbService.updateTransaction({
                     ...relatedTx,
                     accountId: payment.accountId,
-                    amount: payment.amount,
+                    amount: txAmount,
                     date: payment.date,
-                    description: `${farmer?.fullName || 'Çiftçi'} ödemesi`
+                    description: `${farmer?.fullName || 'Çiftçi'} ödemesi`,
+                    partyName: farmer?.fullName,
+                    partyType: 'FARMER',
+                    partyId: payment.farmerId
                 });
             } else {
                 await dbService.deleteTransaction(relatedTx.id);
@@ -1520,11 +1687,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 id: crypto.randomUUID(),
                 accountId: payment.accountId,
                 type: 'INCOME',
-                amount: payment.amount,
+                amount: txAmount,
                 date: payment.date,
                 description: `${farmer?.fullName || 'Çiftçi'} ödemesi`,
                 relatedId: payment.id,
-                category: 'Çiftçi Ödemesi'
+                category: 'Çiftçi Ödemesi',
+                partyName: farmer?.fullName,
+                partyType: 'FARMER',
+                partyId: payment.farmerId
             });
         }
     }
@@ -1742,7 +1912,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         purchase.totalAmount = items.reduce((acc, item) => {
             const price = Number(item.buyingPrice) || 0;
             const qty = Number(item.quantity) || 0;
-            return acc + (price * qty);
+            return Math.round(((acc + (price * qty)) + Number.EPSILON) * 100) / 100;
         }, 0);
 
         // 1. Get old purchase to revert inventory - Use direct lookup instead of getAll
@@ -1913,7 +2083,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 date: payment.date,
                 description: payment.type === 'RECEIVE' ? `${supplierName} tahsilatı (Kart)` : `${supplierName} ödemesi (Kart)`,
                 relatedId: paymentId,
-                category: payment.type === 'RECEIVE' ? 'Tedarikçi Tahsilatı' : 'Tedarikçi Ödemesi'
+                category: payment.type === 'RECEIVE' ? 'Tedarikçi Tahsilatı' : 'Tedarikçi Ödemesi',
+                partyName: supplierName,
+                partyType: 'SUPPLIER',
+                partyId: payment.supplierId
             });
         }
     } else if (payment.accountId) {
@@ -1925,7 +2098,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             date: payment.date,
             description: payment.type === 'RECEIVE' ? `${supplierName} tahsilatı` : `${supplierName} ödemesi`,
             relatedId: paymentId,
-            category: payment.type === 'RECEIVE' ? 'Tedarikçi Tahsilatı' : 'Tedarikçi Ödemesi'
+            category: payment.type === 'RECEIVE' ? 'Tedarikçi Tahsilatı' : 'Tedarikçi Ödemesi',
+            partyName: supplierName,
+            partyType: 'SUPPLIER',
+            partyId: payment.supplierId
         });
     }
     
@@ -2093,16 +2269,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const typeLabel = payment.type === 'CHECK' ? 'Çek' : payment.type === 'TEDYE' ? 'Tedye' : 'Senet';
       const name = payment.farmerName || payment.supplierName || 'Bilinmeyen';
       
-      await dbService.addTransaction({
-        id: crypto.randomUUID(),
-        accountId: payment.accountId,
-        type: isIncome ? 'INCOME' : 'EXPENSE',
-        amount: payment.amount,
-        date: new Date().toISOString(),
-        description: `${name} - ${typeLabel} ${isIncome ? 'Tahsilatı' : 'Ödemesi'}`,
-        relatedId: payment.id,
-        category: isIncome ? 'Çek/Senet Tahsilatı' : 'Çek/Senet Ödemesi'
-      });
+      const allTransactions = await dbService.getTransactions();
+      const existingTx = allTransactions.find(tx => tx.relatedId === payment.id);
+      if (!existingTx) {
+        await dbService.addTransaction({
+          id: crypto.randomUUID(),
+          accountId: payment.accountId,
+          type: isIncome ? 'INCOME' : 'EXPENSE',
+          amount: payment.amount,
+          date: new Date().toISOString(),
+          description: `${name} - ${typeLabel} ${isIncome ? 'Tahsilatı' : 'Ödemesi'}`,
+          relatedId: payment.id,
+          category: isIncome ? 'Çek/Senet Tahsilatı' : 'Çek/Senet Ödemesi',
+          partyName: name,
+          partyType: isIncome ? 'FARMER' : 'SUPPLIER'
+        });
+      }
     } else if (payment.status !== 'PAID' && oldPayment?.status === 'PAID') {
       // If status changed from PAID to something else, delete the transaction
       const allTransactions = await dbService.getTransactions();
@@ -2164,7 +2346,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         date: newExpense.date,
         description: newExpense.title,
         relatedId: newExpense.id,
-        category: 'Gider'
+        category: 'Gider',
+        partyName: newExpense.title,
+        partyType: 'EXPENSE',
+        partyId: newExpense.id
       });
     }
     
@@ -2201,7 +2386,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         date: expense.date,
         description: expense.title,
         relatedId: expense.id,
-        category: 'Gider'
+        category: 'Gider',
+        partyName: expense.title,
+        partyType: 'EXPENSE',
+        partyId: expense.id
       });
     }
     
@@ -2326,7 +2514,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await refreshStats();
   };
 
-  const performManualTurnover = async () => {
+  const performManualTurnover = async (): Promise<{ success: boolean; year: number }> => {
     try {
       const currentYear = new Date().getFullYear();
       const logs = await dbService.getTurnoverLogs();
@@ -2334,7 +2522,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const finLog = logs.find(l => l.year === currentYear && l.type === 'FINANCIAL');
       if (finLog) {
         showToast(`${currentYear} yılı devri zaten yapılmış.`, 'info');
-        return;
+        return { success: true, year: currentYear };
       }
 
       // Calculate balances up to the end of previous year
@@ -2369,9 +2557,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await addSystemNotification('SUCCESS', `${currentYear} Yılı Devri`, `${currentYear} yılı için devir işlemleri başarıyla tamamlandı.`);
       showToast(`${currentYear} yılı devri tamamlandı.`, 'success');
       await refreshStats();
+      return { success: true, year: currentYear };
     } catch (e) {
       console.error("Manual turnover failed:", e);
       showToast("Devir işlemi sırasında bir hata oluştu.", 'error');
+      return { success: false, year: new Date().getFullYear() };
     }
   };
 
@@ -2426,10 +2616,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         dbService.getSupplierPurchases()
     ]);
 
-    // 1. Fix Prescriptions: Process those that are marked as processed but didn't update inventory
+    // 1. Fix Prescriptions: Process those that are marked as processed but didn't update inventory, or set isProcessed if inventory was processed
     for (const p of allPrescriptions) {
         if (p.deletedAt) continue;
-        if (p.isProcessed && !p.isInventoryProcessed) {
+        if (p.isInventoryProcessed && p.isProcessed === false) {
+            p.isProcessed = true;
+            await dbService.updatePrescription(p);
+        } else if (p.isProcessed && !p.isInventoryProcessed) {
             await dbService.processInventory(p);
         }
     }
@@ -2521,7 +2714,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         
         await cleanupOldData();
         await syncLegacyData();
-        await dbService.rebuildInventoryBalances(); // Fix past inventory mismatches automatically
         await refreshStats();
         await refreshNews();
         await refreshPlants();

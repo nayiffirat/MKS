@@ -175,16 +175,24 @@ export const QuickActions: React.FC = () => {
     const [paymentAmount, setPaymentAmount] = useState('');
     const [paymentAccountId, setPaymentAccountId] = useState(accounts[0]?.id || '');
     const [paymentMethod, setPaymentMethod] = useState<Payment['method']>('CASH');
+    const [paymentCardOption, setPaymentCardOption] = useState<'UNBLOCKED' | 'DAYS_15' | 'DAYS_30' | 'DAYS_45'>('UNBLOCKED');
+    const [paymentCommissionRate, setPaymentCommissionRate] = useState('4');
     const [paymentNote, setPaymentNote] = useState('');
+    const [isSavingPayment, setIsSavingPayment] = useState(false);
 
     const handleSavePayment = async () => {
-        if (!paymentFarmerId || !paymentAmount) return;
+        if (!paymentFarmerId || !paymentAmount || isSavingPayment) return;
         try {
+            setIsSavingPayment(true);
+            const parsedAmt = parseFloat(paymentAmount.replace(',', '.')) || 0;
+            const parsedCommRate = parseFloat(paymentCommissionRate.replace(',', '.')) || 0;
             await addPayment({
                 farmerId: paymentFarmerId,
-                amount: parseFloat(paymentAmount.replace(',', '.')) || 0,
+                amount: parsedAmt,
                 date: new Date().toISOString(),
                 method: paymentMethod,
+                cardOption: paymentMethod === 'CARD' ? paymentCardOption : undefined,
+                commissionRate: paymentMethod === 'CARD' ? parsedCommRate : undefined,
                 note: paymentNote,
                 accountId: paymentAccountId || undefined,
                 createdById: activeTeamMember?.id
@@ -195,8 +203,12 @@ export const QuickActions: React.FC = () => {
             setPaymentAmount('');
             setPaymentNote('');
             setPaymentFarmerId('');
+            setPaymentCardOption('UNBLOCKED');
+            setPaymentCommissionRate('4');
         } catch (error) {
             showToast(t('quick.receivePayment.error'), 'error');
+        } finally {
+            setIsSavingPayment(false);
         }
     };
 
@@ -596,6 +608,7 @@ export const QuickActions: React.FC = () => {
                                         {(['CASH', 'CARD', 'CHECK', 'OTHER'] as const).map((method) => (
                                             <button
                                                 key={method}
+                                                type="button"
                                                 onClick={() => setPaymentMethod(method)}
                                                 className={`py-3 rounded-xl border text-[10px] font-bold transition-all ${paymentMethod === method ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-stone-900 border-white/5 text-stone-400'}`}
                                             >
@@ -603,6 +616,44 @@ export const QuickActions: React.FC = () => {
                                             </button>
                                         ))}
                                     </div>
+
+                                    {paymentMethod === 'CARD' && (
+                                        <div className="p-3 bg-stone-900 border border-emerald-500/20 rounded-2xl space-y-3 mb-3">
+                                            <label className="text-[10px] font-bold text-stone-400 uppercase block mb-1">Bloke Seçeneği</label>
+                                            <div className="grid grid-cols-2 gap-1.5">
+                                                {[
+                                                    { id: 'UNBLOCKED', label: 'Blokesiz', desc: '%4 Komisyon' },
+                                                    { id: 'DAYS_15', label: '15 Gün', desc: '%0 Komisyon' },
+                                                    { id: 'DAYS_30', label: '30 Gün', desc: '%0 Komisyon' },
+                                                    { id: 'DAYS_45', label: '45 Gün', desc: '%0 Komisyon' }
+                                                ].map(opt => (
+                                                    <button
+                                                        key={opt.id}
+                                                        type="button"
+                                                        onClick={() => setPaymentCardOption(opt.id as any)}
+                                                        className={`p-2 rounded-xl border text-left transition-all ${paymentCardOption === opt.id ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300' : 'bg-stone-950 border-white/5 text-stone-400'}`}
+                                                    >
+                                                        <div className="text-[10px] font-bold">{opt.label}</div>
+                                                        <div className="text-[8px] text-stone-500">{opt.desc}</div>
+                                                    </button>
+                                                ))}
+                                            </div>
+
+                                            {paymentCardOption === 'UNBLOCKED' && (
+                                                <div className="flex items-center justify-between pt-1 border-t border-white/5">
+                                                    <span className="text-[10px] font-bold text-stone-400 uppercase">POS Komisyonu (%)</span>
+                                                    <input 
+                                                        type="number"
+                                                        step="0.1"
+                                                        value={paymentCommissionRate}
+                                                        onChange={e => setPaymentCommissionRate(e.target.value)}
+                                                        className="w-16 p-1 bg-stone-950 border border-stone-800 rounded text-right text-xs font-bold text-emerald-400 outline-none"
+                                                    />
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
                                     <input 
                                         type="text" 
                                         value={paymentNote} 
@@ -613,11 +664,11 @@ export const QuickActions: React.FC = () => {
                                 </div>
                                 <div className="pt-4">
                                     <button 
-                                        disabled={!paymentFarmerId || !paymentAmount} 
+                                        disabled={!paymentFarmerId || !paymentAmount || isSavingPayment} 
                                         onClick={handleSavePayment} 
                                         className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-5 rounded-2xl font-black text-sm shadow-xl shadow-emerald-600/20 disabled:opacity-50 flex items-center justify-center transition-all active:scale-[0.98]"
                                     >
-                                        <Save className="mr-2" size={20}/> {t('quick.receivePayment.save')}
+                                        <Save className="mr-2" size={20}/> {isSavingPayment ? 'Kaydediliyor...' : t('quick.receivePayment.save')}
                                     </button>
                                 </div>
                             </div>

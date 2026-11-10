@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, getDocFromServer } from "firebase/firestore";
+import { initializeFirestore, memoryLocalCache, memoryLruGarbageCollector, doc, getDocFromServer } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 import firebaseConfig from '../firebase-applet-config.json';
 
@@ -10,7 +10,7 @@ export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 // The database ID must be provided to getFirestore for Enterprise edition (which is the default in AI Studio)
 export const db = initializeFirestore(app, {
-  localCache: persistentLocalCache({tabManager: persistentMultipleTabManager()})
+  localCache: memoryLocalCache({ garbageCollector: memoryLruGarbageCollector() })
 });
 export const storage = getStorage(app);
 

@@ -4,6 +4,7 @@ import { Pesticide, PesticideCategory } from '../types';
 import { Search, FlaskConical, Droplet, Info, Plus, X, Loader2, Save, Camera, Barcode } from 'lucide-react';
 import BarcodeScanner from './BarcodeScanner';
 import { useAppViewModel } from '../context/AppContext';
+import { turkishMatchesAny } from '../utils/search';
 
 export const Pesticides: React.FC = () => {
   const { showToast } = useAppViewModel();
@@ -71,9 +72,7 @@ export const Pesticides: React.FC = () => {
   };
 
   const filteredPesticides = pesticides.filter(p => 
-    p.name.toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR')) ||
-    p.activeIngredient.toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR')) ||
-    (p.barcode && p.barcode.includes(searchTerm))
+    turkishMatchesAny([p.name, p.activeIngredient, p.barcode], searchTerm)
   );
 
   return (

@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
     signInWithEmailAndPassword, 
     createUserWithEmailAndPassword, 
+    sendPasswordResetEmail,
     signInWithPopup,
     signInWithRedirect,
     signInWithCredential,
@@ -16,7 +17,7 @@ import {
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../services/firebase';
 import { safeStringify } from '../utils/json';
-import { Mail, Lock, Loader2, CheckCircle2, AlertCircle, ArrowLeft, Eye, EyeOff, User as UserIcon, Sparkles, Phone, ChevronRight, MessageCircle, Globe } from 'lucide-react';
+import { Mail, Lock, Loader2, CheckCircle2, AlertCircle, ArrowLeft, Eye, EyeOff, User as UserIcon, Sparkles, Phone, ChevronRight, MessageCircle, Globe, Send } from 'lucide-react';
 import { useAppViewModel } from '../context/AppContext';
 import { Language } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
@@ -34,6 +35,10 @@ export const LoginScreen: React.FC = () => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
+    
+    // Password Reset States
+    const [resetEmail, setResetEmail] = useState('');
+    const [isResetSent, setIsResetSent] = useState(false);
     
     // Profile Inputs
     const [fullName, setFullName] = useState('');
@@ -204,18 +209,42 @@ export const LoginScreen: React.FC = () => {
         }
     };
 
+    const handlePasswordReset = async (e: React.FormEvent) => {
+        e.preventDefault();
+        const targetEmail = (resetEmail || email).trim();
+        if (!targetEmail) {
+            setError('Lütfen e-posta adresinizi girin.');
+            return;
+        }
+        setIsLoading(true);
+        setError(null);
+        hapticFeedback('medium');
+
+        try {
+            await sendPasswordResetEmail(auth, targetEmail);
+            setIsResetSent(true);
+            showToast('Şifre sıfırlama bağlantısı e-posta adresinize gönderildi.', 'success');
+        } catch (err: any) {
+            console.error("Password reset error:", err);
+            setError(translateFirebaseError(err.code));
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     const translateFirebaseError = (code: string) => {
         switch (code) {
-            case 'auth/invalid-email': return 'Geçersiz e-posta formatı.';
-            case 'auth/user-not-found': return 'Hesap bulunamadı.';
+            case 'auth/invalid-email': return 'Geçersiz e-posta adresi formatı.';
+            case 'auth/user-not-found': return 'Bu e-posta adresine kayıtlı bir kullanıcı bulunamadı.';
             case 'auth/wrong-password': return 'Hatalı şifre.';
             case 'auth/email-already-in-use': return 'Bu e-posta zaten kullanımda.';
             case 'auth/weak-password': return 'Şifre çok zayıf (en az 6 karakter).';
-            case 'auth/too-many-requests': return 'Çok fazla deneme. Lütfen bekleyin.';
+            case 'auth/too-many-requests': return 'Çok fazla deneme yapıldı. Lütfen biraz bekleyip tekrar deneyin.';
             case 'auth/invalid-credential': return 'E-posta veya şifre hatalı.';
             case 'auth/captcha-check-failed': return 'Güvenlik doğrulaması başarısız.';
-            case 'auth/unauthorized-domain': return 'Kritik Uyarı: Bu link Firebase panelinde "Yetkili Alan Adları"na (Authorized Domains) eklenmemiş! Lütfen Firebase Authentication ayarlarına girip bu sayfanın URL adresini ekleyin.';
+            case 'auth/unauthorized-domain': return 'Kritik Uyarı: Bu link Firebase panelinde "Yetkili Alan Adları"na eklenmemiş.';
             case 'auth/popup-blocked': return 'Tarayıcı pencereyi engelledi. Lütfen izin verin.';
+            case 'auth/network-request-failed': return 'İnternet bağlantınızı kontrol edin.';
             default: return `İşlem başarısız (${code}).`;
         }
     };
@@ -292,26 +321,112 @@ export const LoginScreen: React.FC = () => {
                     {/* --- RESET PASSWORD VIEW --- */}
                     {viewMode === 'RESET' && (
                         <div className="animate-in slide-in-from-right duration-300">
-                            <button onClick={() => { setViewMode('LOGIN'); setError(null); }} className="flex items-center text-stone-500 hover:text-stone-200 text-[10px] font-bold mb-6 transition-colors uppercase tracking-widest">
-                                <ArrowLeft size={12} className="mr-1" /> {t('login.back')}
-                            </button>
-                            <h2 className="text-base font-bold text-stone-100 mb-1">{t('login.reset_title')}</h2>
-                            <p className="text-[11px] text-stone-500 mb-6">{t('login.reset_desc')}</p>
+                            {isResetSent ? (
+                                <div className="text-center py-2">
+                                    <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-emerald-500/20 text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.15)]">
+                                        <Send size={22} />
+                                    </div>
+                                    <h2 className="text-base font-bold text-stone-100 mb-2">{t('login.reset_sent_title')}</h2>
+                                    <p className="text-[11px] text-stone-400 leading-relaxed mb-6 px-1">
+                                        <span className="font-bold text-emerald-400 block mb-1 break-all">{resetEmail || email}</span>
+                                        {t('login.reset_sent_desc')}
+                                    </p>
 
-                            <div className="space-y-4">
-                                <a 
-                                    href="https://wa.me/905428254087" 
-                                    target="_blank" 
-                                    rel="noopener noreferrer"
-                                    className="w-full py-4 bg-[#25D366] hover:bg-[#22c35e] text-white rounded-2xl font-bold text-sm shadow-lg shadow-emerald-900/20 transition-all active:scale-95 flex items-center justify-center gap-2"
-                                >
-                                    <MessageCircle size={18} />
-                                    {t('login.whatsapp')}
-                                </a>
-                                <p className="text-[10px] text-stone-600 text-center px-4">
-                                    {t('login.reset_hint')}
-                                </p>
-                            </div>
+                                    <div className="space-y-2.5">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setViewMode('LOGIN');
+                                                setIsResetSent(false);
+                                                setError(null);
+                                            }}
+                                            className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl font-bold text-xs shadow-lg shadow-emerald-900/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                                        >
+                                            <ArrowLeft size={14} />
+                                            {t('login.reset_success_back')}
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setIsResetSent(false);
+                                                setError(null);
+                                            }}
+                                            className="w-full py-2.5 text-stone-500 hover:text-stone-300 text-[10px] font-bold transition-colors"
+                                        >
+                                            Farklı E-posta ile Tekrar Dene
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div>
+                                    <button 
+                                        type="button"
+                                        onClick={() => { setViewMode('LOGIN'); setError(null); }} 
+                                        className="flex items-center text-stone-500 hover:text-stone-200 text-[10px] font-bold mb-4 transition-colors uppercase tracking-widest"
+                                    >
+                                        <ArrowLeft size={12} className="mr-1" /> {t('login.back')}
+                                    </button>
+                                    
+                                    <div className="flex items-center gap-3 mb-3">
+                                        <div className="p-2.5 bg-emerald-500/10 text-emerald-400 rounded-xl border border-emerald-500/20">
+                                            <Mail size={18} />
+                                        </div>
+                                        <div>
+                                            <h2 className="text-base font-bold text-stone-100">{t('login.reset_title')}</h2>
+                                            <span className="text-[10px] text-emerald-500 font-medium block">Otomatik E-posta Sıfırlama</span>
+                                        </div>
+                                    </div>
+
+                                    <p className="text-[11px] text-stone-400 mb-5 leading-relaxed">
+                                        {t('login.reset_desc')}
+                                    </p>
+
+                                    <form onSubmit={handlePasswordReset} className="space-y-3">
+                                        <div className="relative group">
+                                            <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-600 group-focus-within:text-emerald-500 transition-colors" size={14} />
+                                            <input 
+                                                type="email" 
+                                                required 
+                                                value={resetEmail} 
+                                                onChange={e => setResetEmail(e.target.value)} 
+                                                placeholder={t('login.email')} 
+                                                className="w-full pl-11 pr-4 py-3 bg-stone-950/50 border border-stone-800 rounded-2xl text-stone-200 text-sm outline-none focus:border-emerald-500/50 transition-all placeholder-stone-700" 
+                                            />
+                                        </div>
+
+                                        <button 
+                                            type="submit" 
+                                            disabled={isLoading} 
+                                            className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl font-bold text-xs shadow-lg shadow-emerald-900/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-50"
+                                        >
+                                            {isLoading ? (
+                                                <Loader2 className="animate-spin" size={16} />
+                                            ) : (
+                                                <>
+                                                    <Send size={14} />
+                                                    {t('login.reset_button')}
+                                                </>
+                                            )}
+                                        </button>
+                                    </form>
+
+                                    <div className="mt-6 pt-4 border-t border-white/5 space-y-2">
+                                        <p className="text-[10px] text-stone-500 text-center">
+                                            {t('login.reset_hint')}
+                                        </p>
+                                        <a 
+                                            href="https://wa.me/905428254087" 
+                                            target="_blank" 
+                                            rel="noopener noreferrer"
+                                            className="w-full py-2.5 bg-stone-900 hover:bg-stone-800 border border-white/5 text-stone-400 hover:text-white rounded-xl font-bold text-[10px] transition-all flex items-center justify-center gap-2"
+                                        >
+                                            <MessageCircle size={14} className="text-[#25D366]" />
+                                            {t('login.whatsapp')}
+                                        </a>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -365,7 +480,18 @@ export const LoginScreen: React.FC = () => {
 
                                 <div className="flex items-center justify-end px-1">
                                     {viewMode === 'LOGIN' && (
-                                        <button type="button" onClick={() => setViewMode('RESET')} className="text-[9px] font-bold text-stone-500 hover:text-emerald-500 transition-colors">{t('login.forgot_password')}</button>
+                                        <button 
+                                            type="button" 
+                                            onClick={() => { 
+                                                setResetEmail(email); 
+                                                setIsResetSent(false); 
+                                                setError(null); 
+                                                setViewMode('RESET'); 
+                                            }} 
+                                            className="text-[9px] font-bold text-stone-500 hover:text-emerald-500 transition-colors"
+                                        >
+                                            {t('login.forgot_password')}
+                                        </button>
                                     )}
                                 </div>
 

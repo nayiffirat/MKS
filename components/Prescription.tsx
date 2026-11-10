@@ -1,11 +1,12 @@
+import { createMultiPagePdf } from '../utils/pdfHelper';
 
 // ... imports ...
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { dbService } from '../services/db';
 import { Farmer, Pesticide, Prescription, PesticideCategory, VisitLog, AppNotification } from '../types';
 import { useAppViewModel } from '../context/AppContext';
 import { safeStringify } from '../utils/json';
-import { Check, Plus, Trash2, FileOutput, Share2, FileText, Calendar, MapPin, X, User, Loader2, Search, FlaskConical, MessageCircle, Edit2, AlertCircle, ArrowLeft, Printer, Package, Download, MessageSquare, RefreshCw, AlertTriangle, Camera, Barcode, TrendingUp, Star, Lightbulb, ChevronRight, CreditCard, Wallet } from 'lucide-react';
+import { Check, Plus, Trash2, FileOutput, Share2, FileText, Calendar, MapPin, X, User, Loader2, Search, FlaskConical, MessageCircle, Edit2, AlertCircle, ArrowLeft, Printer, Package, Download, MessageSquare, RefreshCw, AlertTriangle, Camera, Barcode, TrendingUp, Star, Lightbulb, ChevronRight, CreditCard, Wallet, Landmark, Sprout, Wheat, Sparkles } from 'lucide-react';
 import BarcodeScanner from './BarcodeScanner';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
@@ -15,6 +16,16 @@ import { formatCurrency, getCurrencySymbol } from '../utils/currency';
 import { ConfirmationModal } from './ConfirmationModal';
 import { ListSkeleton } from './Skeleton';
 import { EmptyState } from './EmptyState';
+import { RealisticStamp } from './RealisticStamp';
+import { turkishMatchesAny } from '../utils/search';
+
+const POPULAR_CROPS = [
+  'Pamuk', 'Buğday', 'Mısır', 'Ayçiçeği', 'Domates', 'Biber', 'Patlıcan', 
+  'Hıyar (Salatalık)', 'Karpuz', 'Kavun', 'Üzüm (Bağ)', 'Zeytin', 'Fındık', 
+  'Arpa', 'Çeltik (Pirinç)', 'Patates', 'Soğan', 'Sarımsak', 'Şeker Pancarı', 
+  'Yonca', 'Ceviz', 'Badem', 'Narenciye', 'Elma', 'Kiraz', 'Çilek', 
+  'Kayısı', 'Şeftali', 'Antep Fıstığı', 'Nohut', 'Mercimek', 'Fasulye', 'Soya', 'Kanola'
+];
 
 interface PrescriptionFormProps {
     onBack: () => void;
@@ -173,14 +184,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
             
             document.body.removeChild(container);
             
-            const imgData = canvas.toDataURL('image/jpeg', 0.95);
-            const pdf = new jsPDF({
-                orientation: 'p',
-                unit: 'px',
-                format: [canvas.width, canvas.height]
-            });
-            
-            pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+            const pdf = createMultiPagePdf(canvas);
             const pdfBlob = pdf.output('blob');
             
             const charMap: {[key: string]: string} = {'Ğ':'G','ğ':'g','Ü':'U','ü':'u','Ş':'S','ş':'s','İ':'I','ı':'i','Ö':'O','ö':'o','Ç':'C','ç':'c'};
@@ -314,8 +318,29 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         }
     };
 
+    const [isSavingPrescription, setIsSavingPrescription] = useState(false);
+    const isSavingPrescriptionRef = useRef(false);
+
     const changeStep = (newStep: number) => {
         if (newStep === step) return;
+        if (newStep > 1 && !selectedFarmer) {
+            showToast("Lütfen önce bir müşteri seçiniz.", 'error');
+            hapticFeedback('error');
+            setStep(1);
+            return;
+        }
+        if (newStep > 2 && (!selectedCrop || !selectedCrop.trim())) {
+            showToast("Lütfen satışı yapılan mahsulü (ürünü) seçiniz.", 'error');
+            hapticFeedback('error');
+            setStep(2);
+            return;
+        }
+        if (newStep > 3 && selectedItems.length === 0) {
+            showToast("Lütfen en az bir ürün ekleyiniz.", 'error');
+            hapticFeedback('error');
+            setStep(3);
+            return;
+        }
         window.history.pushState({ ...window.history.state, step: newStep }, '');
         setStep(newStep);
     };
@@ -331,6 +356,9 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     const [selectedFieldId, setSelectedFieldId] = useState('');
     const [selectedFieldIds, setSelectedFieldIds] = useState<string[]>([]);
     const [selectedPlantId, setSelectedPlantId] = useState('');
+    const [selectedCrop, setSelectedCrop] = useState('');
+    const [cropSearchTerm, setCropSearchTerm] = useState('');
+    const [customCropInput, setCustomCropInput] = useState('');
     const [farmerSearchTerm, setFarmerSearchTerm] = useState('');
     const [pesticideSearchTerm, setPesticideSearchTerm] = useState('');
     const [prescriptionSearchTerm, setPrescriptionSearchTerm] = useState('');
@@ -340,6 +368,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     const [showPrices, setShowPrices] = useState(true);
     const [customPrescriptionNo, setCustomPrescriptionNo] = useState('');
     const [prescriptionPriceType, setPrescriptionPriceType] = useState<'CASH' | 'TERM'>('TERM');
+    const [prescriptionAccountId, setPrescriptionAccountId] = useState<string>('');
     const [prescriptionDiscount, setPrescriptionDiscount] = useState<string>('');
     const [prescriptionDueDate, setPrescriptionDueDate] = useState('');
     const [isManualDueDate, setIsManualDueDate] = useState(false);
@@ -440,6 +469,40 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         }
     }, [initialPrescriptionId, contextPrescriptions, pesticides, hasInitializedEdit]);
 
+    // Derive available crops for farmer and global catalog
+    const farmerCrops = useMemo(() => {
+        if (!selectedFarmer) return [];
+        const set = new Set<string>();
+        if (selectedFarmer.fields) {
+            selectedFarmer.fields.forEach(f => {
+                if (f.crop && f.crop.trim()) set.add(f.crop.trim());
+            });
+        }
+        contextPrescriptions.forEach(p => {
+            if (p.farmerId === selectedFarmer.id) {
+                const c = (p.crop || p.cropName || contextPlants.find(pl => pl.id === p.plantId)?.name)?.trim();
+                if (c) set.add(c);
+            }
+        });
+        return Array.from(set).sort((a, b) => a.localeCompare(b, 'tr'));
+    }, [selectedFarmer, contextPrescriptions, contextPlants]);
+
+    const allAvailableCrops = useMemo<string[]>(() => {
+        const set = new Set<string>();
+        POPULAR_CROPS.forEach((c: string) => set.add(c));
+        contextPlants.forEach(p => {
+            if (p.name && p.name.trim()) set.add(p.name.trim());
+        });
+        farmerCrops.forEach((c: string) => set.add(c));
+        return Array.from(set).sort((a: string, b: string) => a.localeCompare(b, 'tr'));
+    }, [contextPlants, farmerCrops]);
+
+    const filteredCropsList = useMemo<string[]>(() => {
+        if (!cropSearchTerm.trim()) return allAvailableCrops;
+        const term = cropSearchTerm.trim().toLowerCase();
+        return allAvailableCrops.filter((c: string) => c.toLowerCase().includes(term));
+    }, [allAvailableCrops, cropSearchTerm]);
+
     useEffect(() => {
         if (!selectedFarmer || prescriptionPriceType !== 'TERM' || isManualDueDate) {
             if (prescriptionPriceType !== 'TERM') {
@@ -448,19 +511,16 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
             return;
         }
 
-        // Use selected plant for calculation if available
-        const plant = contextPlants.find(p => p.id === selectedPlantId);
+        // 1. Use selected plant or selected crop for calculation if available
+        const plant = contextPlants.find(p => p.id === selectedPlantId || p.name.toLowerCase() === selectedCrop.toLowerCase());
         if (plant && plant.maturityDate) {
             const [month, day] = plant.maturityDate.split('-').map(Number);
             if (!isNaN(month) && !isNaN(day)) {
                 const now = new Date();
                 let year = now.getFullYear();
                 
-                // If the maturity date for this year has passed significantly (e.g. 1 month), set to next year
-                // But usually in seasonal agriculture, we target the upcoming harvest.
                 const targetDate = new Date(year, month - 1, day);
                 if (targetDate < now) {
-                    // Check if it's way in the past
                     const diffDays = (now.getTime() - targetDate.getTime()) / (1000 * 3600 * 24);
                     if (diffDays > 30) {
                         year += 1;
@@ -473,35 +533,40 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
             }
         }
         
-        const field = selectedFarmer.fields?.find(f => f.id === selectedFieldId);
-        if (!field) {
-            setPrescriptionDueDate('');
+        // 2. Check selectedCrop directly or field crop
+        const cropLower = (selectedCrop || (selectedFarmer.fields?.find(f => f.id === selectedFieldId)?.crop) || '').toLocaleLowerCase('tr-TR');
+        if (cropLower) {
+            const currentYear = new Date().getFullYear();
+            let targetMonth = 11; // Aralık (December)
+            let targetDay = 31;
+
+            if (cropLower.includes('arpa')) {
+                targetMonth = 5; // Haziran (June)
+                targetDay = 1;
+            } else if (cropLower.includes('buğday') || cropLower.includes('bugday')) {
+                targetMonth = 5; // Haziran
+                targetDay = 15;
+            } else if (cropLower.includes('pamuk')) {
+                targetMonth = 10; // Kasım (November)
+                targetDay = 1;
+            } else if (cropLower.includes('mısır') || cropLower.includes('misir')) {
+                targetMonth = 10; // Kasım
+                targetDay = 15;
+            } else if (cropLower.includes('ayçiçek') || cropLower.includes('aycicek')) {
+                targetMonth = 8; // Eylül
+                targetDay = 15;
+            } else if (cropLower.includes('üzüm') || cropLower.includes('uzum')) {
+                targetMonth = 9; // Ekim
+                targetDay = 15;
+            }
+
+            const calculatedDate = new Date(currentYear, targetMonth, targetDay);
+            setPrescriptionDueDate(format(calculatedDate, 'yyyy-MM-dd'));
             return;
         }
 
-        const currentYear = new Date().getFullYear();
-        let targetMonth = 11; // Aralık, 0-indexed (December)
-        let targetDay = 31;
-        const cropLower = (field.crop || '').toLocaleLowerCase('tr-TR');
-
-        if (cropLower.includes('arpa')) {
-            targetMonth = 5; // Haziran (June)
-            targetDay = 1;
-        } else if (cropLower.includes('buğday') || cropLower.includes('bugday')) {
-            targetMonth = 5; // Haziran
-            targetDay = 15;
-        } else if (cropLower.includes('pamuk')) {
-            targetMonth = 10; // Kasım (November)
-            targetDay = 1;
-        } else if (cropLower.includes('mısır') || cropLower.includes('misir')) {
-            targetMonth = 10; // Kasım
-            targetDay = 15;
-        }
-
-        const calculatedDate = new Date(currentYear, targetMonth, targetDay);
-        setPrescriptionDueDate(format(calculatedDate, 'yyyy-MM-dd'));
-
-    }, [selectedFieldId, selectedFarmer, prescriptionPriceType, selectedPlantId, contextPlants]);
+        setPrescriptionDueDate('');
+    }, [selectedFieldId, selectedFarmer, prescriptionPriceType, selectedPlantId, selectedCrop, contextPlants]);
 
     const loadData = async () => {
         setIsLoading(true);
@@ -543,6 +608,9 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         setSelectedFieldId('');
         setSelectedFieldIds([]);
         setSelectedPlantId('');
+        setSelectedCrop('');
+        setCropSearchTerm('');
+        setCustomCropInput('');
         setDetailPrescription(null);
         setIsProcessingPdf(false);
         setEditingId(null);
@@ -551,6 +619,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         setShowPrices(true);
         setCustomPrescriptionNo('');
         setPrescriptionPriceType('TERM');
+        setPrescriptionAccountId(accounts.find(a => a.type === 'CASH')?.id || accounts[0]?.id || '');
         setPrescriptionDueDate('');
         setIsManualDueDate(false);
         setPrescriptionType(type);
@@ -680,6 +749,8 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
             setSelectedFieldId(p.fieldId || '');
             setSelectedFieldIds(p.fieldIds || (p.fieldId ? [p.fieldId] : []));
             setSelectedPlantId(p.plantId || '');
+            const cropVal = p.crop || p.cropName || (contextPlants.find(pl => pl.id === p.plantId)?.name) || (p.fieldId ? farmer?.fields?.find(f => f.id === p.fieldId)?.crop : '') || '';
+            setSelectedCrop(cropVal);
         }
 
         // Reconstruct Pesticide objects from stored items
@@ -713,6 +784,8 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
 
         setCustomPrescriptionNo(p.prescriptionNo || '');
         setPrescriptionPriceType(p.priceType || 'TERM');
+        const existingTx = transactions.find(t => t.relatedId === p.id);
+        setPrescriptionAccountId(p.accountId || existingTx?.accountId || accounts.find(a => a.type === 'CASH')?.id || accounts[0]?.id || '');
         setPrescriptionType(p.type || 'SALE');
         if (p.dueDate) {
             setPrescriptionDueDate(p.dueDate.split('T')[0]);
@@ -789,156 +862,209 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     };
 
     const handleSave = async () => {
-        if (!selectedFarmer) return;
-        
-        const items = selectedItems.map(i => ({
-            pesticideId: i.pesticide.id,
-            pesticideName: i.pesticide.name,
-            dosage: i.dosage,
-            quantity: i.quantity ? i.quantity.replace(',', '.') : '', // Save standardized quantity
-            unitPrice: i.unitPrice ? parseFloat(i.unitPrice.replace(',', '.')) : undefined,
-            totalPrice: i.totalPrice,
-            buyingPrice: i.buyingPrice
-        }));
-
-        const initialTotal = items.reduce((acc, item) => acc + (item.totalPrice || 0), 0);
-        const discountValue = parseFloat(prescriptionDiscount.replace(',', '.')) || 0;
-        const totalAmount = Math.max(0, initialTotal - discountValue);
-        
-        if (editingId) {
-            // Update existing
-            const original = contextPrescriptions.find(p => p.id === editingId);
-            if (!original) return;
-
-            // If it was already processed, revert old inventory first
-            if (original.isInventoryProcessed) {
-                await dbService.revertInventory(original);
-            }
-
-            const updatedPrescription: Prescription = {
-                ...original,
-                farmerId: selectedFarmer.id,
-                fieldId: selectedFieldIds.length === 1 ? selectedFieldIds[0] : (selectedFieldId || undefined),
-                fieldIds: selectedFieldIds,
-                plantId: selectedPlantId || undefined,
-                engineerName: userProfile.fullName || original.engineerName,
-                prescriptionNo: customPrescriptionNo.trim() || original.prescriptionNo,
-                items: items,
-                totalAmount: totalAmount > 0 ? (prescriptionType === 'RETURN' ? -totalAmount : totalAmount) : undefined,
-                discountAmount: discountValue > 0 ? discountValue : undefined,
-                priceType: prescriptionPriceType,
-                type: prescriptionType,
-                dueDate: prescriptionPriceType === 'TERM' && prescriptionDueDate ? new Date(prescriptionDueDate).toISOString() : undefined,
-                isProcessed: original.isProcessed,
-                isInventoryProcessed: false // Reset this so it can be re-processed
-            };
-
-            await dbService.updatePrescription(updatedPrescription);
-            
-            // Re-process with new items unconditionally
-            await dbService.processInventory(updatedPrescription);
-
-            // Clean up any old cash transactions for this prescription
-            const oldTx = transactions.find(t => t.relatedId === updatedPrescription.id);
-            if (oldTx) {
-                await deleteTransaction(oldTx.id);
-            }
-
-            if (updatedPrescription.priceType === 'CASH') {
-                const targetAccount = accounts.find(a => a.type === 'CASH');
-                if (targetAccount) {
-                    await addTransaction({
-                        accountId: targetAccount.id,
-                        type: updatedPrescription.type === 'RETURN' ? 'EXPENSE' : 'INCOME',
-                        amount: Math.abs(updatedPrescription.totalAmount || 0),
-                        date: updatedPrescription.date,
-                        description: updatedPrescription.type === 'RETURN' ? 'Peşin İade Kasadan Çıkış' : 'Peşin Satış Tahsilatı',
-                        category: 'Satış/İade',
-                        relatedId: updatedPrescription.id
-                    });
-                }
-            }
-
-            await refreshStats();
-
-            const finalUpdated = { ...updatedPrescription, isInventoryProcessed: true };
-            setDetailPrescription(finalUpdated);
-            changeViewMode('DETAIL', finalUpdated.id);
-        } else {
-            // Create new
-            const newPrescription: Prescription = {
-                id: crypto.randomUUID(),
-                farmerId: selectedFarmer.id,
-                fieldId: selectedFieldIds.length === 1 ? selectedFieldIds[0] : (selectedFieldId || undefined),
-                fieldIds: selectedFieldIds,
-                plantId: selectedPlantId || undefined,
-                date: new Date().toISOString(),
-                prescriptionNo: customPrescriptionNo.trim() || `REC-${new Date().getFullYear()}-${Math.floor(Math.random() * 1000)}`,
-                engineerName: userProfile.fullName || 'Ziraat Mühendisi',
-                items: items,
-                isOfficial: true,
-                isProcessed: false,
-                isInventoryProcessed: false,
-                totalAmount: totalAmount > 0 ? (prescriptionType === 'RETURN' ? -totalAmount : totalAmount) : undefined,
-                discountAmount: discountValue > 0 ? discountValue : undefined,
-                priceType: prescriptionPriceType,
-                type: prescriptionType,
-                dueDate: prescriptionPriceType === 'TERM' && prescriptionDueDate ? new Date(prescriptionDueDate).toISOString() : undefined,
-                status: undefined,
-                createdById: activeTeamMember?.id
-            };
-
-            await dbService.addPrescription(newPrescription);
-            await dbService.processInventory(newPrescription);
-
-            if (newPrescription.priceType === 'CASH') {
-                const targetAccount = accounts.find(a => a.type === 'CASH');
-                if (targetAccount) {
-                    await addTransaction({
-                        accountId: targetAccount.id,
-                        type: newPrescription.type === 'RETURN' ? 'EXPENSE' : 'INCOME',
-                        amount: Math.abs(newPrescription.totalAmount || 0),
-                        date: newPrescription.date,
-                        description: newPrescription.type === 'RETURN' ? 'Peşin İade Kasadan Çıkış' : 'Peşin Satış Tahsilatı',
-                        category: 'Satış/İade',
-                        relatedId: newPrescription.id
-                    });
-                }
-            }
-            
-            const currentTypeLabel = newPrescription.type === 'RETURN' ? 'İade Faturası' : 'Satış Faturası';
-            
-            // Create a visit log entry automatically
-            const newVisit: VisitLog = {
-                id: crypto.randomUUID(),
-                farmerId: selectedFarmer.id,
-                fieldId: selectedFieldIds.length > 0 ? selectedFieldIds[0] : (selectedFieldId || undefined),
-                date: new Date().toISOString(),
-                note: `${currentTypeLabel} işlendi (${newPrescription.prescriptionNo})`,
-                village: selectedFarmer.village
-            };
-            await dbService.addVisit(newVisit);
-            
-            // Add a notification
-            const newNotification: AppNotification = {
-                id: crypto.randomUUID(),
-                type: 'SUCCESS',
-                title: `${currentTypeLabel} ve Reçete Kaydı`,
-                message: `${selectedFarmer.fullName} için ${currentTypeLabel.toLowerCase()} işlendi ve ziyaret kaydı oluşturuldu.`,
-                date: new Date().toISOString(),
-                isRead: false
-            };
-            await dbService.addNotification(newNotification);
-            
-            const finalNew = { ...newPrescription, isInventoryProcessed: true };
-            setDetailPrescription(finalNew);
-            changeViewMode('DETAIL', finalNew.id, true);
+        if (isSavingPrescription || isSavingPrescriptionRef.current) return;
+        if (!selectedFarmer) {
+            showToast("Lütfen önce bir müşteri seçiniz.", 'error');
+            setStep(1);
+            return;
+        }
+        if (!selectedCrop || !selectedCrop.trim()) {
+            showToast("Zorunlu alan: Lütfen satışı yapılan mahsulü seçiniz!", 'error');
+            hapticFeedback('error');
+            setStep(2);
+            return;
+        }
+        if (selectedItems.length === 0) {
+            showToast("Lütfen faturaya en az bir ürün ekleyiniz!", 'error');
+            hapticFeedback('error');
+            setStep(3);
+            return;
         }
 
-        await loadData();
-        await refreshStats();
-        showToast(`${currentPrescriptionLabel} başarıyla kaydedildi`, 'success');
-        hapticFeedback('success');
+        isSavingPrescriptionRef.current = true;
+        setIsSavingPrescription(true);
+
+        try {
+            const items = selectedItems.map(i => ({
+                pesticideId: i.pesticide.id,
+                pesticideName: i.pesticide.name,
+                dosage: i.dosage,
+                quantity: i.quantity ? i.quantity.replace(',', '.') : '', // Save standardized quantity
+                unitPrice: i.unitPrice ? parseFloat(i.unitPrice.replace(',', '.')) : undefined,
+                totalPrice: i.totalPrice,
+                buyingPrice: i.buyingPrice
+            }));
+
+            const initialTotal = items.reduce((acc, item) => acc + (item.totalPrice || 0), 0);
+            const discountValue = parseFloat(prescriptionDiscount.replace(',', '.')) || 0;
+            const totalAmount = Math.max(0, initialTotal - discountValue);
+            
+            if (editingId) {
+                // Update existing
+                const original = contextPrescriptions.find(p => p.id === editingId);
+                if (!original) return;
+
+                // If it was already processed, revert old inventory first
+                if (original.isInventoryProcessed) {
+                    await dbService.revertInventory(original);
+                }
+
+                const updatedPrescription: Prescription = {
+                    ...original,
+                    farmerId: selectedFarmer.id,
+                    fieldId: selectedFieldIds.length === 1 ? selectedFieldIds[0] : (selectedFieldId || undefined),
+                    fieldIds: selectedFieldIds,
+                    plantId: selectedPlantId || undefined,
+                    crop: selectedCrop.trim() || undefined,
+                    cropName: selectedCrop.trim() || undefined,
+                    engineerName: userProfile.fullName || original.engineerName,
+                    prescriptionNo: customPrescriptionNo.trim() || original.prescriptionNo,
+                    items: items,
+                    totalAmount: totalAmount > 0 ? (prescriptionType === 'RETURN' ? -totalAmount : totalAmount) : undefined,
+                    discountAmount: discountValue > 0 ? discountValue : undefined,
+                    priceType: prescriptionPriceType,
+                    type: prescriptionType,
+                    dueDate: prescriptionPriceType === 'TERM' && prescriptionDueDate ? new Date(prescriptionDueDate).toISOString() : undefined,
+                    accountId: prescriptionPriceType === 'CASH' ? (prescriptionAccountId || accounts.find(a => a.type === 'CASH')?.id || accounts[0]?.id) : undefined,
+                    isProcessed: original.isProcessed,
+                    isInventoryProcessed: false // Reset this so it can be re-processed
+                };
+
+                await dbService.updatePrescription(updatedPrescription);
+                
+                // Re-process with new items unconditionally
+                await dbService.processInventory(updatedPrescription);
+
+                const targetAccount = updatedPrescription.accountId ? accounts.find(a => a.id === updatedPrescription.accountId) : (accounts.find(a => a.type === 'CASH') || accounts[0]);
+                const oldTx = transactions.find(t => t.relatedId === updatedPrescription.id);
+
+                if (updatedPrescription.priceType === 'CASH' && targetAccount) {
+                    if (oldTx) {
+                        await dbService.updateTransaction({
+                            ...oldTx,
+                            accountId: targetAccount.id,
+                            type: updatedPrescription.type === 'RETURN' ? 'EXPENSE' : 'INCOME',
+                            amount: Math.abs(updatedPrescription.totalAmount || 0),
+                            date: updatedPrescription.date,
+                            description: updatedPrescription.type === 'RETURN' ? 'Peşin İade Kasadan Çıkış' : 'Peşin Satış Tahsilatı',
+                            category: 'Satış/İade',
+                            partyName: selectedFarmer?.fullName,
+                            partyType: 'FARMER',
+                            partyId: selectedFarmer?.id
+                        });
+                    } else {
+                        await addTransaction({
+                            accountId: targetAccount.id,
+                            type: updatedPrescription.type === 'RETURN' ? 'EXPENSE' : 'INCOME',
+                            amount: Math.abs(updatedPrescription.totalAmount || 0),
+                            date: updatedPrescription.date,
+                            description: updatedPrescription.type === 'RETURN' ? 'Peşin İade Kasadan Çıkış' : 'Peşin Satış Tahsilatı',
+                            category: 'Satış/İade',
+                            relatedId: updatedPrescription.id,
+                            partyName: selectedFarmer?.fullName,
+                            partyType: 'FARMER',
+                            partyId: selectedFarmer?.id
+                        });
+                    }
+                } else if (oldTx) {
+                    await deleteTransaction(oldTx.id);
+                }
+
+                await refreshStats();
+
+                const finalUpdated = { ...updatedPrescription, isInventoryProcessed: true };
+                setDetailPrescription(finalUpdated);
+                changeViewMode('DETAIL', finalUpdated.id);
+            } else {
+                // Create new
+                const targetAccId = prescriptionAccountId || accounts.find(a => a.type === 'CASH')?.id || accounts[0]?.id;
+                const newPrescription: Prescription = {
+                    id: crypto.randomUUID(),
+                    farmerId: selectedFarmer.id,
+                    fieldId: selectedFieldIds.length === 1 ? selectedFieldIds[0] : (selectedFieldId || undefined),
+                    fieldIds: selectedFieldIds,
+                    plantId: selectedPlantId || undefined,
+                    crop: selectedCrop.trim() || undefined,
+                    cropName: selectedCrop.trim() || undefined,
+                    date: new Date().toISOString(),
+                    prescriptionNo: customPrescriptionNo.trim() || `REC-${new Date().getFullYear()}-${Math.floor(Math.random() * 1000)}`,
+                    engineerName: userProfile.fullName || 'Ziraat Mühendisi',
+                    items: items,
+                    isOfficial: true,
+                    isProcessed: true,
+                    isInventoryProcessed: false,
+                    totalAmount: totalAmount > 0 ? (prescriptionType === 'RETURN' ? -totalAmount : totalAmount) : undefined,
+                    discountAmount: discountValue > 0 ? discountValue : undefined,
+                    priceType: prescriptionPriceType,
+                    type: prescriptionType,
+                    dueDate: prescriptionPriceType === 'TERM' && prescriptionDueDate ? new Date(prescriptionDueDate).toISOString() : undefined,
+                    accountId: prescriptionPriceType === 'CASH' ? targetAccId : undefined,
+                    status: undefined,
+                    createdById: activeTeamMember?.id
+                };
+
+                await dbService.addPrescription(newPrescription);
+                await dbService.processInventory(newPrescription);
+
+                if (newPrescription.priceType === 'CASH' && targetAccId) {
+                    const existingTx = transactions.find(t => t.relatedId === newPrescription.id);
+                    if (!existingTx) {
+                        await addTransaction({
+                            accountId: targetAccId,
+                            type: newPrescription.type === 'RETURN' ? 'EXPENSE' : 'INCOME',
+                            amount: Math.abs(newPrescription.totalAmount || 0),
+                            date: newPrescription.date,
+                            description: newPrescription.type === 'RETURN' ? 'Peşin İade Kasadan Çıkış' : 'Peşin Satış Tahsilatı',
+                            category: 'Satış/İade',
+                            relatedId: newPrescription.id,
+                            partyName: selectedFarmer?.fullName,
+                            partyType: 'FARMER',
+                            partyId: selectedFarmer?.id
+                        });
+                    }
+                }
+                
+                const currentTypeLabel = newPrescription.type === 'RETURN' ? 'İade Faturası' : 'Satış Faturası';
+                
+                // Create a visit log entry automatically
+                const newVisit: VisitLog = {
+                    id: crypto.randomUUID(),
+                    farmerId: selectedFarmer.id,
+                    fieldId: selectedFieldIds.length > 0 ? selectedFieldIds[0] : (selectedFieldId || undefined),
+                    date: new Date().toISOString(),
+                    note: `${currentTypeLabel} işlendi (${newPrescription.prescriptionNo})`,
+                    village: selectedFarmer.village
+                };
+                await dbService.addVisit(newVisit);
+                
+                // Add a notification
+                const newNotification: AppNotification = {
+                    id: crypto.randomUUID(),
+                    type: 'SUCCESS',
+                    title: `${currentTypeLabel} ve Reçete Kaydı`,
+                    message: `${selectedFarmer.fullName} için ${currentTypeLabel.toLowerCase()} işlendi ve ziyaret kaydı oluşturuldu.`,
+                    date: new Date().toISOString(),
+                    isRead: false
+                };
+                await dbService.addNotification(newNotification);
+                
+                const finalNew = { ...newPrescription, isInventoryProcessed: true };
+                setDetailPrescription(finalNew);
+                changeViewMode('DETAIL', finalNew.id, true);
+            }
+
+            await loadData();
+            await refreshStats();
+            showToast(`${currentPrescriptionLabel} başarıyla kaydedildi`, 'success');
+            hapticFeedback('success');
+        } catch (error) {
+            console.error("Save prescription error:", error);
+            showToast("Kayıt sırasında bir hata oluştu", 'error');
+            hapticFeedback('error');
+        } finally {
+            isSavingPrescriptionRef.current = false;
+            setIsSavingPrescription(false);
+        }
     };
 
     const handleWhatsAppText = (targetPrescription: Prescription, targetFarmer: Farmer) => {
@@ -1011,15 +1137,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                 allowTaint: true
             });
 
-            const imgData = canvas.toDataURL('image/jpeg', 0.95);
-            
-            const pdf = new jsPDF({
-                orientation: canvas.width > canvas.height ? 'l' : 'p',
-                unit: 'px',
-                format: [canvas.width, canvas.height]
-            });
-            
-            pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+            const pdf = createMultiPagePdf(canvas);
             
             const pdfBlob = pdf.output('blob');
             
@@ -1062,20 +1180,16 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     };
 
     const filteredFarmers = farmers.filter(f => 
-        f.fullName.toLocaleLowerCase('tr-TR').includes(farmerSearchTerm.toLocaleLowerCase('tr-TR')) ||
-        f.village.toLocaleLowerCase('tr-TR').includes(farmerSearchTerm.toLocaleLowerCase('tr-TR'))
+        turkishMatchesAny([f.fullName, f.village, f.phoneNumber], farmerSearchTerm)
     );
 
     const filteredInventoryItems = contextInventory.filter(inv => 
-        inv.pesticideName.toLocaleLowerCase('tr-TR').includes(pesticideSearchTerm.toLocaleLowerCase('tr-TR'))
+        turkishMatchesAny([inv.pesticideName, inv.barcode], pesticideSearchTerm)
     );
 
     const filteredPrescriptions = contextPrescriptions.filter(p => {
         const farmer = farmerMap[p.farmerId];
-        const search = prescriptionSearchTerm.toLocaleLowerCase('tr-TR');
-        
-        const matchesSearch = p.prescriptionNo.toLocaleLowerCase('tr-TR').includes(search) ||
-            (farmer?.fullName && farmer.fullName.toLocaleLowerCase('tr-TR').includes(search));
+        const matchesSearch = turkishMatchesAny([p.prescriptionNo, farmer?.fullName, p.crop, p.cropName], prescriptionSearchTerm);
             
         const matchesFilter = filterMode === 'ALL' || 
             (filterMode === 'PROCESSED' && p.isProcessed) ||
@@ -1086,10 +1200,9 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     });
 
     const filteredPaymentsForList = filterMode === 'PAYMENTS' ? payments.filter(p => {
-        const search = prescriptionSearchTerm.toLocaleLowerCase('tr-TR');
-        if (!search) return true;
+        if (!prescriptionSearchTerm) return true;
         const farmer = farmerMap[p.farmerId];
-        return farmer?.fullName && farmer.fullName.toLocaleLowerCase('tr-TR').includes(search);
+        return turkishMatchesAny([farmer?.fullName, p.crop, p.note], prescriptionSearchTerm);
     }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()) : [];
 
     const trToEn = (text: string) => {
@@ -1290,14 +1403,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
 
                 document.body.removeChild(container);
                 
-                const imgData = canvas.toDataURL('image/jpeg', 0.95);
-                const pdf = new jsPDF({
-                    orientation: canvas.width > canvas.height ? 'l' : 'p',
-                    unit: 'px',
-                    format: [canvas.width, canvas.height]
-                });
-                
-                pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+                const pdf = createMultiPagePdf(canvas);
                 pdf.save(`Fatura_Raporu_${format(new Date(), 'yyyyMMdd_HHmm')}.pdf`);
                 
                 setIsGeneratingReport(false);
@@ -1858,8 +1964,10 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                 <h3 className="font-bold text-2xl text-stone-900 tracking-tight">
                                     {detailPrescription.type === 'RETURN' ? 'Zirai İade Faturası' : 'Zirai Satış Faturası'}
                                 </h3>
-                                <p className="text-xs text-stone-400 mt-1 uppercase font-bold tracking-widest">{detailPrescription.prescriptionNo}</p>
-                                <p className="text-[10px] text-stone-500 font-bold mt-1 flex items-center">
+                                <div className="mt-2 inline-flex items-center gap-1.5 bg-stone-900 text-white font-mono text-xs font-black px-3 py-1 rounded-md tracking-wider shadow-xs">
+                                    FATURA NO: {detailPrescription.prescriptionNo}
+                                </div>
+                                <p className="text-[10px] text-stone-500 font-bold mt-1.5 flex items-center">
                                     <User size={10} className="mr-1" />
                                     {detailPrescription.createdById ? (teamMembers.find(m => m.id === detailPrescription.createdById)?.fullName || 'Yönetici') : 'Yönetici'}
                                 </p>
@@ -1892,28 +2000,30 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                         <div className="min-h-[250px] relative z-10">
                             {detailPrescription.totalAmount !== undefined && detailPrescription.totalAmount !== null && Math.abs(detailPrescription.totalAmount) > 0 ? (
                                 <table className="w-full text-sm">
-                                    <thead className="text-stone-400 uppercase text-[9px] font-black tracking-widest border-b-2 border-stone-200">
+                                    <thead className="bg-stone-200 text-stone-900 uppercase text-[10px] font-black tracking-wider border-b-2 border-stone-300">
                                         <tr>
-                                            <th className="pb-3 text-left w-[40%]">Ürün Adı</th>
-                                            <th className="pb-3 text-center w-[15%]">Adet</th>
-                                            <th className="pb-3 text-right w-[20%]">Birim Fiyat</th>
-                                            <th className="pb-3 text-right w-[25%]">Toplam</th>
+                                            <th className="py-2.5 px-2 text-left w-[40%]">Ürün Adı</th>
+                                            <th className="py-2.5 px-2 text-center w-[18%]">Adet</th>
+                                            <th className="py-2.5 px-2 text-right w-[20%]">Birim Fiyat</th>
+                                            <th className="py-2.5 px-2 text-right w-[22%]">Toplam</th>
                                         </tr>
                                     </thead>
-                                    <tbody className="divide-y divide-stone-100">
+                                    <tbody className="divide-y divide-stone-200">
                                         {detailPrescription.items.map((item, idx) => (
-                                            <tr key={idx}>
-                                                <td className="py-3">
-                                                    <div className="font-bold text-stone-800">{item.pesticideName}</div>
+                                            <tr key={idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-stone-50/50'}>
+                                                <td className="py-3 px-2">
+                                                    <div className="font-black text-stone-900 text-sm">{item.pesticideName}</div>
                                                     <div className="text-[10px] text-stone-500 font-mono mt-0.5">Doz: {item.dosage}</div>
                                                 </td>
-                                                <td className="py-3 text-center font-bold text-stone-700">
-                                                    {item.quantity ? item.quantity.toString().replace(/^-/, '') : '-'}
+                                                <td className="py-3 px-2 text-center">
+                                                    <span className="inline-block bg-amber-100 text-amber-950 font-black font-mono text-sm px-2.5 py-1 rounded-md border border-amber-300/80 shadow-2xs">
+                                                        {item.quantity ? item.quantity.toString().replace(/^-/, '') : '-'}
+                                                    </span>
                                                 </td>
-                                                <td className="py-3 text-right font-mono text-stone-500">
+                                                <td className="py-3 px-2 text-right font-mono font-bold text-stone-800 text-sm">
                                                     {item.unitPrice ? formatCurrency(item.unitPrice, userProfile?.currency || 'TRY') : '-'}
                                                 </td>
-                                                <td className="py-3 text-right font-mono font-bold text-stone-900">
+                                                <td className="py-3 px-2 text-right font-mono font-black text-stone-950 text-base">
                                                     {item.totalPrice ? formatCurrency(Math.abs(item.totalPrice), userProfile?.currency || 'TRY') : '-'}
                                                 </td>
                                             </tr>
@@ -1989,15 +2099,18 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                             )}
                         </div>
 
-                        <div className="mt-12 pt-6 flex justify-between items-end relative z-10">
+                        <div className="mt-8 pt-4 flex justify-between items-end relative z-10 border-t border-stone-200">
                             <div className="text-[10px] text-stone-400/80 font-mono leading-relaxed">
                                 Bu belge Mühendis Kayıt Sistemi<br/>
                                 tarafından oluşturulmuştur.<br/>
                                 <strong>v3.1.2</strong>
                             </div>
-                            <div className="text-center">
-                                <div className="font-serif italic text-xl text-blue-900/80 mb-1">{detailPrescription.engineerName}</div>
-                                <div className="text-[9px] text-stone-400 uppercase tracking-widest border-t border-stone-200 pt-2 font-bold">Dijital Onay / Kaşe</div>
+                            <div className="text-right flex flex-col items-end">
+                                <RealisticStamp 
+                                    profile={userProfile} 
+                                    engineerName={detailPrescription.engineerName} 
+                                    size="sm"
+                                />
                             </div>
                         </div>
                     </div>
@@ -2211,108 +2324,177 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
 
             {step === 2 && (
                 <div className="pb-24 slide-in-from-right animate-in">
-                    <div className="flex items-center justify-center mb-6">
-                        <h2 className="text-2xl font-bold text-stone-100 text-center">
-                            {selectedFarmer?.fullName} - Tarla Seçimi
+                    <div className="flex flex-col items-center justify-center mb-6 text-center">
+                        <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center mb-2 border border-emerald-500/20">
+                            <Sprout size={26} />
+                        </div>
+                        <h2 className="text-2xl font-black text-stone-100">
+                            {selectedFarmer?.fullName}
                         </h2>
+                        <div className="flex items-center gap-1.5 mt-1">
+                            <span className="text-[11px] font-black uppercase tracking-wider text-amber-400 bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/20">
+                                Zorunlu Alan: Mahsul (Ürün) Seçimi
+                            </span>
+                        </div>
+                        <p className="text-xs text-stone-400 mt-2 max-w-md">
+                            Satışı yapılan mahsulü seçiniz. Bu seçim, cari hesap raporunda <strong>ürün bazlı filtreleme</strong> ve <strong>ürün bazlı ödeme</strong> takibini kusursuz yapmanızı sağlar.
+                        </p>
                     </div>
 
-                    <div className="space-y-4 max-w-xl mx-auto">
-                        <label className="text-[10px] font-bold text-stone-500 uppercase tracking-widest ml-1 block text-center">İlacın Uygulanacağı Araziyi Belirleyin</label>
-                        
+                    <div className="space-y-5 max-w-xl mx-auto">
                         {!selectedFarmer ? (
-                             <div className="p-12 border-2 border-dashed border-stone-800 rounded-3xl text-center text-stone-600 flex flex-col items-center gap-3">
+                            <div className="p-12 border-2 border-dashed border-stone-800 rounded-3xl text-center text-stone-600 flex flex-col items-center gap-3">
                                 <User size={40} className="opacity-20" />
                                 <p className="text-sm font-medium">Lütfen önce çiftçi seçiniz</p>
                                 <button onClick={() => changeStep(1)} className="text-emerald-500 text-xs font-bold underline">Geri Dön</button>
                             </div>
                         ) : (
-            <div className="grid grid-cols-1 gap-3">
-                {selectedFarmer.fields?.map(field => {
-                    const isSelected = selectedFieldIds.includes(field.id);
-                    return (
-                        <button 
-                            key={field.id} 
-                            onClick={() => { 
-                                setSelectedFieldIds(prev => 
-                                    prev.includes(field.id) 
-                                        ? prev.filter(id => id !== field.id) 
-                                        : [...prev, field.id]
-                                );
-                            }}
-                            className={`w-full text-left p-5 rounded-2xl border flex justify-between items-center group transition-all relative overflow-hidden ${
-                                isSelected
-                                ? 'bg-emerald-900/20 border-emerald-500 shadow-lg shadow-emerald-500/10'
-                                : 'bg-stone-900 border-white/5 hover:border-emerald-500/50 hover:bg-stone-800/10'
-                            }`}
-                        >
-                            <div className="flex items-center gap-4 relative z-10">
-                                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${isSelected ? 'bg-emerald-600 text-white shadow-lg' : 'bg-stone-800 text-stone-500 group-hover:bg-emerald-900/30'}`}>
-                                    <MapPin size={22} />
-                                </div>
-                                <div>
-                                    <span className={`font-black block text-base leading-tight ${isSelected ? 'text-emerald-400' : 'text-stone-100'}`}>{field.name}</span>
-                                    <div className="flex items-center gap-3 mt-1.5">
-                                        <span className="text-[10px] font-black text-stone-500 uppercase tracking-widest flex items-center bg-stone-950/50 px-2 py-1 rounded-lg border border-white/5">
-                                            {field.crop}
-                                        </span>
-                                        <span className="text-[10px] font-black text-emerald-600 bg-emerald-500/10 px-2 py-1 rounded-lg border border-emerald-500/10">
-                                            {field.size} Dekar
-                                        </span>
+                            <>
+                                {/* Selected Crop Active Badge */}
+                                {selectedCrop ? (
+                                    <div className="bg-emerald-950/40 border-2 border-emerald-500 rounded-2xl p-4 flex items-center justify-between shadow-lg shadow-emerald-950/40 animate-in zoom-in-95">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-12 h-12 rounded-xl bg-emerald-500 text-stone-950 flex items-center justify-center font-black shadow-md">
+                                                <Check size={24} strokeWidth={3} />
+                                            </div>
+                                            <div>
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-400">Seçilen Satış Mahsulü</p>
+                                                <h3 className="text-xl font-black text-white">{selectedCrop}</h3>
+                                            </div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setSelectedCrop('')}
+                                            className="px-3 py-1.5 bg-stone-900 hover:bg-stone-800 text-rose-400 border border-white/5 rounded-xl text-xs font-bold transition-all active:scale-95"
+                                        >
+                                            Değiştir
+                                        </button>
                                     </div>
-                                </div>
-                            </div>
-                            <div className={`relative z-10 w-7 h-7 rounded-full flex items-center justify-center shadow-lg transition-all ${isSelected ? 'bg-emerald-500 text-white scale-110' : 'bg-stone-800 text-stone-600'}`}>
-                                <Check size={14} strokeWidth={4} />
-                            </div>
-                        </button>
-                    );
-                })}
-                                {(!selectedFarmer.fields || selectedFarmer.fields.length === 0) && (
-                                    <div className="p-12 border-2 border-dashed border-stone-800 rounded-3xl text-center text-stone-600 flex flex-col items-center gap-3">
-                                        <MapPin size={40} className="opacity-20" />
-                                        <p className="text-sm font-medium">Bu çiftçinin kayıtlı tarlası bulunamadı.</p>
-                                        <p className="text-[10px] text-stone-500 italic max-w-[200px]">Lütfen Çiftçiler bölümünden tarla ekleyiniz veya tarlasız devam etmek için bir alan oluşturun.</p>
+                                ) : (
+                                    <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-3.5 flex items-center gap-3">
+                                        <AlertCircle size={20} className="text-amber-400 shrink-0" />
+                                        <p className="text-xs font-medium text-amber-300">
+                                            Devam etmek için aşağıdaki listeden veya aramadan satışı yapılan mahsulü seçiniz.
+                                        </p>
                                     </div>
                                 )}
-                            </div>
-                        )}
 
-                        {/* Plant Selection (Optional) */}
-                        <div className="mt-8">
-                            <div className="flex items-center justify-between mb-3">
-                                <label className="text-xs font-bold text-stone-500 uppercase tracking-widest">Bitki / Mahsul Seçimi (Opsiyonel)</label>
-                                {selectedPlantId && (
-                                    <button 
-                                        onClick={() => setSelectedPlantId('')}
-                                        className="text-[10px] font-black text-rose-500 uppercase tracking-widest"
-                                    >
-                                        Temizle
-                                    </button>
-                                )}
-                            </div>
-                            <div className="flex items-center gap-2 overflow-x-auto pb-2 scroll-hide">
-                                {contextPlants.map(plant => (
+                                {/* Search & Custom Crop Input */}
+                                <div className="bg-stone-900 rounded-2xl shadow-sm border border-white/5 flex items-center p-1.5">
+                                    <Search className="text-stone-500 ml-3" size={18} />
+                                    <input 
+                                        type="text" 
+                                        placeholder="Mahsul veya ürün ara (örn: Pamuk, Buğday, Domates)..." 
+                                        className="w-full p-2.5 bg-transparent outline-none font-medium text-stone-200 placeholder-stone-600 text-sm"
+                                        value={cropSearchTerm}
+                                        onChange={e => setCropSearchTerm(e.target.value)}
+                                    />
+                                    {cropSearchTerm && (
+                                        <button 
+                                            onClick={() => setCropSearchTerm('')} 
+                                            className="p-2 text-stone-500 hover:text-stone-300"
+                                        >
+                                            <X size={16} />
+                                        </button>
+                                    )}
+                                </div>
+
+                                {/* Custom Crop Button if searched name is not in list */}
+                                {cropSearchTerm.trim() && (
                                     <button
-                                        key={plant.id}
-                                        onClick={() => setSelectedPlantId(plant.id === selectedPlantId ? '' : plant.id)}
-                                        className={`whitespace-nowrap px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${
-                                            selectedPlantId === plant.id 
-                                                ? 'bg-amber-500 text-stone-950 border-amber-400 shadow-lg shadow-amber-900/20' 
-                                                : 'bg-stone-900 text-stone-500 border-white/5 hover:border-white/10'
-                                        }`}
+                                        type="button"
+                                        onClick={() => {
+                                            const val = cropSearchTerm.trim();
+                                            setSelectedCrop(val);
+                                            const match = contextPlants.find(p => p.name.toLowerCase() === val.toLowerCase());
+                                            if (match) setSelectedPlantId(match.id);
+                                            setCropSearchTerm('');
+                                            hapticFeedback('medium');
+                                        }}
+                                        className="w-full p-3 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-2xl text-xs font-bold flex items-center justify-center gap-2 transition-all active:scale-95"
                                     >
-                                        {plant.name}
+                                        <Plus size={16} />
+                                        <span>&ldquo;{cropSearchTerm.trim()}&rdquo; olarak seç</span>
                                     </button>
-                                ))}
-                                {contextPlants.length === 0 && (
-                                    <p className="text-[10px] text-stone-600 font-bold italic py-2">Henüz kayıtlı bitki bulunamadı.</p>
                                 )}
-                            </div>
-                            <p className="text-[9px] text-stone-600 mt-2 leading-relaxed">
-                                * Bitki seçimi yaparsanız, vadeli satışlarda ödeme tarihi bu bitkinin olgunlaşma süresine göre otomatik belirlenir.
-                            </p>
-                        </div>
+
+                                {/* Farmer's existing crops (if any) */}
+                                {farmerCrops.length > 0 && !cropSearchTerm && (
+                                    <div>
+                                        <label className="text-[10px] font-black text-emerald-400 uppercase tracking-widest block mb-2">
+                                            Çiftçinin Mevcut Mahsulleri
+                                        </label>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {farmerCrops.map((crop: string) => (
+                                                <button
+                                                    key={`farmer-crop-${crop}`}
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setSelectedCrop(crop);
+                                                        const match = contextPlants.find(p => p.name.toLowerCase() === crop.toLowerCase());
+                                                        if (match) setSelectedPlantId(match.id);
+                                                        hapticFeedback('light');
+                                                    }}
+                                                    className={`p-3.5 rounded-2xl border text-left flex items-center justify-between transition-all active:scale-95 ${
+                                                        selectedCrop === crop
+                                                            ? 'bg-emerald-900/30 border-emerald-500 text-white shadow-md'
+                                                            : 'bg-stone-900/80 border-white/5 text-stone-300 hover:border-emerald-500/30 hover:bg-stone-800'
+                                                    }`}
+                                                >
+                                                    <div className="flex items-center gap-2.5">
+                                                        <Wheat size={18} className="text-amber-400" />
+                                                        <span className="font-bold text-sm">{crop}</span>
+                                                    </div>
+                                                    {selectedCrop === crop && <Check size={16} className="text-emerald-400" />}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* All Crop Badges / Grid */}
+                                <div>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <label className="text-[10px] font-black text-stone-400 uppercase tracking-widest">
+                                            Tüm Mahsul & Ürün Listesi
+                                        </label>
+                                        <span className="text-[10px] text-stone-500 font-medium">
+                                            {filteredCropsList.length} Ürün
+                                        </span>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[340px] overflow-y-auto pr-1 no-scrollbar">
+                                        {filteredCropsList.map((crop: string) => {
+                                            const isSelected = selectedCrop === crop;
+                                            return (
+                                                <button
+                                                    key={crop}
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setSelectedCrop(crop);
+                                                        const match = contextPlants.find(p => p.name.toLowerCase() === crop.toLowerCase());
+                                                        if (match) setSelectedPlantId(match.id);
+                                                        hapticFeedback('light');
+                                                    }}
+                                                    className={`p-3 rounded-2xl border text-left flex items-center justify-between transition-all active:scale-95 ${
+                                                        isSelected
+                                                            ? 'bg-emerald-500 text-stone-950 border-emerald-400 shadow-lg shadow-emerald-950 font-black'
+                                                            : 'bg-stone-900 border-white/5 text-stone-300 hover:border-white/20 hover:bg-stone-800'
+                                                    }`}
+                                                >
+                                                    <span className="text-xs truncate">{crop}</span>
+                                                    {isSelected ? (
+                                                        <Check size={16} strokeWidth={3} className="shrink-0 ml-1 text-stone-950" />
+                                                    ) : (
+                                                        <Sprout size={14} className="shrink-0 ml-1 text-stone-600" />
+                                                    )}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </>
+                        )}
                     </div>
                     
                     <div className="fixed bottom-20 left-0 w-full p-4 md:static md:p-0 md:mt-12 z-30 bg-gradient-to-t from-stone-950 via-stone-950 to-transparent pb-6">
@@ -2324,11 +2506,18 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                 <ArrowLeft size={20} className="mr-2"/> Çiftçi Seçimi
                             </button>
                             <button 
-                                disabled={selectedFieldIds.length === 0}
+                                disabled={!selectedCrop || !selectedCrop.trim()}
                                 onClick={() => changeStep(3)} 
                                 className="flex-[2] py-4 bg-emerald-600 text-white rounded-2xl font-bold flex items-center justify-center shadow-lg shadow-emerald-500/20 disabled:opacity-30 disabled:grayscale active:scale-95 transition-all border border-emerald-500/20"
                             >
-                                Ürün Seçimine Geç <ChevronRight size={20} className="ml-2"/>
+                                {selectedCrop ? (
+                                    <>
+                                        <span>İlaç Seçimine Geç ({selectedCrop})</span>
+                                        <ChevronRight size={20} className="ml-2"/>
+                                    </>
+                                ) : (
+                                    <span>Lütfen Mahsul Seçiniz (Zorunlu)</span>
+                                )}
                             </button>
                         </div>
                     </div>
@@ -2578,25 +2767,45 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                 </button>
                             </div>
                             
-                            {/* Due Date Input */}
-                            <div className={`flex-1 flex items-center space-x-1.5 bg-stone-900 px-2 py-2 rounded-xl border border-white/5 shadow-inner transition-all duration-300 ${prescriptionPriceType === 'CASH' ? 'opacity-30 grayscale pointer-events-none' : 'opacity-100'}`}>
-                                <Calendar size={10} className="text-amber-500 shrink-0" />
-                                <div className="flex-1 min-w-0">
-                                    <p className="text-[7px] font-black text-stone-500 uppercase tracking-tighter leading-none mb-0.5">VADE</p>
-                                    <div className="text-[9px] text-stone-200 font-black truncate relative">
-                                        <input
-                                            type="date"
-                                            value={prescriptionDueDate}
-                                            onChange={(e) => {
-                                                setPrescriptionDueDate(e.target.value);
-                                                setIsManualDueDate(true);
-                                            }}
-                                            className="bg-transparent border-none text-[9px] text-stone-200 font-black w-full focus:ring-0 p-0 outline-none relative z-10"
-                                            style={{ colorScheme: 'dark' }}
-                                        />
+                             {/* Account Selection for CASH or Due Date for TERM */}
+                            {prescriptionPriceType === 'CASH' ? (
+                                <div className="flex-1 flex items-center space-x-1.5 bg-stone-900 px-2 py-2 rounded-xl border border-emerald-500/30 shadow-inner">
+                                    <Landmark size={10} className="text-emerald-400 shrink-0" />
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-[7px] font-black text-emerald-400 uppercase tracking-tighter leading-none mb-0.5">HESAP / KASA</p>
+                                        <select
+                                            value={prescriptionAccountId || (accounts.find(a => a.type === 'CASH')?.id || accounts[0]?.id || '')}
+                                            onChange={(e) => setPrescriptionAccountId(e.target.value)}
+                                            className="bg-transparent border-none text-[9px] text-stone-100 font-black w-full focus:ring-0 p-0 outline-none cursor-pointer"
+                                        >
+                                            {accounts.map(acc => (
+                                                <option key={acc.id} value={acc.id} className="bg-stone-900 text-stone-100">
+                                                    {acc.name} ({new Intl.NumberFormat('tr-TR', { style: 'currency', currency: userProfile?.currency || 'TRY' }).format(acc.balance)})
+                                                </option>
+                                            ))}
+                                        </select>
                                     </div>
                                 </div>
-                            </div>
+                            ) : (
+                                <div className="flex-1 flex items-center space-x-1.5 bg-stone-900 px-2 py-2 rounded-xl border border-white/5 shadow-inner transition-all duration-300">
+                                    <Calendar size={10} className="text-amber-500 shrink-0" />
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-[7px] font-black text-stone-500 uppercase tracking-tighter leading-none mb-0.5">VADE</p>
+                                        <div className="text-[9px] text-stone-200 font-black truncate relative">
+                                            <input
+                                                type="date"
+                                                value={prescriptionDueDate}
+                                                onChange={(e) => {
+                                                    setPrescriptionDueDate(e.target.value);
+                                                    setIsManualDueDate(true);
+                                                }}
+                                                className="bg-transparent border-none text-[9px] text-stone-200 font-black w-full focus:ring-0 p-0 outline-none relative z-10"
+                                                style={{ colorScheme: 'dark' }}
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
                         {selectedItems.map((item, idx) => (
@@ -2692,6 +2901,16 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                  <p className="font-medium text-stone-300">{new Date().toLocaleDateString()}</p>
                              </div>
                          </div>
+                         {selectedCrop && (
+                             <div className="mb-4 flex items-center justify-between bg-emerald-500/10 border border-emerald-500/20 px-3.5 py-2.5 rounded-xl">
+                                 <div className="flex items-center gap-2">
+                                     <Sprout size={16} className="text-emerald-400" />
+                                     <span className="text-xs text-stone-400 font-medium">Mahsul (Ürün):</span>
+                                     <span className="text-xs font-black text-emerald-400">{selectedCrop}</span>
+                                 </div>
+                                 <span className="text-[10px] font-bold text-emerald-500/80 bg-emerald-500/20 px-2 py-0.5 rounded-md">Ürün Bazlı Takip</span>
+                             </div>
+                         )}
                          <div className="space-y-2">
                              {selectedItems.map((item, idx) => (
                                  <div key={idx} className="flex justify-between py-2 border-b border-white/5 last:border-0">
@@ -2760,9 +2979,18 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                         <div className="max-w-3xl mx-auto">
                             <button 
                                 onClick={handleSave}
-                                className="w-full bg-emerald-600 text-white py-4 rounded-xl font-bold text-lg shadow-lg hover:bg-emerald-700 flex items-center justify-center transition-all border border-emerald-500/20"
+                                disabled={isSavingPrescription}
+                                className="w-full bg-emerald-600 disabled:opacity-50 disabled:grayscale text-white py-4 rounded-xl font-bold text-lg shadow-lg hover:bg-emerald-700 flex items-center justify-center transition-all border border-emerald-500/20 active:scale-95"
                             >
-                                <FileOutput className="mr-2" /> {editingId ? `${currentPrescriptionLabel} Güncelle` : `${currentPrescriptionLabel} Oluştur`}
+                                {isSavingPrescription ? (
+                                    <>
+                                        <Loader2 className="animate-spin mr-2" size={24} /> Kaydediliyor...
+                                    </>
+                                ) : (
+                                    <>
+                                        <FileOutput className="mr-2" /> {editingId ? `${currentPrescriptionLabel} Güncelle` : `${currentPrescriptionLabel} Oluştur`}
+                                    </>
+                                )}
                             </button>
                         </div>
                     </div>
@@ -2998,6 +3226,8 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                             return;
                                         }
 
+                                        const targetAccountId = selectedAccountId || accounts.find(a => a.type === 'CASH')?.id || accounts[0]?.id;
+
                                         if (editingPayment) {
                                             await updatePayment({
                                                 ...editingPayment,
@@ -3005,7 +3235,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                                 note: paymentNote,
                                                 method: paymentMethod,
                                                 dueDate: (paymentMethod === 'CHECK' || paymentMethod === 'TEDYE') ? paymentDate : undefined,
-                                                accountId: selectedAccountId || undefined,
+                                                accountId: targetAccountId || undefined,
                                                 farmerId: selectedPaymentFarmerId
                                             });
                                             showToast('Tahsilat güncellendi', 'success');
@@ -3017,7 +3247,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                                 method: paymentMethod,
                                                 dueDate: (paymentMethod === 'CHECK' || paymentMethod === 'TEDYE') ? paymentDate : undefined,
                                                 note: paymentNote,
-                                                accountId: selectedAccountId || undefined,
+                                                accountId: targetAccountId || undefined,
                                                 createdById: activeTeamMember?.id
                                             });
                                             showToast('Tahsilat kaydedildi', 'success');

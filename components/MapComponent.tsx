@@ -29,6 +29,7 @@ import {
   Save,
   X,
   Edit2,
+  Move,
 } from "lucide-react";
 import { useAppViewModel } from "../context/AppContext";
 import { safeStringify } from "../utils/json";
@@ -244,7 +245,7 @@ const SavedFeatureRenderer = ({
 };
 
 export const MapComponent = ({ onBack }: { onBack: () => void }) => {
-  const { farmers, showToast, userProfile } = useAppViewModel();
+  const { farmers, showToast, userProfile, updateFarmer } = useAppViewModel();
   const [points, setPoints] = useState<L.LatLng[]>([]);
   const [mode, setMode] = useState<"DISTANCE" | "AREA" | "COORDINATE" | null>(
     null
@@ -343,7 +344,7 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
     setSaveDialog({ isOpen: true, defaultName });
   };
 
-  const confirmSave = (name: string) => {
+  const confirmSave = async (name: string, farmerId?: string) => {
     if (name.trim()) {
       let finalName = name.trim();
       if (mode === "AREA") {
@@ -352,11 +353,20 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
         finalName = `${finalName} (${totalDistance.toFixed(0)} m)`;
       }
 
+      if (farmerId && mode === "COORDINATE") {
+        const farmer = farmers.find(f => f.id === farmerId);
+        if (farmer) {
+          await updateFarmer({ ...farmer, latitude: points[0].lat, longitude: points[0].lng });
+          showToast(`Konum ${farmer.fullName} adlı çiftçiye kaydedildi.`, "success");
+        }
+      }
+
       const newFeature = {
         id: Math.random().toString(36).substr(2, 9),
         name: finalName,
         type: mode,
         points: points.map((p) => ({ lat: p.lat, lng: p.lng })),
+        farmerId: farmerId || undefined
       };
       setSavedFeatures([...savedFeatures, newFeature]);
       setPoints([]);
@@ -564,38 +574,46 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
               </div>
             </div>
           ) : (
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex flex-col gap-1">
-                <span className="text-[10px] text-white/40 font-bold uppercase tracking-[0.1em]">
-                  {mode === "DISTANCE" ? "Toplam Mesafe" : "Hesaplanan Alan"}
-                </span>
-                <div className="flex items-center gap-2 text-emerald-400 text-sm font-black tracking-tight">
-                  <div className="p-1.5 bg-emerald-500/10 rounded-lg">
-                    {mode === "DISTANCE" ? (
-                      <Ruler size={16} />
-                    ) : (
-                      <Square size={16} />
-                    )}
-                  </div>
-                  <span>
-                    {mode === "DISTANCE"
-                      ? `${totalDistance.toFixed(0)} m`
-                      : `${(area / 1000).toFixed(2)} da`}
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex flex-col gap-1">
+                  <span className="text-[10px] text-white/40 font-bold uppercase tracking-[0.1em]">
+                    {mode === "DISTANCE" ? "Toplam Mesafe" : "Hesaplanan Alan"}
                   </span>
+                  <div className="flex items-center gap-2 text-emerald-400 text-sm font-black tracking-tight">
+                    <div className="p-1.5 bg-emerald-500/10 rounded-lg">
+                      {mode === "DISTANCE" ? (
+                        <Ruler size={16} />
+                      ) : (
+                        <Square size={16} />
+                      )}
+                    </div>
+                    <span>
+                      {mode === "DISTANCE"
+                        ? `${totalDistance.toFixed(0)} m`
+                        : `${(area / 1000).toFixed(2)} da`}
+                    </span>
+                  </div>
                 </div>
+                {(mode === "DISTANCE"
+                  ? points.length > 1
+                  : points.length > 2) && (
+                  <button
+                    onClick={handleSaveFeature}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl p-3.5 transition-all active:scale-90 shadow-xl shadow-emerald-900/40 group"
+                  >
+                    <Save
+                      size={20}
+                      className="group-hover:scale-110 transition-transform"
+                    />
+                  </button>
+                )}
               </div>
-              {(mode === "DISTANCE"
-                ? points.length > 1
-                : points.length > 2) && (
-                <button
-                  onClick={handleSaveFeature}
-                  className="bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl p-3.5 transition-all active:scale-90 shadow-xl shadow-emerald-900/40 group"
-                >
-                  <Save
-                    size={20}
-                    className="group-hover:scale-110 transition-transform"
-                  />
-                </button>
+              {points.length > 0 && (
+                <div className="flex items-center gap-2 pt-2 border-t border-white/10 text-[11px] text-amber-300/90 font-medium">
+                  <Move size={13} className="shrink-0 animate-pulse text-amber-400" />
+                  <span>Noktaları sürükleyerek konumlarını hassaslaştırabilirsiniz.</span>
+                </div>
               )}
             </div>
           )}
@@ -605,23 +623,36 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
       {mode === "COORDINATE" && points.length > 0 && (
         <div className="absolute bottom-6 left-4 right-4 z-[1000] md:left-4 md:right-auto bg-black/40 backdrop-blur-xl px-5 py-5 rounded-[2.5rem] border border-white/10 shadow-2xl flex flex-col gap-4 md:min-w-[340px] animate-in fade-in slide-in-from-bottom-8 duration-500 ease-out">
           {saveDialog.isOpen ? (
-            <div className="flex items-center gap-3 w-full">
+            <div className="flex flex-col gap-3 w-full">
               <input
                 autoFocus
                 defaultValue={saveDialog.defaultName}
+                id="coordinateFeatureNameInput"
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") confirmSave(e.currentTarget.value);
+                  if (e.key === "Enter") {
+                    const farmerSelect = document.getElementById('coordinateFarmerSelectInput') as HTMLSelectElement;
+                    confirmSave(e.currentTarget.value, farmerSelect?.value);
+                  }
                   if (e.key === "Escape") cancelSave();
                 }}
-                className="bg-white/10 text-white text-xs px-5 py-3 rounded-2xl outline-none border border-white/5 flex-1 focus:border-amber-500/50 focus:bg-white/15 transition-all"
+                className="bg-white/10 text-white text-xs px-5 py-3 rounded-2xl outline-none border border-white/5 w-full focus:border-amber-500/50 focus:bg-white/15 transition-all"
                 placeholder="Konuma isim verin..."
               />
-              <div className="flex gap-2">
+              <select 
+                id="coordinateFarmerSelectInput"
+                className="bg-white/10 text-white text-xs px-5 py-3 rounded-2xl outline-none border border-white/5 w-full focus:border-amber-500/50 focus:bg-white/15 transition-all"
+              >
+                <option value="" className="text-stone-800">Çiftçi Profili ile Eşleştir (İsteğe Bağlı)</option>
+                {farmers.filter(f => !f.deletedAt).map(f => (
+                  <option key={f.id} value={f.id} className="text-stone-800">{f.fullName}</option>
+                ))}
+              </select>
+              <div className="flex gap-2 justify-end mt-1">
                 <button
                   onClick={(e) => {
-                    const input = e.currentTarget.parentElement
-                      ?.previousElementSibling as HTMLInputElement;
-                    confirmSave(input.value);
+                    const input = document.getElementById('coordinateFeatureNameInput') as HTMLInputElement;
+                    const farmerSelect = document.getElementById('coordinateFarmerSelectInput') as HTMLSelectElement;
+                    confirmSave(input?.value || "", farmerSelect?.value);
                   }}
                   className="bg-amber-500 hover:bg-amber-400 text-black rounded-2xl p-3 transition-all active:scale-90 shadow-lg shadow-amber-500/20"
                 >
@@ -782,7 +813,31 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
           />
         ))}
         {points.map((p, i) => (
-          <Marker key={i} position={p} />
+          <Marker
+            key={`point-${i}`}
+            position={p}
+            draggable={true}
+            eventHandlers={{
+              dragend: (e: any) => {
+                const marker = e.target;
+                if (marker) {
+                  const newPos = marker.getLatLng();
+                  setPoints((prev) => {
+                    const next = [...prev];
+                    next[i] = newPos;
+                    return next;
+                  });
+                }
+              },
+            }}
+          >
+            <Tooltip permanent direction="top" offset={[0, -20]} opacity={0.95}>
+              <div className="text-[11px] font-bold text-stone-900 bg-white/95 px-2 py-0.5 rounded shadow flex items-center gap-1 border border-stone-300 pointer-events-none select-none">
+                <Move size={10} className="text-amber-600" />
+                <span>Nokta {i + 1}</span>
+              </div>
+            </Tooltip>
+          </Marker>
         ))}
         {mode === "DISTANCE" && points.length > 1 && (
           <Polyline positions={points} color="red" />

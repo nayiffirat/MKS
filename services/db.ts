@@ -598,6 +598,78 @@ const dbServiceObj = {
   },
 
   /**
+   * Kullanıcının hem buluttaki (Firestore) tüm verilerini hem de yerel
+   * cihazdaki (IndexedDB, localStorage) verilerini tamamen ve kalıcı olarak siler.
+   */
+  async deleteAllUserData(uid: string) {
+    if (!uid) return;
+    const userPath = [FS_ROOT, FS_ORG, FS_USERS, uid].join("/");
+    const collections = [
+      "farmers", "notifications", "visits", "prescriptions", "reminders", 
+      "inventory", "payments", "manualDebts", "suppliers", "supplierPurchases", 
+      "supplierPayments", "myPayments", "expenses", "accounts", "transactions", 
+      "teamMembers", "messages", "collectionLogs", "plants", "siloTransactions", 
+      "siloContacts", "turnoverLogs", "systemErrors"
+    ] as const;
+
+    // 1. Buluttaki (Firestore) tüm dökümanları sil
+    for (const col of collections) {
+      try {
+        const colRef = collection(firestore, userPath, col);
+        const snapshot = await getDocsFromServer(colRef);
+        if (!snapshot.empty) {
+          const batchSize = 400;
+          let batch = writeBatch(firestore);
+          let count = 0;
+          for (const document of snapshot.docs) {
+            batch.delete(document.ref);
+            count++;
+            if (count >= batchSize) {
+              await batch.commit();
+              batch = writeBatch(firestore);
+              count = 0;
+            }
+          }
+          if (count > 0) {
+            await batch.commit();
+          }
+        }
+      } catch (e) {
+        console.error(`Firestore wipe collection ${col} error:`, e);
+      }
+    }
+
+    // 2. Kullanıcı profil belgesini sıfırla
+    try {
+      const userDocRef = doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid);
+      await setDoc(userDocRef, {
+        uid: uid,
+        email: auth.currentUser?.email || '',
+        fullName: auth.currentUser?.displayName || 'İsimsiz Kullanıcı',
+        role: 'user',
+        subscriptionStatus: 'active',
+        subscriptionEndsAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+        createdAt: new Date().toISOString(),
+        lastLogin: new Date().toISOString(),
+        photoURL: auth.currentUser?.photoURL || ''
+      });
+    } catch (e) {
+      console.error("Firestore user doc reset error:", e);
+    }
+
+    // 3. Yerel veritabanını (IndexedDB) tamamen temizle
+    try {
+      await this.clearLocalUserData();
+      await this.clearLocalData();
+    } catch (e) {
+      console.error("IndexedDB wipe error:", e);
+    }
+
+    // 4. LocalStorage önbelleğini temizle
+    localStorage.clear();
+  },
+
+  /**
    * Giriş yapıldığında tüm verileri çeker ve yerelle birleştirir.
    */
   async syncAllDataOnLogin(uid: string) {
@@ -610,30 +682,43 @@ const dbServiceObj = {
       try {
         const snap = await getDocsFromServer(collection(firestore, userPath, col));
         const data = snap.docs.map(d => d.data());
+        const serverIds = new Set(snap.docs.map(d => d.id));
         
         const tx = db.transaction(col, 'readwrite');
+        const localItems = await tx.store.getAll();
         
-        // 1. Get all local keys
-        const localKeys = await tx.store.getAllKeys();
-        
-        // 2. Put all server items
+        // 1. Put all server items to local DB
         if (data.length > 0) {
           await Promise.all(data.map(item => tx.store.put(item as any)));
         }
         
-        // 3. Find and delete local items that no longer exist on the server
-        const serverIds = new Set(snap.docs.map(d => d.id));
-        for (const localKey of localKeys) {
-          if (!serverIds.has(localKey as string)) {
-            await tx.store.delete(localKey);
+        // 2. Identify local items created offline (do NOT delete them; queue to upload)
+        const offlineItemsToUpload: any[] = [];
+        for (const localItem of localItems) {
+          if (localItem && localItem.id && !serverIds.has(localItem.id)) {
+            // Keep in local DB and upload to server
+            offlineItemsToUpload.push(localItem);
           }
         }
         
         await tx.done;
+
+        // 3. Upload offline-created items to Firestore in the background
+        for (const offItem of offlineItemsToUpload) {
+          try {
+            const cleanData = sanitizeForFirestore(offItem);
+            await setDoc(doc(firestore, userPath, col, offItem.id), cleanData, { merge: true });
+          } catch (uploadErr) {
+            console.warn(`Sync upload failed for offline item in ${col}:`, uploadErr);
+          }
+        }
       } catch (e: any) {
         console.error(`Error syncing collection ${col}:`, e);
       }
     }
+
+    // Reconcile and audit accounts and transactions after cloud sync
+    await dbService.reconcileAccountBalances();
   },
 
   async syncGlobalPesticides() {
@@ -667,6 +752,43 @@ const dbServiceObj = {
                 await tx.done;
             }
         }).catch(() => {});
+    }
+  },
+
+  
+  async exportData() {
+    const db = await initDB();
+    const stores = ['farmers', 'visits', 'prescriptions', 'notifications', 'reminders', 'inventory', 'payments', 'manualDebts', 'suppliers', 'supplierPurchases', 'supplierPayments', 'myPayments', 'expenses', 'accounts', 'transactions', 'teamMembers', 'messages', 'plants'];
+    const exportObj: Record<string, any> = {};
+    for (const store of stores) {
+        exportObj[store] = await db.getAll(store as any);
+    }
+    return JSON.stringify(exportObj);
+  },
+
+  async importData(jsonData: string) {
+    const data = JSON.parse(jsonData);
+    const db = await initDB();
+    const stores = Object.keys(data);
+    
+    // Begin transaction for all stores that exist in both DB and JSON
+    const validStores = stores.filter(store => db.objectStoreNames.contains(store as any)) as any[];
+    const tx = db.transaction(validStores as any, 'readwrite');
+    
+    for (const store of validStores) {
+        const os = tx.objectStore(store as any);
+        await os.clear();
+        for (const item of data[store]) {
+            await os.put(item);
+        }
+    }
+    await tx.done;
+    
+    // Also trigger background sync for all imported items so it persists to cloud if logged in
+    for (const store of validStores) {
+        for (const item of data[store]) {
+            backgroundSync(store as any, item).catch(console.error);
+        }
     }
   },
 
@@ -1029,17 +1151,27 @@ const dbServiceObj = {
     const db = await initDB();
     const inventory = await db.getAll('inventory');
     
-    const tx = db.transaction('inventory', 'readwrite');
     for (const fix of fixes) {
         const item = inventory.find(i => i.pesticideId === fix.pesticideId && !i.deletedAt);
         if (item) {
-            item.quantity = fix.quantity;
+            const newQty = Number(fix.quantity) || 0;
+            const diff = newQty - (Number(item.quantity) || 0);
+            item.quantity = newQty;
             item.lastUpdated = new Date().toISOString();
-            await tx.store.put(item);
+            if (Math.abs(diff) > 0.0001) {
+                item.adjustments = [
+                    ...(item.adjustments || []),
+                    {
+                        date: new Date().toISOString(),
+                        amount: diff,
+                        note: 'Depo Onarım Düzeltmesi'
+                    }
+                ];
+            }
+            await db.put('inventory', item);
             backgroundSync('inventory', item);
         }
     }
-    await tx.done;
   },
 
   async applyFarmerFixes(fixes: { 
@@ -1257,82 +1389,61 @@ const dbServiceObj = {
 
     const mismatches: {pesticideId: string, pesticideName: string, currentQty: number, calculatedQty: number, purchasedQty: number, soldQty: number, adjustedQty: number}[] = [];
 
-    // Calculate correctly based on history
-    const calculatedMap = new Map<string, { total: number, purchased: number, sold: number, adjusted: number }>();
-    const originalMap = new Map<string, InventoryItem>();
-
     for (const item of inventory) {
-        if (!item.deletedAt) {
-            originalMap.set(item.pesticideId, item);
-            let qty = 0;
-            if (item.adjustments) {
-                for (const adj of item.adjustments) {
-                    qty += (adj.amount || 0);
+        if (item.deletedAt) continue;
+        let purchasedQty = 0;
+        let soldQty = 0;
+
+        for (const purchase of purchases) {
+            if (purchase.deletedAt) continue;
+            for (const pItem of (purchase.items || [])) {
+                if (pItem.pesticideId === item.pesticideId) {
+                    const qty = parseFloat(String(pItem.quantity || '0').replace(',', '.')) || 0;
+                    const isSale = purchase.type === 'SALE' || (purchase.note && purchase.note.includes('SATIŞ'));
+                    const isReturn = purchase.type === 'RETURN' || (purchase.note && purchase.note.includes('İADE'));
+                    if (isSale || isReturn || qty < 0) {
+                        purchasedQty -= Math.abs(qty);
+                    } else {
+                        purchasedQty += Math.abs(qty);
+                    }
                 }
             }
-            calculatedMap.set(item.pesticideId, { total: qty, purchased: 0, sold: 0, adjusted: qty });
         }
-    }
 
-    for (const purchase of purchases) {
-        if (purchase.deletedAt) continue;
-        for (const item of (purchase.items || [])) {
-            const qtyStr = String(item.quantity || '0').replace(',', '.');
-            const qty = parseFloat(qtyStr) || 0;
-            if (isNaN(qty) || qty === 0) continue;
-
-            const isReturnOrSale = purchase.type === 'RETURN' || purchase.note?.startsWith('SATIŞ') || qty < 0;
-            const effectiveQty = isReturnOrSale ? -Math.abs(qty) : Math.abs(qty);
-            
-            const stats = calculatedMap.get(item.pesticideId) || { total: 0, purchased: 0, sold: 0, adjusted: 0 };
-            stats.total += effectiveQty;
-            if (effectiveQty > 0) {
-                stats.purchased += effectiveQty;
-            } else {
-                // If it's a return or sale to supplier it subtracts from inventory (like sold but maybe labeled returned)
-                stats.sold += Math.abs(effectiveQty);
+        for (const prescription of prescriptions) {
+            if (prescription.deletedAt) continue;
+            if (!prescription.isInventoryProcessed && prescription.isProcessed === false) continue;
+            for (const pItem of (prescription.items || [])) {
+                if (pItem.pesticideId === item.pesticideId) {
+                    const qty = parseFloat(String(pItem.quantity || '0').replace(',', '.')) || 0;
+                    if (prescription.type === 'RETURN') {
+                        soldQty -= Math.abs(qty);
+                    } else {
+                        soldQty += Math.abs(qty);
+                    }
+                }
             }
-            calculatedMap.set(item.pesticideId, stats);
         }
-    }
 
-    for (const prescription of prescriptions) {
-        if (prescription.deletedAt) continue;
-        if (prescription.isProcessed === false) continue;
-        if (prescription.isInventoryProcessed === false) continue;
-        const isReturn = prescription.type === 'RETURN';
-        const qtyMultiplier = isReturn ? 1 : -1;
-        
-        for (const item of (prescription.items || [])) {
-            const qty = parseFloat(String(item.quantity).replace(',', '.')) || 0;
-            if (qty === 0) continue;
-            
-            const effectiveQty = qty * qtyMultiplier;
-            const stats = calculatedMap.get(item.pesticideId) || { total: 0, purchased: 0, sold: 0, adjusted: 0 };
-            stats.total += effectiveQty;
-            if (effectiveQty > 0) {
-                stats.purchased += effectiveQty;
-            } else {
-                stats.sold += Math.abs(effectiveQty);
+        let adjustedQty = 0;
+        if (item.adjustments && item.adjustments.length > 0) {
+            for (const adj of item.adjustments) {
+                adjustedQty += (Number(adj.amount) || 0);
             }
-            calculatedMap.set(item.pesticideId, stats);
         }
-    }
 
-    // Now compare
-    for (const [pesticideId, item] of originalMap.entries()) {
-        const stats = calculatedMap.get(pesticideId) || { total: 0, purchased: 0, sold: 0, adjusted: 0 };
-        // Float precision fix
-        const diff = Math.abs(item.quantity - stats.total);
-        if (diff > 0.001) {
+        const calculatedQty = Number((adjustedQty + purchasedQty - soldQty).toFixed(2));
+        const currentQty = isNaN(item.quantity) ? 0 : Number((item.quantity || 0).toFixed(2));
+
+        if (isNaN(item.quantity) || Math.abs(currentQty - calculatedQty) > 0.001) {
             mismatches.push({
-                pesticideId,
+                pesticideId: item.pesticideId,
                 pesticideName: item.pesticideName,
-                currentQty: Number(item.quantity.toFixed(2)),
-                calculatedQty: Number(stats.total.toFixed(2)),
-                purchasedQty: Number(stats.purchased.toFixed(2)),
-                soldQty: Number(stats.sold.toFixed(2)),
-                adjustedQty: Number(stats.adjusted.toFixed(2))
+                currentQty,
+                calculatedQty,
+                purchasedQty: Number(purchasedQty.toFixed(2)),
+                soldQty: Number(soldQty.toFixed(2)),
+                adjustedQty: Number(adjustedQty.toFixed(2))
             });
         }
     }
@@ -1346,88 +1457,57 @@ const dbServiceObj = {
     const purchases = await db.getAll('supplierPurchases');
     const prescriptions = await db.getAll('prescriptions');
 
-    // Reset all quantities to 0 but keep adjustments
-    const inventoryMap = new Map<string, InventoryItem>();
     for (const item of inventory) {
-        if (!item.deletedAt) {
-            inventoryMap.set(item.pesticideId, { ...item, quantity: 0 });
-            // Add initial quantities from adjustments if any
-            if (item.adjustments) {
-                let adjTotal = 0;
-                for (const adj of item.adjustments) {
-                    adjTotal += (adj.amount || 0);
+        if (item.deletedAt) continue;
+        let purchasedQty = 0;
+        let soldQty = 0;
+
+        for (const purchase of purchases) {
+            if (purchase.deletedAt) continue;
+            for (const pItem of (purchase.items || [])) {
+                if (pItem.pesticideId === item.pesticideId) {
+                    const qty = parseFloat(String(pItem.quantity || '0').replace(',', '.')) || 0;
+                    const isSale = purchase.type === 'SALE' || (purchase.note && purchase.note.includes('SATIŞ'));
+                    const isReturn = purchase.type === 'RETURN' || (purchase.note && purchase.note.includes('İADE'));
+                    if (isSale || isReturn || qty < 0) {
+                        purchasedQty -= Math.abs(qty);
+                    } else {
+                        purchasedQty += Math.abs(qty);
+                    }
                 }
-                inventoryMap.get(item.pesticideId)!.quantity = adjTotal;
             }
         }
-    }
 
-    // Process Purchases
-    for (const purchase of purchases) {
-        if (purchase.deletedAt) continue;
-        
-        for (const item of (purchase.items || [])) {
-            const qtyStr = String(item.quantity || '0').replace(',', '.');
-            const qty = parseFloat(qtyStr) || 0;
-            if (isNaN(qty) || qty === 0) continue;
-
-            const isReturnOrSale = purchase.type === 'RETURN' || purchase.note?.startsWith('SATIŞ') || qty < 0;
-            const effectiveQty = isReturnOrSale ? -Math.abs(qty) : Math.abs(qty);
-            
-            if (inventoryMap.has(item.pesticideId)) {
-                const existing = inventoryMap.get(item.pesticideId)!;
-                existing.quantity += effectiveQty;
-                // Update prices based on latest purchase (optional, but good for consistency)
-                if (!isReturnOrSale && item.buyingPrice) {
-                     existing.buyingPrice = parseFloat(String(item.buyingPrice).replace(',', '.')) || existing.buyingPrice;
-                     if (item.sellingPrice) {
-                         existing.sellingPrice = parseFloat(String(item.sellingPrice).replace(',', '.')) || existing.sellingPrice;
-                     }
+        for (const prescription of prescriptions) {
+            if (prescription.deletedAt) continue;
+            if (!prescription.isInventoryProcessed && prescription.isProcessed === false) continue;
+            for (const pItem of (prescription.items || [])) {
+                if (pItem.pesticideId === item.pesticideId) {
+                    const qty = parseFloat(String(pItem.quantity || '0').replace(',', '.')) || 0;
+                    if (prescription.type === 'RETURN') {
+                        soldQty -= Math.abs(qty);
+                    } else {
+                        soldQty += Math.abs(qty);
+                    }
                 }
-            } else {
-                // Should exist from DB, but just in case
-                const buyingPrice = parseFloat(String(item.buyingPrice).replace(',', '.')) || 0;
-                const sellingPrice = item.sellingPrice ? parseFloat(String(item.sellingPrice).replace(',', '.')) : buyingPrice * 1.2;
-                inventoryMap.set(item.pesticideId, {
-                    id: crypto.randomUUID(),
-                    pesticideId: item.pesticideId,
-                    pesticideName: item.pesticideName,
-                    category: PesticideCategory.OTHER,
-                    quantity: effectiveQty,
-                    unit: item.unit || 'Adet',
-                    buyingPrice,
-                    sellingPrice,
-                    lastUpdated: new Date().toISOString()
-                });
             }
         }
-    }
 
-    // Process Prescriptions
-    for (const prescription of prescriptions) {
-        if (prescription.deletedAt) continue;
-        if (prescription.isProcessed === false) continue;
-        if (prescription.isInventoryProcessed === false) continue;
-
-        const isReturn = prescription.type === 'RETURN';
-        const qtyMultiplier = isReturn ? 1 : -1;
-
-        for (const item of (prescription.items || [])) {
-            const qty = parseFloat(String(item.quantity).replace(',', '.')) || 0;
-            if (qty === 0) continue;
-
-            if (inventoryMap.has(item.pesticideId)) {
-                inventoryMap.get(item.pesticideId)!.quantity += (qty * qtyMultiplier);
+        let adjustedQty = 0;
+        if (item.adjustments && item.adjustments.length > 0) {
+            for (const adj of item.adjustments) {
+                adjustedQty += (Number(adj.amount) || 0);
             }
         }
-    }
 
-    // Save all to DB
-    const tx = db.transaction('inventory', 'readwrite');
-    for (const item of inventoryMap.values()) {
-        await tx.store.put(item);
+        const calculatedQty = Number((adjustedQty + purchasedQty - soldQty).toFixed(2));
+        const finalQty = isNaN(calculatedQty) ? 0 : calculatedQty;
+
+        item.quantity = finalQty;
+        item.lastUpdated = new Date().toISOString();
+        await db.put('inventory', item);
+        backgroundSync('inventory', item);
     }
-    await tx.done;
   },
 
   async processInventory(prescription: Prescription) {
@@ -1451,13 +1531,13 @@ const dbServiceObj = {
         const isReturn = prescription.type === 'RETURN';
         const qtyMultiplier = isReturn ? 1 : -1;
 
-        const existingIndex = allInventory.findIndex(i => i.pesticideId === item.pesticideId);
+        const existingIndex = allInventory.findIndex(i => i.pesticideId === item.pesticideId && !i.deletedAt);
         
         if (existingIndex !== -1) {
             const existingItem = allInventory[existingIndex];
             const updatedItem = {
                 ...existingItem,
-                quantity: existingItem.quantity + (qty * qtyMultiplier),
+                quantity: Math.round((existingItem.quantity + (qty * qtyMultiplier)) * 100) / 100,
                 lastUpdated: new Date().toISOString()
             };
             await inventoryStore.put(updatedItem);
@@ -1469,7 +1549,7 @@ const dbServiceObj = {
                 pesticideId: item.pesticideId,
                 pesticideName: item.pesticideName,
                 category: PesticideCategory.OTHER,
-                quantity: qty * qtyMultiplier,
+                quantity: Math.round((qty * qtyMultiplier) * 100) / 100,
                 unit: 'Adet',
                 buyingPrice: 0,
                 sellingPrice: item.unitPrice || 0,
@@ -1481,7 +1561,7 @@ const dbServiceObj = {
         }
     }
 
-    const updatedPrescription: Prescription = { ...prescription, isInventoryProcessed: true };
+    const updatedPrescription: Prescription = { ...prescription, isInventoryProcessed: true, isProcessed: true };
     await prescriptionStore.put(updatedPrescription);
     
     await tx.done;
@@ -1512,13 +1592,13 @@ const dbServiceObj = {
         const isReturn = prescription.type === 'RETURN';
         const qtyMultiplier = isReturn ? -1 : 1;
 
-        const existingIndex = allInventory.findIndex(i => i.pesticideId === item.pesticideId);
+        const existingIndex = allInventory.findIndex(i => i.pesticideId === item.pesticideId && !i.deletedAt);
         
         if (existingIndex !== -1) {
             const existingItem = allInventory[existingIndex];
             const updatedItem = {
                 ...existingItem,
-                quantity: existingItem.quantity + (qty * qtyMultiplier),
+                quantity: Math.round((existingItem.quantity + (qty * qtyMultiplier)) * 100) / 100,
                 lastUpdated: new Date().toISOString()
             };
             await inventoryStore.put(updatedItem);
@@ -1527,7 +1607,7 @@ const dbServiceObj = {
         }
     }
 
-    const updatedPrescription: Prescription = { ...prescription, isInventoryProcessed: false };
+    const updatedPrescription: Prescription = { ...prescription, isInventoryProcessed: false, isProcessed: false };
     await prescriptionStore.put(updatedPrescription);
     
     await tx.done;
@@ -1665,13 +1745,12 @@ const dbServiceObj = {
     const db = await initDB();
     const tx = db.transaction('inventory', 'readwrite');
     const store = tx.objectStore('inventory');
-    const index = store.index('by-pesticide');
+    const allStoreItems = await store.getAll();
     const updates: InventoryItem[] = [];
 
     const items = purchase.items || [];
     for (const item of items) {
-      // Use index to get the inventory item faster
-      let existing = await index.get(item.pesticideId);
+      let existing = allStoreItems.find(i => i.pesticideId === item.pesticideId && !i.deletedAt);
       
       const qtyStr = String(item.quantity || '0').replace(',', '.');
       const quantityChange = parseFloat(qtyStr) || 0;
@@ -1681,17 +1760,20 @@ const dbServiceObj = {
           continue;
       }
       
-      const isReturnOrSale = purchase.type === 'RETURN' || purchase.note?.startsWith('SATIŞ') || quantityChange < 0;
+      const isSale = purchase.type === 'SALE' || (purchase.note && purchase.note.includes('SATIŞ'));
+      const isReturn = purchase.type === 'RETURN' || (purchase.note && purchase.note.includes('İADE'));
+      const isReturnOrSale = isSale || isReturn || quantityChange < 0;
       // Force sign based on type if needed, but here we trust the sign if it's already consistent
       const effectiveQtyChange = isReturnOrSale ? -Math.abs(quantityChange) : Math.abs(quantityChange);
       
       if (existing) {
         const currentQty = Number(existing.quantity) || 0;
-        const newQuantity = currentQty + (isRevert ? -effectiveQtyChange : effectiveQtyChange);
+        const rawNewQty = currentQty + (isRevert ? -effectiveQtyChange : effectiveQtyChange);
+        const newQuantity = Math.round((isNaN(rawNewQty) ? currentQty : rawNewQty) * 100) / 100;
         
         const updatedItem = {
           ...existing,
-          quantity: isNaN(newQuantity) ? currentQty : newQuantity,
+          quantity: newQuantity,
           buyingPrice: isRevert ? (existing.buyingPrice || 0) : (parseFloat(String(item.buyingPrice || '0').replace(',', '.')) || (existing.buyingPrice || 0)),
           sellingPrice: (isRevert || !item.sellingPrice) ? (existing.sellingPrice || 0) : (parseFloat(String(item.sellingPrice || '0').replace(',', '.')) || (existing.sellingPrice || 0)),
           lastUpdated: new Date().toISOString()
@@ -1708,7 +1790,7 @@ const dbServiceObj = {
           pesticideId: item.pesticideId,
           pesticideName: item.pesticideName,
           category: PesticideCategory.OTHER,
-          quantity: effectiveQtyChange,
+          quantity: Math.round(effectiveQtyChange * 100) / 100,
           unit: item.unit || 'Adet',
           buyingPrice,
           sellingPrice,
@@ -1716,6 +1798,7 @@ const dbServiceObj = {
         };
         await store.put(newItem);
         updates.push(newItem);
+        allStoreItems.push(newItem);
       }
     }
     await tx.done;
@@ -1944,17 +2027,45 @@ const dbServiceObj = {
 
   async addTransaction(transaction: Transaction) {
     const db = await initDB();
+    
+    // 1. Prevent duplicate insertion if relatedId is provided
+    if (transaction.relatedId) {
+      const allExisting = await db.getAll('transactions');
+      const existing = allExisting.find((t: any) => !t.deletedAt && t.relatedId === transaction.relatedId);
+      if (existing) {
+        console.warn(`Transaction already exists for relatedId: ${transaction.relatedId}`);
+        return existing.id;
+      }
+    } else {
+      // 2. Prevent accidental duplicate manual submissions (within 5 seconds with exact same data)
+      const allExisting = await db.getAll('transactions');
+      const txTime = new Date(transaction.date).getTime();
+      const recent = allExisting.find((t: any) => 
+        !t.deletedAt && 
+        t.accountId === transaction.accountId &&
+        t.type === transaction.type &&
+        Math.abs(t.amount - transaction.amount) < 0.001 &&
+        t.description === transaction.description &&
+        Math.abs(new Date(t.date).getTime() - txTime) < 5000
+      );
+      if (recent) {
+        console.warn('Duplicate manual transaction detected and ignored');
+        return recent.id;
+      }
+    }
+
     await db.put('transactions', transaction);
     backgroundSync('transactions', transaction);
     
-    // Update account balance
+    // Recalculate account balance from all active transactions for this account
     const account = await db.get('accounts', transaction.accountId);
     if (account) {
-      if (transaction.type === 'INCOME') {
-        account.balance += transaction.amount;
-      } else {
-        account.balance -= transaction.amount;
+      const allAccountTxs = (await db.getAll('transactions')).filter((t: any) => !t.deletedAt && t.accountId === transaction.accountId);
+      let calculatedBalance = 0;
+      for (const t of allAccountTxs) {
+        calculatedBalance += (t.type === 'INCOME' ? t.amount : -t.amount);
       }
+      account.balance = Math.round((calculatedBalance + Number.EPSILON) * 100) / 100;
       await db.put('accounts', account);
       backgroundSync('accounts', account);
     }
@@ -1965,33 +2076,27 @@ const dbServiceObj = {
     const db = await initDB();
     const oldTransaction = await db.get('transactions', transaction.id);
     
-    if (oldTransaction) {
-      // Revert old transaction effect
-      const oldAccount = await db.get('accounts', oldTransaction.accountId);
-      if (oldAccount) {
-        if (oldTransaction.type === 'INCOME') {
-          oldAccount.balance -= oldTransaction.amount;
-        } else {
-          oldAccount.balance += oldTransaction.amount;
-        }
-        await db.put('accounts', oldAccount);
-        backgroundSync('accounts', oldAccount);
-      }
-    }
-
     await db.put('transactions', transaction);
     backgroundSync('transactions', transaction);
     
-    // Apply new transaction effect
-    const newAccount = await db.get('accounts', transaction.accountId);
-    if (newAccount) {
-      if (transaction.type === 'INCOME') {
-        newAccount.balance += transaction.amount;
-      } else {
-        newAccount.balance -= transaction.amount;
+    // Recalculate balances for both accounts if account changed
+    const accountIdsToRecalculate = new Set<string>([transaction.accountId]);
+    if (oldTransaction && oldTransaction.accountId !== transaction.accountId) {
+      accountIdsToRecalculate.add(oldTransaction.accountId);
+    }
+
+    for (const accId of accountIdsToRecalculate) {
+      const account = await db.get('accounts', accId);
+      if (account) {
+        const allAccountTxs = (await db.getAll('transactions')).filter((t: any) => !t.deletedAt && t.accountId === accId);
+        let calculatedBalance = 0;
+        for (const t of allAccountTxs) {
+          calculatedBalance += (t.type === 'INCOME' ? t.amount : -t.amount);
+        }
+        account.balance = Math.round((calculatedBalance + Number.EPSILON) * 100) / 100;
+        await db.put('accounts', account);
+        backgroundSync('accounts', account);
       }
-      await db.put('accounts', newAccount);
-      backgroundSync('accounts', newAccount);
     }
   },
 
@@ -1999,18 +2104,84 @@ const dbServiceObj = {
     const db = await initDB();
     const transaction = await db.get('transactions', id);
     if (transaction) {
+      await db.delete('transactions', id);
+      await backgroundDelete('transactions', id);
+
       const account = await db.get('accounts', transaction.accountId);
       if (account) {
-        if (transaction.type === 'INCOME') {
-          account.balance -= transaction.amount;
-        } else {
-          account.balance += transaction.amount;
+        const allAccountTxs = (await db.getAll('transactions')).filter((t: any) => !t.deletedAt && t.accountId === transaction.accountId);
+        let calculatedBalance = 0;
+        for (const t of allAccountTxs) {
+          calculatedBalance += (t.type === 'INCOME' ? t.amount : -t.amount);
         }
+        account.balance = Math.round((calculatedBalance + Number.EPSILON) * 100) / 100;
         await db.put('accounts', account);
         backgroundSync('accounts', account);
       }
     }
-    await backgroundDelete('transactions', id);
+  },
+
+  /**
+   * Reconciles all accounts:
+   * 1. Detects and removes duplicate transactions (same relatedId or duplicate manual submits)
+   * 2. Recalculates every account's balance to strictly equal sum(INCOME) - sum(EXPENSE)
+   */
+  async reconcileAccountBalances() {
+    try {
+      const db = await initDB();
+      const allAccounts = await db.getAll('accounts');
+      const allTransactions = (await db.getAll('transactions')).filter((t: any) => !t.deletedAt);
+
+      // 1. Deduplicate transactions
+      const seenRelatedIds = new Set<string>();
+      const toDeleteTxIds: string[] = [];
+      const validTransactions: Transaction[] = [];
+      const seenManualSignatures = new Map<string, string>();
+
+      for (const tx of allTransactions) {
+        if (tx.relatedId) {
+          if (seenRelatedIds.has(tx.relatedId)) {
+            toDeleteTxIds.push(tx.id);
+            continue;
+          }
+          seenRelatedIds.add(tx.relatedId);
+        } else {
+          // Manual transaction deduplication (10 second bucket)
+          const timeBucket = Math.floor(new Date(tx.date).getTime() / 10000);
+          const sig = `${tx.accountId}_${tx.type}_${tx.amount}_${tx.description || ''}_${timeBucket}`;
+          if (seenManualSignatures.has(sig)) {
+            toDeleteTxIds.push(tx.id);
+            continue;
+          }
+          seenManualSignatures.set(sig, tx.id);
+        }
+        validTransactions.push(tx);
+      }
+
+      for (const delId of toDeleteTxIds) {
+        await db.delete('transactions', delId);
+        await backgroundDelete('transactions', delId);
+      }
+
+      // 2. Ensure each account balance equals the exact sum of its transactions
+      for (const acc of allAccounts) {
+        if (acc.deletedAt) continue;
+        const accTxs = validTransactions.filter(t => t.accountId === acc.id);
+        let calculatedBalance = 0;
+        for (const t of accTxs) {
+          calculatedBalance += (t.type === 'INCOME' ? t.amount : -t.amount);
+        }
+        calculatedBalance = Math.round((calculatedBalance + Number.EPSILON) * 100) / 100;
+
+        if (acc.balance !== calculatedBalance) {
+          acc.balance = calculatedBalance;
+          await db.put('accounts', acc);
+          backgroundSync('accounts', acc);
+        }
+      }
+    } catch (err) {
+      console.error('Error during reconcileAccountBalances:', err);
+    }
   },
 
   async deleteExpense(id: string) {
@@ -2248,6 +2419,7 @@ const dbServiceObj = {
     if (onProfileSync) {
       const profileRef = doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid);
       const profileUnsub = onSnapshot(profileRef, (snapshot) => {
+        if (auth.currentUser?.uid !== uid) return;
         if (snapshot.exists() && !snapshot.metadata.hasPendingWrites) {
           const profileData = snapshot.data() as UserProfile;
           onProfileSync(profileData);
@@ -2259,21 +2431,25 @@ const dbServiceObj = {
     collections.forEach(col => {
       const q = collection(firestore, userPath, col);
       const unsub = onSnapshot(q, async (snapshot) => {
+        if (auth.currentUser?.uid !== uid) return;
         const db = await initDB();
+        if (auth.currentUser?.uid !== uid) return;
         const tx = db.transaction(col, 'readwrite');
         
+        const ops: Promise<any>[] = [];
         for (const change of snapshot.docChanges()) {
-          // Sadece yerel yazma işlemi (pending write) olmayan dökümanları işle.
-          // Bu, yerel optimistik güncellemelerin Firestore'dan gelen eski verilerle ezilmesini önler.
           if (change.doc.metadata.hasPendingWrites) continue;
 
           if (change.type === 'added' || change.type === 'modified') {
-            await tx.store.put(change.doc.data() as any);
+            ops.push(tx.store.put(change.doc.data() as any));
           } else if (change.type === 'removed') {
-            await tx.store.delete(change.doc.id);
+            ops.push(tx.store.delete(change.doc.id));
           }
         }
         
+        if (ops.length > 0) {
+          await Promise.all(ops);
+        }
         await tx.done;
         onSync(); // UI'ı bilgilendir
       }, (error) => {
@@ -2287,19 +2463,25 @@ const dbServiceObj = {
     const newsPath = [FS_ROOT, FS_ORG, "news"].join("/");
     const newsQuery = collection(firestore, newsPath);
     const newsUnsub = onSnapshot(newsQuery, async (snapshot) => {
+      if (auth.currentUser?.uid !== uid) return;
       const db = await initDB();
+      if (auth.currentUser?.uid !== uid) return;
       const tx = db.transaction('news', 'readwrite');
       
+      const ops: Promise<any>[] = [];
       for (const change of snapshot.docChanges()) {
         if (change.doc.metadata.hasPendingWrites) continue;
 
         if (change.type === 'added' || change.type === 'modified') {
-          await tx.store.put(change.doc.data() as any);
+          ops.push(tx.store.put(change.doc.data() as any));
         } else if (change.type === 'removed') {
-          await tx.store.delete(change.doc.id);
+          ops.push(tx.store.delete(change.doc.id));
         }
       }
       
+      if (ops.length > 0) {
+        await Promise.all(ops);
+      }
       await tx.done;
       onSync();
     }, (error) => {
@@ -2367,7 +2549,8 @@ export const dbService = new Proxy(dbServiceObj, {
                          propStr.startsWith('revert') ||
                          propStr.startsWith('perform')) && 
                          propStr !== 'clearLocalUserData' &&
-                         propStr !== 'cleanupOldNotifications';
+                         propStr !== 'cleanupOldNotifications' &&
+                         propStr !== 'deleteAllUserData';
                          
       if (isMutating) {
         return async (...args: any[]) => {

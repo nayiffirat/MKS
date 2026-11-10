@@ -1,12 +1,15 @@
-import React, { useState } from 'react';
+import { createMultiPagePdf } from '../utils/pdfHelper';
+import React, { useState, useMemo } from 'react';
 import { useAppViewModel } from '../context/AppContext';
-import { Printer, FileText, Download, Users, Package, Receipt, Loader2, ChevronRight, Calendar, X, Store } from 'lucide-react';
+import { Printer, FileText, Download, Users, Package, Receipt, Loader2, ChevronRight, Calendar, X, Store, BarChart3, LayoutGrid } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { format } from 'date-fns';
 import { tr } from 'date-fns/locale';
 import { formatCurrency } from '../utils/currency';
 import html2canvas from 'html2canvas';
+import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
+import { generateYearEndReportPDF } from '../utils/yearEndReportGenerator';
 
 export const Reports: React.FC = () => {
   const { 
@@ -26,9 +29,48 @@ export const Reports: React.FC = () => {
     supplierPurchases
   } = useAppViewModel();
   const [generating, setGenerating] = useState<string | null>(null);
+  const [activeViewMode, setActiveViewMode] = useState<'ANALYTICS' | 'PDF_LIST'>('ANALYTICS');
   const [startDate, setStartDate] = useState<string>(format(new Date(new Date().getFullYear(), 0, 1), 'yyyy-MM-dd'));
   const [endDate, setEndDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
+  const [selectedYearEndYear, setSelectedYearEndYear] = useState<number>(new Date().getFullYear());
+
+  const availableYears = useMemo(() => {
+    const currentY = new Date().getFullYear();
+    const years = new Set<number>([currentY]);
+    for (let y = currentY; y >= currentY - 5; y--) years.add(y);
+    prescriptions.forEach(p => {
+      if (p.date) {
+        const y = new Date(p.date).getFullYear();
+        if (!isNaN(y)) years.add(y);
+      }
+    });
+    return Array.from(years).sort((a, b) => b - a);
+  }, [prescriptions]);
+
+  const handleGenerateYearEndReport = async (year: number) => {
+    setGenerating('YEAR_END_TURNOVER');
+    try {
+      await generateYearEndReportPDF({
+        targetYear: year,
+        farmers,
+        inventory,
+        prescriptions,
+        payments,
+        manualDebts,
+        myPayments,
+        suppliers,
+        supplierPurchases,
+        accounts,
+        expenses,
+        userProfile
+      });
+    } catch (e) {
+      console.error("Yıl sonu devir raporu oluşturma hatası:", e);
+    } finally {
+      setGenerating(null);
+    }
+  };
 
   // Helper to replace Turkish chars for standard PDF fonts if needed
   const trToEn = (text: string) => {
@@ -86,10 +128,21 @@ export const Reports: React.FC = () => {
               const bg = i % 2 === 0 ? '#fafaf9' : '#ffffff';
               html += `<tr style="background-color: ${bg}; border-bottom: 1px solid #e7e5e4;">`;
               row.forEach((cell, j) => {
-                  const isRight = headers[j].toLowerCase().includes('bakiye') || headers[j].toLowerCase().includes('tutar') || headers[j].toLowerCase().includes('maliyet') || headers[j].toLowerCase().includes('fiyat');
+                  const headerName = headers[j].toLowerCase();
+                  const isRight = headerName.includes('bakiye') || headerName.includes('tutar') || headerName.includes('maliyet') || headerName.includes('fiyat');
+                  const isBelgeNo = headerName.includes('belge') || headerName.includes('fatura');
+                  const isQuantity = headerName.includes('miktar') || headerName.includes('adet');
                   const isBold = typeof cell === 'string' && (cell.includes('BORÇ') || cell.includes('ALACAK') || cell.includes('ALACAKLI') || cell.includes('BORÇLU'));
                   const color = cell === 'ALACAKLI HESAP' || cell === 'ALACAKLIYIZ' ? '#059669' : (cell === 'BORÇLU HESAP (BİZE)' || cell === 'BORÇLUYUZ (TEDARİKÇİYE)' ? '#dc2626' : '#3f3f46');
-                  html += `<td style="padding: 10px; color: ${color}; ${isRight ? 'text-align: right; font-family: monospace; font-weight: 600;' : ''} ${isBold ? 'font-weight: 700;' : ''}">${cell}</td>`;
+
+                  let displayContent = cell;
+                  if (isBelgeNo && cell && cell !== '-') {
+                      displayContent = `<span style="background-color: #18181b; color: #ffffff; font-family: monospace; font-weight: 800; padding: 2px 7px; border-radius: 4px; font-size: 10.5px; display: inline-block;">${cell}</span>`;
+                  } else if (isQuantity && cell) {
+                      displayContent = `<span style="background-color: #fef3c7; color: #78350f; border: 1px solid #fde68a; font-family: monospace; font-weight: 800; padding: 2px 7px; border-radius: 4px; font-size: 11px; display: inline-block;">${cell}</span>`;
+                  }
+
+                  html += `<td style="padding: 10px; color: ${color}; ${isRight ? 'text-align: right; font-family: monospace; font-weight: 600;' : ''} ${isBold ? 'font-weight: 700;' : ''}">${displayContent}</td>`;
               });
               html += `</tr>`;
           });
@@ -126,6 +179,11 @@ export const Reports: React.FC = () => {
           container.style.color = '#1c1917';
           container.style.fontFamily = 'system-ui, -apple-system, sans-serif';
 
+          const stampTitle = (userProfile?.stampTitle || userProfile?.companyName || 'MKS SİSTEMİ').toUpperCase();
+          const stampSubTitle = userProfile?.stampSubTitle || (userProfile?.title ? `${userProfile.title} ${userProfile?.fullName || ''}` : userProfile?.fullName || 'Ziraat Mühendisi');
+          const stampTax = userProfile?.stampTaxInfo || 'Vergi D. - 1234567890';
+          const stampColor = userProfile?.stampColor || '#1d4ed8';
+
           let baseHtml = `
               <div style="margin-bottom: 30px;">
                   <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px;">
@@ -143,6 +201,26 @@ export const Reports: React.FC = () => {
                   </div>
               </div>
               ${htmlContent}
+              <div style="margin-top: 40px; padding-top: 20px; border-top: 2px dashed #e7e5e4; display: flex; justify-content: space-between; align-items: flex-end;">
+                  <div style="font-size: 10px; color: #a8a29e; font-family: monospace;">
+                      Bu belge Mühendis Kayıt Sistemi tarafından oluşturulmuştur.<br/>
+                      Düzenlenme Tarihi: ${format(new Date(), 'dd.MM.yyyy HH:mm')}
+                  </div>
+                  <div style="border: 2.5px solid ${stampColor}; border-radius: 8px; padding: 10px 16px; transform: rotate(-2.5deg); color: ${stampColor}; text-align: center; max-width: 260px;">
+                      <div style="font-size: 11px; font-weight: 900; text-transform: uppercase; border-bottom: 1px solid ${stampColor}; padding-bottom: 4px; margin-bottom: 4px; font-family: serif;">
+                          ${stampTitle}
+                      </div>
+                      <div style="font-size: 10px; font-weight: 800; margin-bottom: 2px;">
+                          ${stampSubTitle}
+                      </div>
+                      <div style="font-size: 8.5px; opacity: 0.9; font-weight: 600;">
+                          ${stampTax}
+                      </div>
+                      <div style="font-size: 8px; opacity: 0.8; margin-top: 2px; text-transform: uppercase;">
+                          Resmi Onaylı Dijital İşyeri Kaşesi
+                      </div>
+                  </div>
+              </div>
           `;
 
           container.innerHTML = baseHtml;
@@ -156,15 +234,7 @@ export const Reports: React.FC = () => {
 
           document.body.removeChild(container);
           
-          const imgData = canvas.toDataURL('image/jpeg', 0.95);
-          
-          const doc = new jsPDF({
-              orientation: canvas.width > canvas.height ? 'l' : 'p',
-              unit: 'px',
-              format: [canvas.width, canvas.height]
-          });
-          
-          doc.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+          const doc = createMultiPagePdf(canvas);
           doc.save(fileName);
       } catch(e) {
           console.error("PDF Oluşturma Hatası", e);
@@ -382,12 +452,16 @@ export const Reports: React.FC = () => {
             const ledger: any[] = [];
             
             supplierPurchases.filter(p => !p.deletedAt && p.supplierId === supplier.id).forEach(p => {
+                const isSale = p.type === 'SALE' || p.note?.includes('SATIŞ');
+                const isReturn = p.type === 'RETURN' || (p.note?.includes('İADE') && !isSale);
+                const isReturnOrSale = isSale || isReturn || (p.totalAmount && p.totalAmount < 0);
+
                 ledger.push({
                     date: new Date(p.date),
-                    type: p.type === 'RETURN' ? 'Alış İade' : 'Alış Faturası',
+                    type: isSale ? 'Tedarikçiye Satış' : (isReturn ? 'Alış İadesi' : 'Alış Faturası'),
                     docNo: p.receiptNo || '-',
-                    amount: p.totalAmount || p.items.reduce((acc, i) => acc + (i.quantity * (i.buyingPrice || 0)), 0) || 0,
-                    isDebtToUs: p.type !== 'RETURN'
+                    amount: Math.abs(p.totalAmount || p.items.reduce((acc, i) => acc + (i.quantity * (i.buyingPrice || 0)), 0) || 0),
+                    isDebtToUs: !isReturnOrSale
                 });
             });
 
@@ -594,6 +668,16 @@ export const Reports: React.FC = () => {
 
   const reportCards = [
     {
+      id: 'YEAR_END_TURNOVER',
+      title: 'Yıl Sonu Devir & Bilanço Raporu',
+      description: 'Seçilen yıla ait ürün bazlı kârlılık, stok durumu, çiftçi ve tedarikçi borçları, kasa/banka bakiyeleri, çek-senetler ve ortaklık kâr paylaşım raporudur.',
+      icon: Calendar,
+      color: 'text-emerald-400',
+      bgColor: 'bg-emerald-500/20 border border-emerald-500/30',
+      isYearEnd: true,
+      action: () => handleGenerateYearEndReport(selectedYearEndYear)
+    },
+    {
       id: 'BAYI_RAPORU',
       title: 'Bayi Raporum',
       description: 'İşletmenizin (kasa, müşteri, tedarikçi, depo vs.) tüm genel durumunu kusursuz bir şekilde tek PDF\'te sunar.',
@@ -651,69 +735,118 @@ export const Reports: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 px-2">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-black text-stone-100 tracking-tight flex items-center">
             <Printer className="mr-2 text-emerald-500" size={20} />
-            Raporlar
+            Raporlar & Analiz
           </h1>
           <p className="text-[10px] font-bold text-stone-500 uppercase tracking-widest mt-1">
-            İşletmenizin tüm verilerini PDF olarak dışa aktarın
+            İnteraktif grafik analizleri inceleyin ve PDF raporları indirin
           </p>
+        </div>
+
+        {/* View Mode Selector Tabs */}
+        <div className="flex items-center gap-1.5 bg-stone-900 border border-white/10 p-1.5 rounded-2xl">
+          <button
+            onClick={() => setActiveViewMode('ANALYTICS')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${
+              activeViewMode === 'ANALYTICS'
+                ? 'bg-emerald-500 text-stone-950 font-black shadow-lg shadow-emerald-950/30'
+                : 'text-stone-400 hover:text-stone-200'
+            }`}
+          >
+            <BarChart3 size={16} />
+            Gelir-Gider Grafik Analizi
+          </button>
+          <button
+            onClick={() => setActiveViewMode('PDF_LIST')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${
+              activeViewMode === 'PDF_LIST'
+                ? 'bg-emerald-500 text-stone-950 font-black shadow-lg shadow-emerald-950/30'
+                : 'text-stone-400 hover:text-stone-200'
+            }`}
+          >
+            <LayoutGrid size={16} />
+            PDF Rapor Listesi
+          </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-        {reportCards.map((report) => (
-          <div 
-            key={report.id}
-            className="group bg-stone-900/60 backdrop-blur-md border border-white/5 rounded-3xl p-5 hover:bg-stone-800/80 hover:border-white/10 transition-all duration-300 relative overflow-hidden flex flex-col"
-          >
-            <div className="absolute -right-6 -top-6 w-24 h-24 bg-gradient-to-br from-white/5 to-transparent rounded-full blur-2xl group-hover:from-white/10 transition-all"></div>
-            
-            <div className="flex items-start justify-between mb-4">
-              <div className={`w-12 h-12 rounded-2xl ${report.bgColor} flex items-center justify-center border border-white/5 shadow-inner`}>
-                <report.icon size={24} className={report.color} />
-              </div>
-            </div>
-            
-            <div className="flex-1">
-              <h3 className="text-base font-bold text-stone-100 mb-1">{report.title}</h3>
-              <p className="text-xs text-stone-400 leading-relaxed mb-6">
-                {report.description}
-              </p>
-            </div>
-
-            <button 
-              onClick={() => {
-                if (report.id === 'BAYI_RAPORU') {
-                    report.action();
-                } else {
-                    setSelectedReportId(report.id);
-                }
-              }}
-              disabled={generating !== null}
-              className={`w-full py-3 rounded-xl font-bold text-xs flex items-center justify-center transition-all ${
-                generating === report.id 
-                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
-                  : 'bg-stone-950 text-stone-300 border border-white/5 hover:bg-emerald-600 hover:text-white hover:border-emerald-500 shadow-lg'
-              }`}
+      {activeViewMode === 'ANALYTICS' ? (
+        <IncomeExpenseChartReport />
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
+          {reportCards.map((report) => (
+            <div 
+              key={report.id}
+              className="group bg-stone-900/60 backdrop-blur-md border border-white/5 rounded-3xl p-5 hover:bg-stone-800/80 hover:border-white/10 transition-all duration-300 relative overflow-hidden flex flex-col"
             >
-              {generating === report.id ? (
-                <>
-                  <Loader2 size={16} className="animate-spin mr-2" />
-                  Hazırlanıyor...
-                </>
-              ) : (
-                <>
-                  <Download size={16} className="mr-2" />
-                  PDF Oluştur ve İndir
-                </>
-              )}
-            </button>
-          </div>
-        ))}
-      </div>
+              <div className="absolute -right-6 -top-6 w-24 h-24 bg-gradient-to-br from-white/5 to-transparent rounded-full blur-2xl group-hover:from-white/10 transition-all"></div>
+              
+              <div className="flex items-start justify-between mb-4">
+                <div className={`w-12 h-12 rounded-2xl ${report.bgColor} flex items-center justify-center border border-white/5 shadow-inner`}>
+                  <report.icon size={24} className={report.color} />
+                </div>
+              </div>
+              
+              <div className="flex-1">
+                <h3 className="text-base font-bold text-stone-100 mb-1">{report.title}</h3>
+                <p className="text-xs text-stone-400 leading-relaxed mb-4">
+                  {report.description}
+                </p>
+
+                {report.isYearEnd && (
+                  <div className="mb-4 bg-stone-950/80 p-2.5 rounded-xl border border-emerald-500/30 flex items-center justify-between">
+                    <span className="text-xs font-bold text-stone-300 flex items-center gap-1.5">
+                      <Calendar size={14} className="text-emerald-400" /> Rapor Yılı:
+                    </span>
+                    <select
+                      value={selectedYearEndYear}
+                      onChange={(e) => setSelectedYearEndYear(Number(e.target.value))}
+                      className="bg-stone-900 text-emerald-400 font-bold text-xs px-2.5 py-1 rounded-lg border border-white/10 outline-none cursor-pointer"
+                    >
+                      {availableYears.map(y => (
+                        <option key={y} value={y} className="bg-stone-900 text-stone-200">
+                          {y} Yılı Devir Raporu
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              <button 
+                onClick={() => {
+                  if (report.id === 'BAYI_RAPORU' || report.id === 'YEAR_END_TURNOVER') {
+                      report.action();
+                  } else {
+                      setSelectedReportId(report.id);
+                  }
+                }}
+                disabled={generating !== null}
+                className={`w-full py-3 rounded-xl font-bold text-xs flex items-center justify-center transition-all ${
+                  generating === report.id 
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
+                    : 'bg-stone-950 text-stone-300 border border-white/5 hover:bg-emerald-600 hover:text-white hover:border-emerald-500 shadow-lg'
+                }`}
+              >
+                {generating === report.id ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin mr-2" />
+                    Hazırlanıyor...
+                  </>
+                ) : (
+                  <>
+                    <Download size={16} className="mr-2" />
+                    PDF Oluştur ve İndir
+                  </>
+                )}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       
       {selectedReportId && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-stone-950/80 backdrop-blur-sm animate-in fade-in duration-200">

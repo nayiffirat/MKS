@@ -1,10 +1,14 @@
+export const roundAmount = (amount: number): number => {
+  return Math.round((amount + Number.EPSILON) * 100) / 100;
+};
+
 export const formatCurrency = (amount: number, currencyCode: 'TRY' | 'USD' | 'EUR' = 'TRY') => {
   return new Intl.NumberFormat('tr-TR', {
     style: 'currency',
     currency: currencyCode,
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
-  }).format(amount);
+  }).format(roundAmount(amount));
 };
 
 export const getCurrencySymbol = (currencyCode: 'TRY' | 'USD' | 'EUR' = 'TRY') => {

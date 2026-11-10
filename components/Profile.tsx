@@ -3,8 +3,9 @@ import React, { useState, useEffect } from 'react';
 import { useAppViewModel } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { dbService } from '../services/db';
-import { User, Save, Briefcase, Phone, CheckCircle, Loader2, ArrowLeft } from 'lucide-react';
+import { User, Save, Briefcase, Phone, CheckCircle, Loader2, ArrowLeft, Stamp, Sparkles, Circle, Square, Check } from 'lucide-react';
 import { UserProfile } from '../types';
+import { RealisticStamp } from './RealisticStamp';
 
 interface ProfileProps {
     onBack: () => void;
@@ -51,6 +52,26 @@ export const ProfileScreen: React.FC<ProfileProps> = ({ onBack }) => {
       const clean = phone.replace(/\D/g, '');
       // 90 5XX XXX XX XX -> ~12 digits
       return clean.length >= 12;
+  };
+
+  const handleGenerateAiStamp = () => {
+      const compName = (formData.companyName || 'ZİRAİ MÜHENDİSLİK DÜKKANI').toUpperCase();
+      const titleVal = formData.title ? `${formData.title} ` : 'Ziraat Yüksek Mühendisi ';
+      const authName = (formData.fullName || 'Yönetici').toUpperCase();
+      const city = formData.selectedCity?.name || 'ŞANLIURFA';
+      const phone = formData.phoneNumber || '+90 542 825 40 87';
+
+      setFormData(prev => ({
+          ...prev,
+          stampEnabled: true,
+          stampTitle: compName.includes('LTD') || compName.includes('ŞTİ') || compName.includes('A.Ş') ? compName : `${compName} TARIM SAN. VE TİC. LTD. ŞTİ.`,
+          stampSubTitle: `${titleVal}${authName}`,
+          stampTaxInfo: `${city} V.D. - ${Math.floor(1000000000 + Math.random() * 8999999999)}`,
+          stampTradeInfo: `Tic. Sic. No: ${Math.floor(10000 + Math.random() * 80000)}`,
+          stampAddressPhone: `${city} - Tel: ${phone}`,
+          stampColor: prev.stampColor || '#1d4ed8',
+          stampShape: prev.stampShape || 'RECTANGLE'
+      }));
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -171,6 +192,171 @@ export const ProfileScreen: React.FC<ProfileProps> = ({ onBack }) => {
                             onChange={(e) => handleChange('title', e.target.value)}
                             placeholder={t('profile.jobTitle.placeholder')}
                             className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 text-stone-200 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all placeholder-stone-600"
+                        />
+                    </div>
+                </div>
+            </div>
+
+            {/* Official Stamp & Digital Approval Section */}
+            <div className="bg-stone-900/60 backdrop-blur rounded-2xl p-6 border border-emerald-500/20 shadow-sm relative overflow-hidden">
+                <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-emerald-400 text-xs font-bold uppercase tracking-wider flex items-center">
+                        <Stamp size={16} className="mr-2 text-emerald-400" /> Resmi İşyeri Kaşesi &amp; Dijital Onay
+                    </h3>
+
+                    <button
+                        type="button"
+                        onClick={handleGenerateAiStamp}
+                        className="px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-[11px] font-bold rounded-xl shadow-lg shadow-emerald-900/30 flex items-center gap-1.5 transition-all active:scale-95"
+                    >
+                        <Sparkles size={13} className="animate-pulse text-amber-300" />
+                        Yapay Zeka ile Otomatik Kaşe
+                    </button>
+                </div>
+
+                <p className="text-stone-400 text-xs mb-5 leading-relaxed">
+                    Faturalarda, reçetelerde ve raporlarda altta basılı görünecek resmi yazılı kaşenizi özelleştirin. Kaşe, gerçek mürekkep baskısı efektiyle belgelerinize otomatik yerleştirilir.
+                </p>
+
+                {/* Stamp Live Preview Paper Box */}
+                <div className="mb-6 p-6 bg-[#fdfdfc] rounded-2xl border border-stone-300 flex flex-col items-center justify-center relative shadow-inner overflow-hidden">
+                    <div className="absolute top-2 left-3 text-[9px] font-bold text-stone-400 uppercase tracking-widest pointer-events-none">
+                        Canlı Kaşe Önizleme
+                    </div>
+                    <div className="my-2 py-2">
+                        <RealisticStamp
+                            profile={formData}
+                            title={formData.stampTitle}
+                            subTitle={formData.stampSubTitle}
+                            taxInfo={formData.stampTaxInfo}
+                            tradeInfo={formData.stampTradeInfo}
+                            addressPhone={formData.stampAddressPhone}
+                            color={formData.stampColor}
+                            shape={formData.stampShape}
+                            size="md"
+                        />
+                    </div>
+                    <div className="text-[9px] text-stone-400 italic">
+                        * Tüm fatura ve PDF rapor çıktılarının en altına otomatik basılacaktır.
+                    </div>
+                </div>
+
+                <div className="space-y-4">
+                    {/* Shape & Color Selection */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-xs font-bold text-stone-400 uppercase tracking-wider mb-2">Kaşe Şekli</label>
+                            <div className="flex gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setFormData(p => ({ ...p, stampShape: 'RECTANGLE' }))}
+                                    className={`flex-1 py-2.5 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                                        (formData.stampShape || 'RECTANGLE') === 'RECTANGLE'
+                                            ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
+                                            : 'bg-stone-950 border-stone-800 text-stone-400 hover:text-stone-200'
+                                    }`}
+                                >
+                                    <Square size={14} />
+                                    Dikdörtgen
+                                </button>
+
+                                <button
+                                    type="button"
+                                    onClick={() => setFormData(p => ({ ...p, stampShape: 'OVAL' }))}
+                                    className={`flex-1 py-2.5 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                                        formData.stampShape === 'OVAL'
+                                            ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
+                                            : 'bg-stone-950 border-stone-800 text-stone-400 hover:text-stone-200'
+                                    }`}
+                                >
+                                    <Circle size={14} />
+                                    Oval (Dairesel)
+                                </button>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-bold text-stone-400 uppercase tracking-wider mb-2">Mürekkep Rengi</label>
+                            <div className="flex items-center gap-2 pt-1">
+                                {[
+                                    { name: 'Klasik Mavi', hex: '#1d4ed8' },
+                                    { name: 'Koyu Lacivert', hex: '#1e3a8a' },
+                                    { name: 'Resmi Mürdüm', hex: '#701a75' },
+                                    { name: 'Siyah', hex: '#1c1917' },
+                                    { name: 'Kırmızı', hex: '#991b1b' },
+                                ].map(c => (
+                                    <button
+                                        key={c.hex}
+                                        type="button"
+                                        title={c.name}
+                                        onClick={() => setFormData(p => ({ ...p, stampColor: c.hex }))}
+                                        style={{ backgroundColor: c.hex }}
+                                        className={`w-7 h-7 rounded-full border-2 transition-transform flex items-center justify-center ${
+                                            (formData.stampColor || '#1d4ed8') === c.hex ? 'scale-125 border-white shadow-lg' : 'border-transparent opacity-80 hover:opacity-100'
+                                        }`}
+                                    >
+                                        {(formData.stampColor || '#1d4ed8') === c.hex && <Check size={14} className="text-white" />}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Stamp Text Inputs */}
+                    <div>
+                        <label className="block text-xs font-bold text-stone-300 mb-1">Firma / Şirket Ünvanı (Kaşe Üst Satırı)</label>
+                        <input
+                            type="text"
+                            value={formData.stampTitle || ''}
+                            onChange={(e) => setFormData(p => ({ ...p, stampTitle: e.target.value }))}
+                            placeholder="Örn: BETA ZİRAİ MÜHENDİSLİK SAN. VE TİC. LTD. ŞTİ."
+                            className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 text-stone-200 text-sm outline-none focus:border-emerald-500 transition-all placeholder-stone-600"
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-bold text-stone-300 mb-1">Yetkili Kişi &amp; Unvanı</label>
+                        <input
+                            type="text"
+                            value={formData.stampSubTitle || ''}
+                            onChange={(e) => setFormData(p => ({ ...p, stampSubTitle: e.target.value }))}
+                            placeholder="Örn: Ziraat Yüksek Mühendisi Nayif FIRAT"
+                            className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 text-stone-200 text-sm outline-none focus:border-emerald-500 transition-all placeholder-stone-600"
+                        />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-xs font-bold text-stone-300 mb-1">Vergi Dairesi ve No</label>
+                            <input
+                                type="text"
+                                value={formData.stampTaxInfo || ''}
+                                onChange={(e) => setFormData(p => ({ ...p, stampTaxInfo: e.target.value }))}
+                                placeholder="Örn: Haliliye V.D. - 388 042 1902"
+                                className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 text-stone-200 text-sm outline-none focus:border-emerald-500 transition-all placeholder-stone-600"
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-bold text-stone-300 mb-1">Ticaret Sicil No / MERSİS</label>
+                            <input
+                                type="text"
+                                value={formData.stampTradeInfo || ''}
+                                onChange={(e) => setFormData(p => ({ ...p, stampTradeInfo: e.target.value }))}
+                                placeholder="Örn: Tic. Sic. No: 45892"
+                                className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 text-stone-200 text-sm outline-none focus:border-emerald-500 transition-all placeholder-stone-600"
+                            />
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-bold text-stone-300 mb-1">Adres ve İletişim Bilgisi</label>
+                        <input
+                            type="text"
+                            value={formData.stampAddressPhone || ''}
+                            onChange={(e) => setFormData(p => ({ ...p, stampAddressPhone: e.target.value }))}
+                            placeholder="Örn: Şanlıurfa - Tel: +90 542 825 40 87"
+                            className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 text-stone-200 text-sm outline-none focus:border-emerald-500 transition-all placeholder-stone-600"
                         />
                     </div>
                 </div>

@@ -330,7 +330,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                         <FileText size={16}/>
                     </div>
                     <div className="text-left">
-                        <span className="block font-black text-[9px] text-stone-200 uppercase tracking-wider">{prescriptionLabel.toUpperCase()}</span>
+                        <span className="block font-black text-[9px] text-stone-200 uppercase tracking-wider">SATIŞ YAP</span>
                         <span className="text-[7px] text-stone-600 font-bold uppercase">{t('dashboard.new_record')}</span>
                     </div>
                 </button>
@@ -343,7 +343,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                         <FileText size={16}/>
                     </div>
                     <div className="text-left">
-                        <span className="block font-black text-[9px] text-stone-200 uppercase tracking-wider">{prescriptionLabel.toUpperCase()}</span>
+                        <span className="block font-black text-[9px] text-stone-200 uppercase tracking-wider">SATIŞ YAP</span>
                         <span className="text-[7px] text-stone-600 font-bold uppercase">{t('dashboard.list')}</span>
                     </div>
                 </button>
@@ -409,9 +409,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
 
         <div className="grid grid-cols-4 gap-2">
             <ActionButton onClick={() => onNavigate('CALCULATOR')} icon={Calculator} label={t('dashboard.calculate')} color="emerald" />
-            <ActionButton onClick={() => onNavigate('PRESCRIPTION_NEW')} icon={FileText} label="Reçete" color="blue" />
+            <ActionButton onClick={() => onNavigate('PRESCRIPTION_NEW')} icon={FileText} label="Satış Yap" color="blue" />
             <ActionButton onClick={() => onNavigate('SILO')} icon={Database} label="Silom" color="orange" />
-            <ActionButton onClick={() => onNavigate('FINDEKS')} icon={Wallet} label="Findeks" color="purple" />
+            <ActionButton onClick={() => onNavigate('DEBT_TRACKING')} icon={Wallet} label="Findeks" color="purple" />
         </div>
       </div>
 
