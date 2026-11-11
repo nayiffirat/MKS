@@ -1,0 +1,74 @@
+name: MKS Multi-Platform Cloud Build (iOS Xcode .ipa + Android .apk + Web)
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    name: Build Android APK & AAB
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - name: Install dependencies & Build Web Assets
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+          npx cap sync android
+      - name: Build Android 16 (API 36) Play Console Bundle (.aab) & APK (.apk)
+        working-directory: ./android
+        run: |
+          chmod +x gradlew
+          ./gradlew bundleRelease assembleDebug
+      - name: Upload Play Console AAB & Android APK Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: MKS-Android16-API36-PlayBundle-and-APK
+          path: |
+            android/app/build/outputs/bundle/release/*.aab
+            android/app/build/outputs/apk/debug/*.apk
+
+  build-ios:
+    name: Build iOS Xcode Project (.xcarchive / Unsigned .ipa)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies & Sync Capacitor iOS
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+          npx cap sync ios
+      - name: Install CocoaPods
+        working-directory: ./ios/App
+        run: pod install
+      - name: Build Xcode Archive (Unsigned for Ad-Hoc / Sideload / App Store Connect)
+        working-directory: ./ios/App
+        run: |
+          xcodebuild -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            clean build
+          mkdir -p Payload
+          cp -r build/Build/Products/Release-iphoneos/App.app Payload/
+          zip -r MKS-iOS.ipa Payload
+      - name: Upload iOS IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MKS-iOS-IPA
+          path: ios/App/MKS-iOS.ipa

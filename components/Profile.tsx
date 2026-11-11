@@ -3,7 +3,11 @@ import React, { useState, useEffect } from 'react';
 import { useAppViewModel } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { dbService } from '../services/db';
-import { User, Save, Briefcase, Phone, CheckCircle, Loader2, ArrowLeft, Stamp, Sparkles, Circle, Square, Check } from 'lucide-react';
+import { User, Save, Briefcase, Phone, CheckCircle, Loader2, ArrowLeft, Stamp, Sparkles, Circle, Square, Check, Mail, Link2, ShieldCheck } from 'lucide-react';
+import { linkWithPopup } from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
+import { auth, db, googleProvider } from '../services/firebase';
+import { normalizePhone } from './Login';
 import { UserProfile } from '../types';
 import { RealisticStamp } from './RealisticStamp';
 
@@ -12,13 +16,68 @@ interface ProfileProps {
 }
 
 export const ProfileScreen: React.FC<ProfileProps> = ({ onBack }) => {
-  const { userProfile, updateUserProfile, t } = useAppViewModel();
+  const { userProfile, updateUserProfile, t, showToast } = useAppViewModel();
   const { currentUser } = useAuth();
   
   const [formData, setFormData] = useState<UserProfile>(userProfile);
   const [isSaving, setIsSaving] = useState(false);
-  const [showSuccess, setShowSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Linked login methods
+  const [isGoogleLinked, setIsGoogleLinked] = useState(() => !!auth.currentUser?.providerData.some(p => p.providerId === 'google.com'));
+  const [linkPhone, setLinkPhone] = useState(userProfile.phoneNumber || '+90 ');
+  const [linkBusy, setLinkBusy] = useState<'google' | 'phone' | null>(null);
+  const [linkMsg, setLinkMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const handleLinkGoogle = async () => {
+      const user = auth.currentUser;
+      if (!user || isGoogleLinked) return;
+      setLinkBusy('google');
+      setLinkMsg(null);
+      try {
+          googleProvider.setCustomParameters({ prompt: 'select_account' });
+          await linkWithPopup(user, googleProvider); // same UID, data untouched
+          setIsGoogleLinked(true);
+          setLinkMsg({ ok: true, text: 'Google hesabınız bu hesaba bağlandı.' });
+      } catch (err: any) {
+          console.error('Google link failed:', err);
+          const text = err.code === 'auth/credential-already-in-use'
+              ? 'Bu Google hesabı başka bir MKS hesabına bağlı.'
+              : err.code === 'auth/popup-closed-by-user' ? 'İşlem iptal edildi.' : `Google bağlanamadı (${err.code || 'hata'}).`;
+          setLinkMsg({ ok: false, text });
+      } finally {
+          setLinkBusy(null);
+      }
+  };
+
+  const handleLinkPhone = async () => {
+      const user = auth.currentUser;
+      const key = normalizePhone(linkPhone);
+      if (!user?.email) { setLinkMsg({ ok: false, text: 'Telefon bağlamak için e-posta ile giriş yapmış olmalısınız.' }); return; }
+      if (!key) { setLinkMsg({ ok: false, text: 'Geçerli bir cep telefonu girin (+90 5XX...).' }); return; }
+      setLinkBusy('phone');
+      setLinkMsg(null);
+      try {
+          const phoneNumber = `+90 ${key}`;
+          await updateUserProfile({ ...userProfile, phoneNumber });
+          let map: Record<string, string> = {};
+          try { map = JSON.parse(localStorage.getItem('mks_phone_email_map') || '{}'); } catch { /* reset corrupt map */ }
+          map[key] = user.email;
+          localStorage.setItem('mks_phone_email_map', JSON.stringify(map));
+          await setDoc(
+              doc(db, 'MKS', 'g892bEaJyGfEq1Fa67yb', 'phone_directory', key),
+              { uid: user.uid, email: user.email.toLowerCase(), updatedAt: new Date().toISOString() },
+              { merge: true }
+          );
+          setLinkPhone(phoneNumber);
+          setLinkMsg({ ok: true, text: 'Telefon numaranız bağlandı. Artık Telefon No + Şifre ile aynı hesaba giriş yapabilirsiniz.' });
+      } catch (err) {
+          console.error('Phone link failed:', err);
+          setLinkMsg({ ok: false, text: 'Telefon numarası kaydedilemedi.' });
+      } finally {
+          setLinkBusy(null);
+      }
+  };
 
   // Sync if context updates externally
   useEffect(() => {
@@ -90,10 +149,7 @@ export const ProfileScreen: React.FC<ProfileProps> = ({ onBack }) => {
           await updateUserProfile(formData);
 
           setIsSaving(false);
-          setShowSuccess(true);
-          
-          // Hide success message after 3 seconds
-          setTimeout(() => setShowSuccess(false), 3000);
+          showToast(t('profile.success'), 'success');
       } catch (err) {
           console.error("Failed to save profile:", err);
           setError(t('profile.error.save'));
@@ -106,7 +162,7 @@ export const ProfileScreen: React.FC<ProfileProps> = ({ onBack }) => {
         
         {/* Header */}
         <div className="flex items-center mb-6 pt-2">
-            <button onClick={onBack} className="mr-3 text-stone-400 hover:text-stone-200">
+            <button onClick={onBack} aria-label="Geri" className="mr-3 min-w-[44px] min-h-[44px] flex items-center justify-center text-stone-400 hover:text-stone-200">
                 <ArrowLeft size={24} />
             </button>
             <h2 className="text-2xl font-bold text-stone-100">{t('profile.title')}</h2>
@@ -125,13 +181,68 @@ export const ProfileScreen: React.FC<ProfileProps> = ({ onBack }) => {
              <div className="z-10">
                  <h3 className="text-xl font-bold text-white leading-tight flex items-center gap-2">
                     {formData.fullName || t('profile.unnamed')}
-                    <span className="text-[10px] font-black px-2 py-0.5 rounded-full border bg-orange-500/10 border-orange-500/30 text-orange-400">
+                    <span className="text-[11px] font-black px-2 py-0.5 rounded-full border bg-orange-500/10 border-orange-500/30 text-orange-400">
                         {t('login.dealer').toUpperCase()}
                     </span>
                  </h3>
                  <p className="text-emerald-400 text-sm font-medium">{formData.title || t('profile.noTitle')}</p>
                  <p className="text-stone-500 text-xs mt-1">{formData.companyName}</p>
              </div>
+        </div>
+
+        {/* Linked login methods */}
+        <div className="bg-stone-900/60 backdrop-blur rounded-2xl p-6 border border-emerald-500/20 shadow-sm mb-6">
+            <h3 className="text-emerald-400 text-xs font-bold uppercase tracking-wider mb-1 flex items-center">
+                <ShieldCheck size={14} className="mr-2 shrink-0" /> Bağlı Giriş Yöntemlerim (Eski Hesap Koruma &amp; Birleştirme)
+            </h3>
+            <p className="text-stone-500 text-[11px] mb-4">Tüm yöntemler aynı hesaba (UID) bağlanır; mevcut verileriniz korunur.</p>
+
+            <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3 p-3 bg-stone-950 border border-stone-800 rounded-xl">
+                    <div className="flex items-center gap-2 min-w-0">
+                        <Mail size={16} className="text-emerald-500 shrink-0" />
+                        <span className="text-sm text-stone-200 truncate">{currentUser?.email || 'E-posta yok'}</span>
+                    </div>
+                    {currentUser?.email && <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 shrink-0">Bağlı</span>}
+                </div>
+
+                <div className="flex items-center justify-between gap-3 p-3 bg-stone-950 border border-stone-800 rounded-xl">
+                    <div className="flex items-center gap-2">
+                        <Link2 size={16} className="text-sky-400 shrink-0" />
+                        <span className="text-sm text-stone-200">Google</span>
+                    </div>
+                    {isGoogleLinked ? (
+                        <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">Google Hesabı Bağlı</span>
+                    ) : (
+                        <button type="button" onClick={handleLinkGoogle} disabled={linkBusy !== null} className="px-3 py-1.5 bg-white hover:bg-stone-100 text-stone-900 text-[11px] font-bold rounded-lg transition-all active:scale-95 disabled:opacity-50 flex items-center gap-1.5">
+                            {linkBusy === 'google' && <Loader2 size={12} className="animate-spin" />} Google Hesabı Bağla
+                        </button>
+                    )}
+                </div>
+
+                <div className="p-3 bg-stone-950 border border-stone-800 rounded-xl">
+                    <label htmlFor="link-phone" className="flex items-center gap-2 text-sm text-stone-200 mb-2">
+                        <Phone size={16} className="text-amber-400" /> Telefon Numarası Bağla
+                    </label>
+                    <div className="flex gap-2">
+                        <input
+                            id="link-phone"
+                            type="tel"
+                            value={linkPhone}
+                            onChange={(e) => setLinkPhone(e.target.value)}
+                            placeholder="+90 5XX..."
+                            className="flex-1 min-w-0 bg-stone-900 border border-stone-800 rounded-lg px-3 py-2 text-stone-200 text-sm outline-none focus:border-emerald-500 transition-all placeholder-stone-600"
+                        />
+                        <button type="button" onClick={handleLinkPhone} disabled={linkBusy !== null} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition-all active:scale-95 disabled:opacity-50 flex items-center gap-1.5">
+                            {linkBusy === 'phone' ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} Kaydet
+                        </button>
+                    </div>
+                </div>
+
+                {linkMsg && (
+                    <p role="status" className={`text-[11px] font-medium ${linkMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>{linkMsg.text}</p>
+                )}
+            </div>
         </div>
 
         <form onSubmit={handleSave} className="space-y-6">
@@ -162,7 +273,7 @@ export const ProfileScreen: React.FC<ProfileProps> = ({ onBack }) => {
                             placeholder="+90 5xxxxxxxxx"
                             className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 text-stone-200 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all placeholder-stone-600"
                         />
-                        <p className="text-[10px] text-stone-500 mt-1">{t('profile.phone.desc')}</p>
+                        <p className="text-[11px] text-stone-500 mt-1">{t('profile.phone.desc')}</p>
                     </div>
                 </div>
             </div>
@@ -220,7 +331,7 @@ export const ProfileScreen: React.FC<ProfileProps> = ({ onBack }) => {
 
                 {/* Stamp Live Preview Paper Box */}
                 <div className="mb-6 p-6 bg-[#fdfdfc] rounded-2xl border border-stone-300 flex flex-col items-center justify-center relative shadow-inner overflow-hidden">
-                    <div className="absolute top-2 left-3 text-[9px] font-bold text-stone-400 uppercase tracking-widest pointer-events-none">
+                    <div className="absolute top-2 left-3 text-[11px] font-bold text-stone-400 uppercase tracking-widest pointer-events-none">
                         Canlı Kaşe Önizleme
                     </div>
                     <div className="my-2 py-2">
@@ -236,7 +347,7 @@ export const ProfileScreen: React.FC<ProfileProps> = ({ onBack }) => {
                             size="md"
                         />
                     </div>
-                    <div className="text-[9px] text-stone-400 italic">
+                    <div className="text-[11px] text-stone-400 italic">
                         * Tüm fatura ve PDF rapor çıktılarının en altına otomatik basılacaktır.
                     </div>
                 </div>
@@ -276,8 +387,8 @@ export const ProfileScreen: React.FC<ProfileProps> = ({ onBack }) => {
                         </div>
 
                         <div>
-                            <label className="block text-xs font-bold text-stone-400 uppercase tracking-wider mb-2">Mürekkep Rengi</label>
-                            <div className="flex items-center gap-2 pt-1">
+                            <label className="block text-xs font-bold text-stone-400 mb-2">Mürekkep Rengi</label>
+                            <div className="flex items-center gap-2.5 pt-1">
                                 {[
                                     { name: 'Klasik Mavi', hex: '#1d4ed8' },
                                     { name: 'Koyu Lacivert', hex: '#1e3a8a' },
@@ -291,11 +402,11 @@ export const ProfileScreen: React.FC<ProfileProps> = ({ onBack }) => {
                                         title={c.name}
                                         onClick={() => setFormData(p => ({ ...p, stampColor: c.hex }))}
                                         style={{ backgroundColor: c.hex }}
-                                        className={`w-7 h-7 rounded-full border-2 transition-transform flex items-center justify-center ${
-                                            (formData.stampColor || '#1d4ed8') === c.hex ? 'scale-125 border-white shadow-lg' : 'border-transparent opacity-80 hover:opacity-100'
+                                        className={`w-9 h-9 rounded-full border-2 transition-transform flex items-center justify-center ${
+                                            (formData.stampColor || '#1d4ed8') === c.hex ? 'scale-110 border-white shadow-md' : 'border-transparent opacity-85 hover:opacity-100'
                                         }`}
                                     >
-                                        {(formData.stampColor || '#1d4ed8') === c.hex && <Check size={14} className="text-white" />}
+                                        {(formData.stampColor || '#1d4ed8') === c.hex && <Check size={15} className="text-white" />}
                                     </button>
                                 ))}
                             </div>
@@ -390,13 +501,7 @@ export const ProfileScreen: React.FC<ProfileProps> = ({ onBack }) => {
             </button>
         </form>
 
-        {/* Success Toast */}
-        {showSuccess && (
-            <div className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-emerald-800/90 text-white px-6 py-3 rounded-full shadow-2xl backdrop-blur flex items-center animate-in slide-in-from-bottom-5 fade-in duration-300 z-50">
-                <CheckCircle size={18} className="mr-2" />
-                <span className="font-bold text-sm">{t('profile.success')}</span>
-            </div>
-        )}
+        {/* Success Toast: UI-66 — uygulamanın ortak showToast'u kullanılıyor (handleSave) */}
 
     </div>
   );

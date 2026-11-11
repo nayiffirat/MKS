@@ -3,10 +3,12 @@ import React, { useState } from 'react';
 import { useAppViewModel } from '../context/AppContext';
 import { Reminder } from '../types';
 import { 
-    Calendar, Plus, X, Trash2, CheckCircle2, Circle, 
+    Calendar, Plus, Trash2, CheckCircle2, Circle, 
     ArrowLeft, Bell, Repeat, Users, Search,
     ChevronDown, AlertCircle, Sparkles, Check, Edit2, Clock, CalendarClock, PlayCircle, MapPin, AlignLeft
 } from 'lucide-react';
+import { ModalCloseButton } from './ModalCloseButton';
+import { useBackHandler } from '../utils/navigationManager';
 
 interface RemindersScreenProps {
     onBack: () => void;
@@ -23,6 +25,9 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
 
     // Detail View State
     const [selectedReminder, setSelectedReminder] = useState<Reminder | null>(null);
+
+    useBackHandler(!!selectedReminder, () => setSelectedReminder(null), 'Reminders_detail', 50);
+    useBackHandler(isAddModalOpen, () => setIsAddModalOpen(false), 'Reminders_addEdit', 50);
 
     // Form State
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -156,18 +161,18 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
     };
 
     return (
-        <div className="pb-32 animate-in fade-in duration-300 min-h-screen">
+        <div className="pb-32 animate-in fade-in duration-300 min-h-dvh">
             {/* Header */}
             <div className="flex justify-between items-center mb-5 px-4 pt-2 sticky top-0 bg-stone-950/90 backdrop-blur-md z-20 py-3 border-b border-white/5">
-                 <button onClick={onBack} className="group flex items-center text-stone-400 hover:text-stone-200 transition-all p-1">
-                    <div className="p-1.5 bg-stone-900 rounded-lg mr-2.5 border border-white/5 group-active:scale-90 transition-transform">
+                 <button onClick={onBack} className="group flex items-center min-h-[42px] text-stone-400 hover:text-stone-200 transition-all p-1">
+                    <div className="p-2 bg-stone-900 rounded-xl mr-2.5 border border-white/5 group-active:scale-90 transition-transform">
                         <ArrowLeft size={18} />
                     </div>
                     <h2 className="text-lg font-bold text-stone-100 tracking-tight">{t('reminders.title')}</h2>
                  </button>
                  <button 
                     onClick={() => { resetForm(); setIsAddModalOpen(true); }}
-                    className="p-2 bg-emerald-600 text-white rounded-xl shadow-[0_5px_15px_rgba(16,185,129,0.3)] active:scale-95 transition-all border border-emerald-500/30"
+                    className="min-w-[42px] min-h-[42px] p-2.5 bg-emerald-600 text-white rounded-xl shadow-sm active:scale-95 transition-all border border-emerald-500/30 flex items-center justify-center"
                  >
                     <Plus size={20} />
                  </button>
@@ -175,18 +180,18 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
 
             {/* Filter Tabs */}
             <div className="px-4 mb-6">
-                <div className="flex p-1 bg-stone-900/60 backdrop-blur-xl rounded-2xl border border-white/5 shadow-inner">
+                <div className="mks-tab-rail flex gap-1 p-1 bg-stone-900/60 backdrop-blur-xl rounded-2xl border border-white/5 shadow-inner">
                     {(['PENDING', 'TOMORROW', 'COMPLETED', 'ALL'] as const).map(f => (
                         <button
                             key={f}
                             onClick={() => setFilter(f)}
-                            className={`flex-1 py-2.5 rounded-xl text-[10px] font-black tracking-widest transition-all duration-300 flex items-center justify-center ${
+                            className={`flex-1 min-w-[74px] min-h-[40px] px-2.5 py-2 rounded-xl text-[11px] font-bold transition-all duration-200 flex items-center justify-center whitespace-nowrap ${
                                 filter === f 
-                                ? 'bg-stone-100 text-stone-950 shadow-lg shadow-white/5 scale-[1.02]' 
-                                : 'text-stone-500 hover:text-stone-300'
+                                ? 'bg-stone-100 text-stone-950 shadow-sm' 
+                                : 'text-stone-400 hover:text-stone-200'
                             }`}
                         >
-                            {f === 'TOMORROW' && <CalendarClock size={12} className="mr-1.5" />}
+                            {f === 'TOMORROW' && <CalendarClock size={13} className="mr-1 shrink-0" />}
                             {f === 'PENDING' ? t('reminders.filter.pending') : f === 'COMPLETED' ? t('reminders.filter.completed') : f === 'TOMORROW' ? t('reminders.filter.tomorrow') : t('reminders.filter.all')}
                         </button>
                     ))}
@@ -230,20 +235,20 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                                             {item.title}
                                          </h4>
                                          {!item.isCompleted && (
-                                             <span className={`text-[8px] px-1.5 py-0.5 rounded-lg border font-black uppercase tracking-widest ${getPriorityColor(item.priority)}`}>
+                                             <span className={`text-[11px] px-1.5 py-0.5 rounded-lg border font-black uppercase tracking-widest ${getPriorityColor(item.priority)}`}>
                                                 {item.priority === 'HIGH' ? t('reminders.priority.high') : item.priority === 'MEDIUM' ? t('reminders.priority.medium') : t('reminders.priority.low')}
                                              </span>
                                          )}
                                     </div>
                                     
                                     <div className="flex flex-wrap items-center gap-3">
-                                        <div className={`flex items-center text-[10px] font-black uppercase tracking-widest ${!item.isCompleted && isOverdue(item.date) ? 'text-rose-400' : 'text-stone-500'}`}>
+                                        <div className={`flex items-center text-[11px] font-black uppercase tracking-widest ${!item.isCompleted && isOverdue(item.date) ? 'text-rose-400' : 'text-stone-500'}`}>
                                             <Calendar size={11} className="mr-1.5" />
                                             {new Date(item.date).toLocaleDateString(language === 'tr' ? 'tr-TR' : language === 'en' ? 'en-US' : 'ar-SA', { day: 'numeric', month: 'short' })}
                                         </div>
                                         
                                         {item.recurrence !== 'NONE' && (
-                                            <div className="flex items-center text-[10px] font-black text-blue-400/70 uppercase tracking-widest">
+                                            <div className="flex items-center text-[11px] font-black text-blue-400/70 uppercase tracking-widest">
                                                 <Repeat size={11} className="mr-1.5" />
                                                 {getRecurrenceLabel(item.recurrence)}
                                             </div>
@@ -259,11 +264,11 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                                             className="flex items-center px-4 py-2 bg-emerald-600/10 hover:bg-emerald-600 text-emerald-500 hover:text-white rounded-xl border border-emerald-500/30 transition-all active:scale-95 shadow-sm group/btn"
                                         >
                                             <CheckCircle2 size={14} className="mr-2" />
-                                            <span className="text-[10px] font-black uppercase tracking-widest">{t('reminders.action.finish')}</span>
+                                            <span className="text-[11px] font-black uppercase tracking-widest">{t('reminders.action.finish')}</span>
                                         </button>
                                     ) : (
                                         <div className="flex items-center px-3 py-1.5 bg-stone-900 rounded-xl border border-white/5">
-                                            <span className="text-[9px] font-black text-stone-500 uppercase tracking-widest">{t('reminders.action.finished')}</span>
+                                            <span className="text-[11px] font-black text-stone-500 uppercase tracking-widest">{t('reminders.action.finished')}</span>
                                         </div>
                                     )}
 
@@ -292,19 +297,22 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
 
             {/* DETAIL MODAL */}
             {selectedReminder && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4 animate-in fade-in duration-200">
-                    <div className="bg-stone-900 rounded-[2rem] w-full max-w-sm relative shadow-2xl border border-white/10 overflow-hidden flex flex-col">
+                <div
+                    className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4 animate-in fade-in duration-200"
+                    onClick={e => { if (e.target === e.currentTarget) setSelectedReminder(null); }}
+                >
+                    <div className="bg-stone-900 rounded-[2rem] w-full max-w-sm relative shadow-2xl border border-white/10 overflow-y-auto max-h-[90dvh] flex flex-col">
                         <div className={`h-2 w-full ${selectedReminder.isCompleted ? 'bg-stone-600' : (selectedReminder.priority === 'HIGH' ? 'bg-rose-500' : selectedReminder.priority === 'MEDIUM' ? 'bg-amber-500' : 'bg-emerald-500')}`}></div>
                         
                         <div className="p-6">
                             <div className="flex justify-between items-start mb-4">
                                 <div>
                                     <h3 className="text-lg font-bold text-white leading-tight mb-1">{selectedReminder.title}</h3>
-                                    <span className={`text-[9px] px-1.5 py-0.5 rounded border font-black uppercase tracking-widest ${selectedReminder.isCompleted ? 'text-stone-400 border-stone-700 bg-stone-800' : getPriorityColor(selectedReminder.priority)}`}>
+                                    <span className={`text-[11px] px-1.5 py-0.5 rounded border font-black uppercase tracking-widest ${selectedReminder.isCompleted ? 'text-stone-400 border-stone-700 bg-stone-800' : getPriorityColor(selectedReminder.priority)}`}>
                                         {selectedReminder.isCompleted ? t('reminders.action.finished') : (selectedReminder.priority === 'HIGH' ? t('reminders.priority.high') : selectedReminder.priority === 'MEDIUM' ? t('reminders.priority.medium') : t('reminders.priority.low'))}
                                     </span>
                                 </div>
-                                <button onClick={() => setSelectedReminder(null)} className="p-2 bg-stone-800 rounded-full text-stone-400 hover:text-white"><X size={18}/></button>
+                                <ModalCloseButton onClick={() => setSelectedReminder(null)} className="!rounded-full" />
                             </div>
 
                             <div className="space-y-4 mb-6">
@@ -337,7 +345,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                                             {getLinkedFarmers(selectedReminder.farmerIds).map(f => (
                                                 <div key={f.id} className="flex items-center justify-between text-xs text-stone-300">
                                                     <span>{f.fullName}</span>
-                                                    <span className="text-[9px] text-stone-500 bg-stone-900 px-1.5 py-0.5 rounded flex items-center">
+                                                    <span className="text-[11px] text-stone-500 bg-stone-900 px-1.5 py-0.5 rounded flex items-center">
                                                         <MapPin size={8} className="mr-1"/> {f.village}
                                                     </span>
                                                 </div>
@@ -385,14 +393,9 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                                 <h3 className="text-base font-bold text-stone-100 tracking-tight">
                                     {editingId ? t('reminders.modal.edit') : t('reminders.modal.new')}
                                 </h3>
-                                <p className="text-[8px] text-stone-500 font-black uppercase tracking-[0.2em] mt-0.5">{t('reminders.modal.subtitle')}</p>
+                                <p className="text-[11px] text-stone-500 font-black uppercase tracking-[0.2em] mt-0.5">{t('reminders.modal.subtitle')}</p>
                             </div>
-                            <button 
-                                onClick={() => setIsAddModalOpen(false)} 
-                                className="p-2 bg-stone-800 rounded-lg text-stone-400 hover:text-white transition-all active:scale-90"
-                            >
-                                <X size={18}/>
-                            </button>
+                            <ModalCloseButton onClick={() => setIsAddModalOpen(false)} />
                         </div>
 
                         {/* Scrollable Form Content */}
@@ -400,7 +403,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                             
                             {/* Title & Presets */}
                             <div className="space-y-2">
-                                <label className="flex items-center text-[9px] font-black text-stone-500 uppercase tracking-widest ml-1">
+                                <label className="flex items-center text-[11px] font-black text-stone-500 uppercase tracking-widest ml-1">
                                     <Sparkles size={10} className="mr-1.5 text-emerald-500" /> {t('reminders.label.title')}
                                 </label>
                                 <input 
@@ -418,7 +421,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                                             key={preset}
                                             type="button"
                                             onClick={() => setNewTitle(preset)}
-                                            className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-all active:scale-95 ${
+                                            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all active:scale-95 ${
                                                 newTitle === preset 
                                                 ? 'bg-emerald-600 text-white border-emerald-500'
                                                 : 'bg-stone-900/60 text-stone-500 border-white/5 hover:bg-stone-800 hover:text-stone-300'
@@ -433,7 +436,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                             {/* Date & Recurrence Row */}
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="group space-y-2">
-                                    <label className="text-[9px] font-black text-stone-500 uppercase tracking-widest ml-1 block">{t('reminders.label.date')}</label>
+                                    <label className="text-[11px] font-black text-stone-500 uppercase tracking-widest ml-1 block">{t('reminders.label.date')}</label>
                                     <div className="relative">
                                         <div className="absolute left-4 top-1/2 -translate-y-1/2 text-emerald-500 pointer-events-none">
                                             <Calendar size={18} />
@@ -448,7 +451,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                                     </div>
                                 </div>
                                 <div className="group space-y-2">
-                                    <label className="text-[9px] font-black text-stone-500 uppercase tracking-widest ml-1 block">{t('reminders.label.recurrence')}</label>
+                                    <label className="text-[11px] font-black text-stone-500 uppercase tracking-widest ml-1 block">{t('reminders.label.recurrence')}</label>
                                     <div className="relative">
                                         <div className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none">
                                             <Repeat size={18} />
@@ -470,14 +473,14 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
 
                             {/* Priority Selection */}
                             <div className="space-y-2">
-                                <label className="text-[9px] font-black text-stone-500 uppercase tracking-widest ml-1 block">{t('reminders.label.priority')}</label>
+                                <label className="text-[11px] font-black text-stone-500 uppercase tracking-widest ml-1 block">{t('reminders.label.priority')}</label>
                                 <div className="grid grid-cols-3 gap-2">
                                     {(['LOW', 'MEDIUM', 'HIGH'] as const).map(p => (
                                         <button
                                             key={p}
                                             type="button"
                                             onClick={() => setNewPriority(p)}
-                                            className={`py-3 rounded-xl text-[9px] font-black border transition-all duration-300 active:scale-95 flex flex-col items-center justify-center gap-1.5 ${
+                                            className={`py-3 rounded-xl text-[11px] font-black border transition-all duration-300 active:scale-95 flex flex-col items-center justify-center gap-1.5 ${
                                                 newPriority === p 
                                                 ? (p === 'HIGH' ? 'bg-rose-600 text-white border-rose-500 shadow-lg' : p === 'MEDIUM' ? 'bg-amber-500 text-stone-950 border-amber-400 shadow-lg' : 'bg-emerald-600 text-white border-emerald-500 shadow-lg')
                                                 : 'bg-stone-900/50 text-stone-600 border-white/5 hover:bg-stone-900'
@@ -493,12 +496,12 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                             {/* Linked Farmers */}
                             <div className="bg-stone-900/40 p-3 rounded-2xl border border-white/5">
                                 <div className="flex justify-between items-center mb-3 px-1">
-                                    <label className="text-[9px] font-black text-stone-400 uppercase tracking-widest flex items-center">
+                                    <label className="text-[11px] font-black text-stone-400 uppercase tracking-widest flex items-center">
                                         <Users size={12} className="mr-1.5 text-emerald-500" /> 
                                         {farmerPluralLabel} ({selectedFarmerIds.length})
                                     </label>
                                     {selectedFarmerIds.length > 0 && (
-                                        <button type="button" onClick={() => setSelectedFarmerIds([])} className="text-[8px] font-black text-rose-500 uppercase">{t('quick.bulkMessage.all')}</button>
+                                        <button type="button" onClick={() => setSelectedFarmerIds([])} className="text-[11px] font-black text-rose-500 uppercase">{t('quick.bulkMessage.all')}</button>
                                     )}
                                 </div>
                                 
@@ -509,7 +512,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
                                         value={farmerSearch}
                                         onChange={e => setFarmerSearch(e.target.value)}
                                         placeholder={t('dashboard.list')}
-                                        className="w-full bg-stone-950 border border-stone-800 rounded-lg py-2 pl-8 pr-2 text-[10px] text-stone-200 outline-none focus:border-emerald-500/40 placeholder-stone-700"
+                                        className="w-full bg-stone-950 border border-stone-800 rounded-lg py-2 pl-8 pr-2 text-[11px] text-stone-200 outline-none focus:border-emerald-500/40 placeholder-stone-700"
                                     />
                                 </div>
 
@@ -538,7 +541,7 @@ export const RemindersScreen: React.FC<RemindersScreenProps> = ({ onBack, initia
 
                             {/* Additional Description */}
                             <div className="space-y-1.5">
-                                <label className="text-[9px] font-black text-stone-500 uppercase tracking-widest ml-1 block">{t('reminders.label.notes')}</label>
+                                <label className="text-[11px] font-black text-stone-500 uppercase tracking-widest ml-1 block">{t('reminders.label.notes')}</label>
                                 <textarea 
                                     value={newDesc}
                                     onChange={e => setNewDesc(e.target.value)}

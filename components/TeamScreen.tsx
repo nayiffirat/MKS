@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { useAppViewModel } from '../context/AppContext';
 import { TeamMember, TeamRole } from '../types';
-import { Plus, Trash2, Edit2, Shield, User as UserIcon, Lock, Mail, ChevronLeft, Save, X } from 'lucide-react';
+import { Plus, Trash2, Edit2, Shield, User as UserIcon, Lock, ChevronLeft, Save, X } from 'lucide-react';
+import { hashSecret } from '../utils/crypto';
 
 export const TeamScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
-    const { teamMembers, addTeamMember, updateTeamMember, deleteTeamMember, userProfile, updateUserProfile } = useAppViewModel();
+    const { teamMembers, addTeamMember, updateTeamMember, deleteTeamMember, userProfile, updateUserProfile, showToast } = useAppViewModel();
     const [isAdding, setIsAdding] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -17,19 +18,44 @@ export const TeamScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     });
 
     const handleSave = async () => {
-        if (!formData.fullName || !formData.username || !formData.password || !formData.role) return;
+        if (!formData.fullName || !formData.username || !formData.role) return;
+        const trimmedPassword = (formData.password || '').trim();
+
+        // Yeni kayıtta şifre zorunlu, düzenlemede boş bırakılırsa mevcut hash korunur
+        if (!editingId && !trimmedPassword) {
+            showToast('Lütfen yeni personel için bir şifre belirleyin.', 'error');
+            return;
+        }
+        if (trimmedPassword && trimmedPassword.length < 4) {
+            showToast('Şifre en az 4 karakter olmalıdır.', 'error');
+            return;
+        }
 
         if (editingId === 'admin') {
+            const nextAdminPassword = trimmedPassword
+                ? await hashSecret(trimmedPassword)
+                : userProfile.adminPassword;
             updateUserProfile({
                 ...userProfile,
                 fullName: formData.fullName,
-                adminUsername: formData.username,
-                adminPassword: formData.password
+                adminUsername: formData.username.trim(),
+                adminPassword: nextAdminPassword
             });
         } else if (editingId) {
-            await updateTeamMember({ ...formData, id: editingId } as TeamMember);
+            const hashedPassword = trimmedPassword ? await hashSecret(trimmedPassword) : undefined;
+            await updateTeamMember({
+                ...formData,
+                username: formData.username.trim(),
+                password: hashedPassword,
+                id: editingId
+            } as TeamMember);
         } else {
-            await addTeamMember(formData as Omit<TeamMember, 'id' | 'createdAt'>);
+            const hashedPassword = await hashSecret(trimmedPassword);
+            await addTeamMember({
+                ...(formData as Omit<TeamMember, 'id' | 'createdAt'>),
+                username: formData.username.trim(),
+                password: hashedPassword
+            });
         }
 
         setIsAdding(false);
@@ -38,7 +64,10 @@ export const TeamScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     };
 
     const handleEdit = (member: TeamMember) => {
-        setFormData(member);
+        setFormData({
+            ...member,
+            password: '' // Mevcut hash gösterilmez; yalnızca değiştirmek istenirse yeni şifre girilir
+        });
         setEditingId(member.id);
         setIsAdding(true);
     };
@@ -47,7 +76,7 @@ export const TeamScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         setFormData({
             fullName: userProfile.fullName || 'Yönetici',
             username: userProfile.adminUsername || 'admin',
-            password: userProfile.adminPassword || 'admin',
+            password: '',
             role: 'MANAGER',
             notes: 'Ana yönetici hesabı'
         });
@@ -76,7 +105,11 @@ export const TeamScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                 </div>
                 {!isAdding && (
                     <button 
-                        onClick={() => setIsAdding(true)}
+                        onClick={() => {
+                            setEditingId(null);
+                            setFormData({ fullName: '', username: '', password: '', role: 'SALES', notes: '' });
+                            setIsAdding(true);
+                        }}
                         className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-medium transition-colors"
                     >
                         <Plus size={18} />
@@ -114,12 +147,15 @@ export const TeamScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                             />
                         </div>
                         <div>
-                            <label className="block text-xs font-medium text-stone-400 mb-1">Şifre</label>
+                            <label className="block text-xs font-medium text-stone-400 mb-1">
+                                {editingId ? 'Yeni Şifre (Değiştirmeyecekseniz boş bırakın)' : 'Şifre'}
+                            </label>
                             <input 
-                                type="text" 
-                                value={formData.password} 
+                                type="password" 
+                                value={formData.password || ''} 
                                 onChange={e => setFormData({...formData, password: e.target.value})}
-                                className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2.5 text-white focus:border-emerald-500 outline-none"
+                                placeholder={editingId ? 'Mevcut şifre korunur' : 'En az 4 karakter'}
+                                className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2.5 text-white focus:border-emerald-500 outline-none placeholder-stone-600"
                             />
                         </div>
                         <div>
@@ -194,7 +230,7 @@ export const TeamScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                         </div>
                         <div className="flex items-center gap-2 text-sm text-stone-300">
                             <Lock size={14} className="text-emerald-500" />
-                            <span>••••••••</span>
+                            <span>{userProfile.adminPassword ? 'SHA-256 Korumalı' : 'Hesap Şifresi Aktif'}</span>
                         </div>
                     </div>
                 </div>
@@ -229,7 +265,7 @@ export const TeamScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                             </div>
                             <div className="flex items-center gap-2 text-sm text-stone-400">
                                 <Lock size={14} />
-                                <span>••••••••</span>
+                                <span>•••••••• (SHA-256)</span>
                             </div>
                             {member.notes && (
                                 <div className="mt-3 p-3 bg-stone-950 rounded-xl border border-stone-800">

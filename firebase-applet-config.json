@@ -1,12 +1,12 @@
 {
   "projectId": "muhendiskayitsistemi",
-  "appId": "1:92102884744:web:d13f502dfcb74a3b6a4e3d",
+  "appId": "1:92102884744:web:800acd065ea854076a4e3d",
   "apiKey": "AIzaSyDVmTxpTp2fdlU5SWG7FmHAJ-Zu4waB66M",
   "authDomain": "muhendiskayitsistemi.firebaseapp.com",
   "firestoreDatabaseId": "ai-studio-9eae1cae-4469-4d37-8b42-5e0fb091a527",
   "storageBucket": "muhendiskayitsistemi.firebasestorage.app",
   "messagingSenderId": "92102884744",
-  "measurementId": "",
+  "measurementId": "G-40SCW715YY",
   "oAuthClientId": "92102884744-nluv352emtngctqp3cnkpgcfepecb856.apps.googleusercontent.com",
   "recaptchaSiteKey": ""
 }

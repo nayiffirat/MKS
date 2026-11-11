@@ -1,4 +1,6 @@
 
+import { normalizeWaPhone } from '../utils/whatsappTemplates';
+
 export interface ContactInfo {
   fullName: string;
   phoneNumber: string;
@@ -112,38 +114,14 @@ export const ContactService = {
 
   /**
    * Telefon numarasını standart +90 5XX XXX XX XX formatına çevirir.
+   * WA-02: Tek merkezli normalizeWaPhone yardımcısını kullanır; geçersiz numaralarda '' döner.
    */
   formatPhoneNumber: (raw: string): string => {
-    if (!raw) return '';
-    
-    // Tüm boşlukları, parantezleri ve tireleri temizle
-    let cleaned = raw.replace(/\D/g, ''); 
-    
-    // Türkiye Numarası Mantığı
-    // 1. Başında 90 varsa koru
-    if (cleaned.startsWith('90') && cleaned.length > 10) {
-        // Zaten 90 ile başlıyor, bir şey yapma
-    } 
-    // 2. Başında 0 varsa (0532...) -> 90532...
-    else if (cleaned.startsWith('0')) {
-        cleaned = '90' + cleaned.substring(1);
+    const normalized = normalizeWaPhone(raw);
+    if (!normalized) return '';
+    if (normalized.startsWith('90') && normalized.length === 12) {
+      return `+90 ${normalized.substring(2, 5)} ${normalized.substring(5, 8)} ${normalized.substring(8, 10)} ${normalized.substring(10, 12)}`;
     }
-    // 3. Sadece 5 ile başlıyorsa (532...) -> 90532...
-    else if (cleaned.startsWith('5') && cleaned.length === 10) {
-        cleaned = '90' + cleaned;
-    }
-    
-    // Sonuç + ile başlamıyorsa ekle
-    if (!cleaned.startsWith('+')) {
-        cleaned = '+' + cleaned;
-    }
-
-    // Okunabilirlik için boşluk ekleme (Opsiyonel, şimdilik veritabanı tutarlılığı için bitişik veya basit format)
-    // Örn: +905321234567 -> +90 532 123 45 67
-    if (cleaned.startsWith('+90') && cleaned.length === 13) {
-        return `+90 ${cleaned.substring(3, 6)} ${cleaned.substring(6, 9)} ${cleaned.substring(9, 11)} ${cleaned.substring(11, 13)}`;
-    }
-
-    return cleaned;
+    return `+${normalized}`;
   }
 };

@@ -367,13 +367,13 @@ export const MKSMuhendisim: React.FC<Props> = ({ onBack }) => {
 
                 {/* Main Navigation Tabs (Visible when in CATEGORIES view) */}
                 {viewState === 'CATEGORIES' && (
-                    <div className="flex items-center gap-1.5 mt-4 overflow-x-auto no-scrollbar pb-1">
+                    <div className="mks-tab-rail mt-3.5 pb-1">
                         <button 
                             onClick={() => setMainTab('REHBER')}
-                            className={`px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shrink-0 ${
+                            className={`shrink-0 min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all whitespace-nowrap ${
                                 mainTab === 'REHBER' 
-                                    ? 'bg-purple-500 text-white shadow-lg shadow-purple-500/20' 
-                                    : 'bg-stone-900 text-stone-400 hover:text-stone-200 border border-white/5'
+                                    ? 'bg-purple-600 text-white shadow-sm' 
+                                    : 'bg-stone-900 text-stone-400 hover:text-stone-200 border border-white/10'
                             }`}
                         >
                             <Sprout size={14} /> Rehber
@@ -381,46 +381,46 @@ export const MKSMuhendisim: React.FC<Props> = ({ onBack }) => {
 
                         <button 
                             onClick={() => setMainTab('AI_DANISMAN')}
-                            className={`px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shrink-0 ${
+                            className={`shrink-0 min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all whitespace-nowrap ${
                                 mainTab === 'AI_DANISMAN' 
-                                    ? 'bg-gradient-to-r from-purple-500 to-indigo-500 text-white shadow-lg shadow-purple-500/20' 
-                                    : 'bg-stone-900 text-stone-400 hover:text-stone-200 border border-white/5'
+                                    ? 'bg-indigo-600 text-white shadow-sm' 
+                                    : 'bg-stone-900 text-stone-400 hover:text-stone-200 border border-white/10'
                             }`}
                         >
-                            <Sparkles size={14} className="text-yellow-400" /> AI Mühendis
+                            <Sparkles size={14} className="text-amber-300" /> AI Danışman
                         </button>
 
                         <button 
                             onClick={() => setMainTab('TANK_MIX')}
-                            className={`px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shrink-0 ${
+                            className={`shrink-0 min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all whitespace-nowrap ${
                                 mainTab === 'TANK_MIX' 
-                                    ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/20' 
-                                    : 'bg-stone-900 text-stone-400 hover:text-stone-200 border border-white/5'
+                                    ? 'bg-blue-600 text-white shadow-sm' 
+                                    : 'bg-stone-900 text-stone-400 hover:text-stone-200 border border-white/10'
                             }`}
                         >
-                            <FlaskConical size={14} /> İlaç Karışımı
+                            <FlaskConical size={14} /> İlaç karışımı
                         </button>
 
                         <button 
                             onClick={() => setMainTab('DEFICIENCY')}
-                            className={`px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shrink-0 ${
+                            className={`shrink-0 min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all whitespace-nowrap ${
                                 mainTab === 'DEFICIENCY' 
-                                    ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20' 
-                                    : 'bg-stone-900 text-stone-400 hover:text-stone-200 border border-white/5'
+                                    ? 'bg-emerald-600 text-white shadow-sm' 
+                                    : 'bg-stone-900 text-stone-400 hover:text-stone-200 border border-white/10'
                             }`}
                         >
-                            <Droplet size={14} /> Besin Noksanlığı
+                            <Droplet size={14} /> Besin noksanlığı
                         </button>
 
                         <button 
                             onClick={() => setMainTab('TAKVIM')}
-                            className={`px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shrink-0 ${
+                            className={`shrink-0 min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all whitespace-nowrap ${
                                 mainTab === 'TAKVIM' 
-                                    ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/20' 
-                                    : 'bg-stone-900 text-stone-400 hover:text-stone-200 border border-white/5'
+                                    ? 'bg-amber-600 text-white shadow-sm' 
+                                    : 'bg-stone-900 text-stone-400 hover:text-stone-200 border border-white/10'
                             }`}
                         >
-                            <Calendar size={14} /> Zirai Takvim
+                            <Calendar size={14} /> Zirai takvim
                         </button>
                     </div>
                 )}
@@ -770,15 +770,15 @@ export const MKSMuhendisim: React.FC<Props> = ({ onBack }) => {
                                     </div>
 
                                     {/* Season Selector */}
-                                    <div className="grid grid-cols-4 gap-2">
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                                         {(['İlkbahar', 'Yaz', 'Sonbahar', 'Kış'] as const).map(s => (
                                             <button 
                                                 key={s}
                                                 onClick={() => setSelectedSeason(s)}
-                                                className={`py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider transition-all ${
+                                                className={`min-h-[40px] py-2.5 rounded-2xl text-xs font-bold transition-all ${
                                                     selectedSeason === s 
-                                                        ? 'bg-amber-500 text-stone-950 shadow-lg shadow-amber-500/20' 
-                                                        : 'bg-stone-900 text-stone-400 border border-white/5'
+                                                        ? 'bg-amber-500 text-stone-950 shadow-sm' 
+                                                        : 'bg-stone-900 text-stone-300 border border-white/10'
                                                 }`}
                                             >
                                                 {s}

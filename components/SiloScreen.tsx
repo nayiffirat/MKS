@@ -1,20 +1,30 @@
-import { createMultiPagePdf } from '../utils/pdfHelper';
+import { createMultiPagePdf, loadJsPdf, renderElementToCanvas } from '../utils/pdfHelper';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { dbService } from '../services/db';
 import { SiloTransaction } from '../types';
-import { Plus, Trash2, ArrowLeft, TrendingUp, TrendingDown, Package, Edit2, Info, User, Download, Calendar, Wallet, ChevronRight, FileText, Paperclip, Search, X as XIcon, Camera, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Plus, Trash2, ArrowLeft, TrendingUp, TrendingDown, Package, Edit2, Info, User, Download, Calendar, Wallet, ChevronRight, FileText, Paperclip, Search, X as XIcon, Camera, AlertTriangle, CheckCircle2, Truck, Sparkles, Loader2, RefreshCw, Scale, ArrowRightLeft, Phone } from 'lucide-react';
 import { validateTcOrVkn } from '../utils/tcNoValidator';
 import { formatCurrency } from '../utils/currency';
+import { computeFarmerLedgerTotals } from '../utils/ledger';
 import { useAppViewModel } from '../context/AppContext';
-import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
-import html2canvas from 'html2canvas';
+import { useBackHandler } from '../utils/navigationManager';
+import { toTelHref } from '../utils/whatsappTemplates';
+import { ModalCloseButton } from './ModalCloseButton';
 import { ConfirmationModal } from './ConfirmationModal';
 import { storage } from '../services/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { generateAIContent, DEFAULT_GEMINI_MODEL } from '../utils/gemini';
+
+const escapeSiloHtml = (val: unknown): string =>
+    String(val ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 
 export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
-    const { userProfile, activeTeamMember, hapticFeedback } = useAppViewModel();
+    const { userProfile, activeTeamMember, hapticFeedback, farmers, prescriptions, payments, manualDebts, myPayments, addPayment, showToast } = useAppViewModel();
     const isAdmin = activeTeamMember?.role !== 'SALES';
     
     // Pamuk, mısır, buğday, arpa, ayçiçeği, antepfıstığı, zeytin
@@ -47,12 +57,191 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     const [dueDate, setDueDate] = useState('');
     const [plateNumber, setPlateNumber] = useState('');
     const [driverPhone, setDriverPhone] = useState('');
+    const [carrierName, setCarrierName] = useState('');
+    const [routeFrom, setRouteFrom] = useState('');
+    const [routeTo, setRouteTo] = useState('');
+    const [tripStatus, setTripStatus] = useState<'IN_TRANSIT' | 'DELIVERED'>('DELIVERED');
     const [transportCost, setTransportCost] = useState('');
     const [isTransportIncluded, setIsTransportIncluded] = useState(false);
     const [transportPayer, setTransportPayer] = useState<'US'|'THEM'>('US');
     const [commissionRate, setCommissionRate] = useState('1');
     const [showSuggestions, setShowSuggestions] = useState(false);
-    const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'BUYS' | 'SELLS' | 'SELLERS' | 'BUYERS' | 'STOCKS' | 'FINANCE'>('OVERVIEW');
+    const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'BUYS' | 'SELLS' | 'SELLERS' | 'BUYERS' | 'STOCKS' | 'FINANCE' | 'TRIPS'>('OVERVIEW');
+    const [tripStatusFilter, setTripStatusFilter] = useState<'ALL' | 'IN_TRANSIT' | 'DELIVERED'>('ALL');
+
+    // #39 Kantar Fişi AI-OCR & #40 Fire Hesaplayıcı State
+    const [isOcrScanning, setIsOcrScanning] = useState(false);
+    const [showWeighbridgePanel, setShowWeighbridgePanel] = useState(false);
+    const [grossWeightKg, setGrossWeightKg] = useState('');
+    const [tareWeightKg, setTareWeightKg] = useState('');
+    const [moisturePct, setMoisturePct] = useState('');
+    const [baseMoisturePct, setBaseMoisturePct] = useState('14');
+    const [hectoliter, setHectoliter] = useState('');
+    const [foreignMatterPct, setForeignMatterPct] = useState('');
+    const [manualDeductionPct, setManualDeductionPct] = useState('');
+
+    // #41 Çiftçi Zirai İlaç Borcu Mahsuplaşma (Takas / Barter)
+    const [enableBarterOffset, setEnableBarterOffset] = useState(false);
+    const [barterFarmerId, setBarterFarmerId] = useState('');
+    const [barterOffsetAmount, setBarterOffsetAmount] = useState('');
+    const [autoDeductFromSiloLedger, setAutoDeductFromSiloLedger] = useState(true);
+
+    // Çiftçilerin canlı zirai ilaç/gübre cari borçlarını tek gerçek kaynak (ledger.ts) ile hesapla
+    const farmerDebtMap = useMemo(() => {
+        const map: Record<string, number> = {};
+        farmers.forEach(f => {
+            if (f.deletedAt) return;
+            const { netDebt } = computeFarmerLedgerTotals({
+                farmerId: f.id,
+                prescriptions,
+                manualDebts,
+                payments,
+                myPayments
+            });
+            map[f.id] = netDebt;
+        });
+        return map;
+    }, [farmers, prescriptions, manualDebts, payments, myPayments]);
+
+    // Kantar Brüt/Dara ve Rutubet/Yabancı Madde Fire Hesaplaması (#40)
+    const weighbridgeSummary = useMemo(() => {
+        const gross = parseFloat(grossWeightKg.replace(',', '.')) || 0;
+        const tare = parseFloat(tareWeightKg.replace(',', '.')) || 0;
+        const rawNet = gross > 0 ? Math.max(0, gross - tare) : (parseFloat(quantity.replace(',', '.')) || 0);
+        const moist = parseFloat(moisturePct.replace(',', '.')) || 0;
+        const baseMoist = parseFloat(baseMoisturePct.replace(',', '.')) || 14;
+        const fm = parseFloat(foreignMatterPct.replace(',', '.')) || 0;
+        const hl = parseFloat(hectoliter.replace(',', '.')) || 0;
+
+        // Fazla rutubet firesi: baz rutubetin üstündeki her 1 puan için %1.2 fire + %1 muafiyet üstü yabancı madde
+        const moisturePenaltyPct = moist > baseMoist ? (moist - baseMoist) * 1.2 : 0;
+        const fmPenaltyPct = fm > 1 ? (fm - 1) * 1.0 : 0;
+        const hlPenaltyPct = hl > 0 && hl < 74 ? (74 - hl) * 0.5 : 0;
+        const autoPct = Math.round((moisturePenaltyPct + fmPenaltyPct + hlPenaltyPct) * 100) / 100;
+        const effectiveDeductionPct = manualDeductionPct.trim() !== ''
+            ? Math.max(0, parseFloat(manualDeductionPct.replace(',', '.')) || 0)
+            : autoPct;
+        const deductionKg = Math.round(rawNet * (effectiveDeductionPct / 100));
+        const payableNetKg = Math.max(0, Math.round(rawNet - deductionKg));
+
+        return {
+            gross,
+            tare,
+            rawNet,
+            moist,
+            hl,
+            fm,
+            autoPct,
+            effectiveDeductionPct,
+            deductionKg,
+            payableNetKg
+        };
+    }, [grossWeightKg, tareWeightKg, quantity, moisturePct, baseMoisturePct, foreignMatterPct, hectoliter, manualDeductionPct]);
+
+    const applyWeighbridgeToQuantity = () => {
+        if (weighbridgeSummary.payableNetKg > 0) {
+            setQuantity(String(weighbridgeSummary.payableNetKg));
+            showToast(`Net ödenecek tonaj uygulandı: ${weighbridgeSummary.payableNetKg.toLocaleString('tr-TR')} kg`, 'success');
+        }
+    };
+
+    // #39 Kantar Fişi AI-OCR Okuma
+    const handleWeighbridgeOcrFile = async (file: File) => {
+        setDocumentFile(file);
+        setIsOcrScanning(true);
+        try {
+            const base64Data = await new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(String(reader.result || ''));
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+            const cleanBase64 = base64Data.replace(/^data:[^;]+;base64,/, '');
+            const prompt = `Bu bir tarımsal kantar tartım fişi (veya müstahsil/sevk irsaliyesi) fotoğrafıdır.
+Görseldeki verileri okuyup SADECE geçerli bir JSON nesnesi olarak döndür (markdown kod bloğu kullanma):
+{
+  "plateNumber": "Araç plakası (örn: 63 ABC 123 veya boş string)",
+  "person": "Müşteri / Üretici / Firma adı (varsa)",
+  "product": "Ürün adı (Pamuk, Mısır, Buğday, Arpa, Ayçiçeği, Antepfıstığı, Zeytin vb.)",
+  "grossWeightKg": 0,
+  "tareWeightKg": 0,
+  "rawNetWeightKg": 0,
+  "moisturePct": 0,
+  "hectoliter": 0,
+  "foreignMatterPct": 0,
+  "carrierName": "Nakliye firması veya şoför adı (varsa)"
+}
+Not: Ton olarak yazılmışsa KG'ye çevir (örn: 24.580 kg veya 24,58 ton -> 24580). Sayı yoksa 0 yaz.`;
+
+            const rawText = await generateAIContent(DEFAULT_GEMINI_MODEL, [
+                {
+                    role: 'user',
+                    parts: [
+                        { text: prompt },
+                        { inlineData: { mimeType: file.type || 'image/jpeg', data: cleanBase64 } }
+                    ]
+                }
+            ]);
+
+            const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+            if (!jsonMatch) throw new Error('Kantar fişi JSON verisi çözümlenemedi.');
+            const parsed = JSON.parse(jsonMatch[0]);
+
+            if (parsed.plateNumber) setPlateNumber(String(parsed.plateNumber).toUpperCase().trim());
+            if (parsed.person && !person.trim()) setPerson(String(parsed.person).trim());
+            if (parsed.carrierName && !carrierName.trim()) setCarrierName(String(parsed.carrierName).trim());
+            if (parsed.product) {
+                const pNorm = String(parsed.product).toLowerCase();
+                const matchedProd = PRODUCTS.find(pr => pNorm.includes(pr.toLowerCase()) || tr(pNorm).includes(tr(pr).toLowerCase()));
+                if (matchedProd) setProduct(matchedProd);
+            }
+
+            const gKg = Number(parsed.grossWeightKg) || 0;
+            const tKg = Number(parsed.tareWeightKg) || 0;
+            const nKg = Number(parsed.rawNetWeightKg) || (gKg > 0 && tKg > 0 ? Math.max(0, gKg - tKg) : 0);
+            const mPct = Number(parsed.moisturePct) || 0;
+            const hlVal = Number(parsed.hectoliter) || 0;
+            const fmPct = Number(parsed.foreignMatterPct) || 0;
+
+            if (gKg > 0) setGrossWeightKg(String(gKg));
+            if (tKg > 0) setTareWeightKg(String(tKg));
+            if (mPct > 0) setMoisturePct(String(mPct));
+            if (hlVal > 0) setHectoliter(String(hlVal));
+            if (fmPct > 0) setForeignMatterPct(String(fmPct));
+
+            if (gKg > 0 || mPct > 0 || fmPct > 0) {
+                setShowWeighbridgePanel(true);
+            }
+            if (nKg > 0) {
+                const baseM = parseFloat(baseMoisturePct) || 14;
+                const mPen = mPct > baseM ? (mPct - baseM) * 1.2 : 0;
+                const fPen = fmPct > 1 ? (fmPct - 1) : 0;
+                const hPen = hlVal > 0 && hlVal < 74 ? (74 - hlVal) * 0.5 : 0;
+                const totPenPct = mPen + fPen + hPen;
+                const dedKg = Math.round(nKg * (totPenPct / 100));
+                setQuantity(String(Math.max(0, Math.round(nKg - dedKg))));
+            }
+            showToast('Kantar fişi yapay zeka ile okundu ve alanlara aktarıldı.', 'success');
+        } catch (err: any) {
+            console.error('Weighbridge OCR error:', err);
+            showToast('Kantar fişi okunamadı, değerleri kontrol edip elle girebilirsiniz.', 'error');
+        } finally {
+            setIsOcrScanning(false);
+        }
+    };
+
+    const toggleTripStatus = async (tx: SiloTransaction) => {
+        if (!isAdmin) return;
+        const nextStatus: 'IN_TRANSIT' | 'DELIVERED' = tx.tripStatus === 'IN_TRANSIT' ? 'DELIVERED' : 'IN_TRANSIT';
+        const updated: SiloTransaction = {
+            ...tx,
+            tripStatus: nextStatus,
+            lastUpdated: new Date().toISOString()
+        };
+        await dbService.updateSiloTransaction(updated);
+        showToast(`${tx.plateNumber || 'Sefer'} durumu "${nextStatus === 'DELIVERED' ? 'Teslim Edildi' : 'Yolda'}" olarak güncellendi.`, 'success');
+        loadData();
+    };
     
     const [selectedProductDetails, setSelectedProductDetails] = useState<string | null>(null);
     const [selectedPersonDetails, setSelectedPersonDetails] = useState<string | null>(null);
@@ -107,7 +296,14 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             const parsedPrice = unitPrice.replace(',', '.');
             const parsedTransport = isTransportIncluded && transportCost ? transportCost.replace(',', '.') : undefined;
             
-            const qtyNum = type === 'PAYMENT_IN' || type === 'PAYMENT_OUT' ? 0 : parseFloat(parsedQuantity);
+            const rawQtyNum = type === 'PAYMENT_IN' || type === 'PAYMENT_OUT' ? 0 : parseFloat(parsedQuantity);
+            // Kantar / Rutubet fire girişi varsa net ödenecek tonajı otomatik esas al (#40)
+            const qtyNum =
+                (type === 'BUY' || type === 'SELL') &&
+                (weighbridgeSummary.gross > 0 || weighbridgeSummary.deductionKg > 0) &&
+                weighbridgeSummary.payableNetKg > 0
+                    ? weighbridgeSummary.payableNetKg
+                    : rawQtyNum;
             const priceNum = parseFloat(parsedPrice);
             if (isNaN(qtyNum) || isNaN(priceNum) || priceNum <= 0) {
                 setIsLoading(false);
@@ -142,13 +338,37 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
             let finalDocUrl = editingTx?.documentUrl || undefined;
             if (documentFile) {
-                const fileExt = documentFile.name.split('.').pop();
-                const fileName = `silo_docs/${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
+                const rawExt = (documentFile.name.split('.').pop() || 'jpg').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+                const ownerScope = dbService.getCurrentUserId() || 'shared';
+                const fileName = `silo_docs/${ownerScope}/${crypto.randomUUID()}.${rawExt || 'jpg'}`;
                 const fileRef = ref(storage, fileName);
                 await uploadBytes(fileRef, documentFile);
                 finalDocUrl = await getDownloadURL(fileRef);
             }
             
+            const isCargoTx = type === 'BUY' || type === 'SELL';
+            const wbFields: Partial<SiloTransaction> = isCargoTx ? {
+                carrierName: carrierName.trim() || undefined,
+                routeFrom: routeFrom.trim() || undefined,
+                routeTo: routeTo.trim() || undefined,
+                tripStatus: plateNumber.trim() || carrierName.trim() ? tripStatus : undefined,
+                grossWeightKg: weighbridgeSummary.gross > 0 ? weighbridgeSummary.gross : undefined,
+                tareWeightKg: weighbridgeSummary.tare > 0 ? weighbridgeSummary.tare : undefined,
+                rawNetWeightKg: weighbridgeSummary.gross > 0 ? weighbridgeSummary.rawNet : undefined,
+                moisturePct: weighbridgeSummary.moist > 0 ? weighbridgeSummary.moist : undefined,
+                hectoliter: weighbridgeSummary.hl > 0 ? weighbridgeSummary.hl : undefined,
+                foreignMatterPct: weighbridgeSummary.fm > 0 ? weighbridgeSummary.fm : undefined,
+                deductionPct: weighbridgeSummary.effectiveDeductionPct > 0 ? weighbridgeSummary.effectiveDeductionPct : undefined,
+                deductionKg: weighbridgeSummary.deductionKg > 0 ? weighbridgeSummary.deductionKg : undefined,
+            } : {};
+
+            const rawBarterOffset = type === 'BUY' && enableBarterOffset && barterFarmerId
+                ? Math.max(0, parseFloat(barterOffsetAmount.replace(',', '.')) || 0)
+                : 0;
+            const farmerCurrentDebt = barterFarmerId ? Math.max(0, farmerDebtMap[barterFarmerId] || 0) : 0;
+            const maxAllowedBarter = farmerCurrentDebt > 0 ? Math.min(Math.max(0, totalAmt), farmerCurrentDebt) : Math.max(0, totalAmt);
+            const barterOffsetNum = Math.min(rawBarterOffset, maxAllowedBarter);
+
             if (editingTx) {
                 const updated: SiloTransaction = {
                     ...editingTx,
@@ -161,18 +381,53 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                     totalAmount: totalAmt,
                     commissionRate: commRate,
                     commissionAmount: commAmt,
-                    paymentType: type === 'BUY' || type === 'SELL' ? paymentMode : undefined,
-                    dueDate: (type === 'BUY' || type === 'SELL') && paymentMode === 'TERM' && dueDate ? new Date(dueDate).toISOString() : undefined,
-                    plateNumber: (type === 'BUY' || type === 'SELL') && plateNumber.trim() ? plateNumber.trim() : undefined,
-                    driverPhone: (type === 'BUY' || type === 'SELL') && driverPhone.trim() ? driverPhone.trim() : undefined,
-                    transportCost: (type === 'BUY' || type === 'SELL') && parsedTransport ? parseFloat(parsedTransport) : undefined,
-                    transportPayer: (type === 'BUY' || type === 'SELL') && parsedTransport ? transportPayer : undefined,
+                    paymentType: isCargoTx ? paymentMode : undefined,
+                    dueDate: isCargoTx && paymentMode === 'TERM' && dueDate ? new Date(dueDate).toISOString() : undefined,
+                    plateNumber: isCargoTx && plateNumber.trim() ? plateNumber.trim() : undefined,
+                    driverPhone: isCargoTx && driverPhone.trim() ? driverPhone.trim() : undefined,
+                    transportCost: isCargoTx && parsedTransport ? parseFloat(parsedTransport) : undefined,
+                    transportPayer: isCargoTx && parsedTransport ? transportPayer : undefined,
                     documentUrl: finalDocUrl,
+                    ...wbFields,
                 };
                 await dbService.updateSiloTransaction(updated);
             } else {
+                const txId = crypto.randomUUID();
+                let linkedPaymentMarker: string | undefined = undefined;
+
+                // #41 Mahsul Alışı <-> Zirai İlaç Cari Borcu Mahsuplaşma (Takas)
+                if (barterOffsetNum > 0 && barterFarmerId) {
+                    const targetFarmer = farmers.find(f => f.id === barterFarmerId);
+                    const realPaymentId = await addPayment({
+                        farmerId: barterFarmerId,
+                        amount: barterOffsetNum,
+                        date: new Date(date).toISOString(),
+                        method: 'OTHER',
+                        note: `Silo Mahsul Takası (${product} - ${qtyNum.toLocaleString('tr-TR')} kg | Silo Fiş #${txId.slice(-6).toUpperCase()})`,
+                        createdById: activeTeamMember?.id
+                    });
+                    linkedPaymentMarker = realPaymentId;
+
+                    if (autoDeductFromSiloLedger) {
+                        const siloOffsetPayment: SiloTransaction = {
+                            id: `${txId}_barter`,
+                            type: 'PAYMENT_OUT',
+                            product: '-',
+                            person,
+                            date: new Date(date).toISOString(),
+                            quantity: 0,
+                            unitPrice: barterOffsetNum,
+                            totalAmount: barterOffsetNum,
+                            note: `Zirai İlaç Borcu Mahsubu (${targetFarmer?.fullName || person})`,
+                            createdById: activeTeamMember?.id,
+                        };
+                        await dbService.addSiloTransaction(siloOffsetPayment);
+                    }
+                    showToast(`${formatCurrency(barterOffsetNum, userProfile?.currency || 'TRY')} zirai ilaç borcundan mahsup edildi.`, 'success');
+                }
+
                 const newTx: SiloTransaction = {
-                    id: String(Date.now()),
+                    id: txId,
                     type,
                     product: type === 'PAYMENT_IN' || type === 'PAYMENT_OUT' ? '-' : product,
                     person,
@@ -182,14 +437,18 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                     totalAmount: totalAmt,
                     commissionRate: commRate,
                     commissionAmount: commAmt,
-                    paymentType: type === 'BUY' || type === 'SELL' ? paymentMode : undefined,
-                    dueDate: (type === 'BUY' || type === 'SELL') && paymentMode === 'TERM' && dueDate ? new Date(dueDate).toISOString() : undefined,
-                    plateNumber: (type === 'BUY' || type === 'SELL') && plateNumber.trim() ? plateNumber.trim() : undefined,
-                    driverPhone: (type === 'BUY' || type === 'SELL') && driverPhone.trim() ? driverPhone.trim() : undefined,
-                    transportCost: (type === 'BUY' || type === 'SELL') && parsedTransport ? parseFloat(parsedTransport) : undefined,
-                    transportPayer: (type === 'BUY' || type === 'SELL') && parsedTransport ? transportPayer : undefined,
+                    paymentType: isCargoTx ? paymentMode : undefined,
+                    dueDate: isCargoTx && paymentMode === 'TERM' && dueDate ? new Date(dueDate).toISOString() : undefined,
+                    plateNumber: isCargoTx && plateNumber.trim() ? plateNumber.trim() : undefined,
+                    driverPhone: isCargoTx && driverPhone.trim() ? driverPhone.trim() : undefined,
+                    transportCost: isCargoTx && parsedTransport ? parseFloat(parsedTransport) : undefined,
+                    transportPayer: isCargoTx && parsedTransport ? transportPayer : undefined,
+                    barterFarmerId: barterOffsetNum > 0 ? barterFarmerId : undefined,
+                    barterOffsetAmount: barterOffsetNum > 0 ? barterOffsetNum : undefined,
+                    linkedPaymentId: linkedPaymentMarker,
                     createdById: activeTeamMember?.id,
                     documentUrl: finalDocUrl,
+                    ...wbFields,
                 };
                 await dbService.addSiloTransaction(newTx);
             }
@@ -301,12 +560,13 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         // Wait for state update and React render
         setTimeout(async () => {
             try {
+                const jsPDF = await loadJsPdf();
                 const doc = new jsPDF('p', 'mm', 'a4');
                 const pages = document.querySelectorAll('.pdf-page-container');
                 
                 for (let i = 0; i < pages.length; i++) {
                     const el = pages[i] as HTMLElement;
-                    const canvas = await html2canvas(el, { 
+                    const canvas = await renderElementToCanvas(el, { 
                         scale: 2, 
                         useCORS: true,
                         logging: false,
@@ -360,11 +620,26 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         setDueDate('');
         setPlateNumber('');
         setDriverPhone('');
+        setCarrierName('');
+        setRouteFrom('');
+        setRouteTo('');
+        setTripStatus('DELIVERED');
         setTransportCost('');
         setIsTransportIncluded(false);
         setTransportPayer('US');
         setCommissionRate('1');
         setDocumentFile(null);
+        setShowWeighbridgePanel(false);
+        setGrossWeightKg('');
+        setTareWeightKg('');
+        setMoisturePct('');
+        setHectoliter('');
+        setForeignMatterPct('');
+        setManualDeductionPct('');
+        setEnableBarterOffset(false);
+        setBarterFarmerId('');
+        setBarterOffsetAmount('');
+        setAutoDeductFromSiloLedger(true);
         setIsModalOpen(true);
     };
     
@@ -379,11 +654,25 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         setPaymentMode(tx.paymentType || 'CASH');
         setPlateNumber(tx.plateNumber || '');
         setDriverPhone(tx.driverPhone || '');
+        setCarrierName(tx.carrierName || '');
+        setRouteFrom(tx.routeFrom || '');
+        setRouteTo(tx.routeTo || '');
+        setTripStatus(tx.tripStatus || 'DELIVERED');
         setTransportCost(tx.transportCost ? tx.transportCost.toString() : '');
         setIsTransportIncluded(!!tx.transportCost);
         setTransportPayer(tx.transportPayer || 'US');
         setCommissionRate(tx.commissionRate ? tx.commissionRate.toString() : '1');
         setDocumentFile(null);
+        setGrossWeightKg(tx.grossWeightKg ? String(tx.grossWeightKg) : '');
+        setTareWeightKg(tx.tareWeightKg ? String(tx.tareWeightKg) : '');
+        setMoisturePct(tx.moisturePct ? String(tx.moisturePct) : '');
+        setHectoliter(tx.hectoliter ? String(tx.hectoliter) : '');
+        setForeignMatterPct(tx.foreignMatterPct ? String(tx.foreignMatterPct) : '');
+        setManualDeductionPct(tx.deductionPct ? String(tx.deductionPct) : '');
+        setShowWeighbridgePanel(Boolean(tx.grossWeightKg || tx.moisturePct || tx.hectoliter || tx.foreignMatterPct));
+        setEnableBarterOffset(Boolean(tx.barterFarmerId));
+        setBarterFarmerId(tx.barterFarmerId || '');
+        setBarterOffsetAmount(tx.barterOffsetAmount ? String(tx.barterOffsetAmount) : '');
         // Handle timezone issues manually to get local date
         const localDate = new Date(tx.date);
         setDate(`${localDate.getFullYear()}-${String(localDate.getMonth() + 1).padStart(2, '0')}-${String(localDate.getDate()).padStart(2, '0')}`);
@@ -402,6 +691,12 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         setEditingTx(null);
         setDocumentFile(null);
     };
+
+    // UI-10: Android geri tuşu açık modal/overlay katmanını kapatır
+    useBackHandler(isModalOpen, closeModal, 'SiloScreen_txModal', 50);
+    useBackHandler(isContactModalOpen, closeContactModal, 'SiloScreen_contactModal', 50);
+    useBackHandler(!!selectedPersonDetails, () => setSelectedPersonDetails(null), 'SiloScreen_personDetails', 50);
+    useBackHandler(!!selectedProductDetails, () => setSelectedProductDetails(null), 'SiloScreen_productDetails', 50);
     
     const generatePDF = async (tx: SiloTransaction) => {
         hapticFeedback('medium');
@@ -448,23 +743,23 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                             </thead>
                             <tbody>
                                 <tr style="border-bottom: 1px solid #f1f5f9;">
-                                    <td style="padding: 14px 12px; font-weight: 600; color: #0f172a;">${tx.product.toUpperCase()}</td>
-                                    <td style="padding: 14px 12px; text-align: right; color: #334155;">${tx.quantity?.toLocaleString('tr-TR')} KG</td>
-                                    <td style="padding: 14px 12px; text-align: right; color: #334155;">${formatCurrency(tx.unitPrice, 'TRY')}</td>
-                                    <td style="padding: 14px 12px; text-align: right; font-weight: 600; color: #0f172a;">${formatCurrency((tx.quantity || 0) * (tx.unitPrice || 0), 'TRY')}</td>
+                                    <td style="padding: 14px 12px; font-weight: 600; color: #0f172a;">${escapeSiloHtml(tx.product.toUpperCase())}</td>
+                                    <td style="padding: 14px 12px; text-align: right; color: #334155;">${escapeSiloHtml(tx.quantity?.toLocaleString('tr-TR'))} KG</td>
+                                    <td style="padding: 14px 12px; text-align: right; color: #334155;">${escapeSiloHtml(formatCurrency(tx.unitPrice, 'TRY'))}</td>
+                                    <td style="padding: 14px 12px; text-align: right; font-weight: 600; color: #0f172a;">${escapeSiloHtml(formatCurrency((tx.quantity || 0) * (tx.unitPrice || 0), 'TRY'))}</td>
                                 </tr>
                                 ${tx.commissionAmount ? `
                                 <tr style="border-bottom: 1px solid #f1f5f9; font-size: 13px;">
-                                    <td style="padding: 10px 12px; color: #64748b;">Komisyon (${tx.commissionRate}%)</td>
+                                    <td style="padding: 10px 12px; color: #64748b;">Komisyon (${escapeSiloHtml(tx.commissionRate)}%)</td>
                                     <td style="padding: 10px 12px; text-align: right; color: #94a3b8;" colspan="2">(Fiyattan Düşüldü)</td>
-                                    <td style="padding: 10px 12px; text-align: right; color: #e11d48;">-${formatCurrency(tx.commissionAmount, 'TRY')}</td>
+                                    <td style="padding: 10px 12px; text-align: right; color: #e11d48;">-${escapeSiloHtml(formatCurrency(tx.commissionAmount, 'TRY'))}</td>
                                 </tr>
                                 ` : ''}
                                 ${tx.transportCost ? `
                                 <tr style="border-bottom: 1px solid #f1f5f9; font-size: 13px;">
                                     <td style="padding: 10px 12px; color: #64748b;">Nakliye Maliyeti</td>
                                     <td style="padding: 10px 12px; text-align: right; color: #94a3b8;" colspan="2">${(tx.transportPayer === 'US' && tx.type === 'SELL') || (tx.transportPayer === 'THEM' && tx.type === 'BUY') ? '(Düşüldü)' : '(Eklendi)'}</td>
-                                    <td style="padding: 10px 12px; text-align: right; color: ${(tx.transportPayer === 'US' && tx.type === 'SELL') || (tx.transportPayer === 'THEM' && tx.type === 'BUY') ? '#e11d48' : '#10b981'};">${(tx.transportPayer === 'US' && tx.type === 'SELL') || (tx.transportPayer === 'THEM' && tx.type === 'BUY') ? '-' : '+'}${formatCurrency(tx.transportCost, 'TRY')}</td>
+                                    <td style="padding: 10px 12px; text-align: right; color: ${(tx.transportPayer === 'US' && tx.type === 'SELL') || (tx.transportPayer === 'THEM' && tx.type === 'BUY') ? '#e11d48' : '#10b981'};">${(tx.transportPayer === 'US' && tx.type === 'SELL') || (tx.transportPayer === 'THEM' && tx.type === 'BUY') ? '-' : '+'}${escapeSiloHtml(formatCurrency(tx.transportCost, 'TRY'))}</td>
                                 </tr>
                                 ` : ''}
                             </tbody>
@@ -484,9 +779,9 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                             </thead>
                             <tbody>
                                 <tr style="border-bottom: 1px solid #f1f5f9;">
-                                    <td style="padding: 14px 12px; font-weight: 600; color: #0f172a;">${txTypeName}</td>
-                                    <td style="padding: 14px 12px; color: #334155;">${tx.person} CARİ HESABI</td>
-                                    <td style="padding: 14px 12px; text-align: right; font-weight: 600; color: #0f172a;">${formatCurrency(tx.totalAmount, 'TRY')}</td>
+                                    <td style="padding: 14px 12px; font-weight: 600; color: #0f172a;">${escapeSiloHtml(txTypeName)}</td>
+                                    <td style="padding: 14px 12px; color: #334155;">${escapeSiloHtml(tx.person)} CARİ HESABI</td>
+                                    <td style="padding: 14px 12px; text-align: right; font-weight: 600; color: #0f172a;">${escapeSiloHtml(formatCurrency(tx.totalAmount, 'TRY'))}</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -501,25 +796,25 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                     <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px; margin-top: 20px;">
                         <div>
                             <h1 style="margin: 0; font-size: 28px; font-weight: 900; color: #0f172a; letter-spacing: -0.5px;">${tx.type === 'BUY' || tx.type === 'SELL' ? 'ÜRÜN İŞLEM FİŞİ' : 'FİNANSAL İŞLEM FİŞİ'}</h1>
-                            <p style="margin: 8px 0 0; font-size: 14px; font-weight: 500; color: #64748b;">${userProfile?.companyName || 'Silo Yönetimi'}</p>
+                            <p style="margin: 8px 0 0; font-size: 14px; font-weight: 500; color: #64748b;">${escapeSiloHtml(userProfile?.companyName || 'Silo Yönetimi')}</p>
                         </div>
                         <div style="text-align: right;">
-                            <h2 style="margin: 0; font-size: 18px; font-weight: 700; color: ${primaryColor};">${txTypeName}</h2>
-                            <p style="margin: 6px 0 0; font-size: 14px; color: #475569; font-weight: 600;">Tarih: ${dateStr}</p>
-                            <p style="margin: 4px 0 0; font-size: 13px; color: #94a3b8;">NO: #${tx.id.substring(tx.id.length - 8).toUpperCase()}</p>
+                            <h2 style="margin: 0; font-size: 18px; font-weight: 700; color: ${primaryColor};">${escapeSiloHtml(txTypeName)}</h2>
+                            <p style="margin: 6px 0 0; font-size: 14px; color: #475569; font-weight: 600;">Tarih: ${escapeSiloHtml(dateStr)}</p>
+                            <p style="margin: 4px 0 0; font-size: 13px; color: #94a3b8;">NO: #${escapeSiloHtml(tx.id.substring(Math.max(0, tx.id.length - 8)).toUpperCase())}</p>
                         </div>
                     </div>
 
                     <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 24px; display: flex; justify-content: space-between;">
                         <div>
                             <p style="margin: 0; font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">${isBuy || tx.type === 'PAYMENT_OUT' ? 'TEDARİKÇİ / SATICI:' : 'MÜŞTERİ / ALICI:'}</p>
-                            <p style="margin: 8px 0 0; font-size: 20px; font-weight: 800; color: #0f172a;">${tx.person.toUpperCase()}</p>
+                            <p style="margin: 8px 0 0; font-size: 20px; font-weight: 800; color: #0f172a;">${escapeSiloHtml(tx.person.toUpperCase())}</p>
                         </div>
                         ${!isPay && tx.plateNumber ? `
                         <div style="text-align: right; border-left: 2px dashed #cbd5e1; padding-left: 24px;">
                             <p style="margin: 0; font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase;">ARAÇ / NAKLİYE:</p>
-                            <p style="margin: 8px 0 0; font-size: 18px; font-weight: 700; color: #334155;">${tx.plateNumber.toUpperCase()}</p>
-                            ${tx.driverPhone ? `<p style="margin: 4px 0 0; font-size: 13px; color: #64748b;">Şoför: ${tx.driverPhone}</p>` : ''}
+                            <p style="margin: 8px 0 0; font-size: 18px; font-weight: 700; color: #334155;">${escapeSiloHtml(tx.plateNumber.toUpperCase())}</p>
+                            ${tx.driverPhone ? `<p style="margin: 4px 0 0; font-size: 13px; color: #64748b;">Şoför: ${escapeSiloHtml(tx.driverPhone)}</p>` : ''}
                         </div>
                         ` : ''}
                     </div>
@@ -562,8 +857,8 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             document.body.appendChild(container);
             
             const elementToCapture = container.firstElementChild as HTMLElement;
-            const canvas = await html2canvas(elementToCapture, {
-                scale: 2, 
+            const canvas = await renderElementToCanvas(elementToCapture, {
+                scale: 3, 
                 backgroundColor: '#ffffff',
                 useCORS: true,
                 logging: false
@@ -571,7 +866,7 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             
             document.body.removeChild(container);
             
-            const pdf = createMultiPagePdf(canvas);
+            const pdf = await createMultiPagePdf(canvas);
             
             const charMap: {[key: string]: string} = {'Ğ':'G','ğ':'g','Ü':'U','ü':'u','Ş':'S','ş':'s','İ':'I','ı':'i','Ö':'O','ö':'o','Ç':'C','ç':'c'};
             const safeName = tx.person
@@ -627,12 +922,12 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                 
                 rowsHtml += `
                     <tr style="border-bottom: 1px solid #f1f5f9;">
-                        <td style="padding: 12px; color: #334155;">${new Date(tx.date).toLocaleDateString('tr-TR')}</td>
-                        <td style="padding: 12px; font-weight: 600; color: #0f172a;">${operation}</td>
-                        <td style="padding: 12px; text-align: right; color: #334155;">${tx.quantity ? tx.quantity.toLocaleString('tr-TR') + ' KG' : '-'}</td>
-                        <td style="padding: 12px; text-align: right; color: #e11d48;">${balanceChange < 0 ? formatCurrency(Math.abs(balanceChange), 'TRY') : '-'}</td>
-                        <td style="padding: 12px; text-align: right; color: #10b981;">${balanceChange > 0 ? formatCurrency(Math.abs(balanceChange), 'TRY') : '-'}</td>
-                        <td style="padding: 12px; text-align: right; font-weight: 700; color: ${runningBalance >= 0 ? '#10b981' : '#e11d48'};">${formatCurrency(Math.abs(runningBalance), 'TRY')} ${runningBalance > 0 ? '(A)' : runningBalance < 0 ? '(B)' : ''}</td>
+                        <td style="padding: 12px; color: #334155;">${escapeSiloHtml(new Date(tx.date).toLocaleDateString('tr-TR'))}</td>
+                        <td style="padding: 12px; font-weight: 600; color: #0f172a;">${escapeSiloHtml(operation)}</td>
+                        <td style="padding: 12px; text-align: right; color: #334155;">${tx.quantity ? escapeSiloHtml(tx.quantity.toLocaleString('tr-TR')) + ' KG' : '-'}</td>
+                        <td style="padding: 12px; text-align: right; color: #e11d48;">${balanceChange < 0 ? escapeSiloHtml(formatCurrency(Math.abs(balanceChange), 'TRY')) : '-'}</td>
+                        <td style="padding: 12px; text-align: right; color: #10b981;">${balanceChange > 0 ? escapeSiloHtml(formatCurrency(Math.abs(balanceChange), 'TRY')) : '-'}</td>
+                        <td style="padding: 12px; text-align: right; font-weight: 700; color: ${runningBalance >= 0 ? '#10b981' : '#e11d48'};">${escapeSiloHtml(formatCurrency(Math.abs(runningBalance), 'TRY'))} ${runningBalance > 0 ? '(A)' : runningBalance < 0 ? '(B)' : ''}</td>
                     </tr>
                 `;
             });
@@ -644,19 +939,19 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                     <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px; margin-top: 20px;">
                         <div>
                             <h1 style="margin: 0; font-size: 28px; font-weight: 900; color: #0f172a; letter-spacing: -0.5px;">CARİ HESAP EKSTRESİ</h1>
-                            <p style="margin: 8px 0 0; font-size: 14px; font-weight: 500; color: #64748b;">${userProfile?.companyName || 'Silo Yönetimi'}</p>
+                            <p style="margin: 8px 0 0; font-size: 14px; font-weight: 500; color: #64748b;">${escapeSiloHtml(userProfile?.companyName || 'Silo Yönetimi')}</p>
                         </div>
                         <div style="text-align: right;">
-                            <p style="margin: 6px 0 0; font-size: 14px; color: #475569; font-weight: 600;">Oluşturulma: ${dateStr}</p>
+                            <p style="margin: 6px 0 0; font-size: 14px; color: #475569; font-weight: 600;">Oluşturulma: ${escapeSiloHtml(dateStr)}</p>
                         </div>
                     </div>
 
                     <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 24px; display: flex; justify-content: space-between; margin-bottom: 30px;">
                         <div>
                             <p style="margin: 0; font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase;">CARİ / MÜŞTERİ:</p>
-                            <p style="margin: 8px 0 0; font-size: 20px; font-weight: 800; color: #0f172a;">${personName.toUpperCase()}</p>
-                            ${statInfo?.phone ? `<p style="margin: 4px 0 0; font-size: 13px; color: #64748b;">Telefon: ${statInfo.phone}</p>` : ''}
-                            ${statInfo?.address ? `<p style="margin: 4px 0 0; font-size: 13px; color: #64748b;">Adres: ${statInfo.address}</p>` : ''}
+                            <p style="margin: 8px 0 0; font-size: 20px; font-weight: 800; color: #0f172a;">${escapeSiloHtml(personName.toUpperCase())}</p>
+                            ${statInfo?.phone ? `<p style="margin: 4px 0 0; font-size: 13px; color: #64748b;">Telefon: ${escapeSiloHtml(statInfo.phone)}</p>` : ''}
+                            ${statInfo?.address ? `<p style="margin: 4px 0 0; font-size: 13px; color: #64748b;">Adres: ${escapeSiloHtml(statInfo.address)}</p>` : ''}
                         </div>
                         <div style="text-align: right; border-left: 2px dashed #cbd5e1; padding-left: 24px;">
                             <p style="margin: 0; font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase;">GÜNCEL BAKİYE:</p>
@@ -693,8 +988,8 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             document.body.appendChild(container);
             
             const elementToCapture = container.firstElementChild as HTMLElement;
-            const canvas = await html2canvas(elementToCapture, {
-                scale: 2, 
+            const canvas = await renderElementToCanvas(elementToCapture, {
+                scale: 3, 
                 backgroundColor: '#ffffff',
                 useCORS: true,
                 logging: false
@@ -702,7 +997,7 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             
             document.body.removeChild(container);
             
-            const pdf = createMultiPagePdf(canvas);
+            const pdf = await createMultiPagePdf(canvas);
             
             const charMap: {[key: string]: string} = {'Ğ':'G','ğ':'g','Ü':'U','ü':'u','Ş':'S','ş':'s','İ':'I','ı':'i','Ö':'O','ö':'o','Ç':'C','ç':'c'};
             const safeName = personName
@@ -856,51 +1151,52 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
     return (
         <div className="space-y-6 pb-20 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div className="flex flex-col gap-4 mb-4 mt-2 px-2">
-                <div className="flex items-center space-x-3">
-                     <button onClick={onBack} className="p-2 -ml-2 rounded-full hover:bg-stone-800 transition-colors text-stone-400">
-                        <ArrowLeft size={20} />
+            <div className="flex flex-col gap-3.5 mb-3 mt-1 px-1">
+                <div className="flex items-center space-x-2.5">
+                     <button onClick={onBack} className="p-2 min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl hover:bg-stone-800 transition-colors text-stone-300">
+                        <ArrowLeft size={18} />
                     </button>
                     <div>
-                        <h1 className="text-2xl font-black text-stone-100 tracking-tight">SİLOM</h1>
+                        <h1 className="text-xl sm:text-2xl font-bold text-stone-100 tracking-tight">Silo ve Tüccar Yönetimi</h1>
                     </div>
                 </div>
                 {isAdmin && (
-                    <div className="grid grid-cols-4 gap-2">
-                        <button onClick={generateReportPDF} className="w-full py-2 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded-xl text-[10px] sm:text-xs font-bold hover:bg-purple-500/20 transition-all flex items-center justify-center">
-                            <FileText size={14} className="mr-1.5 hidden sm:block" />
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <button onClick={generateReportPDF} className="w-full min-h-[40px] px-3 py-2 bg-purple-500/10 text-purple-300 border border-purple-500/25 rounded-xl text-xs font-bold hover:bg-purple-500/20 transition-all flex items-center justify-center gap-1.5">
+                            <FileText size={14} className="shrink-0" />
                             <span className="truncate">Rapor</span>
                         </button>
-                        <button onClick={() => setIsContactModalOpen(true)} className="w-full py-2 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-xl text-[10px] sm:text-xs font-bold hover:bg-blue-500/20 transition-all flex items-center justify-center">
-                            <User size={14} className="mr-1.5 hidden sm:block" />
-                            <span className="truncate">Kişi Ekle</span>
+                        <button onClick={() => setIsContactModalOpen(true)} className="w-full min-h-[40px] px-3 py-2 bg-blue-500/10 text-blue-300 border border-blue-500/25 rounded-xl text-xs font-bold hover:bg-blue-500/20 transition-all flex items-center justify-center gap-1.5">
+                            <User size={14} className="shrink-0" />
+                            <span className="truncate">Kişi ekle</span>
                         </button>
-                        <button onClick={() => openNewModal('BUY')} className="w-full py-2 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-xl text-[10px] sm:text-xs font-bold hover:bg-emerald-500/20 transition-all flex items-center justify-center">
-                            <TrendingDown size={14} className="mr-1.5 hidden sm:block" />
-                            <span className="truncate">Alım</span>
+                        <button onClick={() => openNewModal('BUY')} className="w-full min-h-[40px] px-3 py-2 bg-emerald-500/10 text-emerald-300 border border-emerald-500/25 rounded-xl text-xs font-bold hover:bg-emerald-500/20 transition-all flex items-center justify-center gap-1.5">
+                            <TrendingDown size={14} className="shrink-0" />
+                            <span className="truncate">Alım gir</span>
                         </button>
-                        <button onClick={() => openNewModal('SELL')} className="w-full py-2 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-xl text-[10px] sm:text-xs font-bold hover:bg-amber-500/20 transition-all flex items-center justify-center">
-                            <TrendingUp size={14} className="mr-1.5 hidden sm:block" />
-                            <span className="truncate">Satış</span>
+                        <button onClick={() => openNewModal('SELL')} className="w-full min-h-[40px] px-3 py-2 bg-amber-500/10 text-amber-300 border border-amber-500/25 rounded-xl text-xs font-bold hover:bg-amber-500/20 transition-all flex items-center justify-center gap-1.5">
+                            <TrendingUp size={14} className="shrink-0" />
+                            <span className="truncate">Satış gir</span>
                         </button>
                     </div>
                 )}
             </div>
 
-            <div className="flex overflow-x-auto no-scrollbar gap-2 px-2 border-b border-white/5 pb-2">
+            <div className="mks-tab-rail px-1 border-b border-white/5 pb-2.5">
                 {[
-                    { id: 'OVERVIEW', label: 'Genel Durum' },
+                    { id: 'OVERVIEW', label: 'Genel durum' },
                     { id: 'BUYS', label: 'Alışlar' },
                     { id: 'SELLS', label: 'Satışlar' },
-                    { id: 'SELLERS', label: 'Çiftçi' },
-                    { id: 'BUYERS', label: 'Arsa' },
-                    { id: 'STOCKS', label: 'Stok Durumu' },
-                    { id: 'FINANCE', label: 'Finansal Durum' }
+                    { id: 'TRIPS', label: 'Sefer defteri' },
+                    { id: 'SELLERS', label: 'Çiftçiler' },
+                    { id: 'BUYERS', label: 'Alıcılar' },
+                    { id: 'STOCKS', label: 'Stok durumu' },
+                    { id: 'FINANCE', label: 'Finansal durum' }
                 ].map(tab => (
                     <button
                         key={tab.id}
                         onClick={() => setActiveTab(tab.id as any)}
-                        className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-colors ${activeTab === tab.id ? 'bg-stone-800 text-white' : 'text-stone-500 hover:bg-stone-900'}`}
+                        className={`shrink-0 min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-colors ${activeTab === tab.id ? 'bg-stone-800 text-white border border-white/10' : 'text-stone-400 hover:bg-stone-900'}`}
                     >
                         {tab.label}
                     </button>
@@ -930,11 +1226,11 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                                          
                                          <div className="space-y-2 mt-auto">
                                              <div>
-                                                 <p className="text-[9px] font-black uppercase tracking-widest text-stone-500 mb-0.5">Mevcut Stok</p>
+                                                 <p className="text-[11px] font-black uppercase tracking-widest text-stone-500 mb-0.5">Mevcut Stok</p>
                                                  <p className="text-lg font-black font-mono text-white">{currentStock.toLocaleString('tr-TR')} kg</p>
                                              </div>
                                              <div className={`pt-2 border-t border-white/5 flex flex-col`}>
-                                                 <p className="text-[9px] font-black uppercase tracking-widest text-stone-500 mb-0.5">Öngörülen Kar Zarar</p>
+                                                 <p className="text-[11px] font-black uppercase tracking-widest text-stone-500 mb-0.5">Öngörülen Kar Zarar</p>
                                                  <p className={`text-sm font-black font-mono ${stat.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                                                      {stat.profit >= 0 ? '+' : ''}{formatCurrency(stat.profit, userProfile?.currency || 'TRY')}
                                                  </p>
@@ -964,7 +1260,7 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                                                 </div>
                                                 <div>
                                                     <p className="text-sm font-bold text-stone-200">{tx.person}</p>
-                                                    <p className="text-[10px] text-stone-400">Son Tarih: <span className="font-bold text-rose-400">{new Date(tx.dueDate!).toLocaleDateString('tr-TR')}</span></p>
+                                                    <p className="text-[11px] text-stone-400">Son Tarih: <span className="font-bold text-rose-400">{new Date(tx.dueDate!).toLocaleDateString('tr-TR')}</span></p>
                                                 </div>
                                             </div>
                                             <p className="text-sm font-black font-mono text-rose-400">{formatCurrency(tx.totalAmount, userProfile?.currency || 'TRY')}</p>
@@ -1034,14 +1330,14 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                                             <div className="flex items-center justify-between">
                                                 <p className="text-sm font-bold text-stone-100 truncate">
                                                     {tx.type === 'PAYMENT_IN' || tx.type === 'PAYMENT_OUT' ? 'Ödeme' : tx.product} 
-                                                    <span className="text-[10px] text-stone-500 font-medium ml-1">
+                                                    <span className="text-[11px] text-stone-500 font-medium ml-1">
                                                         ({tx.type === 'BUY' ? 'Alım' : tx.type === 'SELL' ? 'Satış' : tx.type === 'PAYMENT_IN' ? 'Tahsilat' : 'Ödeme Yapıldı'})
                                                     </span>
                                                 </p>
-                                                <span className="text-[10px] text-stone-500 font-medium sm:hidden">{new Date(tx.date).toLocaleDateString('tr-TR')}</span>
+                                                <span className="text-[11px] text-stone-500 font-medium sm:hidden">{new Date(tx.date).toLocaleDateString('tr-TR')}</span>
                                             </div>
                                             <div className="mt-1 flex items-center gap-1.5">
-                                                <span className="text-[10px] font-black uppercase tracking-widest text-stone-500">
+                                                <span className="text-[11px] font-black uppercase tracking-widest text-stone-500">
                                                     {tx.type === 'BUY' || tx.type === 'PAYMENT_IN' ? 'Kimden:' : 'Kime:'}
                                                 </span>
                                                 <span className="text-xs font-bold text-stone-200 bg-stone-800/80 px-2 py-0.5 rounded-md truncate border border-white/5">
@@ -1049,40 +1345,40 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                                                 </span>
                                             </div>
                                             {tx.plateNumber && (
-                                                <p className="text-[10px] text-stone-500 font-mono mt-0.5 uppercase">PLAKA: {tx.plateNumber}{tx.driverPhone ? ` | TEL: ${tx.driverPhone}` : ''}</p>
+                                                <p className="text-[11px] text-stone-500 font-mono mt-0.5 uppercase">PLAKA: {tx.plateNumber}{tx.driverPhone ? ` | TEL: ${tx.driverPhone}` : ''}</p>
                                             )}
                                         </div>
                                     </div>
                                     <div className="flex items-center justify-between sm:justify-end w-full sm:flex-1 gap-4">
                                         <div className="flex gap-4">
                                             <div className="text-left sm:text-right hidden sm:block">
-                                                <p className="text-[9px] font-black uppercase tracking-widest text-stone-500">Tarih</p>
+                                                <p className="text-[11px] font-black uppercase tracking-widest text-stone-500">Tarih</p>
                                                 <p className="text-xs font-bold text-stone-400 mt-0.5">{new Date(tx.date).toLocaleDateString('tr-TR')}</p>
                                             </div>
                                             <div className="text-left sm:text-right">
-                                                <p className="text-[9px] font-black uppercase tracking-widest text-stone-500">Miktar</p>
+                                                <p className="text-[11px] font-black uppercase tracking-widest text-stone-500">Miktar</p>
                                                 <p className="text-sm font-black font-mono text-stone-300">{tx.quantity.toLocaleString('tr-TR')} kg</p>
                                             </div>
                                             <div className="text-right hidden sm:block">
-                                                <p className="text-[9px] font-black uppercase tracking-widest text-stone-500">B. Fiyatı</p>
+                                                <p className="text-[11px] font-black uppercase tracking-widest text-stone-500">B. Fiyatı</p>
                                                 <p className="text-sm font-black font-mono text-stone-400">{formatCurrency(tx.unitPrice, userProfile?.currency || 'TRY')}</p>
                                             </div>
                                             {tx.commissionAmount ? (
                                                 <div className="text-right hidden md:block">
-                                                    <p className="text-[9px] font-black uppercase tracking-widest text-stone-500">Komisyon</p>
+                                                    <p className="text-[11px] font-black uppercase tracking-widest text-stone-500">Komisyon</p>
                                                     <p className="text-sm font-black font-mono text-rose-400">-{formatCurrency(tx.commissionAmount, userProfile?.currency || 'TRY')}</p>
                                                 </div>
                                             ) : null}
                                             {tx.transportCost ? (
                                                 <div className="text-right hidden sm:block">
-                                                    <p className="text-[9px] font-black uppercase tracking-widest text-stone-500">Nakliye</p>
+                                                    <p className="text-[11px] font-black uppercase tracking-widest text-stone-500">Nakliye</p>
                                                     <p className={`text-sm font-black font-mono ${(tx.transportPayer === 'US' && tx.type === 'SELL') || (tx.transportPayer === 'THEM' && tx.type === 'BUY') ? 'text-rose-400' : 'text-emerald-400'}`}>
                                                         {(tx.transportPayer === 'US' && tx.type === 'SELL') || (tx.transportPayer === 'THEM' && tx.type === 'BUY') ? '-' : '+'}{formatCurrency(tx.transportCost, userProfile?.currency || 'TRY')}
                                                     </p>
                                                 </div>
                                             ) : null}
                                             <div className="text-right">
-                                                <p className="text-[9px] font-black uppercase tracking-widest text-stone-500">Toplam</p>
+                                                <p className="text-[11px] font-black uppercase tracking-widest text-stone-500">Toplam</p>
                                                 <p className={`text-base font-black font-mono ${tx.type === 'BUY' || tx.type === 'PAYMENT_OUT' ? 'text-stone-300' : 'text-amber-400'}`}>
                                                     {formatCurrency(tx.totalAmount, userProfile?.currency || 'TRY')}
                                                 </p>
@@ -1147,20 +1443,20 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                                         </div>
                                         <div>
                                             <p className="text-sm font-bold text-stone-100 group-hover:text-white transition-colors">{name}</p>
-                                            <span className="text-[10px] text-stone-500 font-bold uppercase tracking-widest">{activeTab === 'BUYERS' ? 'Arsa' : 'Çiftçi'}</span>
+                                            <span className="text-[11px] text-stone-500 font-bold uppercase tracking-widest">{activeTab === 'BUYERS' ? 'Arsa' : 'Çiftçi'}</span>
                                         </div>
                                     </div>
                                     
                                     <div className="flex gap-4 text-right">
                                         <div className="hidden sm:block">
-                                            <p className="text-[9px] font-black uppercase tracking-widest text-stone-500">Toplam Miktar</p>
+                                            <p className="text-[11px] font-black uppercase tracking-widest text-stone-500">Toplam Miktar</p>
                                             <p className="text-sm font-black font-mono text-stone-300">{(activeTab === 'BUYERS' ? stat.buyerKg : stat.sellerKg).toLocaleString('tr-TR')} kg</p>
                                         </div>
                                         <div>
-                                            <p className="text-[9px] font-black uppercase tracking-widest text-stone-500">Mevcut Bakiye</p>
+                                            <p className="text-[11px] font-black uppercase tracking-widest text-stone-500">Mevcut Bakiye</p>
                                             <p className={`text-base font-black font-mono ${stat.balance > 0 ? 'text-emerald-400' : stat.balance < 0 ? 'text-rose-400' : 'text-stone-400'}`}>
                                                 {formatCurrency(Math.abs(stat.balance), userProfile?.currency || 'TRY')}
-                                                <span className="text-[9px] ml-1 opacity-70">{stat.balance > 0 ? '(Alacaklıyız)' : stat.balance < 0 ? '(Borçluyuz)' : ''}</span>
+                                                <span className="text-[11px] ml-1 opacity-70">{stat.balance > 0 ? '(Alacaklıyız)' : stat.balance < 0 ? '(Borçluyuz)' : ''}</span>
                                             </p>
                                         </div>
                                     </div>
@@ -1199,19 +1495,19 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                                      
                                      <div className="grid grid-cols-2 sm:flex sm:gap-6 gap-y-3 w-full sm:w-auto shrink-0 whitespace-nowrap">
                                          <div className="text-left sm:text-right">
-                                             <p className="text-[9px] font-black uppercase tracking-widest text-stone-500 mb-0.5">Ort. Alış</p>
+                                             <p className="text-[11px] font-black uppercase tracking-widest text-stone-500 mb-0.5">Ort. Alış</p>
                                              <p className="text-sm font-black font-mono text-stone-400">{formatCurrency(avgBuyPrice, userProfile?.currency || 'TRY')}</p>
                                          </div>
                                          <div className="text-left sm:text-right">
-                                             <p className="text-[9px] font-black uppercase tracking-widest text-stone-500 mb-0.5">Stok Maliyeti</p>
+                                             <p className="text-[11px] font-black uppercase tracking-widest text-stone-500 mb-0.5">Stok Maliyeti</p>
                                              <p className="text-sm font-black font-mono text-stone-400">{formatCurrency(estimatedStockValue, userProfile?.currency || 'TRY')}</p>
                                          </div>
                                          <div className="text-left sm:text-right">
-                                             <p className="text-[9px] font-black uppercase tracking-widest text-stone-500 mb-0.5">Satılan</p>
+                                             <p className="text-[11px] font-black uppercase tracking-widest text-stone-500 mb-0.5">Satılan</p>
                                              <p className="text-sm font-black font-mono text-stone-400">{stat.outKg.toLocaleString('tr-TR')} kg</p>
                                          </div>
                                          <div className="text-left sm:text-right">
-                                             <p className="text-[9px] font-black uppercase tracking-widest text-stone-500 mb-0.5">Gerçekleşen Kar</p>
+                                             <p className="text-[11px] font-black uppercase tracking-widest text-stone-500 mb-0.5">Gerçekleşen Kar</p>
                                              <p className={`text-sm font-black font-mono ${stat.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                                                  {stat.profit >= 0 ? '+' : ''}{formatCurrency(stat.profit, userProfile?.currency || 'TRY')}
                                              </p>
@@ -1245,27 +1541,27 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                     <div className="px-2 mt-4 space-y-4">
                         <div className="grid grid-cols-2 gap-3">
                             <div className="bg-stone-900 border border-white/5 rounded-2xl p-4">
-                                <p className="text-[9px] font-black uppercase tracking-widest text-stone-500 mb-1">Toplam Alış Maliyeti</p>
+                                <p className="text-[11px] font-black uppercase tracking-widest text-stone-500 mb-1">Toplam Alış Maliyeti</p>
                                 <p className="text-xl font-black font-mono text-rose-400">{formatCurrency(totalIn, userProfile?.currency || 'TRY')}</p>
                             </div>
                             <div className="bg-stone-900 border border-white/5 rounded-2xl p-4">
-                                <p className="text-[9px] font-black uppercase tracking-widest text-stone-500 mb-1">Toplam Satış Geliri</p>
+                                <p className="text-[11px] font-black uppercase tracking-widest text-stone-500 mb-1">Toplam Satış Geliri</p>
                                 <p className="text-xl font-black font-mono text-emerald-400">{formatCurrency(totalOut, userProfile?.currency || 'TRY')}</p>
                             </div>
                             <div className="bg-stone-900 border border-white/5 rounded-2xl p-4">
-                                <p className="text-[9px] font-black uppercase tracking-widest text-stone-500 mb-1">Mevcut Stok Maliyeti</p>
+                                <p className="text-[11px] font-black uppercase tracking-widest text-stone-500 mb-1">Mevcut Stok Maliyeti</p>
                                 <p className="text-xl font-black font-mono text-stone-300">{formatCurrency(currentStockValue, userProfile?.currency || 'TRY')}</p>
                             </div>
                             <div className="bg-stone-900 border border-white/5 rounded-2xl p-4">
-                                <p className="text-[9px] font-black uppercase tracking-widest text-stone-500 mb-1">Ödenen Nakliye</p>
+                                <p className="text-[11px] font-black uppercase tracking-widest text-stone-500 mb-1">Ödenen Nakliye</p>
                                 <p className="text-xl font-black font-mono text-amber-500">{formatCurrency(totalTransport, userProfile?.currency || 'TRY')}</p>
                             </div>
                             <div className="bg-stone-900 border border-white/5 rounded-2xl p-4">
-                                <p className="text-[9px] font-black uppercase tracking-widest text-stone-500 mb-1">Kesilen Komisyon</p>
+                                <p className="text-[11px] font-black uppercase tracking-widest text-stone-500 mb-1">Kesilen Komisyon</p>
                                 <p className="text-xl font-black font-mono text-indigo-400">{formatCurrency(totalCommission, userProfile?.currency || 'TRY')}</p>
                             </div>
                             <div className={`bg-stone-900 border ${totalProfit >= 0 ? 'border-emerald-500/20' : 'border-rose-500/20'} rounded-2xl p-4`}>
-                                <p className="text-[9px] font-black uppercase tracking-widest text-stone-500 mb-1">Gerçekleşen NET Kar/Zarar</p>
+                                <p className="text-[11px] font-black uppercase tracking-widest text-stone-500 mb-1">Gerçekleşen NET Kar/Zarar</p>
                                 <p className={`text-xl font-black font-mono ${totalProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                                     {totalProfit >= 0 ? '+' : ''}{formatCurrency(totalProfit, userProfile?.currency || 'TRY')}
                                 </p>
@@ -1302,7 +1598,7 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                                             </div>
                                             <div>
                                                 <p className="text-sm font-bold text-stone-100">{p}</p>
-                                                <span className={`text-[10px] font-bold uppercase tracking-widest ${stat.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                <span className={`text-[11px] font-bold uppercase tracking-widest ${stat.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                                                     Kar: {formatCurrency(stat.profit, userProfile?.currency || 'TRY')}
                                                 </span>
                                             </div>
@@ -1310,19 +1606,19 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                                         
                                         <div className="grid grid-cols-2 gap-3 bg-stone-950/50 p-3 rounded-xl border border-white/5">
                                             <div>
-                                                <p className="text-[9px] font-black uppercase tracking-widest text-stone-500 mb-0.5">Toplam Alış Maliyeti</p>
+                                                <p className="text-[11px] font-black uppercase tracking-widest text-stone-500 mb-0.5">Toplam Alış Maliyeti</p>
                                                 <p className="text-sm font-black font-mono text-rose-400">{formatCurrency(stat.buyCost, userProfile?.currency || 'TRY')}</p>
                                             </div>
                                             <div>
-                                                <p className="text-[9px] font-black uppercase tracking-widest text-stone-500 mb-0.5">Toplam Satış Geliri</p>
+                                                <p className="text-[11px] font-black uppercase tracking-widest text-stone-500 mb-0.5">Toplam Satış Geliri</p>
                                                 <p className="text-sm font-black font-mono text-emerald-400">{formatCurrency(stat.sellRev, userProfile?.currency || 'TRY')}</p>
                                             </div>
                                             <div>
-                                                <p className="text-[9px] font-black uppercase tracking-widest text-stone-500 mb-0.5">Stok Maliyeti</p>
+                                                <p className="text-[11px] font-black uppercase tracking-widest text-stone-500 mb-0.5">Stok Maliyeti</p>
                                                 <p className="text-sm font-black font-mono text-stone-300">{formatCurrency(estimatedStockValue, userProfile?.currency || 'TRY')}</p>
                                             </div>
                                             <div>
-                                                <p className="text-[9px] font-black uppercase tracking-widest text-stone-500 mb-0.5">Ort. Alış Fiyatı</p>
+                                                <p className="text-[11px] font-black uppercase tracking-widest text-stone-500 mb-0.5">Ort. Alış Fiyatı</p>
                                                 <p className="text-sm font-black font-mono text-stone-400">{formatCurrency(avgBuyPrice, userProfile?.currency || 'TRY')}</p>
                                             </div>
                                         </div>
@@ -1334,13 +1630,154 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                 );
             })()}
 
+            {/* #43 NAKLİYECİ & PLAKA SEFER DEFTERİ (TRIPS TAB) */}
+            {activeTab === 'TRIPS' && (() => {
+                const allTrips = transactions.filter(t => (t.type === 'BUY' || t.type === 'SELL') && (t.plateNumber || t.carrierName || t.transportCost));
+                const filteredTrips = allTrips.filter(t => {
+                    const statusVal = t.tripStatus || 'DELIVERED';
+                    if (tripStatusFilter !== 'ALL' && statusVal !== tripStatusFilter) return false;
+                    if (searchQuery.trim()) {
+                        const q = searchQuery.toLowerCase();
+                        return Boolean(
+                            t.plateNumber?.toLowerCase().includes(q) ||
+                            t.carrierName?.toLowerCase().includes(q) ||
+                            t.person?.toLowerCase().includes(q) ||
+                            t.product?.toLowerCase().includes(q) ||
+                            t.routeFrom?.toLowerCase().includes(q) ||
+                            t.routeTo?.toLowerCase().includes(q)
+                        );
+                    }
+                    return true;
+                });
+                const inTransitCount = allTrips.filter(t => t.tripStatus === 'IN_TRANSIT').length;
+                const deliveredCount = allTrips.length - inTransitCount;
+                const totalFreightCost = allTrips.reduce((s, t) => s + (t.transportCost || 0), 0);
+                const totalTonnageKg = allTrips.reduce((s, t) => s + (t.quantity || 0), 0);
+
+                return (
+                    <div className="px-2 mt-4 space-y-4 pb-8">
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            <div className="bg-stone-900 border border-white/5 rounded-2xl p-4">
+                                <p className="text-[11px] font-black uppercase tracking-widest text-stone-500 mb-1">Toplam Sefer</p>
+                                <p className="text-xl font-black font-mono text-white">{allTrips.length}</p>
+                            </div>
+                            <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4">
+                                <p className="text-[11px] font-black uppercase tracking-widest text-amber-400 mb-1">Yoldaki Araçlar</p>
+                                <p className="text-xl font-black font-mono text-amber-300">{inTransitCount}</p>
+                            </div>
+                            <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4">
+                                <p className="text-[11px] font-black uppercase tracking-widest text-emerald-400 mb-1">Taşınan Tonaj</p>
+                                <p className="text-xl font-black font-mono text-emerald-300">{(totalTonnageKg / 1000).toLocaleString('tr-TR', { maximumFractionDigits: 1 })} Ton</p>
+                            </div>
+                            <div className="bg-stone-900 border border-white/5 rounded-2xl p-4">
+                                <p className="text-[11px] font-black uppercase tracking-widest text-stone-500 mb-1">Toplam Nakliye</p>
+                                <p className="text-xl font-black font-mono text-sky-400">{formatCurrency(totalFreightCost, userProfile?.currency || 'TRY')}</p>
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row gap-2">
+                            <div className="relative flex-1">
+                                <input
+                                    type="text"
+                                    value={searchQuery}
+                                    onChange={e => setSearchQuery(e.target.value)}
+                                    placeholder="Plaka, nakliyeci, güzergah veya kişi ara..."
+                                    className="w-full bg-stone-900 border border-white/5 rounded-xl px-8 py-2.5 text-xs text-white focus:border-stone-500 outline-none"
+                                />
+                                <Search className="absolute left-3 top-3 text-stone-500" size={14} />
+                            </div>
+                            <div className="flex gap-1.5">
+                                {[
+                                    { id: 'ALL', label: `Tümü (${allTrips.length})` },
+                                    { id: 'IN_TRANSIT', label: `Yolda (${inTransitCount})` },
+                                    { id: 'DELIVERED', label: `Teslim (${deliveredCount})` }
+                                ].map(f => (
+                                    <button
+                                        key={f.id}
+                                        onClick={() => setTripStatusFilter(f.id as any)}
+                                        className={`px-3 py-2 rounded-xl text-xs font-bold transition-colors ${tripStatusFilter === f.id ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30' : 'bg-stone-900 text-stone-400 border border-white/5'}`}
+                                    >
+                                        {f.label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {filteredTrips.length === 0 ? (
+                            <div className="bg-stone-900/60 border border-white/5 rounded-2xl p-8 text-center">
+                                <Truck size={28} className="mx-auto text-stone-500 mb-2" />
+                                <p className="text-sm font-bold text-stone-300">Kayıtlı sefer bulunamadı.</p>
+                                <p className="text-xs text-stone-500 mt-1">Alım veya Satış kaydı girerken Araç Plakası / Nakliyeci bilgisi eklediğinizde burada listelenir.</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-2.5">
+                                {filteredTrips.map(tx => {
+                                    const isTransit = tx.tripStatus === 'IN_TRANSIT';
+                                    return (
+                                        <div key={tx.id} className="bg-stone-900/80 border border-white/5 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                                            <div className="flex items-start gap-3">
+                                                <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 border ${isTransit ? 'bg-amber-500/10 text-amber-400 border-amber-500/30' : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'}`}>
+                                                    <Truck size={20} />
+                                                </div>
+                                                <div>
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                        <span className="px-2.5 py-0.5 rounded-lg bg-stone-950 border border-white/15 text-xs font-black font-mono text-white tracking-wider">
+                                                            {tx.plateNumber || 'PLAKASIZ'}
+                                                        </span>
+                                                        <span className="text-xs font-bold text-stone-200">{tx.product} ({tx.quantity.toLocaleString('tr-TR')} kg)</span>
+                                                        <span className={`text-[11px] font-black px-2 py-0.5 rounded-md ${tx.type === 'BUY' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>
+                                                            {tx.type === 'BUY' ? 'ALIM SEFERİ' : 'SATIŞ SEFERİ'}
+                                                        </span>
+                                                    </div>
+                                                    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-stone-400">
+                                                        <span>Cari: <strong className="text-stone-200">{tx.person}</strong></span>
+                                                        {tx.carrierName && <span>Nakliyeci: <strong className="text-sky-300">{tx.carrierName}</strong></span>}
+                                                        {(tx.routeFrom || tx.routeTo) && (
+                                                            <span className="text-amber-300 font-semibold">
+                                                                📍 {tx.routeFrom || '?'} → {tx.routeTo || '?'}
+                                                            </span>
+                                                        )}
+                                                        <span>{new Date(tx.date).toLocaleDateString('tr-TR')}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center justify-between sm:justify-end gap-3 border-t sm:border-t-0 border-white/5 pt-2.5 sm:pt-0">
+                                                {toTelHref(tx.driverPhone) && (
+                                                    <a href={toTelHref(tx.driverPhone)} aria-label="Şoförü ara" className="px-2.5 py-1.5 min-h-[44px] rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold flex items-center gap-1.5">
+                                                        <Phone size={12} className="text-emerald-400" />
+                                                        {tx.driverPhone}
+                                                    </a>
+                                                )}
+                                                {tx.transportCost ? (
+                                                    <div className="text-right">
+                                                        <p className="text-[11px] font-black uppercase text-stone-500">{tx.transportPayer === 'US' ? 'Bizden Nakliye' : 'Karşıdan Nakliye'}</p>
+                                                        <p className="text-sm font-black font-mono text-sky-400">{formatCurrency(tx.transportCost, userProfile?.currency || 'TRY')}</p>
+                                                    </div>
+                                                ) : null}
+                                                <button
+                                                    onClick={() => toggleTripStatus(tx)}
+                                                    className={`px-3 py-1.5 rounded-xl text-xs font-black border transition-all ${isTransit ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-emerald-500/20 hover:text-emerald-300' : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 hover:bg-amber-500/15 hover:text-amber-300'}`}
+                                                    title="Durumu değiştirmek için tıklayın"
+                                                >
+                                                    {isTransit ? '⏳ YOLDA (Teslim Onayla)' : '✅ TESLİM EDİLDİ'}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                );
+            })()}
+
             {/* MODAL */}
             {isModalOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-                    <div className="bg-stone-900 border border-white/5 rounded-3xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                    <div className="bg-stone-900 border border-white/5 rounded-3xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col max-h-[90dvh]">
                         <div className="p-4 border-b border-white/5 flex justify-between items-center bg-stone-950">
                             <h2 className="text-lg font-bold text-stone-100">{editingTx ? 'İşlemi Düzenle' : (type === 'BUY' ? 'Yeni Alım Kaydı' : 'Yeni Satış Kaydı')}</h2>
-                            <button onClick={closeModal} className="text-stone-500 hover:text-stone-300 transition-colors p-1"><Trash2 size={20} className="opacity-0 hidden" /> <X size={20} /></button>
+                            <ModalCloseButton onClick={closeModal} />
                         </div>
                         
                         <div className="p-5 overflow-y-auto space-y-4">
@@ -1357,10 +1794,48 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                              </div>
 
                              {type !== 'PAYMENT_IN' && type !== 'PAYMENT_OUT' && (
+                                 <div className="bg-indigo-500/10 border border-indigo-500/25 rounded-2xl p-3.5 space-y-2.5">
+                                     <div className="flex items-center justify-between gap-2">
+                                         <div className="flex items-center gap-2">
+                                             <Sparkles size={16} className="text-indigo-400 shrink-0" />
+                                             <div>
+                                                 <p className="text-xs font-black text-indigo-200">Kantar Fişi Yapay Zeka (AI-OCR)</p>
+                                                 <p className="text-[11px] text-indigo-300/70">Fotoğraftan plaka, brüt/dara, rutubet ve ürünü otomatik doldurur</p>
+                                             </div>
+                                         </div>
+                                         {isOcrScanning && <Loader2 size={16} className="animate-spin text-indigo-300 shrink-0" />}
+                                     </div>
+                                     <div className="grid grid-cols-2 gap-2">
+                                         <input
+                                             type="file"
+                                             id="silo-ocr-gallery"
+                                             accept="image/*"
+                                             className="hidden"
+                                             onChange={e => { if (e.target.files?.[0]) handleWeighbridgeOcrFile(e.target.files[0]); e.target.value = ''; }}
+                                         />
+                                         <input
+                                             type="file"
+                                             id="silo-ocr-camera"
+                                             accept="image/*"
+                                             capture="environment"
+                                             className="hidden"
+                                             onChange={e => { if (e.target.files?.[0]) handleWeighbridgeOcrFile(e.target.files[0]); e.target.value = ''; }}
+                                         />
+                                         <label htmlFor="silo-ocr-gallery" className="py-2 px-3 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-400/30 text-indigo-200 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors">
+                                             <Paperclip size={13} /> Fiş Seç & Oku
+                                         </label>
+                                         <label htmlFor="silo-ocr-camera" className="py-2 px-3 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-400/30 text-indigo-200 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors">
+                                             <Camera size={13} /> Kamerayla Oku
+                                         </label>
+                                     </div>
+                                 </div>
+                             )}
+
+                             {type !== 'PAYMENT_IN' && type !== 'PAYMENT_OUT' && (
                                  <div>
                                      <div className="flex justify-between items-center mb-1.5">
                                          <label className="text-xs font-black text-stone-500 uppercase tracking-widest block">Ürün</label>
-                                         <span className={`text-[10px] font-bold ${((productStats[product]?.inKg || 0) - (productStats[product]?.outKg || 0)) > 0 ? 'text-emerald-400' : 'text-stone-500'}`}>
+                                         <span className={`text-[11px] font-bold ${((productStats[product]?.inKg || 0) - (productStats[product]?.outKg || 0)) > 0 ? 'text-emerald-400' : 'text-stone-500'}`}>
                                              Stok: {((productStats[product]?.inKg || 0) - (productStats[product]?.outKg || 0)).toLocaleString('tr-TR')} kg
                                          </span>
                                      </div>
@@ -1401,10 +1876,82 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                                  </div>
                              </div>
 
+                             {/* #40 KANTAR TARTIM & RUTUBET / HEKTOLİTRE / YABANCI MADDE FİRE HESAPLAYICI */}
+                             {(type === 'BUY' || type === 'SELL') && (
+                                 <div className="bg-stone-950/90 border border-stone-800 rounded-2xl p-3.5 space-y-3">
+                                     <button
+                                         type="button"
+                                         onClick={() => setShowWeighbridgePanel(v => !v)}
+                                         className="w-full flex items-center justify-between text-left"
+                                     >
+                                         <span className="flex items-center gap-2 text-xs font-black text-amber-400 uppercase tracking-wider">
+                                             <Scale size={14} /> Kantar & Rutubet / Fire Hesaplayıcı
+                                         </span>
+                                         <span className="text-[11px] font-bold text-stone-400 bg-stone-800 px-2 py-0.5 rounded-lg">
+                                             {showWeighbridgePanel ? 'Gizle' : 'Aç'}
+                                         </span>
+                                     </button>
+
+                                     {showWeighbridgePanel && (
+                                         <div className="space-y-3 pt-2 border-t border-white/5">
+                                             <div className="grid grid-cols-2 gap-2.5">
+                                                 <div>
+                                                     <label className="text-[11px] font-bold text-stone-400 block mb-1">Brüt Tartım (KG)</label>
+                                                     <input type="text" inputMode="decimal" value={grossWeightKg} onChange={e => setGrossWeightKg(e.target.value)} placeholder="Örn: 28400" className="w-full bg-stone-900 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white font-mono" />
+                                                 </div>
+                                                 <div>
+                                                     <label className="text-[11px] font-bold text-stone-400 block mb-1">Dara (KG)</label>
+                                                     <input type="text" inputMode="decimal" value={tareWeightKg} onChange={e => setTareWeightKg(e.target.value)} placeholder="Örn: 8400" className="w-full bg-stone-900 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white font-mono" />
+                                                 </div>
+                                             </div>
+
+                                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                                 <div>
+                                                     <label className="text-[11px] font-bold text-stone-400 block mb-1">Rutubet %</label>
+                                                     <input type="text" inputMode="decimal" value={moisturePct} onChange={e => setMoisturePct(e.target.value)} placeholder="15.5" className="w-full bg-stone-900 border border-stone-700 rounded-xl px-2.5 py-2 text-xs text-white font-mono" />
+                                                 </div>
+                                                 <div>
+                                                     <label className="text-[11px] font-bold text-stone-400 block mb-1">Baz Rut. %</label>
+                                                     <input type="text" inputMode="decimal" value={baseMoisturePct} onChange={e => setBaseMoisturePct(e.target.value)} placeholder="14" className="w-full bg-stone-900 border border-stone-700 rounded-xl px-2.5 py-2 text-xs text-stone-300 font-mono" />
+                                                 </div>
+                                                 <div>
+                                                     <label className="text-[11px] font-bold text-stone-400 block mb-1">Hektolitre</label>
+                                                     <input type="text" inputMode="decimal" value={hectoliter} onChange={e => setHectoliter(e.target.value)} placeholder="78" className="w-full bg-stone-900 border border-stone-700 rounded-xl px-2.5 py-2 text-xs text-white font-mono" />
+                                                 </div>
+                                                 <div>
+                                                     <label className="text-[11px] font-bold text-stone-400 block mb-1">Yab.Mad %</label>
+                                                     <input type="text" inputMode="decimal" value={foreignMatterPct} onChange={e => setForeignMatterPct(e.target.value)} placeholder="1.8" className="w-full bg-stone-900 border border-stone-700 rounded-xl px-2.5 py-2 text-xs text-white font-mono" />
+                                                 </div>
+                                             </div>
+
+                                             <div className="grid grid-cols-2 gap-2.5 items-end">
+                                                 <div>
+                                                     <label className="text-[11px] font-bold text-stone-400 block mb-1">Fire Kesinti % (Oto: %{weighbridgeSummary.autoPct})</label>
+                                                     <input type="text" inputMode="decimal" value={manualDeductionPct} onChange={e => setManualDeductionPct(e.target.value)} placeholder={`Otomatik: ${weighbridgeSummary.autoPct}%`} className="w-full bg-stone-900 border border-stone-700 rounded-xl px-3 py-2 text-xs text-rose-300 font-mono" />
+                                                 </div>
+                                                 <button
+                                                     type="button"
+                                                     onClick={applyWeighbridgeToQuantity}
+                                                     className="py-2 px-3 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 text-xs font-black transition-colors"
+                                                 >
+                                                     Net Tonajı Uygula ({weighbridgeSummary.payableNetKg.toLocaleString('tr-TR')} kg)
+                                                 </button>
+                                             </div>
+
+                                             <div className="bg-stone-900/90 rounded-xl p-2.5 border border-white/5 flex items-center justify-between text-[11px]">
+                                                 <span className="text-stone-400">Ham Net: <strong className="text-white font-mono">{weighbridgeSummary.rawNet.toLocaleString('tr-TR')} kg</strong></span>
+                                                 <span className="text-rose-400">Fire: <strong className="font-mono">-{weighbridgeSummary.deductionKg.toLocaleString('tr-TR')} kg (%{weighbridgeSummary.effectiveDeductionPct})</strong></span>
+                                                 <span className="text-emerald-400">Net: <strong className="font-mono">{weighbridgeSummary.payableNetKg.toLocaleString('tr-TR')} kg</strong></span>
+                                             </div>
+                                         </div>
+                                     )}
+                                 </div>
+                             )}
+
                              {type !== 'PAYMENT_IN' && type !== 'PAYMENT_OUT' ? (
                                  <div className="grid grid-cols-2 gap-3">
                                      <div>
-                                         <label className="text-xs font-black text-stone-500 uppercase tracking-widest mb-1.5 block">Miktar (KG)</label>
+                                         <label className="text-xs font-black text-stone-500 uppercase tracking-widest mb-1.5 block">Net Ödenecek Miktar (KG)</label>
                                          <input type="text" inputMode="decimal" value={quantity} onChange={e => setQuantity(e.target.value)} placeholder="0.00" className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-3.5 text-white font-mono focus:border-emerald-500 outline-none transition-colors" />
                                      </div>
                                      <div>
@@ -1448,15 +1995,38 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                                              <input type="tel" value={driverPhone} onChange={e => setDriverPhone(e.target.value)} placeholder="05..." className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-3.5 text-white focus:border-emerald-500 outline-none transition-colors" />
                                          </div>
                                      </div>
+                                     <div className="grid grid-cols-2 gap-3">
+                                         <div>
+                                             <label className="text-xs font-black text-stone-500 uppercase tracking-widest mb-1.5 block">Nakliyeci / Lojistik</label>
+                                             <input type="text" value={carrierName} onChange={e => setCarrierName(e.target.value)} placeholder="Firma / Şoför adı" className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-3 text-xs text-white focus:border-emerald-500 outline-none" />
+                                         </div>
+                                         <div>
+                                             <label className="text-xs font-black text-stone-500 uppercase tracking-widest mb-1.5 block">Sefer Durumu</label>
+                                             <select value={tripStatus} onChange={e => setTripStatus(e.target.value as any)} className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-3 text-xs text-white font-bold outline-none">
+                                                 <option value="DELIVERED">✅ Teslim Edildi</option>
+                                                 <option value="IN_TRANSIT">⏳ Yolda (Sevk Halinde)</option>
+                                             </select>
+                                         </div>
+                                     </div>
+                                     <div className="grid grid-cols-2 gap-3">
+                                         <div>
+                                             <label className="text-xs font-black text-stone-500 uppercase tracking-widest mb-1.5 block">Çıkış Yeri</label>
+                                             <input type="text" value={routeFrom} onChange={e => setRouteFrom(e.target.value)} placeholder="Örn: Tarla / Köy" className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2.5 text-xs text-white outline-none" />
+                                         </div>
+                                         <div>
+                                             <label className="text-xs font-black text-stone-500 uppercase tracking-widest mb-1.5 block">Varış Yeri</label>
+                                             <input type="text" value={routeTo} onChange={e => setRouteTo(e.target.value)} placeholder="Örn: Merkez Silo / Fabrika" className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2.5 text-xs text-white outline-none" />
+                                         </div>
+                                     </div>
                                      <div>
                                          <div className="flex items-center justify-between mb-1.5">
                                              <label className="text-xs font-black text-stone-500 uppercase tracking-widest block">Nakliye Maliyeti (₺)</label>
                                              <div className="flex gap-1.5">
-                                                 <button type="button" onClick={() => setIsTransportIncluded(!isTransportIncluded)} className={`text-[10px] uppercase font-bold tracking-wider px-2 py-1 rounded transition-colors ${isTransportIncluded ? 'bg-emerald-500/20 text-emerald-400' : 'bg-stone-800 text-stone-400'}`}>
+                                                 <button type="button" onClick={() => setIsTransportIncluded(!isTransportIncluded)} className={`text-[11px] uppercase font-bold tracking-wider px-2 py-1 rounded transition-colors ${isTransportIncluded ? 'bg-emerald-500/20 text-emerald-400' : 'bg-stone-800 text-stone-400'}`}>
                                                      {isTransportIncluded ? 'Dahil' : 'Dahil Değil'}
                                                  </button>
                                                  {isTransportIncluded && (
-                                                     <button type="button" onClick={() => setTransportPayer(p => p === 'US' ? 'THEM' : 'US')} className={`text-[10px] uppercase font-bold tracking-wider px-2 py-1 rounded transition-colors ${transportPayer === 'US' ? 'bg-sky-500/20 text-sky-400' : 'bg-orange-500/20 text-orange-400'}`}>
+                                                     <button type="button" onClick={() => setTransportPayer(p => p === 'US' ? 'THEM' : 'US')} className={`text-[11px] uppercase font-bold tracking-wider px-2 py-1 rounded transition-colors ${transportPayer === 'US' ? 'bg-sky-500/20 text-sky-400' : 'bg-orange-500/20 text-orange-400'}`}>
                                                          {transportPayer === 'US' ? 'Bizden' : 'Karşıdan'}
                                                      </button>
                                                  )}
@@ -1465,6 +2035,86 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                                          <input type="text" inputMode="decimal" value={transportCost} onChange={e => setTransportCost(e.target.value)} disabled={!isTransportIncluded} placeholder={isTransportIncluded ? "0.00" : "Dahil değil"} className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-3.5 text-white font-mono focus:border-emerald-500 outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed" />
                                      </div>
                                  </>
+                             )}
+
+                             {/* #41 ÇİFTÇİ ZİRAİ İLAÇ CARİ BORCU İLE MAHSUPLAŞMA (TAKAS / BARTER) */}
+                             {type === 'BUY' && !editingTx && (
+                                 <div className="bg-emerald-500/5 border border-emerald-500/25 rounded-2xl p-3.5 space-y-3">
+                                     <div className="flex items-center justify-between">
+                                         <span className="flex items-center gap-2 text-xs font-black text-emerald-400">
+                                             <ArrowRightLeft size={14} /> Zirai İlaç Borcu Mahsuplaşma (Takas)
+                                         </span>
+                                         <button
+                                             type="button"
+                                             onClick={() => setEnableBarterOffset(v => !v)}
+                                             className={`px-2.5 py-1 rounded-lg text-[11px] font-black uppercase ${enableBarterOffset ? 'bg-emerald-500 text-stone-950' : 'bg-stone-800 text-stone-400'}`}
+                                         >
+                                             {enableBarterOffset ? 'Aktif' : 'Mahsup Et'}
+                                         </button>
+                                     </div>
+
+                                     {enableBarterOffset && (
+                                         <div className="space-y-2.5 pt-2 border-t border-emerald-500/15">
+                                             <div>
+                                                 <label className="text-[11px] font-bold text-stone-400 block mb-1">MKS Çiftçi Carisi Seçin</label>
+                                                 <select
+                                                     value={barterFarmerId}
+                                                     onChange={e => {
+                                                         const fid = e.target.value;
+                                                         setBarterFarmerId(fid);
+                                                         const fObj = farmers.find(f => f.id === fid);
+                                                         if (fObj && !person.trim()) setPerson(fObj.fullName);
+                                                         const debt = farmerDebtMap[fid] || 0;
+                                                         const buyTotal = (parseFloat(quantity.replace(',', '.')) || 0) * (parseFloat(unitPrice.replace(',', '.')) || 0);
+                                                         if (debt > 0) {
+                                                             setBarterOffsetAmount(String(buyTotal > 0 ? Math.min(debt, buyTotal) : debt));
+                                                         } else {
+                                                             setBarterOffsetAmount('');
+                                                         }
+                                                     }}
+                                                     className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2.5 text-xs text-white font-bold outline-none"
+                                                 >
+                                                     <option value="">-- Çiftçi Seçin --</option>
+                                                     {farmers.filter(f => !f.deletedAt).map(f => (
+                                                         <option key={f.id} value={f.id}>
+                                                             {f.fullName} ({f.village}) — İlaç Borcu: {formatCurrency(farmerDebtMap[f.id] || 0, userProfile?.currency || 'TRY')}
+                                                         </option>
+                                                     ))}
+                                                 </select>
+                                             </div>
+                                             {barterFarmerId && (
+                                                 <>
+                                                     <div>
+                                                         <label className="text-[11px] font-bold text-stone-400 block mb-1">Mahsup Edilecek Tutar (₺)</label>
+                                                         <input
+                                                             type="text"
+                                                             inputMode="decimal"
+                                                             value={barterOffsetAmount}
+                                                             onChange={e => setBarterOffsetAmount(e.target.value)}
+                                                             placeholder="0.00"
+                                                             className="w-full bg-stone-950 border border-emerald-500/40 rounded-xl px-3 py-2.5 text-sm text-emerald-300 font-mono font-bold outline-none"
+                                                         />
+                                                     </div>
+                                                     <label className="flex items-center gap-2 text-[11px] text-stone-300 cursor-pointer">
+                                                         <input
+                                                             type="checkbox"
+                                                             checked={autoDeductFromSiloLedger}
+                                                             onChange={e => setAutoDeductFromSiloLedger(e.target.checked)}
+                                                             className="rounded border-stone-600 text-emerald-500 focus:ring-emerald-500"
+                                                         />
+                                                         <span>Silo carisinden de otomatik mahsup ödemesi düş</span>
+                                                     </label>
+                                                     <p className="text-[11px] text-emerald-300/80 bg-emerald-950/50 border border-emerald-500/20 rounded-xl p-2">
+                                                         Bu tutar çiftçinin zirai ilaç borcundan otomatik tahsilat olarak düşülür. Kalan ödenecek mahsul bedeli:{' '}
+                                                         <strong className="font-mono text-white">
+                                                             {formatCurrency(Math.max(0, ((parseFloat(quantity.replace(',', '.')) || 0) * (parseFloat(unitPrice.replace(',', '.')) || 0)) - (parseFloat(barterOffsetAmount.replace(',', '.')) || 0)), userProfile?.currency || 'TRY')}
+                                                         </strong>
+                                                     </p>
+                                                 </>
+                                             )}
+                                         </div>
+                                     )}
+                                 </div>
                              )}
 
                              {type === 'SELL' && (
@@ -1560,8 +2210,8 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                 });
 
                 return (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-                        <div className="bg-stone-900 border border-white/5 rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={e => { if (e.target === e.currentTarget) setSelectedPersonDetails(null); }}>
+                        <div className="bg-stone-900 border border-white/5 rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90dvh] animate-in fade-in zoom-in-95 duration-200">
                             <div className="p-5 border-b border-white/5 flex justify-between items-center bg-stone-950">
                                 <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 rounded-full bg-stone-800 flex items-center justify-center text-stone-400">
@@ -1569,7 +2219,7 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                                     </div>
                                     <div>
                                         <h2 className="text-lg font-bold text-white">{selectedPersonDetails}</h2>
-                                        <p className="text-[10px] uppercase tracking-widest text-stone-500 font-bold mb-1">Cari Detayı</p>
+                                        <p className="text-[11px] uppercase tracking-widest text-stone-500 font-bold mb-1">Cari Detayı</p>
                                         {(contactStats[selectedPersonDetails]?.phone || contactStats[selectedPersonDetails]?.address) && (
                                             <div className="flex gap-3 text-xs text-stone-400">
                                                 {contactStats[selectedPersonDetails]?.phone && (<span>📞 {contactStats[selectedPersonDetails].phone}</span>)}
@@ -1595,28 +2245,28 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                                     <button onClick={() => generatePersonStatementPDF(selectedPersonDetails, personTxs, balance, contactStats[selectedPersonDetails])} className="text-blue-500/80 hover:text-blue-400 hover:bg-blue-500/10 transition-colors p-2 bg-stone-800 rounded-full" title="PDF Ekstre İndir">
                                         <Download size={18} />
                                     </button>
-                                    <button onClick={() => setSelectedPersonDetails(null)} className="text-stone-500 hover:text-stone-300 transition-colors p-2 bg-stone-800 rounded-full"><X size={18} /></button>
+                                    <ModalCloseButton onClick={() => setSelectedPersonDetails(null)} iconSize={18} />
                                 </div>
                             </div>
                             
                             <div className="px-4 py-4 grid grid-cols-2 gap-3 bg-stone-950/50 border-b border-white/5">
                                 <div className="bg-stone-900 p-3.5 rounded-2xl border border-white/5 col-span-2 flex items-center justify-between">
                                     <div>
-                                        <p className="text-[10px] uppercase tracking-widest text-stone-500 font-bold mb-0.5">Güncel Bakiye</p>
+                                        <p className="text-[11px] uppercase tracking-widest text-stone-500 font-bold mb-0.5">Güncel Bakiye</p>
                                         <p className={`text-2xl font-black font-mono ${balance > 0 ? 'text-emerald-400' : balance < 0 ? 'text-rose-400' : 'text-stone-300'}`}>
                                             {formatCurrency(Math.abs(balance), userProfile?.currency || 'TRY')}
                                         </p>
                                     </div>
-                                    <span className={`text-[10px] font-bold px-2.5 py-1 rounded-lg ${balance > 0 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : balance < 0 ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : 'bg-stone-800 text-stone-400 border border-white/10'}`}>
+                                    <span className={`text-[11px] font-bold px-2.5 py-1 rounded-lg ${balance > 0 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : balance < 0 ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : 'bg-stone-800 text-stone-400 border border-white/10'}`}>
                                         {balance > 0 ? 'ALACAKLIYIZ' : balance < 0 ? 'BORÇLUYUZ' : 'NÖTR'}
                                     </span>
                                 </div>
                                 <div className="bg-stone-900 p-3 rounded-2xl border border-white/5">
-                                    <p className="text-[9px] uppercase tracking-widest text-stone-500 font-bold mb-1">Toplam Alınan</p>
+                                    <p className="text-[11px] uppercase tracking-widest text-stone-500 font-bold mb-1">Toplam Alınan</p>
                                     <p className="text-base font-black font-mono text-stone-300">{totalBoughtKg.toLocaleString('tr-TR')} kg</p>
                                 </div>
                                 <div className="bg-stone-900 p-3 rounded-2xl border border-white/5">
-                                    <p className="text-[9px] uppercase tracking-widest text-stone-500 font-bold mb-1">Toplam Satılan</p>
+                                    <p className="text-[11px] uppercase tracking-widest text-stone-500 font-bold mb-1">Toplam Satılan</p>
                                     <p className="text-base font-black font-mono text-stone-300">{totalSoldKg.toLocaleString('tr-TR')} kg</p>
                                 </div>
                             </div>
@@ -1646,7 +2296,7 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                                                 <div className="flex-1 min-w-0">
                                                     <p className="text-sm font-bold text-stone-100 truncate">
                                                         {tx.type === 'PAYMENT_IN' || tx.type === 'PAYMENT_OUT' ? 'Ödeme' : tx.product} 
-                                                        <span className="text-[10px] text-stone-500 font-medium ml-1">
+                                                        <span className="text-[11px] text-stone-500 font-medium ml-1">
                                                             ({tx.type === 'BUY' ? 'Alım' : tx.type === 'SELL' ? 'Satış' : tx.type === 'PAYMENT_IN' ? 'Tahsilat' : 'Ödeme Yapıldı'})
                                                         </span>
                                                     </p>
@@ -1658,12 +2308,12 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                                                 <div className="flex gap-4">
                                                     {(tx.type === 'BUY' || tx.type === 'SELL') && (
                                                         <div className="text-left sm:text-right">
-                                                            <p className="text-[9px] font-black uppercase tracking-widest text-stone-500">Miktar</p>
+                                                            <p className="text-[11px] font-black uppercase tracking-widest text-stone-500">Miktar</p>
                                                             <p className="text-sm font-black font-mono text-stone-300">{tx.quantity?.toLocaleString('tr-TR')} kg</p>
                                                         </div>
                                                     )}
                                                     <div className="text-right">
-                                                        <p className="text-[9px] font-black uppercase tracking-widest text-stone-500">Tutar</p>
+                                                        <p className="text-[11px] font-black uppercase tracking-widest text-stone-500">Tutar</p>
                                                         <p className={`text-base font-black font-mono ${tx.type === 'BUY' || tx.type === 'PAYMENT_OUT' ? 'text-stone-300' : 'text-amber-400'}`}>
                                                             {formatCurrency(tx.totalAmount, userProfile?.currency || 'TRY')}
                                                         </p>
@@ -1699,8 +2349,8 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                 const stat = productStats[selectedProductDetails];
                 
                 return (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-                        <div className="bg-stone-900 border border-white/5 rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={e => { if (e.target === e.currentTarget) setSelectedProductDetails(null); }}>
+                        <div className="bg-stone-900 border border-white/5 rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90dvh] animate-in fade-in zoom-in-95 duration-200">
                             <div className="p-5 border-b border-white/5 flex justify-between items-center bg-stone-950">
                                 <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 rounded-full bg-stone-800 flex items-center justify-center text-stone-400">
@@ -1708,27 +2358,27 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                                     </div>
                                     <div>
                                         <h2 className="text-lg font-bold text-white">{selectedProductDetails}</h2>
-                                        <p className="text-[10px] uppercase tracking-widest text-stone-500 font-bold">Stok Hareketleri</p>
+                                        <p className="text-[11px] uppercase tracking-widest text-stone-500 font-bold">Stok Hareketleri</p>
                                     </div>
                                 </div>
-                                <button onClick={() => setSelectedProductDetails(null)} className="text-stone-500 hover:text-stone-300 transition-colors p-2 bg-stone-800 rounded-full"><X size={18} /></button>
+                                <ModalCloseButton onClick={() => setSelectedProductDetails(null)} iconSize={18} />
                             </div>
                             
-                            <div className="p-4 grid grid-cols-4 gap-3 bg-stone-950/50">
+                            <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-3 bg-stone-950/50">
                                 <div className="bg-stone-900 p-3 rounded-2xl border border-white/5">
-                                    <p className="text-[9px] uppercase tracking-widest text-stone-500 font-bold mb-1">Mevcut Stok</p>
+                                    <p className="text-[11px] uppercase tracking-widest text-stone-500 font-bold mb-1">Mevcut Stok</p>
                                     <p className="text-lg font-black font-mono text-emerald-400">{(stat.inKg - stat.outKg).toLocaleString('tr-TR')} kg</p>
                                 </div>
                                 <div className="bg-stone-900 p-3 rounded-2xl border border-white/5">
-                                    <p className="text-[9px] uppercase tracking-widest text-stone-500 font-bold mb-1">Toplam Giren</p>
+                                    <p className="text-[11px] uppercase tracking-widest text-stone-500 font-bold mb-1">Toplam Giren</p>
                                     <p className="text-sm font-black font-mono text-stone-300">{stat.inKg.toLocaleString('tr-TR')} kg</p>
                                 </div>
                                 <div className="bg-stone-900 p-3 rounded-2xl border border-white/5">
-                                    <p className="text-[9px] uppercase tracking-widest text-stone-500 font-bold mb-1">Toplam Çıkan</p>
+                                    <p className="text-[11px] uppercase tracking-widest text-stone-500 font-bold mb-1">Toplam Çıkan</p>
                                     <p className="text-sm font-black font-mono text-stone-300">{stat.outKg.toLocaleString('tr-TR')} kg</p>
                                 </div>
                                 <div className="bg-stone-900 p-3 rounded-2xl border border-white/5">
-                                    <p className="text-[9px] uppercase tracking-widest text-stone-500 font-bold mb-1">Ort. Alış</p>
+                                    <p className="text-[11px] uppercase tracking-widest text-stone-500 font-bold mb-1">Ort. Alış</p>
                                     <p className="text-sm font-black font-mono text-stone-300">{formatCurrency(stat.inKg > 0 ? stat.buyCost / stat.inKg : 0, userProfile?.currency || 'TRY')}</p>
                                 </div>
                             </div>
@@ -1748,7 +2398,7 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                                                         <p className="text-sm font-bold text-stone-100 truncate">{tx.type === 'BUY' ? 'Alım' : 'Satış'}</p>
                                                     </div>
                                                     <div className="mt-1 flex items-center gap-1.5">
-                                                        <span className="text-[10px] font-black uppercase tracking-widest text-stone-500">
+                                                        <span className="text-[11px] font-black uppercase tracking-widest text-stone-500">
                                                             {tx.type === 'BUY' ? 'Kimden:' : 'Kime:'}
                                                         </span>
                                                         <span className="text-xs font-bold text-stone-200 bg-stone-800/80 px-2 py-0.5 rounded-md truncate border border-white/5">
@@ -1761,15 +2411,15 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                                             <div className="flex items-center justify-between sm:justify-end w-full sm:flex-1 gap-4">
                                                 <div className="flex gap-4">
                                                     <div className="text-left sm:text-right hidden sm:block">
-                                                        <p className="text-[9px] font-black uppercase tracking-widest text-stone-500">Tarih</p>
+                                                        <p className="text-[11px] font-black uppercase tracking-widest text-stone-500">Tarih</p>
                                                         <p className="text-xs font-bold text-stone-400 mt-0.5">{new Date(tx.date).toLocaleDateString('tr-TR')}</p>
                                                     </div>
                                                     <div className="text-left sm:text-right">
-                                                        <p className="text-[9px] font-black uppercase tracking-widest text-stone-500">Miktar</p>
+                                                        <p className="text-[11px] font-black uppercase tracking-widest text-stone-500">Miktar</p>
                                                         <p className="text-sm font-black font-mono text-stone-300">{tx.quantity?.toLocaleString('tr-TR')} kg</p>
                                                     </div>
                                                     <div className="text-right">
-                                                        <p className="text-[9px] font-black uppercase tracking-widest text-stone-500">Birim Fiyat</p>
+                                                        <p className="text-[11px] font-black uppercase tracking-widest text-stone-500">Birim Fiyat</p>
                                                         <p className="text-sm font-black font-mono text-stone-400">{formatCurrency(tx.unitPrice, userProfile?.currency || 'TRY')}</p>
                                                     </div>
                                                 </div>
@@ -1803,7 +2453,7 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                     <div className="bg-stone-900 border border-white/5 rounded-3xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col">
                         <div className="p-4 border-b border-white/5 flex justify-between items-center bg-stone-950">
                             <h2 className="text-lg font-bold text-stone-100">{editingContactId ? 'Kişiyi Düzenle' : 'Kişi Ekle'}</h2>
-                            <button onClick={closeContactModal} className="text-stone-500 hover:text-stone-300 transition-colors p-1"><X size={20} /></button>
+                            <ModalCloseButton onClick={closeContactModal} />
                         </div>
                         
                         <div className="p-5 overflow-y-auto space-y-4">
@@ -1822,7 +2472,7 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                                 <div className="flex justify-between items-center mb-1.5">
                                     <label className="text-xs font-black text-stone-500 uppercase tracking-widest block">T.C. Kimlik Numarası</label>
                                     {contactTcNo.trim().length > 0 && (
-                                        <span className={`text-[10px] font-bold font-mono ${validateTcOrVkn(contactTcNo).isValid ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                        <span className={`text-[11px] font-bold font-mono ${validateTcOrVkn(contactTcNo).isValid ? 'text-emerald-400' : 'text-rose-400'}`}>
                                             {contactTcNo.trim().length}/11 Hane
                                         </span>
                                     )}
@@ -1836,7 +2486,7 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                                     placeholder="11 haneli T.C. Kimlik No"
                                 />
                                 {contactTcNo.trim().length > 0 && (
-                                    <p className={`text-[10px] font-bold ${validateTcOrVkn(contactTcNo).isValid ? 'text-emerald-400 bg-emerald-950/40 border-emerald-500/30' : 'text-rose-400 bg-rose-950/50 border-rose-500/30'} mt-1.5 flex items-center gap-1.5 border p-2 rounded-xl`}>
+                                    <p className={`text-[11px] font-bold ${validateTcOrVkn(contactTcNo).isValid ? 'text-emerald-400 bg-emerald-950/40 border-emerald-500/30' : 'text-rose-400 bg-rose-950/50 border-rose-500/30'} mt-1.5 flex items-center gap-1.5 border p-2 rounded-xl`}>
                                         {validateTcOrVkn(contactTcNo).isValid ? <CheckCircle2 size={12} className="shrink-0 text-emerald-400" /> : <AlertTriangle size={12} className="shrink-0 text-rose-400" />}
                                         <span>{validateTcOrVkn(contactTcNo).message}</span>
                                     </p>

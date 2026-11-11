@@ -1,0 +1,63 @@
+name: MKS iOS App Store (.IPA) Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: 'iOS Build Number (CURRENT_PROJECT_VERSION)'
+        required: false
+        default: '26'
+
+jobs:
+  build-ios:
+    name: Build MKS iOS Archive (Xcode macOS)
+    runs-on: macos-15
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install Dependencies & Build Web Assets
+        run: |
+          npm ci
+          npm run build
+          rm -f dist/downloads/*.apk dist/downloads/*.exe
+
+      - name: Sync Capacitor iOS Project
+        run: |
+          npx cap sync ios
+
+      - name: Install CocoaPods Dependencies
+        working-directory: ios/App
+        run: |
+          pod install --repo-update
+
+      - name: Build Unsigned iOS Archive (Ready for Signing / AltStore / App Store Connect)
+        working-directory: ios/App
+        run: |
+          xcodebuild -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath $RUNNER_TEMP/MKS.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION=${{ github.event.inputs.build_number || '26' }} \
+            MARKETING_VERSION=8.1.0 \
+            archive
+          mkdir -p $RUNNER_TEMP/Payload
+          cp -r $RUNNER_TEMP/MKS.xcarchive/Products/Applications/App.app $RUNNER_TEMP/Payload/
+          cd $RUNNER_TEMP
+          zip -r MKS_iOS_v8.1.0_b${{ github.event.inputs.build_number || '26' }}.ipa Payload
+
+      - name: Upload MKS iOS .IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MKS-iOS-IPA-v8.1.0
+          path: ${{ runner.temp }}/*.ipa

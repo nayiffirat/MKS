@@ -25,25 +25,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const syncUserToFirestore = async (user: User) => {
         try {
-            // Updated to use the correct path provided in your previous config turn
-            const userRef = doc(db, "MKS", "g892bEaJyGfEq1Fa67yb", "users", user.uid);
-            const userSnap = await getDoc(userRef);
-
-            if (!userSnap.exists()) {
-                await setDoc(userRef, {
-                    uid: user.uid,
-                    email: user.email || '',
-                    fullName: user.displayName || 'İsimsiz Kullanıcı',
-                    role: 'user',
-                    subscriptionStatus: 'active',
-                    subscriptionEndsAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-                    createdAt: new Date().toISOString(),
-                    lastLogin: new Date().toISOString(),
-                    photoURL: user.photoURL || ''
-                });
-            } else {
-                await setDoc(userRef, { lastLogin: new Date().toISOString() }, { merge: true });
-            }
+            // Tek merkezden (dbService.getUserProfile) profil ve abonelik kontrolü yapılır
+            await dbService.getUserProfile(user.uid);
         } catch (err) {
             console.error("Central Sync Error:", err);
         }
@@ -71,9 +54,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 // Track user ID for IndexedDB isolation
                 const lastUid = localStorage.getItem('lastUserId');
                 if (lastUid && lastUid !== user.uid) {
-                    console.log("Farklı bir kullanıcı algılandı. Yerel veriler temizleniyor.");
-                    // Use fire-and-forget clear since we can't easily await here in the snapshot callback without blocking UI state, though actually it is async but inside onAuthStateChanged we can just let it run.
-                    await dbService.clearLocalData().catch(e => console.error("Kullanıcı değişimi temizlik hatası:", e));
+                    console.log("Farklı bir kullanıcı algılandı. Bekleyen senkronizasyon kuyruğu aktarılıyor...");
+                    await dbService.flushSyncOutboxNow().catch(e => console.warn("Kullanıcı değişimi outbox flush uyarısı:", e));
+                    const remainingOldOutbox = await dbService.getPendingOutboxCount(lastUid).catch(() => 0);
+                    if (remainingOldOutbox === 0) {
+                        await dbService.clearLocalData().catch(e => console.error("Kullanıcı değişimi temizlik hatası:", e));
+                    } else {
+                        console.warn(`[AK-01] Önceki kullanıcıya (${lastUid}) ait ${remainingOldOutbox} bekleyen çevrimdışı kayıt korundu.`);
+                    }
                 }
                 localStorage.setItem('lastUserId', user.uid);
             }
@@ -86,6 +74,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const logout = async () => {
         try {
+            await dbService.flushSyncOutboxNow();
+        } catch (e) {
+            console.warn("Çıkış öncesi outbox flush hatası:", e);
+        }
+
+        const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+        const pendingCount = await dbService.getPendingOutboxCount().catch(() => 0);
+
+        if (isOffline || pendingCount > 0) {
+            const warningMsg = pendingCount > 0
+                ? `Buluta henüz aktarılamamış ${pendingCount} adet çevrimdışı kaydınız var${isOffline ? ' ve internet bağlantınız yok' : ''}.\n\nŞimdi çıkış yaparsanız yerel veritabanı temizleneceği için bu kayıtlar kaybolabilir. Yine de çıkış yapmak istiyor musunuz?`
+                : 'İnternet bağlantınız şu an çevrimdışı görünüyor. Buluta henüz aktarılmamış yerel değişiklikleriniz varsa çıkış yaptığınızda silinebilir.\n\nYine de çıkış yapmak istiyor musunuz?';
+            const confirmed = typeof window !== 'undefined' ? window.confirm(warningMsg) : true;
+            if (!confirmed) {
+                return;
+            }
+        }
+
+        try {
+            await dbService.clearLocalUserData(true);
             await dbService.clearLocalData();
         } catch (e) {
             console.error("Local veri temizleme hatası:", e);

@@ -1,9 +1,10 @@
-import React, { useMemo } from 'react';
-import { ShoppingCart, Check, X, Share2, Clipboard, Download, Factory } from 'lucide-react';
-import { InventoryItem, SupplierPurchase, Supplier } from '../types';
-import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
-import { formatCurrency, getCurrencySuffix } from '../utils/currency';
+import React, { useMemo, useState, useEffect } from 'react';
+import { ShoppingCart, Check, Share2, Clipboard, Download, Factory, TrendingUp } from 'lucide-react';
+import { InventoryItem, SupplierPurchase, Supplier, Prescription } from '../types';
+import { loadJsPdfWithAutoTable } from '../utils/pdfHelper';
+import { buildWaUrl } from '../utils/whatsappTemplates';
+import { useBackHandler } from '../utils/navigationManager';
+import { ModalCloseButton } from './ModalCloseButton';
 
 interface SmartOrderModalProps {
     isOpen: boolean;
@@ -11,20 +12,65 @@ interface SmartOrderModalProps {
     inventory: InventoryItem[];
     suppliers: Supplier[];
     supplierPurchases: SupplierPurchase[];
+    prescriptions?: Prescription[];
     showToast: (msg: string, type: 'success'|'error') => void;
 }
 
 export const SmartOrderModal: React.FC<SmartOrderModalProps> = ({ 
-    isOpen, onClose, inventory, suppliers, supplierPurchases, showToast 
+    isOpen, onClose, inventory, suppliers, supplierPurchases, prescriptions = [], showToast 
 }) => {
+    const [customOrderQty, setCustomOrderQty] = useState<Record<string, string>>({});
+
+    // Compute 30-day and 90-day sales velocity per pesticideId (#20)
+    const velocityMap = useMemo(() => {
+        const now = Date.now();
+        const d30 = 30 * 24 * 60 * 60 * 1000;
+        const d90 = 90 * 24 * 60 * 60 * 1000;
+        const map = new Map<string, { sold30d: number; sold90d: number }>();
+
+        for (const p of prescriptions) {
+            if (p.deletedAt || p.type === 'RETURN') continue;
+            const ts = p.date ? new Date(p.date).getTime() : 0;
+            if (!ts || isNaN(ts)) continue;
+            const age = now - ts;
+            if (age > d90) continue;
+            for (const item of (p.items || [])) {
+                const qty = parseFloat(String(item.quantity || '0').replace(',', '.')) || 0;
+                if (qty <= 0) continue;
+                const cur = map.get(item.pesticideId) || { sold30d: 0, sold90d: 0 };
+                if (age <= d30) cur.sold30d += qty;
+                cur.sold90d += qty;
+                map.set(item.pesticideId, cur);
+            }
+        }
+        return map;
+    }, [prescriptions, isOpen]);
+
+    const getRecommendedQty = (item: InventoryItem): number => {
+        const vel = velocityMap.get(item.pesticideId);
+        const sold30d = vel?.sold30d || 0;
+        const sold90dMonthly = (vel?.sold90d || 0) / 3;
+        const velocityTarget = Math.max(sold30d * 1.25, sold90dMonthly * 1.25);
+        const thresholdTarget = Math.max((item.lowStockThreshold || 5) * 2, 5);
+        const targetStock = Math.max(thresholdTarget, velocityTarget);
+        const rawNeed = Math.max(1, Math.ceil(targetStock - (Number(item.quantity) || 0)));
+        const packSize = Number(item.packSize) || 0;
+        if (packSize > 1) {
+            return Math.ceil(rawNeed / packSize) * packSize;
+        }
+        return rawNeed;
+    };
 
     const generatedOrders = useMemo(() => {
-        // Find items that need ordering
-        const itemsToOrder = inventory.filter(item => 
-            !item.deletedAt && 
-            item.lowStockThreshold != null && 
-            item.quantity <= item.lowStockThreshold
-        );
+        // Find items that need ordering (below threshold OR rapid 30d velocity about to deplete within 7 days)
+        const itemsToOrder = inventory.filter(item => {
+            if (item.deletedAt) return false;
+            const thresholdHit = item.lowStockThreshold != null && item.quantity <= item.lowStockThreshold;
+            const vel = velocityMap.get(item.pesticideId);
+            const weeklyBurn = (vel?.sold30d || 0) / 4;
+            const velocityDepletingSoon = weeklyBurn > 0 && item.quantity <= weeklyBurn;
+            return thresholdHit || velocityDepletingSoon;
+        });
 
         if (itemsToOrder.length === 0) return [];
 
@@ -53,39 +99,72 @@ export const SmartOrderModal: React.FC<SmartOrderModalProps> = ({
             ordersBySupplier.get(supplierId)!.push(item);
         });
 
-        const result: { supplierId: string; supplierName: string; items: InventoryItem[] }[] = [];
+        const result: { supplierId: string; supplierName: string; supplierPhone?: string; items: InventoryItem[] }[] = [];
         
         ordersBySupplier.forEach((items, supplierId) => {
             let sName = 'Bilinmeyen Tedarikçi (Önceki Alım Yok)';
+            let sPhone: string | undefined;
             if (supplierId !== 'UNKNOWN') {
                 const sup = suppliers.find(s => s.id === supplierId);
-                if (sup) sName = sup.name;
+                if (sup) {
+                    sName = sup.name;
+                    sPhone = sup.phoneNumber;
+                }
             }
-            result.push({ supplierId, supplierName: sName, items });
+            result.push({ supplierId, supplierName: sName, supplierPhone: sPhone, items });
         });
 
         // sort alphabetically by supplier name
-        return result.sort((a, b) => a.supplierName.localeCompare(b.supplierName));
+        return result.sort((a, b) => a.supplierName.localeCompare(b.supplierName, 'tr-TR'));
 
-    }, [inventory, suppliers, supplierPurchases, isOpen]);
+    }, [inventory, suppliers, supplierPurchases, velocityMap, isOpen]);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        const initial: Record<string, string> = {};
+        generatedOrders.forEach(o => {
+            o.items.forEach(item => {
+                initial[item.id] = String(getRecommendedQty(item));
+            });
+        });
+        setCustomOrderQty(initial);
+    }, [isOpen, generatedOrders]);
+
+    // UI-10: Android geri tuşu modalı kapatsın
+    useBackHandler(isOpen, onClose, 'SmartOrderModal_main', 50);
 
     if (!isOpen) return null;
 
-    const handleShareWhatsApp = (order: { supplierId: string; supplierName: string; items: InventoryItem[] }) => {
+    const getOrderQtyFor = (item: InventoryItem) => {
+        const val = customOrderQty[item.id];
+        if (val !== undefined && val.trim() !== '') return val.trim();
+        return String(getRecommendedQty(item));
+    };
+
+    const handleShareWhatsApp = (order: { supplierId: string; supplierName: string; supplierPhone?: string; items: InventoryItem[] }) => {
         const textLines = [
-            `*${order.supplierName} - Sipariş Listesi*`,
+            `📦 *${order.supplierName} - Sipariş Talebi*`,
+            `Tarih: ${new Date().toLocaleDateString('tr-TR')}`,
             ``,
             ...order.items.map(i => {
-                const targetQty = (i.lowStockThreshold || 0) * 2; // Just a suggestion, like double the threshold
-                return `• ${i.pesticideName} (Depoda: ${i.quantity} ${i.unit}) - \n   Lütfen gönderiniz: ______ ${i.unit}`;
+                const qty = getOrderQtyFor(i);
+                const packSize = Number(i.packSize) || 0;
+                const packNote = packSize > 1 ? ` (~${Math.round((Number(qty) / packSize) * 10) / 10} ${i.packUnitName || 'Koli'})` : '';
+                return `• *${i.pesticideName}*: *${qty} ${i.unit}*${packNote}`;
             }),
             ``,
-            `İyi çalışmalar dileriz.`
+            `Müsaitlik ve güncel fiyat teyidi rica eder, iyi çalışmalar dileriz.`
         ];
         
         const text = textLines.join('\n');
-        const encodedText = encodeURIComponent(text);
-        window.open(`https://wa.me/?text=${encodedText}`, '_blank');
+        // WA-02: ortak normalizeWaPhone/buildWaUrl; geçersiz/boş numarada WhatsApp açılmaz
+        const url = buildWaUrl(order.supplierPhone, text);
+        if (!url) {
+            showToast('Tedarikçinin geçerli bir telefon numarası yok. Sipariş metni panoya kopyalanıyor.', 'error');
+            navigator.clipboard?.writeText(text).catch(() => {});
+            return;
+        }
+        window.open(url, '_blank');
     };
 
     const handleCopyAll = () => {
@@ -94,7 +173,7 @@ export const SmartOrderModal: React.FC<SmartOrderModalProps> = ({
         generatedOrders.forEach(order => {
             textLines.push(`--- ${order.supplierName} ---`);
             order.items.forEach(i => {
-                textLines.push(`${i.pesticideName} (Depo: ${i.quantity} ${i.unit})`);
+                textLines.push(`• ${i.pesticideName}: Sipariş ${getOrderQtyFor(i)} ${i.unit} (Depo: ${i.quantity} ${i.unit})`);
             });
             textLines.push('');
         });
@@ -104,12 +183,13 @@ export const SmartOrderModal: React.FC<SmartOrderModalProps> = ({
         });
     };
 
-    const handleDownloadPDF = () => {
+    const handleDownloadPDF = async () => {
         try {
+            const { jsPDF, autoTable } = await loadJsPdfWithAutoTable();
             const doc = new jsPDF();
             doc.setFontSize(16);
 
-            doc.text("Akill Siparis Listesi", 14, 20);
+            doc.text("Akilli Siparis Listesi (Satis Hizi Destekli)", 14, 20);
             doc.setFontSize(10);
             doc.text(`Olusturulma Tarihi: ${new Date().toLocaleDateString('tr-TR')}`, 14, 28);
 
@@ -117,19 +197,22 @@ export const SmartOrderModal: React.FC<SmartOrderModalProps> = ({
 
             generatedOrders.forEach(order => {
                 doc.setFontSize(12);
-                doc.text(`Tedarikçi: ${order.supplierName}`, 14, startY);
+                doc.text(`Tedarikci: ${order.supplierName}`, 14, startY);
                 
-                const tableData = order.items.map(item => [
-                    item.pesticideName,
-                    item.category,
-                    `${item.quantity} ${item.unit}`,
-                    `${item.lowStockThreshold} ${item.unit}`,
-                    '' // Boş sipariş miktarı alanı
-                ]);
+                const tableData = order.items.map(item => {
+                    const vel = velocityMap.get(item.pesticideId);
+                    return [
+                        item.pesticideName,
+                        `${item.quantity} ${item.unit}`,
+                        `${item.lowStockThreshold ?? '-'} ${item.unit}`,
+                        `${Math.round((vel?.sold30d || 0) * 10) / 10} ${item.unit}`,
+                        `${getOrderQtyFor(item)} ${item.unit}`
+                    ];
+                });
 
                 autoTable(doc, {
                     startY: startY + 5,
-                    head: [['Urun Adi', 'Kategori', 'Mevcut Stok', 'Kritik Seviye', 'Siparis Miktari']],
+                    head: [['Urun Adi', 'Mevcut Stok', 'Kritik Seviye', '30G Satis Hizi', 'Siparis Miktari']],
                     body: tableData,
                     styles: { fontSize: 9 },
                     headStyles: { fillColor: [16, 185, 129] },
@@ -153,7 +236,7 @@ export const SmartOrderModal: React.FC<SmartOrderModalProps> = ({
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-stone-900 border border-stone-800 rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
+            <div className="bg-stone-900 border border-stone-800 rounded-2xl w-full max-w-4xl max-h-[90dvh] overflow-hidden flex flex-col shadow-2xl">
                 {/* Header */}
                 <div className="p-4 border-b border-stone-800 flex justify-between items-center bg-stone-950">
                     <div className="flex items-center gap-3">
@@ -162,12 +245,10 @@ export const SmartOrderModal: React.FC<SmartOrderModalProps> = ({
                         </div>
                         <div>
                             <h2 className="text-lg font-black text-white tracking-tight">Akıllı Sipariş Listesi</h2>
-                            <p className="text-xs text-stone-400 font-medium">Kritik stok seviyesindeki ürünler ve tedarikçileri</p>
+                            <p className="text-xs text-stone-400 font-medium">Kritik stok + 30 günlük satış hızı analiziyle tedarikçi bazlı sipariş önerileri</p>
                         </div>
                     </div>
-                    <button onClick={onClose} className="text-stone-400 hover:text-white transition-colors p-2 bg-stone-900 hover:bg-stone-800 rounded-xl">
-                        <X size={20} />
-                    </button>
+                    <ModalCloseButton onClick={onClose} />
                 </div>
 
                 {/* Content */}
@@ -178,7 +259,7 @@ export const SmartOrderModal: React.FC<SmartOrderModalProps> = ({
                                 <Check size={40} />
                             </div>
                             <h3 className="text-white font-bold text-lg mb-2">Tüm Stoklar Yeterli</h3>
-                            <p className="text-stone-400 text-sm">Kritik seviyenin altına düşen ürün bulunmuyor.</p>
+                            <p className="text-stone-400 text-sm">Kritik seviyenin altına düşen veya hızla tükenen ürün bulunmuyor.</p>
                         </div>
                     ) : (
                         <div className="space-y-6">
@@ -199,50 +280,71 @@ export const SmartOrderModal: React.FC<SmartOrderModalProps> = ({
 
                             {generatedOrders.map((order, idx) => (
                                 <div key={idx} className="bg-stone-900 border border-stone-800 rounded-2xl overflow-hidden">
-                                    <div className="bg-stone-800/50 p-4 border-b border-stone-800 flex items-center justify-between">
+                                    <div className="bg-stone-800/50 p-4 border-b border-stone-800 flex flex-wrap items-center justify-between gap-2">
                                         <div className="flex items-center gap-3">
                                             <div className="w-8 h-8 rounded-full bg-stone-700 flex items-center justify-center text-stone-300">
                                                 <Factory size={16} />
                                             </div>
-                                            <h3 className="font-bold text-white tracking-tight">{order.supplierName}</h3>
+                                            <div>
+                                                <h3 className="font-bold text-white tracking-tight">{order.supplierName}</h3>
+                                                {order.supplierPhone && (
+                                                    <span className="text-[11px] text-stone-400 font-mono">{order.supplierPhone}</span>
+                                                )}
+                                            </div>
                                         </div>
-                                        {order.supplierId !== 'UNKNOWN' && (
-                                            <button 
-                                                onClick={() => handleShareWhatsApp(order)}
-                                                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-900/40 text-emerald-400 border border-emerald-500/20 rounded-lg text-xs font-bold hover:bg-emerald-800/60 transition-colors"
-                                            >
-                                                <Share2 size={12} /> WhatsApp'tan Gönder
-                                            </button>
-                                        )}
+                                        <button 
+                                            onClick={() => handleShareWhatsApp(order)}
+                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-900/40 text-emerald-400 border border-emerald-500/20 rounded-lg text-xs font-bold hover:bg-emerald-800/60 transition-colors"
+                                        >
+                                            <Share2 size={12} /> WhatsApp'tan Sipariş Geç
+                                        </button>
                                     </div>
                                     <div className="p-4">
                                         <div className="overflow-x-auto">
                                             <table className="w-full text-left border-collapse">
                                                 <thead>
-                                                    <tr className="text-[10px] uppercase tracking-wider text-stone-500 border-b border-stone-800">
+                                                    <tr className="text-[11px] uppercase tracking-wider text-stone-500 border-b border-stone-800">
                                                         <th className="font-semibold p-2">Ürün Adı</th>
                                                         <th className="font-semibold p-2">Mevcut Stok</th>
-                                                        <th className="font-semibold p-2">Kritik Seviye</th>
+                                                        <th className="font-semibold p-2">30G Satış Hızı</th>
+                                                        <th className="font-semibold p-2">Önerilen Sipariş</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody>
-                                                    {order.items.map((item, itemIdx) => (
-                                                        <tr key={itemIdx} className="border-b border-stone-800/50 last:border-0 hover:bg-stone-800/20 transition-colors group">
-                                                            <td className="p-3 text-sm text-stone-100 font-medium group-hover:text-emerald-400 transition-colors">
-                                                                {item.pesticideName}
-                                                            </td>
-                                                            <td className="p-3">
-                                                                <span className="text-xs font-black text-red-400 bg-red-400/10 px-2 py-1 rounded border border-red-400/20">
-                                                                    {item.quantity} {item.unit}
-                                                                </span>
-                                                            </td>
-                                                            <td className="p-3">
-                                                                <span className="text-xs font-bold text-stone-400">
-                                                                    {item.lowStockThreshold} {item.unit}
-                                                                </span>
-                                                            </td>
-                                                        </tr>
-                                                    ))}
+                                                    {order.items.map((item, itemIdx) => {
+                                                        const vel = velocityMap.get(item.pesticideId);
+                                                        const sold30 = Math.round((vel?.sold30d || 0) * 10) / 10;
+                                                        return (
+                                                            <tr key={itemIdx} className="border-b border-stone-800/50 last:border-0 hover:bg-stone-800/20 transition-colors group">
+                                                                <td className="p-3 text-sm text-stone-100 font-medium group-hover:text-emerald-400 transition-colors">
+                                                                    <div>{item.pesticideName}</div>
+                                                                    <div className="text-[11px] text-stone-500">Kritik Eşik: {item.lowStockThreshold ?? 0} {item.unit}</div>
+                                                                </td>
+                                                                <td className="p-3">
+                                                                    <span className="text-xs font-black text-red-400 bg-red-400/10 px-2 py-1 rounded border border-red-400/20">
+                                                                        {item.quantity} {item.unit}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="p-3">
+                                                                    <span className="text-xs font-bold text-sky-400 inline-flex items-center gap-1">
+                                                                        <TrendingUp size={12} /> {sold30} {item.unit} / 30g
+                                                                    </span>
+                                                                </td>
+                                                                <td className="p-3">
+                                                                    <div className="flex items-center gap-1.5">
+                                                                        <input
+                                                                            type="number"
+                                                                            min="1"
+                                                                            value={customOrderQty[item.id] ?? String(getRecommendedQty(item))}
+                                                                            onChange={e => setCustomOrderQty(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                                                            className="w-20 bg-stone-950 border border-emerald-500/30 focus:border-emerald-500 rounded-lg px-2 py-1 text-xs font-black text-emerald-400 font-mono outline-none"
+                                                                        />
+                                                                        <span className="text-[11px] text-stone-400 font-bold">{item.unit}</span>
+                                                                    </div>
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    })}
                                                 </tbody>
                                             </table>
                                         </div>

@@ -1,11 +1,14 @@
 import React, { useState } from 'react';
 import { useAppViewModel } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
+import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { Lock, User as UserIcon, Loader2, AlertCircle, LogOut } from 'lucide-react';
+import { verifySecret } from '../utils/crypto';
+import { MksBrandLogo } from './MksBrandLogo';
 
 export const TeamLoginScreen: React.FC = () => {
     const { teamMembers, setActiveTeamMember, userProfile } = useAppViewModel();
-    const { logout } = useAuth();
+    const { currentUser, logout } = useAuth();
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState<string | null>(null);
@@ -17,29 +20,54 @@ export const TeamLoginScreen: React.FC = () => {
         setIsLoading(true);
 
         try {
-            // Check if it's the main admin bypass
-            const adminUser = userProfile.adminUsername || 'admin';
-            const adminPass = userProfile.adminPassword || 'admin';
-            
-            if (username === adminUser && password === adminPass) {
-                // Create a temporary admin member for the session if they just want to manage
-                setActiveTeamMember({
-                    id: 'admin-bypass',
-                    fullName: userProfile.fullName || 'Yönetici',
-                    username: adminUser,
-                    password: '',
-                    role: 'MANAGER',
-                    createdAt: new Date().toISOString()
-                }, true);
-                return;
+            const trimmedUser = username.trim();
+            const adminUser = (userProfile.adminUsername || 'admin').trim();
+
+            // 1. Yönetici girişi: Hash'lenmiş adminPassword doğrulaması (sabit 'admin/admin' şifresi kaldırıldı)
+            if (userProfile.adminPassword && trimmedUser === adminUser) {
+                const isAdminValid = await verifySecret(password, userProfile.adminPassword);
+                if (isAdminValid) {
+                    setActiveTeamMember({
+                        id: 'admin-bypass',
+                        fullName: userProfile.fullName || 'Yönetici',
+                        username: adminUser,
+                        role: 'MANAGER',
+                        createdAt: new Date().toISOString()
+                    }, true);
+                    return;
+                }
             }
 
-            const member = teamMembers.find(m => m.username === username && m.password === password);
-            if (member) {
-                setActiveTeamMember(member, true);
-            } else {
-                setError('Kullanıcı adı veya şifre hatalı.');
+            // 2. Hesap sahibi e-posta/şifre ile kurtarma girişi (adminPassword henüz belirlenmemişse veya unutulmuşsa)
+            if (
+                currentUser?.email &&
+                (trimmedUser.toLowerCase() === currentUser.email.toLowerCase() || trimmedUser === adminUser)
+            ) {
+                try {
+                    const cred = EmailAuthProvider.credential(currentUser.email, password);
+                    await reauthenticateWithCredential(currentUser, cred);
+                    setActiveTeamMember({
+                        id: 'admin-bypass',
+                        fullName: userProfile.fullName || 'Yönetici',
+                        username: adminUser,
+                        role: 'MANAGER',
+                        createdAt: new Date().toISOString()
+                    }, true);
+                    return;
+                } catch {
+                    // Devam et -> ekip üyelerini kontrol et
+                }
             }
+
+            // 3. Ekip üyeleri (Salted SHA-256 doğrulaması + geriye dönük uyumluluk)
+            for (const member of teamMembers) {
+                if (member.username === trimmedUser && (await verifySecret(password, member.password))) {
+                    setActiveTeamMember({ ...member, password: '' }, true);
+                    return;
+                }
+            }
+
+            setError('Kullanıcı adı veya şifre hatalı.');
         } catch (err) {
             setError('Bir hata oluştu.');
         } finally {
@@ -53,6 +81,7 @@ export const TeamLoginScreen: React.FC = () => {
 
             <div className="w-full max-w-[340px] relative z-10 animate-in fade-in zoom-in-95 duration-700">
                 <div className="text-center mb-8">
+                    <MksBrandLogo size="xl" rounded="2xl" className="mx-auto mb-3.5 border-emerald-500/30 shadow-lg" />
                     <h1 className="text-2xl font-black text-stone-100 tracking-tight mb-1">{userProfile.companyName || 'Firma'} Girişi</h1>
                     <span className="font-bold text-emerald-500 uppercase tracking-[0.2em] text-[9px]">Personel Girişi</span>
                 </div>
@@ -66,7 +95,7 @@ export const TeamLoginScreen: React.FC = () => {
                                 required 
                                 value={username} 
                                 onChange={e => setUsername(e.target.value)} 
-                                placeholder="Kullanıcı Adı" 
+                                placeholder="Kullanıcı Adı veya Hesap E-postası" 
                                 className="w-full pl-11 pr-4 py-3 bg-stone-950/50 border border-stone-800 rounded-2xl text-stone-200 text-sm outline-none focus:border-emerald-500/50 transition-all placeholder-stone-700" 
                             />
                         </div>

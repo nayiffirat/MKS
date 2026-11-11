@@ -1,0 +1,108 @@
+name: MKS iOS App Store & TestFlight Build (v8.2.1 - Build 28)
+
+on:
+  workflow_dispatch:
+    inputs:
+      export_signed_ipa:
+        description: 'Apple Developer sertifikasi ile imzali .ipa uret (Secrets tanimliysa true secin)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+jobs:
+  build-ios:
+    name: Build MKS iOS Archive & IPA on macOS 15 (Xcode 16)
+    runs-on: macos-15
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Select Xcode 16 Stable
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+
+      - name: Install Dependencies & Build Web ERP Bundle
+        run: |
+          npm ci
+          npm run build
+          npm run sync:ios
+
+      - name: Install CocoaPods Dependencies
+        working-directory: ios/App
+        run: |
+          pod install --repo-update
+
+      - name: Build Unsigned .xcarchive & Packaging Bundle (Zero-Mac Verification)
+        if: ${{ inputs.export_signed_ipa != 'true' }}
+        working-directory: ios/App
+        run: |
+          xcodebuild archive \
+            -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -archivePath "$RUNNER_TEMP/MKS_v8.2.1_b28.xcarchive" \
+            -sdk iphoneos \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+          mkdir -p "$RUNNER_TEMP/Payload"
+          cp -R "$RUNNER_TEMP/MKS_v8.2.1_b28.xcarchive/Products/Applications/App.app" "$RUNNER_TEMP/Payload/App.app"
+          cd "$RUNNER_TEMP"
+          zip -qry MKS_iOS_v8.2.1_b28_Unsigned.ipa Payload
+
+      - name: Upload iOS Archive & Unsigned IPA Artifact
+        if: ${{ inputs.export_signed_ipa != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: MKS-iOS-v8.2.1-Build28-Archive
+          path: |
+            ${{ runner.temp }}/MKS_iOS_v8.2.1_b28_Unsigned.ipa
+            ${{ runner.temp }}/MKS_v8.2.1_b28.xcarchive
+
+      - name: Signed Archive & Export for App Store Connect / TestFlight
+        if: ${{ inputs.export_signed_ipa == 'true' }}
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        working-directory: ios/App
+        run: |
+          mkdir -p "$RUNNER_TEMP/private_keys"
+          echo "$APP_STORE_CONNECT_PRIVATE_KEY" > "$RUNNER_TEMP/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+          xcodebuild archive \
+            -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -archivePath "$RUNNER_TEMP/MKS_Signed.xcarchive" \
+            -sdk iphoneos \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8" \
+            -authenticationKeyID "$APP_STORE_CONNECT_KEY_ID" \
+            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID"
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/MKS_Signed.xcarchive" \
+            -exportOptionsPlist ../ExportOptions.plist \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8" \
+            -authenticationKeyID "$APP_STORE_CONNECT_KEY_ID" \
+            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID"
+
+      - name: Upload Signed App Store IPA Artifact
+        if: ${{ inputs.export_signed_ipa == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: MKS-iOS-v8.2.1-Build28-AppStore-Signed-IPA
+          path: ${{ runner.temp }}/export/*.ipa

@@ -2,9 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { dbService } from '../services/db';
 import { Pesticide, PesticideCategory } from '../types';
 import { Search, FlaskConical, Droplet, Info, Plus, X, Loader2, Save, Camera, Barcode } from 'lucide-react';
-import BarcodeScanner from './BarcodeScanner';
+import BarcodeScanner from './LazyBarcodeScanner';
 import { useAppViewModel } from '../context/AppContext';
 import { turkishMatchesAny } from '../utils/search';
+import { parseGS1Barcode, canonicalBarcodeFromParsed, findItemByScan } from '../utils/gs1Parser';
+import { playScanBeep, playErrorBeep } from '../utils/hardwareBarcodeScanner';
+
+/** Name key for duplicate detection: trimmed, single-spaced, Turkish lower-case. */
+const normalizedName = (v?: string) => String(v || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('tr-TR');
 
 export const Pesticides: React.FC = () => {
   const { showToast } = useAppViewModel();
@@ -33,20 +38,55 @@ export const Pesticides: React.FC = () => {
     loadPesticides();
   }, []);
 
+  const [formError, setFormError] = useState<string | null>(null);
+
   const handleAddPesticide = async (e: React.FormEvent) => {
       e.preventDefault();
-      if (!newPesticide.name || !newPesticide.activeIngredient) return;
+      if (isSaving) return;
+      const name = String(newPesticide.name || '').trim().replace(/\s+/g, ' ');
+      const activeIngredient = String(newPesticide.activeIngredient || '').trim();
+      if (!name || !activeIngredient) {
+          setFormError('İlaç adı ve etken madde zorunludur.');
+          return;
+      }
+
+      // B-05: store the canonical GTIN/EAN, never the raw 2D GS1 string.
+      const rawBarcode = String(newPesticide.barcode || '').trim();
+      const parsedBarcode = rawBarcode ? parseGS1Barcode(rawBarcode) : null;
+      if (parsedBarcode && !parsedBarcode.valid) {
+          setFormError(`Barkod geçersiz: ${(parsedBarcode.errors || []).join(' • ') || 'kontrol hanesi hatalı'}`);
+          playErrorBeep();
+          return;
+      }
+      const barcode = parsedBarcode ? canonicalBarcodeFromParsed(parsedBarcode) : '';
 
       setIsSaving(true);
+      setFormError(null);
       try {
+          // B-24: duplicate check against the fresh library (normalised name + GTIN-normalised barcode).
+          const latest = await dbService.getPesticides();
+          const nameDup = latest.find(p => normalizedName(p.name) === normalizedName(name));
+          if (nameDup) {
+              setFormError(`"${nameDup.name}" kütüphanede zaten kayıtlı.`);
+              showToast('Bu isimde bir ilaç zaten kayıtlı.', 'error');
+              return;
+          }
+          const barcodeDup = parsedBarcode ? findItemByScan(latest, parsedBarcode) : undefined;
+          if (barcodeDup) {
+              setFormError(`Bu barkod "${barcodeDup.name}" ürününe ait.`);
+              showToast('Bu barkod başka bir ilaçta kayıtlı.', 'error');
+              playErrorBeep();
+              return;
+          }
+
           const pesticideToAdd: Pesticide = {
               id: crypto.randomUUID(),
-              name: newPesticide.name,
-              activeIngredient: newPesticide.activeIngredient,
-              defaultDosage: newPesticide.defaultDosage || '-',
+              name,
+              activeIngredient,
+              defaultDosage: String(newPesticide.defaultDosage || '').trim() || '-',
               category: newPesticide.category as PesticideCategory,
               description: newPesticide.description,
-              barcode: newPesticide.barcode
+              ...(barcode ? { barcode } : {})
           };
 
           await dbService.addGlobalPesticide(pesticideToAdd);
@@ -65,6 +105,8 @@ export const Pesticides: React.FC = () => {
           showToast("İlaç başarıyla eklendi", "success");
       } catch (error) {
           console.error("Failed to add pesticide", error);
+          const msg = error instanceof Error && error.message ? error.message : 'Bilinmeyen hata';
+          setFormError(`Kaydedilemedi: ${msg}`);
           showToast("İlaç eklenirken bir hata oluştu.", "error");
       } finally {
           setIsSaving(false);
@@ -128,7 +170,8 @@ export const Pesticides: React.FC = () => {
 
         {/* FAB - ADD PESTICIDE */}
         <button 
-            onClick={() => setIsAddModalOpen(true)}
+            onClick={() => { setFormError(null); setIsAddModalOpen(true); }}
+            aria-label="Kütüphaneye ilaç ekle"
             className="fixed bottom-32 right-6 md:bottom-10 md:right-10 bg-emerald-600 text-white p-4 rounded-full shadow-lg shadow-emerald-900/50 hover:bg-emerald-500 transition-all transform hover:scale-105 z-50 flex items-center justify-center"
         >
             <Plus size={28} />
@@ -137,8 +180,8 @@ export const Pesticides: React.FC = () => {
         {/* ADD MODAL */}
         {isAddModalOpen && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-                <div className="bg-stone-900 rounded-3xl w-full max-w-lg p-6 shadow-2xl relative border border-white/10 animate-in zoom-in-95 duration-200 overflow-y-auto max-h-[90vh]">
-                    <button onClick={() => setIsAddModalOpen(false)} className="absolute top-4 right-4 p-2 bg-stone-800 rounded-full text-stone-400 hover:text-stone-200 hover:bg-stone-700 transition-colors">
+                <div className="bg-stone-900 rounded-3xl w-full max-w-lg p-6 shadow-2xl relative border border-white/10 animate-in zoom-in-95 duration-200 overflow-y-auto max-h-[90dvh]">
+                    <button type="button" onClick={() => { setIsAddModalOpen(false); setFormError(null); }} aria-label="Kapat" data-mks-modal-close="true" className="absolute top-3 right-3 w-11 h-11 flex items-center justify-center bg-stone-800 rounded-full text-stone-400 hover:text-stone-200 hover:bg-stone-700 transition-colors">
                         <X size={20} />
                     </button>
                     
@@ -207,8 +250,11 @@ export const Pesticides: React.FC = () => {
                                     <Barcode className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-600" size={18} />
                                     <input 
                                         type="text" 
+                                        data-barcode-input="true"
+                                        autoComplete="off"
                                         value={newPesticide.barcode} 
-                                        onChange={e => setNewPesticide({...newPesticide, barcode: e.target.value})} 
+                                        onChange={e => { setFormError(null); setNewPesticide({...newPesticide, barcode: e.target.value}); }} 
+                                        onKeyDown={e => { if (e.key === 'Enter') e.preventDefault(); }}
                                         className="w-full p-3.5 pl-10 bg-stone-950 border border-stone-800 focus:border-emerald-500/50 rounded-xl outline-none font-medium transition-all text-white placeholder-stone-700" 
                                         placeholder="Barkod numarası" 
                                     />
@@ -216,7 +262,8 @@ export const Pesticides: React.FC = () => {
                                 <button 
                                     type="button"
                                     onClick={() => setIsScanning(true)}
-                                    className="p-3.5 bg-stone-800 text-stone-300 rounded-xl hover:bg-stone-700 transition-colors flex items-center justify-center aspect-square"
+                                    aria-label="Kamerayla barkod tara"
+                                    className="min-h-[44px] min-w-[44px] p-3.5 bg-stone-800 text-stone-300 rounded-xl hover:bg-stone-700 transition-colors flex items-center justify-center aspect-square"
                                 >
                                     <Camera size={20} />
                                 </button>
@@ -240,10 +287,16 @@ export const Pesticides: React.FC = () => {
                              </p>
                         </div>
 
+                        {formError && (
+                            <div role="alert" className="bg-red-900/20 p-3 rounded-lg border border-red-500/30 text-xs font-bold text-red-300">
+                                {formError}
+                            </div>
+                        )}
+
                         <button 
                             type="submit" 
                             disabled={isSaving}
-                            className="w-full bg-emerald-700 text-white py-4 rounded-xl font-bold text-lg shadow-lg hover:bg-emerald-600 hover:shadow-emerald-900/40 active:scale-95 transition-all mt-2 flex items-center justify-center"
+                            className="w-full min-h-[44px] bg-emerald-700 text-white py-4 rounded-xl font-bold text-lg shadow-lg hover:bg-emerald-600 hover:shadow-emerald-900/40 active:scale-95 transition-all mt-2 flex items-center justify-center disabled:opacity-60"
                         >
                             {isSaving ? <Loader2 className="animate-spin" /> : <><Save className="mr-2" size={20}/> Kütüphaneye Ekle</>}
                         </button>
@@ -254,8 +307,17 @@ export const Pesticides: React.FC = () => {
 
         {isScanning && (
             <BarcodeScanner 
-                onScan={(code) => {
-                    setNewPesticide(prev => ({ ...prev, barcode: code }));
+                onScan={(code, meta) => {
+                    const parsed = parseGS1Barcode(code, meta?.format);
+                    if (!parsed.valid) {
+                        playErrorBeep();
+                        setFormError(`Okunan barkod geçersiz: ${(parsed.errors || []).join(' • ') || 'kontrol hanesi hatalı'}`);
+                    } else {
+                        playScanBeep();
+                        setFormError(null);
+                    }
+                    // Canonical GTIN/EAN only (never the raw 2D string with serial/lot/SKT).
+                    setNewPesticide(prev => ({ ...prev, barcode: canonicalBarcodeFromParsed(parsed) || code }));
                     setIsScanning(false);
                 }}
                 onClose={() => setIsScanning(false)}

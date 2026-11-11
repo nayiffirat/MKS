@@ -1,25 +1,51 @@
-import { createMultiPagePdf } from '../utils/pdfHelper';
+import { createMultiPagePdf, renderElementToCanvas } from '../utils/pdfHelper';
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { dbService } from '../services/db';
 import { useAppViewModel } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { ContactService, ContactInfo } from '../services/contact';
-import { Farmer, VisitLog, Prescription, ManualDebt, Payment, Pesticide } from '../types';
+import { Farmer, Field, VisitLog, Prescription, ManualDebt, Payment, Pesticide, CardSettlementOption } from '../types';
 import { COMMON_CROPS, CROP_PESTICIDE_COSTS, DEFAULT_PESTICIDE_COST, CROP_AGRONOMY_INTEL, DEFAULT_AGRONOMY } from '../constants';
-import { Search, Phone, MessageCircle, MapPin, Wheat, ChevronLeft, ChevronRight, Contact, Loader2, User, Ruler, FileText, Calendar, Navigation, Plus, X, ArrowLeft, Edit2, Trash2, CheckSquare, Square, Check, FlaskConical, Clock, ImageIcon, Upload, AlertCircle, MessageSquare, Share2, Save, Download, FileJson, RefreshCw, RefreshCcw, Wallet, History, CreditCard, TrendingDown, TrendingUp as TrendingUpIcon, Send, Copy, ClipboardList, AlertTriangle, Sprout, Info, Scale, ShieldAlert, ShieldCheck, Hammer, ClipboardCheck, CheckCircle2 } from 'lucide-react';
-import { validateTcOrVkn } from '../utils/tcNoValidator';
-import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
-import 'jspdf-autotable';
+import { Search, Phone, MessageCircle, MapPin, Wheat, ChevronLeft, ChevronRight, Contact, Loader2, User, Ruler, FileText, Calendar, Navigation, Plus, X, ArrowLeft, Edit2, Trash2, CheckSquare, Square, Check, FlaskConical, Clock, ImageIcon, Upload, AlertCircle, MessageSquare, Share2, Save, Download, FileJson, RefreshCw, RefreshCcw, Wallet, History, CreditCard, TrendingDown, TrendingUp as TrendingUpIcon, Send, Copy, ClipboardList, AlertTriangle, Sprout, Info, Scale, ShieldAlert, ShieldCheck, Hammer, ClipboardCheck, CheckCircle2, Satellite, Megaphone, Split } from 'lucide-react';
+import { renderWhatsAppTemplate, normalizeWaPhone, DEFAULT_WHATSAPP_TEMPLATES } from '../utils/whatsappTemplates';
 import { formatCurrency, getCurrencySymbol } from '../utils/currency';
+import {
+  computeFarmerLedgerTotals,
+  computeFifoUnpaidDebtAgeDays,
+  getBouncedRelatedPaymentIds,
+  getIndependentFarmerMyPayments
+} from '../utils/ledger';
+import { validateTcOrVkn } from '../utils/tcNoValidator';
+
+const escapeHtml = (val: unknown): string =>
+  String(val ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 import { ConfirmationModal } from './ConfirmationModal';
 import { ListSkeleton } from './Skeleton';
 import { EmptyState } from './EmptyState';
 import { DebtReminderModal } from './DebtReminderModal';
 import { FarmerFinancialAnalysisModal } from './FarmerFinancialAnalysisModal';
-import { RealisticStamp } from './RealisticStamp';
 import { turkishMatchesAny } from '../utils/search';
+import { useBackHandler, useScrollLock } from '../utils/navigationManager';
+import { generatePortalToken } from '../utils/crypto';
+import { buildPublicPortalUrl } from '../utils/api';
+import { FarmerModal } from './farmers/FarmerFormModal';
+import { FieldPolygonDrawerModal } from './farmers/FieldPolygonDrawerModal';
+import { FieldSatelliteAnalyzerModal } from './farmers/FieldSatelliteAnalyzerModal';
+import { FarmerStatementReportView } from './farmers/FarmerStatementReportView';
+import { FarmerPrescriptionPreview } from './farmers/FarmerPrescriptionPreview';
+import {
+    FarmerManualDebtModal,
+    FarmerReportFilterModal,
+    FarmerContactImportModal,
+    FarmerBalanceRepairModal,
+    TempContactItem as TempContact,
+} from './farmers/FarmerModalsBundle';
 
 interface FarmersProps {
   onBack: () => void;
@@ -29,213 +55,6 @@ interface FarmersProps {
   selectedFarmerId?: string | null;
   onSelectFarmer?: (id: string | null) => void;
 }
-
-interface TempContact {
-  id: string;
-  fullName: string;
-  phoneNumber: string;
-  isAlreadyRegistered?: boolean;
-}
-
-// --- MODAL COMPONENT (MOVED OUTSIDE) ---
-interface FarmerModalProps {
-    isOpen: boolean;
-    onClose: () => void;
-    mode: 'ADD' | 'EDIT';
-    isSaving: boolean;
-    data: {
-        id: string;
-        fullName: string;
-        phoneNumber: string;
-        village: string;
-        tcNo?: string;
-        fields: { id: string; name: string; size: string; crop: string; plantingDate?: string; currentStage?: string; }[];
-    };
-    setData: (data: any) => void;
-    onSave: (e: React.FormEvent) => void;
-    onDelete?: () => void;
-    farmerLabel: string;
-}
-
-const FarmerModal: React.FC<FarmerModalProps> = ({ isOpen, onClose, mode, isSaving, data, setData, onSave, onDelete, farmerLabel }) => {
-    if (!isOpen) return null;
-
-    const tcNoVal = (data.tcNo || '').trim();
-    const tcValidation = validateTcOrVkn(data.tcNo);
-    const hasTcInput = tcNoVal.length > 0;
-    const isTcValid = tcValidation.isValid;
-
-    const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const val = e.target.value;
-        if (val.length < 4) setData({ ...data, phoneNumber: '+90 ' });
-        else if (!val.startsWith('+90')) setData({ ...data, phoneNumber: '+90 ' + val.replace(/^\+90\s*/, '') });
-        else setData({ ...data, phoneNumber: val });
-    };
-
-    const addField = () => {
-        setData({
-            ...data,
-            fields: [...(data.fields || []), { id: crypto.randomUUID() as string, name: '', size: '', crop: '' }]
-        });
-    };
-
-    const removeField = (id: string) => {
-        if (!data.fields || data.fields.length <= 1) return;
-        setData({
-            ...data,
-            fields: data.fields.filter(f => f.id !== id)
-        });
-    };
-
-    const updateField = (id: string, field: string, value: string) => {
-        setData({
-            ...data,
-            fields: (data.fields || []).map(f => f.id === id ? { ...f, [field]: value } : f)
-        });
-    };
-
-    return (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-stone-900 rounded-3xl w-full max-w-md p-5 shadow-2xl relative border border-white/10 animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
-            <button onClick={onClose} className="absolute top-3 right-3 p-1.5 bg-stone-800 rounded-full text-stone-400 hover:text-stone-200 z-10"><X size={16} /></button>
-            <div className="text-center mb-4 shrink-0"><h2 className="text-base font-bold text-stone-100">{mode === 'ADD' ? `Yeni ${farmerLabel} Ekle` : `${farmerLabel}yi Düzenle`}</h2></div>
-            
-            <form onSubmit={onSave} className="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-4">
-              <div className="space-y-2.5">
-                <div><label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Ad Soyad</label><input required type="text" value={data.fullName} onChange={e => setData({...data, fullName: e.target.value})} className="w-full p-2 bg-stone-950 border border-stone-800 rounded-xl outline-none font-medium text-white text-xs focus:border-emerald-500/50 transition-all" placeholder="İsim" /></div>
-                <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">T.C. Kimlik Numarası</label>
-                    {hasTcInput && (
-                      <span className={`text-[9px] font-bold font-mono ${isTcValid ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {tcNoVal.length}/11 Hane
-                      </span>
-                    )}
-                  </div>
-                  <input
-                    type="text"
-                    maxLength={11}
-                    value={data.tcNo || ''}
-                    onChange={e => {
-                      const val = e.target.value.replace(/[^0-9]/g, '');
-                      setData({ ...data, tcNo: val });
-                    }}
-                    className={`w-full p-2 bg-stone-950 border ${hasTcInput ? (isTcValid ? 'border-emerald-500 text-emerald-300 bg-emerald-950/20 focus:border-emerald-500 ring-2 ring-emerald-500/20' : 'border-rose-500 text-rose-300 bg-rose-950/40 focus:border-rose-500 ring-2 ring-rose-500/20') : 'border-stone-800 text-white focus:border-emerald-500/50'} rounded-xl outline-none font-medium text-xs transition-all font-mono`}
-                    placeholder="11 haneli T.C. Kimlik No"
-                  />
-                  {hasTcInput && (
-                    <p className={`text-[10px] font-bold ${isTcValid ? 'text-emerald-400 bg-emerald-950/40 border-emerald-500/30' : 'text-rose-400 bg-rose-950/50 border-rose-500/30'} mt-1.5 flex items-center gap-1.5 border p-2 rounded-lg`}>
-                      {isTcValid ? <CheckCircle2 size={12} className="shrink-0 text-emerald-400" /> : <AlertTriangle size={12} className="shrink-0 text-rose-400" />}
-                      <span>{tcValidation.message}</span>
-                    </p>
-                  )}
-                </div>
-                <div className="grid grid-cols-2 gap-2.5">
-                    <div><label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Telefon</label><input required type="tel" value={data.phoneNumber} onChange={handlePhoneChange} className="w-full p-2 bg-stone-950 border border-stone-800 rounded-xl outline-none font-medium text-white text-xs focus:border-emerald-500/50 transition-all" /></div>
-                    <div><label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Köy</label><input required type="text" value={data.village} onChange={e => setData({...data, village: e.target.value})} className="w-full p-2 bg-stone-950 border border-stone-800 rounded-xl outline-none font-medium text-white text-xs focus:border-emerald-500/50 transition-all" /></div>
-                </div>
-              </div>
-
-              <div className="pt-2">
-                <div className="flex items-center justify-between mb-2">
-                    <label className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Tarlalar / Araziler</label>
-                    <button type="button" onClick={addField} className="flex items-center gap-1 text-[9px] font-bold bg-emerald-900/30 text-emerald-400 px-2 py-1 rounded-lg border border-emerald-500/20 hover:bg-emerald-900/50 transition-all">
-                        <Plus size={12} /> Tarla Ekle
-                    </button>
-                </div>
-
-                <div className="space-y-3">
-                    {(data.fields || []).map((field, idx) => (
-                        <div key={field.id} className="p-3 bg-stone-950/50 border border-stone-800 rounded-2xl relative animate-in slide-in-from-top-2 duration-200">
-                            {data.fields && data.fields.length > 1 && (
-                                <button type="button" onClick={() => removeField(field.id)} className="absolute -top-2 -right-2 w-5 h-5 bg-red-900/80 text-white rounded-full flex items-center justify-center border border-red-500/30 shadow-lg active:scale-90 transition-all">
-                                    <X size={10} />
-                                </button>
-                            )}
-                            <div className="grid grid-cols-12 gap-2">
-                                <div className="col-span-12">
-                                    <input 
-                                        type="text" 
-                                        placeholder="Tarla Adı (Örn: Ev Arkası)" 
-                                        value={field.name} 
-                                        onChange={e => updateField(field.id, 'name', e.target.value)}
-                                        className="w-full bg-transparent border-b border-stone-800 py-1 text-[11px] text-stone-200 outline-none focus:border-emerald-500/50"
-                                    />
-                                </div>
-                                <div className="col-span-5">
-                                    <label className="text-[8px] font-bold text-stone-600 uppercase ml-1">Alan (da)</label>
-                                    <input 
-                                        required
-                                        type="number" 
-                                        value={field.size} 
-                                        onChange={e => updateField(field.id, 'size', e.target.value)}
-                                        className="w-full p-2 bg-stone-900 border border-stone-800 rounded-lg outline-none font-medium text-white text-[11px]" 
-                                    />
-                                </div>
-                                <div className="col-span-7">
-                                    <label className="text-[8px] font-bold text-stone-600 uppercase ml-1">Ürün</label>
-                                    <input 
-                                        required
-                                        type="text" 
-                                        list="crop-options"
-                                        value={field.crop} 
-                                        onChange={e => updateField(field.id, 'crop', e.target.value)}
-                                        className="w-full p-2 bg-stone-900 border border-stone-800 rounded-lg outline-none font-medium text-white text-[11px]" 
-                                        placeholder="Ürün Seçin veya Yazın"
-                                    />
-                                    <datalist id="crop-options">
-                                        {COMMON_CROPS.map(crop => (
-                                            <option key={crop} value={crop} />
-                                        ))}
-                                    </datalist>
-                                </div>
-                                <div className="col-span-6">
-                                    <label className="text-[8px] font-bold text-stone-600 uppercase ml-1">Ekim Tarihi</label>
-                                    <input 
-                                        type="date" 
-                                        value={field.plantingDate || ''} 
-                                        onChange={e => updateField(field.id, 'plantingDate', e.target.value)}
-                                        className="w-full p-2 bg-stone-900 border border-stone-800 rounded-lg outline-none font-medium text-white text-[11px]" 
-                                    />
-                                </div>
-                                <div className="col-span-6">
-                                    <label className="text-[8px] font-bold text-stone-600 uppercase ml-1">Mevcut Evre</label>
-                                    <input 
-                                        type="text" 
-                                        value={field.currentStage || ''} 
-                                        onChange={e => updateField(field.id, 'currentStage', e.target.value)}
-                                        className="w-full p-2 bg-stone-900 border border-stone-800 rounded-lg outline-none font-medium text-white text-[11px]" 
-                                        placeholder="Örn: Çimlenme"
-                                    />
-                                </div>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-              </div>
-
-              <div className="pt-2 shrink-0 flex gap-2">
-                {mode === 'EDIT' && onDelete && (
-                    <button 
-                        type="button" 
-                        onClick={() => {
-                            onClose();
-                            onDelete();
-                        }}
-                        className="px-4 bg-rose-900/20 text-rose-500 rounded-2xl font-bold text-xs border border-rose-500/20 hover:bg-rose-900/30 transition-all active:scale-95"
-                    >
-                        <Trash2 size={16} />
-                    </button>
-                )}
-                <button disabled={isSaving || (hasTcInput && !isTcValid)} type="submit" className={`flex-1 ${(hasTcInput && !isTcValid) ? 'bg-stone-800 text-stone-500 border-stone-700 cursor-not-allowed opacity-60' : 'bg-emerald-700 text-white border-emerald-500/20 shadow-xl shadow-emerald-900/20 active:scale-95'} py-3.5 rounded-2xl font-bold text-xs flex justify-center items-center transition-all border`}>
-                    {isSaving ? <Loader2 size={18} className="animate-spin" /> : `${farmerLabel}yi Kaydet`}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-    );
-};
 
 export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescription, onEditPrescription, onEditVisit, selectedFarmerId, onSelectFarmer }) => {
   const { currentUser } = useAuth();
@@ -247,6 +66,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
     addManualDebt, 
     updateManualDebt, 
     deleteManualDebt, 
+    farmers: contextFarmers,
     payments, 
     prescriptions, 
     manualDebts, 
@@ -311,41 +131,8 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
     }
   }, [selectedFarmerId, farmers]);
 
-  // Sub-navigation sync
-  useEffect(() => {
-    const handlePop = (e: PopStateEvent) => {
-      const state = e.state;
-      if (state?.view === 'FARMERS') {
-        if (state.farmerId) {
-          const target = farmers.find(f => f.id === state.farmerId);
-          if (target) {
-            if (onSelectFarmer) onSelectFarmer(target.id);
-            else setSelectedFarmer(target);
-          }
-        } else {
-          if (onSelectFarmer) onSelectFarmer(null);
-          else setSelectedFarmer(null);
-        }
-
-        if (state.modal) {
-          setIsModalOpen(true);
-        } else {
-          setIsModalOpen(false);
-        }
-      }
-    };
-    window.addEventListener('popstate', handlePop);
-    return () => window.removeEventListener('popstate', handlePop);
-  }, [farmers, onSelectFarmer]);
-
   const toggleModal = (open: boolean) => {
     if (open === isModalOpen) return;
-    if (open) {
-      window.history.pushState({ ...window.history.state, modal: 'FARMER_FORM' }, '');
-    } else if (window.history.state?.modal === 'FARMER_FORM') {
-      window.history.back();
-      return;
-    }
     setIsModalOpen(open);
   };
 
@@ -353,22 +140,24 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
     if (farmer === selectedFarmer) return;
 
     setSelectedPrescription(null);
+    setIsViewingReport(false);
+    setIsReportModalOpen(false);
     if (!farmer) {
       if (onSelectFarmer) {
         onSelectFarmer(null);
       } else {
         setSelectedFarmer(null);
       }
-      
       if (window.history.state?.farmerId) {
-        window.history.back();
+        const nextState = { ...window.history.state };
+        delete nextState.farmerId;
+        window.history.replaceState(nextState, '');
       }
     } else {
       setActiveTab('DEBT');
       if (!window.history.state?.farmerId) {
-        window.history.pushState({ ...window.history.state, farmerId: farmer.id }, '');
+        window.history.pushState({ ...window.history.state, view: 'FARMERS', farmerId: farmer.id }, '');
       }
-      
       if (onSelectFarmer) {
         onSelectFarmer(farmer.id);
       } else {
@@ -411,14 +200,37 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<'ADD' | 'EDIT'>('ADD');
   const [isSavingFarmer, setIsSavingFarmer] = useState(false);
-  const [editFarmerData, setEditFarmerData] = useState({
+  const [editFarmerData, setEditFarmerData] = useState<any>({
       id: '',
       fullName: '',
       phoneNumber: '+90 ',
       village: '',
       tcNo: '',
+      creditLimit: '',
+      riskScoreOverride: '',
       fields: [{ id: crypto.randomUUID() as string, name: '', size: '', crop: '', plantingDate: '', currentStage: '' }]
   });
+  const [satelliteTargetField, setSatelliteTargetField] = useState<Field | null>(null);
+  const [directPolygonEditField, setDirectPolygonEditField] = useState<Field | null>(null);
+
+  // Parçalı Tahsilat (#27) & Toplu Duyuru (#37) States
+  const [isFarmerSplitPayment, setIsFarmerSplitPayment] = useState(false);
+  const [farmerSplitRows, setFarmerSplitRows] = useState<{
+      id: string;
+      method: 'CASH' | 'CARD' | 'CHECK' | 'TEDYE';
+      amount: string;
+      accountId: string;
+      dueDate: string;
+      cardOption: CardSettlementOption;
+  }[]>([
+      { id: 'fsp-1', method: 'CASH', amount: '', accountId: '', dueDate: new Date().toISOString().split('T')[0], cardOption: 'UNBLOCKED' },
+      { id: 'fsp-2', method: 'CARD', amount: '', accountId: '', dueDate: new Date().toISOString().split('T')[0], cardOption: 'DAYS_30' },
+  ]);
+  const [isAnnouncementModalOpen, setIsAnnouncementModalOpen] = useState(false);
+  const [announceVillage, setAnnounceVillage] = useState('ALL');
+  const [announceCrop, setAnnounceCrop] = useState('ALL');
+  const [announceTemplate, setAnnounceTemplate] = useState('');
+  const [sentAnnouncementFarmerIds, setSentAnnouncementFarmerIds] = useState<Set<string>>(new Set());
   
   // Detail View Tab State
   const [activeTab, setActiveTab] = useState<'GENERAL' | 'VISITS' | 'PRESCRIPTIONS' | 'DEBT'>('DEBT');
@@ -479,6 +291,40 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
 
   // Cari Onar States
   const [isRepairModalOpen, setIsRepairModalOpen] = useState(false);
+
+  // Deterministic Step-by-Step Back Stack & Modal Scroll Lock
+  useBackHandler(isViewingReport, () => setIsViewingReport(false), 'farmer_ekstre_preview', 68);
+  useBackHandler(
+    isReportModalOpen,
+    () => {
+      setIsReportModalOpen(false);
+      setIsViewingReport(false);
+    },
+    'farmer_ekstre_modal',
+    64
+  );
+  useBackHandler(!!selectedPrescription, () => setSelectedPrescription(null), 'farmer_prescription_detail', 60);
+  useBackHandler(isPaymentModalOpen, () => setIsPaymentModalOpen(false), 'farmer_payment_modal', 58);
+  useBackHandler(isManualDebtModalOpen, () => setIsManualDebtModalOpen(false), 'farmer_debt_modal', 58);
+  useBackHandler(isReturnModalOpen, () => setIsReturnModalOpen(false), 'farmer_return_modal', 58);
+  useBackHandler(isFinancialAnalysisOpen, () => setIsFinancialAnalysisOpen(false), 'farmer_fin_modal', 58);
+  useBackHandler(isDebtReminderModalOpen, () => setIsDebtReminderModalOpen(false), 'farmer_reminder_modal', 58);
+  useBackHandler(isRepairModalOpen, () => setIsRepairModalOpen(false), 'farmer_repair_modal', 58);
+  useBackHandler(isImportModalOpen, () => setIsImportModalOpen(false), 'farmer_import_modal', 58);
+  useBackHandler(isModalOpen, () => setIsModalOpen(false), 'farmer_edit_modal', 58);
+  useBackHandler(!!selectedFarmer, () => changeFarmerSelection(null), 'farmer_detail_view', 25);
+
+  useScrollLock(
+    isReportModalOpen ||
+      isPaymentModalOpen ||
+      isManualDebtModalOpen ||
+      isReturnModalOpen ||
+      isFinancialAnalysisOpen ||
+      isDebtReminderModalOpen ||
+      isRepairModalOpen ||
+      isImportModalOpen ||
+      isModalOpen
+  );
   const [repairState, setRepairState] = useState<'IDLE' | 'ANALYZING' | 'RESULT' | 'REPAIRING'>('IDLE');
   const [repairMismatches, setRepairMismatches] = useState<{
       farmerId: string, 
@@ -547,10 +393,21 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
     loadFarmers();
   }, []);
 
+  useEffect(() => {
+    if (contextFarmers && contextFarmers.length >= 0) {
+      const activeList = contextFarmers.filter(f => !f.deletedAt);
+      setFarmers(activeList);
+      setSelectedFarmer(prev => prev ? (activeList.find(f => f.id === prev.id) || prev) : null);
+    }
+  }, [contextFarmers]);
+
   // Fetch farmer specific data when selected
   useEffect(() => {
     if (selectedFarmer) {
         loadFarmerDetails();
+        if (selectedFarmer.portalToken && selectedFarmer.portalToken.length >= 16) {
+            dbService.publishFarmerPortalShare(selectedFarmer.id, false).catch(() => {});
+        }
     }
   }, [selectedFarmer]);
 
@@ -719,11 +576,14 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       farmerPrescriptions.filter(p => new Date(p.date).getFullYear() === selectedYear),
   [farmerPrescriptions, selectedYear]);
 
+  const bouncedRelatedIds = useMemo(() => getBouncedRelatedPaymentIds(myPayments), [myPayments]);
+
   const filteredPayments = useMemo(() => {
-      const regularPayments = farmerPayments.filter(p => new Date(p.date).getFullYear() === selectedYear);
-      const checkPayments = myPayments.filter(p => p.farmerId === selectedFarmer?.id && !p.deletedAt && p.status !== 'CANCELLED' && !p.relatedId && new Date(p.issueDate).getFullYear() === selectedYear);
-      return [...regularPayments, ...checkPayments.map(p => ({ ...p, date: p.issueDate }))];
-  }, [farmerPayments, myPayments, selectedFarmer, selectedYear]);
+      const regularPayments = farmerPayments.filter(p => !bouncedRelatedIds.has(p.id) && new Date(p.date).getFullYear() === selectedYear);
+      const checkPayments = getIndependentFarmerMyPayments(myPayments, selectedFarmer?.id)
+          .filter(p => new Date(p.date).getFullYear() === selectedYear);
+      return [...regularPayments, ...checkPayments];
+  }, [farmerPayments, myPayments, bouncedRelatedIds, selectedFarmer, selectedYear]);
 
   const filteredManualDebts = useMemo(() => 
       farmerManualDebts.filter(d => new Date(d.date).getFullYear() === selectedYear),
@@ -748,19 +608,19 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       });
       
       farmerPayments.forEach(p => {
-          if (new Date(p.date).getFullYear() < selectedYear) {
+          if (!bouncedRelatedIds.has(p.id) && new Date(p.date).getFullYear() < selectedYear) {
               balance += p.amount;
           }
       });
 
-      myPayments.forEach(p => {
-          if (p.farmerId === selectedFarmer?.id && !p.deletedAt && p.status !== 'CANCELLED' && new Date(p.issueDate).getFullYear() < selectedYear) {
+      getIndependentFarmerMyPayments(myPayments, selectedFarmer?.id).forEach(p => {
+          if (new Date(p.date).getFullYear() < selectedYear) {
               balance += p.amount;
           }
       });
       
       return balance;
-  }, [farmerPrescriptions, farmerManualDebts, farmerPayments, myPayments, selectedYear, selectedFarmer]);
+  }, [farmerPrescriptions, farmerManualDebts, farmerPayments, myPayments, bouncedRelatedIds, selectedYear, selectedFarmer]);
 
   const yearTotalPaid = useMemo(() => filteredPayments.reduce((acc, p) => acc + p.amount, 0), [filteredPayments]);
   const yearTotalDebt = useMemo(() => 
@@ -774,19 +634,17 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
 
   const yearBalance = openingBalance + yearTotalPaid - yearTotalDebt;
 
-  // Overall totals for report or general info if needed
-  const totalPaid = useMemo(() => {
-      const cashPayments = farmerPayments.reduce((acc, p) => acc + p.amount, 0);
-      const checkPayments = myPayments.filter(p => p.farmerId === selectedFarmer?.id && !p.deletedAt && p.status !== 'CANCELLED' && !p.relatedId).reduce((acc, p) => acc + p.amount, 0);
-      return cashPayments + checkPayments;
-  }, [farmerPayments, myPayments, selectedFarmer]);
-
-  const totalDebt = farmerPrescriptions.filter(p => p.priceType !== 'CASH').reduce((acc, p) => {
-      const amt = Number(p.totalAmount) || 0;
-      const isReturn = p.type === 'RETURN' || amt < 0;
-      return acc + (isReturn ? -Math.abs(amt) : Math.abs(amt));
-  }, 0) + farmerManualDebts.filter(d => !d.id.startsWith('turnover-')).reduce((acc, d) => acc + d.amount, 0);
-  const overallBalance = totalPaid - totalDebt;
+  // Overall totals via single source of truth ledger
+  const selectedFarmerLedger = useMemo(() => computeFarmerLedgerTotals({
+      farmerId: selectedFarmer?.id,
+      prescriptions: farmerPrescriptions,
+      manualDebts: farmerManualDebts,
+      payments: farmerPayments,
+      myPayments
+  }), [selectedFarmer, farmerPrescriptions, farmerManualDebts, farmerPayments, myPayments]);
+  const totalPaid = selectedFarmerLedger.totalPaid;
+  const totalDebt = selectedFarmerLedger.totalDebt;
+  const overallBalance = selectedFarmerLedger.signedBalance;
 
   useEffect(() => {
     if (availableYears.length > 0) {
@@ -844,15 +702,25 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       window.open(url, '_blank');
   };
 
+  const buildSecurePortalUrl = (farmer: Farmer) => {
+      let token = farmer.portalToken;
+      if (!token || token.length < 16) {
+          token = generatePortalToken();
+          farmer.portalToken = token;
+          dbService.updateFarmer({ ...farmer, portalToken: token })
+              .then(() => dbService.publishFarmerPortalShare(farmer.id, true))
+              .catch(() => {});
+      } else {
+          dbService.publishFarmerPortalShare(farmer.id, true).catch(() => {});
+      }
+
+      return buildPublicPortalUrl(token);
+  };
+
   const handleCopyPortalLink = async () => {
       if (!selectedFarmer || !currentUser) return;
       
-      const baseUrl = window.location.origin + window.location.pathname;
-      const portalPath = baseUrl.endsWith('/') ? baseUrl + 'portal.html' : baseUrl.replace(/\/[^\/]*$/, '/portal.html');
-      const url = new URL(portalPath);
-      url.searchParams.set('portalId', selectedFarmer.id);
-      url.searchParams.set('engineerId', currentUser.uid);
-      const portalUrl = url.toString();
+      const portalUrl = buildSecurePortalUrl(selectedFarmer);
       
       let text = `Sayın *${selectedFarmer.fullName}*,\n\n`;
       text += `Size özel hazırladığımız *${farmerLabel} Portalı*'na aşağıdaki linkten ulaşabilirsiniz. Bu portal üzerinden güncel borç durumunuzu, aldığınız ilaçları ve ${prescriptionLabel.toLowerCase()}lerinizi takip edebilirsiniz.\n\n`;
@@ -875,7 +743,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
     setIsProcessingPdf(true);
 
     try {
-        const canvas = await html2canvas(receiptRef.current, {
+        const canvas = await renderElementToCanvas(receiptRef.current, {
             scale: 2,
             backgroundColor: '#ffffff',
             useCORS: true,
@@ -883,7 +751,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
             allowTaint: true
         });
 
-        const pdf = createMultiPagePdf(canvas);
+        const pdf = await createMultiPagePdf(canvas);
         
         // Türkçe karakterleri temizle ve ASCII'ye çevir
         const charMap: {[key: string]: string} = {'Ğ':'G','ğ':'g','Ü':'U','ü':'u','Ş':'S','ş':'s','İ':'I','ı':'i','Ö':'O','ö':'o','Ç':'C','ç':'c'};
@@ -997,12 +865,18 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       }
       setIsSavingFarmer(true);
       try {
+          const parsedCreditLimit = editFarmerData.creditLimit !== undefined && String(editFarmerData.creditLimit).trim() !== ''
+              ? Number(editFarmerData.creditLimit) || 0
+              : undefined;
+
           const farmerData = { 
               fullName: editFarmerData.fullName, 
               phoneNumber: editFarmerData.phoneNumber, 
               village: editFarmerData.village, 
               tcNo: editFarmerData.tcNo,
-              fields: (editFarmerData.fields || []).map(f => ({
+              creditLimit: parsedCreditLimit,
+              riskScoreOverride: (editFarmerData.riskScoreOverride || undefined) as Farmer['riskScoreOverride'],
+              fields: (editFarmerData.fields || []).map((f: any) => ({
                   ...f,
                   size: Number(f.size) || 0,
                   plantingDate: f.plantingDate || undefined,
@@ -1013,7 +887,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           if (modalMode === 'ADD') {
               await addFarmer(farmerData);
           } else { 
-              const updated = { id: editFarmerData.id, ...farmerData }; 
+              const updated = { ...(selectedFarmer || {}), id: editFarmerData.id, ...farmerData }; 
               await updateFarmer(updated); 
               setSelectedFarmer(updated); 
           }
@@ -1035,6 +909,8 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           phoneNumber: '+90 ', 
           village: '', 
           tcNo: '',
+          creditLimit: '',
+          riskScoreOverride: '',
           fields: [{ id: crypto.randomUUID() as string, name: '', size: '', crop: '', plantingDate: '', currentStage: '' }] 
       });
   };
@@ -1047,6 +923,8 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           phoneNumber: selectedFarmer.phoneNumber, 
           village: selectedFarmer.village, 
           tcNo: selectedFarmer.tcNo || '',
+          creditLimit: selectedFarmer.creditLimit ?? '',
+          riskScoreOverride: selectedFarmer.riskScoreOverride || '',
           fields: (selectedFarmer.fields || []).map(f => ({ 
               ...f, 
               size: f.size.toString(),
@@ -1061,7 +939,57 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
 
   const handleSavePayment = async () => {
       if (isSavingPayment || isSavingPaymentRef.current) return;
-      if (!selectedFarmer || !paymentAmount) return;
+      if (!selectedFarmer) return;
+      if (!editingPayment && isFarmerSplitPayment) {
+          const validRows = farmerSplitRows.filter(r => parseFloatSafe(r.amount) > 0);
+          if (validRows.length === 0) {
+              showToast('En az bir geçerli ödeme kalemi giriniz', 'error');
+              return;
+          }
+          isSavingPaymentRef.current = true;
+          setIsSavingPayment(true);
+          try {
+              const nowIso = new Date().toISOString();
+              for (let i = 0; i < validRows.length; i++) {
+                  const row = validRows[i];
+                  const amt = parseFloatSafe(row.amount);
+                  const fallbackAcc = row.method === 'CARD'
+                      ? (accounts.find(a => a.type === 'BANK')?.id || accounts[0]?.id)
+                      : (accounts.find(a => a.type === 'CASH')?.id || accounts[0]?.id);
+                  await addPayment({
+                      farmerId: selectedFarmer.id,
+                      amount: amt,
+                      date: nowIso,
+                      method: row.method,
+                      crop: paymentCrop || undefined,
+                      cardOption: row.method === 'CARD' ? row.cardOption : undefined,
+                      commissionRate: row.method === 'CARD' && row.cardOption === 'UNBLOCKED' ? parseFloatSafe(commissionRate) : undefined,
+                      dueDate: (row.method === 'CHECK' || row.method === 'TEDYE') ? row.dueDate : undefined,
+                      note: `${paymentNote ? paymentNote + ' • ' : ''}Karma Tahsilat (${i + 1}/${validRows.length})`,
+                      accountId: row.accountId || fallbackAcc || undefined,
+                      createdById: activeTeamMember?.id
+                  });
+              }
+              showToast(`${validRows.length} kalem karma tahsilat kaydedildi`, 'success');
+              hapticFeedback('success');
+              setIsPaymentModalOpen(false);
+              setIsFarmerSplitPayment(false);
+              setFarmerSplitRows([
+                  { id: 'fsp-1', method: 'CASH', amount: '', accountId: '', dueDate: new Date().toISOString().split('T')[0], cardOption: 'UNBLOCKED' },
+                  { id: 'fsp-2', method: 'CARD', amount: '', accountId: '', dueDate: new Date().toISOString().split('T')[0], cardOption: 'DAYS_30' },
+              ]);
+              setPaymentNote('');
+              setPaymentCrop('');
+              await loadFarmerDetails();
+          } catch (e) {
+              showToast('Karma tahsilat kaydedilemedi', 'error');
+          } finally {
+              isSavingPaymentRef.current = false;
+              setIsSavingPayment(false);
+          }
+          return;
+      }
+      if (!paymentAmount) return;
       isSavingPaymentRef.current = true;
       setIsSavingPayment(true);
       try {
@@ -1198,11 +1126,24 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
 
   const handleSendReceipt = async (payment: Payment) => {
       hapticFeedback('medium');
+      const currency = userProfile?.currency || 'TRY';
       const farmerName = selectedFarmer?.fullName || 'Sayın Müşterimiz';
       const dateStr = new Date(payment.date).toLocaleDateString('tr-TR');
-      const amountStr = formatCurrency(payment.amount, userProfile?.currency || 'TRY');
-      const paymentTypeStr = payment.method === 'CHECK' ? 'Çek' : 
-                          payment.method === 'TEDYE' ? 'Tediye' : 'Nakit/Diğer';
+      const amountStr = formatCurrency(payment.amount, currency);
+      const paymentTypeStr =
+          payment.method === 'CHECK' ? 'Çek' :
+          payment.method === 'TEDYE' ? 'Tediye' :
+          payment.method === 'CARD' ? 'Kredi Kartı / POS' : 'Nakit';
+
+      // Güncel ve önceki bakiye hesabı (#36)
+      const currentDebtAmt = overallBalance < 0 ? Math.abs(overallBalance) : 0;
+      const previousDebtAmt = Math.max(0, currentDebtAmt + payment.amount);
+      const prevBalStr = previousDebtAmt > 0 ? `${formatCurrency(previousDebtAmt, currency)} Borç` : '0,00 TL';
+      const remainingBalStr = overallBalance < -0.01
+          ? `${formatCurrency(Math.abs(overallBalance), currency)} Borç`
+          : overallBalance > 0.01
+              ? `${formatCurrency(overallBalance, currency)} Alacak`
+              : '0,00 TL (Kapandı)';
                           
       setIsProcessingPdf(true);
       try {
@@ -1211,42 +1152,51 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           container.style.left = '-9999px';
           container.style.top = '0';
           container.innerHTML = `
-              <div id="receipt-print-${payment.id}" style="width: 400px; padding: 40px; background: white; color: #1c1917; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-                  <div style="text-align: center; margin-bottom: 30px;">
-                      <h2 style="margin: 0; font-size: 26px; font-weight: 900; color: #064e3b; text-transform: uppercase;">${userProfile?.companyName || 'ZİRAİ OTOMASYON'}</h2>
-                      <p style="margin: 5px 0 0; font-size: 14px; font-weight: 600; color: #57534e; letter-spacing: 2px;">TAHSİLAT MAKBUZU</p>
+              <div id="receipt-print-${payment.id}" style="width: 420px; padding: 40px; background: white; color: #1c1917; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+                  <div style="text-align: center; margin-bottom: 24px;">
+                      <h2 style="margin: 0; font-size: 24px; font-weight: 900; color: #064e3b; text-transform: uppercase;">${userProfile?.companyName || 'ZİRAİ OTOMASYON'}</h2>
+                      <p style="margin: 5px 0 0; font-size: 13px; font-weight: 700; color: #57534e; letter-spacing: 2px;">TAHSİLAT DEKONTU</p>
                   </div>
-                  <div style="border-top: 2px dashed #d6d3d1; margin: 20px 0;"></div>
-                  <div style="display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 15px;">
+                  <div style="border-top: 2px dashed #d6d3d1; margin: 16px 0;"></div>
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 14px;">
                       <span style="color: #78716c; font-weight: 600;">Tarih:</span>
                       <strong style="color: #292524;">${dateStr}</strong>
                   </div>
-                  <div style="display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 15px;">
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 14px;">
                       <span style="color: #78716c; font-weight: 600;">Müşteri:</span>
                       <strong style="color: #292524;">${farmerName}</strong>
                   </div>
-                  <div style="display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 15px;">
-                      <span style="color: #78716c; font-weight: 600;">Ödeme:</span>
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 14px;">
+                      <span style="color: #78716c; font-weight: 600;">Ödeme Yöntemi:</span>
                       <strong style="color: #292524;">${paymentTypeStr}</strong>
                   </div>
                   ${payment.dueDate ? `
-                  <div style="display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 15px;">
-                      <span style="color: #78716c; font-weight: 600;">Vade:</span>
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 14px;">
+                      <span style="color: #78716c; font-weight: 600;">Vade Tarihi:</span>
                       <strong style="color: #292524;">${new Date(payment.dueDate).toLocaleDateString('tr-TR')}</strong>
                   </div>` : ''}
                   ${payment.note ? `
-                  <div style="display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 15px;">
-                      <span style="color: #78716c; font-weight: 600;">Not:</span>
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 14px;">
+                      <span style="color: #78716c; font-weight: 600;">Açıklama:</span>
                       <strong style="color: #292524;">${payment.note}</strong>
                   </div>` : ''}
-                  <div style="border-top: 2px dashed #d6d3d1; margin: 20px 0;"></div>
-                  <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px;">
-                      <span style="font-weight: 900; font-size: 18px; color: #292524;">TUTAR:</span>
-                      <strong style="font-size: 28px; color: #059669;">${amountStr}</strong>
+                  <div style="background: #f5f5f4; border: 1px solid #e7e5e4; border-radius: 12px; padding: 14px 16px; margin: 18px 0;">
+                      <div style="display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px;">
+                          <span style="color: #57534e; font-weight: 600;">Önceki Bakiye:</span>
+                          <strong style="color: #44403c;">${prevBalStr}</strong>
+                      </div>
+                      <div style="display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 15px;">
+                          <span style="color: #065f46; font-weight: 800;">Tahsil Edilen:</span>
+                          <strong style="color: #059669; font-size: 18px;">${amountStr}</strong>
+                      </div>
+                      <div style="border-top: 1px solid #d6d3d1; padding-top: 8px; display: flex; justify-content: space-between; font-size: 14px;">
+                          <span style="color: #1c1917; font-weight: 800;">Güncel Kalan Bakiye:</span>
+                          <strong style="color: ${overallBalance < -0.01 ? '#dc2626' : '#059669'};">${remainingBalStr}</strong>
+                      </div>
                   </div>
-                  <div style="margin-top: 30px; border-top: 1px solid #e7e5e4; padding-top: 15px; display: flex; justify-content: space-between; align-items: flex-end;">
+                  <div style="margin-top: 24px; border-top: 1px solid #e7e5e4; padding-top: 15px; display: flex; justify-content: space-between; align-items: flex-end;">
                       <div style="font-size: 11px; font-weight: 600; color: #78716c;">
-                          Bizi tercih ettiğiniz için<br/>teşekkür ederiz.
+                          Ödemeniz cari hesabınıza işlenmiştir.<br/>Bereketli sezonlar dileriz.
                       </div>
                       <div style="border: 2px solid ${userProfile?.stampColor || '#1d4ed8'}; border-radius: 6px; padding: 6px 10px; transform: rotate(-2.5deg); color: ${userProfile?.stampColor || '#1d4ed8'}; font-size: 8px; text-align: center; max-width: 190px;">
                           <div style="font-weight: 900; text-transform: uppercase; border-bottom: 1px solid ${userProfile?.stampColor || '#1d4ed8'}; padding-bottom: 2px; margin-bottom: 2px; font-size: 8.5px;">
@@ -1265,8 +1215,8 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           document.body.appendChild(container);
           
           const elementToCapture = container.firstElementChild as HTMLElement;
-          const canvas = await html2canvas(elementToCapture, {
-              scale: 2, 
+          const canvas = await renderElementToCanvas(elementToCapture, {
+              scale: 3, 
               backgroundColor: '#ffffff',
               useCORS: true,
               logging: false
@@ -1274,7 +1224,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           
           document.body.removeChild(container);
           
-          const pdf = createMultiPagePdf(canvas);
+          const pdf = await createMultiPagePdf(canvas);
           const pdfBlob = pdf.output('blob');
           
           const charMap: {[key: string]: string} = {'Ğ':'G','ğ':'g','Ü':'U','ü':'u','Ş':'S','ş':'s','İ':'I','ı':'i','Ö':'O','ö':'o','Ç':'C','ç':'c'};
@@ -1283,18 +1233,11 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
               .replace(/[^a-zA-Z0-9]/g, '_')
               .replace(/_+/g, '_')
               .replace(/^_|_$/g, '');
-          const fileName = `${safeName}_Tahsilat_Makbuzu.pdf`;
+          const fileName = `${safeName}_Tahsilat_Dekontu.pdf`;
           
           const fallbackToWhatsApp = (phone?: string, text?: string) => {
               const encodedMessage = encodeURIComponent(text || '');
-              let phoneParam = '';
-              if (phone) {
-                  let cleanPhone = phone.replace(/[^0-9]/g, '');
-                  if (cleanPhone.length === 10) {
-                      cleanPhone = '90' + cleanPhone;
-                  }
-                  phoneParam = cleanPhone.replace('+', '');
-              }
+              const phoneParam = normalizeWaPhone(phone);
               const whatsappUrl = phoneParam 
                   ? `https://wa.me/${phoneParam}?text=${encodedMessage}` 
                   : `https://wa.me/?text=${encodedMessage}`;
@@ -1302,10 +1245,23 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           };
 
           const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
-          let message = `Merhaba ${farmerName},\nTahsilat makbuzunuz ektedir.\n\nTutar: ${amountStr}\nBizi tercih ettiğiniz için teşekkür ederiz.\n${userProfile?.companyName || 'Zirai Otomasyon'}`;
+          const message = renderWhatsAppTemplate(
+              userProfile?.whatsappTemplates?.collectionReceipt,
+              'collectionReceipt',
+              {
+                  firma: userProfile?.companyName || 'Zirai Mühendislik',
+                  isim: farmerName,
+                  tarih: dateStr,
+                  odeme_yontemi: paymentTypeStr,
+                  eski_bakiye: prevBalStr,
+                  odenen: amountStr,
+                  kalan_bakiye: remainingBalStr,
+                  bakiye: remainingBalStr,
+              }
+          );
           const shareData = {
               files: [file],
-              title: 'Tahsilat Makbuzu',
+              title: 'Tahsilat Dekontu',
               text: message
           };
           
@@ -1419,14 +1375,14 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       if (!selectedFarmer || !reportRef.current) return;
       setIsGeneratingReport(true);
       try {
-          const canvas = await html2canvas(reportRef.current, {
+          const canvas = await renderElementToCanvas(reportRef.current, {
               scale: 2,
               backgroundColor: '#ffffff',
               useCORS: true,
               logging: false,
               allowTaint: true
           });
-          const pdf = createMultiPagePdf(canvas);
+          const pdf = await createMultiPagePdf(canvas);
           
           // Türkçe karakterleri temizle ve ASCII'ye çevir
           const charMap: {[key: string]: string} = {'Ğ':'G','ğ':'g','Ü':'U','ü':'u','Ş':'S','ş':'s','İ':'I','ı':'i','Ö':'O','ö':'o','Ç':'C','ç':'c'};
@@ -1470,23 +1426,169 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       if (!selectedFarmer) return;
       
       const debtAmount = Math.abs(overallBalance);
-      const formattedDebt = formatCurrency(debtAmount, (userProfile?.currency as any) || 'TRY');
-      
-      const baseUrl = window.location.origin + window.location.pathname;
-      const portalPath = baseUrl.endsWith('/') ? baseUrl + 'portal.html' : baseUrl.replace(/\/[^\/]*$/, '/portal.html');
-      const url = new URL(portalPath);
-      url.searchParams.set('portalId', selectedFarmer.id);
-      url.searchParams.set('engineerId', currentUser?.uid || '');
-      const portalUrl = url.toString();
-      
-      let text = `Sayın *${selectedFarmer.fullName}*,\n\n`;
-      text += `Güncel hesap bakiyeniz *${formattedDebt}* borç bakiyesi vermektedir.\n\n`;
-      text += `Detaylı hesap ekstrenizi, aldığınız ürünleri ve ödemelerinizi size özel ${farmerLabel.toLowerCase()} portalınızdan inceleyebilirsiniz:\n\n`;
-      text += `🔗 *Portal Linkiniz:*\n${portalUrl}\n\n`;
-      text += `İyi çalışmalar dileriz.`;
-      
-      const waUrl = `https://wa.me/${selectedFarmer.phoneNumber.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`;
+      const formattedDebt = `${formatCurrency(debtAmount, (userProfile?.currency as any) || 'TRY')} ${overallBalance < 0 ? 'Borç' : 'Alacak'}`;
+      const portalUrl = buildSecurePortalUrl(selectedFarmer);
+      const text = renderWhatsAppTemplate(
+          userProfile?.whatsappTemplates?.debtReminder,
+          'debtReminder',
+          {
+              firma: userProfile?.companyName || 'Zirai Mühendislik',
+              isim: selectedFarmer.fullName,
+              tarih: new Date().toLocaleDateString('tr-TR'),
+              bakiye: formattedDebt,
+              kalan_bakiye: formattedDebt,
+              link: portalUrl,
+              koy: selectedFarmer.village,
+          }
+      );
+      const cleanPhone = normalizeWaPhone(selectedFarmer.phoneNumber);
+      const waUrl = cleanPhone
+          ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`
+          : `https://wa.me/?text=${encodeURIComponent(text)}`;
       window.open(waUrl, '_blank');
+  };
+
+  const handleGenerateFarmerReconciliationPdf = async () => {
+      if (!selectedFarmer) return;
+      setIsProcessingPdf(true);
+      try {
+          hapticFeedback('medium');
+          showToast('Resmi Cari Mutabakat Mektubu hazırlanıyor...', 'info');
+          const currency = userProfile?.currency || 'TRY';
+          const todayStr = new Date().toLocaleDateString('tr-TR');
+          const absBal = Math.abs(overallBalance);
+          const directionText =
+              overallBalance < -0.01
+                  ? 'BORÇLU (Şirketimiz Alacaklı)'
+                  : overallBalance > 0.01
+                      ? 'ALACAKLI (Şirketimiz Borçlu)'
+                      : 'BAKİYE SIFIR (Mutabık)';
+          const companyTitle = escapeHtml(userProfile?.companyName || userProfile?.stampTitle || 'ZİRAİ MÜHENDİSLİK & TARIM MARKET');
+          const safeFullName = escapeHtml(userProfile?.fullName || 'Ziraat Mühendisi');
+          const safePhone = userProfile?.phoneNumber ? `• ${escapeHtml(userProfile.phoneNumber)}` : '';
+          const safeFarmerName = escapeHtml(selectedFarmer.fullName);
+          const safeFarmerTc = selectedFarmer.tcNo ? `T.C. / VKN: <strong>${escapeHtml(selectedFarmer.tcNo)}</strong> • ` : '';
+          const safeFarmerVillage = escapeHtml(selectedFarmer.village || '-');
+          const safeFarmerPhone = escapeHtml(selectedFarmer.phoneNumber || '-');
+          const safeStampColor = /^#[0-9a-fA-F]{3,8}$/.test(userProfile?.stampColor || '') ? userProfile!.stampColor! : '#1d4ed8';
+          const safeStampTitle = escapeHtml((userProfile?.stampTitle || userProfile?.companyName || 'ZİRAİ MÜHENDİSLİK').toUpperCase());
+          const safeStampSub = escapeHtml(userProfile?.stampSubTitle || userProfile?.fullName || 'Ziraat Mühendisi');
+          const safeStampTax = escapeHtml(userProfile?.stampTaxInfo || 'Resmi Dijital Onaylı Kaşe');
+
+          const container = document.createElement('div');
+          container.style.position = 'fixed';
+          container.style.left = '-9999px';
+          container.style.top = '0';
+          container.innerHTML = `
+              <div style="width: 794px; min-height: 1080px; padding: 56px 60px; background: #ffffff; color: #1c1917; font-family: 'Segoe UI', Roboto, Arial, sans-serif; box-sizing: border-box;">
+                  <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid #064e3b; padding-bottom: 20px; margin-bottom: 28px;">
+                      <div>
+                          <h1 style="margin: 0; font-size: 24px; font-weight: 900; color: #064e3b; text-transform: uppercase;">${companyTitle}</h1>
+                          <p style="margin: 6px 0 0; font-size: 13px; color: #57534e; font-weight: 600;">${safeFullName} ${safePhone}</p>
+                      </div>
+                      <div style="text-align: right;">
+                          <div style="background: #ecfdf5; border: 1px solid #10b981; color: #065f46; padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 900; letter-spacing: 1px;">
+                              CARİ HESAP MUTABAKAT MEKTUBU
+                          </div>
+                          <p style="margin: 8px 0 0; font-size: 12px; color: #57534e; font-weight: 700;">Tarih: ${escapeHtml(todayStr)}</p>
+                      </div>
+                  </div>
+
+                  <div style="background: #fafaf9; border: 1px solid #e7e5e4; border-radius: 12px; padding: 18px 22px; margin-bottom: 26px;">
+                      <p style="margin: 0 0 6px; font-size: 11px; font-weight: 800; color: #78716c; text-transform: uppercase; letter-spacing: 1px;">SAYIN ÜRETİCİ / MUHATAP BİLGİLERİ</p>
+                      <h2 style="margin: 0; font-size: 19px; font-weight: 900; color: #1c1917;">${safeFarmerName}</h2>
+                      <p style="margin: 6px 0 0; font-size: 13px; color: #44403c;">
+                          ${safeFarmerTc}
+                          Köy / Mevki: <strong>${safeFarmerVillage}</strong> • Telefon: <strong>${safeFarmerPhone}</strong>
+                      </p>
+                  </div>
+
+                  <p style="font-size: 14px; line-height: 1.75; color: #292524; margin-bottom: 24px;">
+                      Sayın <strong>${safeFarmerName}</strong>,<br/>
+                      İşletmemiz nezdindeki cari hesabınızın <strong>${escapeHtml(todayStr)}</strong> tarihi itibarıyla yapılan kontroller sonucunda aşağıda detayları belirtilen bakiyeyi verdiği tespit edilmiştir. Kayıtlarımızla mutabık olup olmadığınızı aşağıdaki bölümü imzalayarak tarafımıza bildirmenizi rica ederiz.
+                  </p>
+
+                  <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 14px;">
+                      <thead>
+                          <tr style="background: #064e3b; color: #ffffff;">
+                              <th style="padding: 12px 16px; text-align: left; border-radius: 8px 0 0 0;">Mutabakat Tarihi</th>
+                              <th style="padding: 12px 16px; text-align: right;">Toplam Borç</th>
+                              <th style="padding: 12px 16px; text-align: right;">Toplam Tahsilat</th>
+                              <th style="padding: 12px 16px; text-align: right;">Net Cari Bakiye</th>
+                              <th style="padding: 12px 16px; text-align: center; border-radius: 0 8px 0 0;">Bakiye Durumu</th>
+                          </tr>
+                      </thead>
+                      <tbody>
+                          <tr style="background: #f5f5f4; font-weight: 700;">
+                              <td style="padding: 14px 16px; border-bottom: 2px solid #d6d3d1;">${escapeHtml(todayStr)}</td>
+                              <td style="padding: 14px 16px; text-align: right; border-bottom: 2px solid #d6d3d1;">${escapeHtml(formatCurrency(totalDebt, currency))}</td>
+                              <td style="padding: 14px 16px; text-align: right; border-bottom: 2px solid #d6d3d1;">${escapeHtml(formatCurrency(totalPaid, currency))}</td>
+                              <td style="padding: 14px 16px; text-align: right; font-size: 16px; font-weight: 900; color: #064e3b; border-bottom: 2px solid #d6d3d1;">${escapeHtml(formatCurrency(absBal, currency))}</td>
+                              <td style="padding: 14px 16px; text-align: center; font-size: 12px; font-weight: 900; border-bottom: 2px solid #d6d3d1;">${escapeHtml(directionText)}</td>
+                          </tr>
+                      </tbody>
+                  </table>
+
+                  <div style="border: 1px dashed #a8a29e; background: #fffbeb; border-radius: 10px; padding: 14px 18px; margin-bottom: 36px; font-size: 12px; color: #78350f;">
+                      <strong>Not:</strong> İşbu mutabakat mektubuna tebliğ tarihinden itibaren 1 (bir) ay içerisinde itiraz edilmediği takdirde 6102 sayılı TTK m. 94 uyarınca cari hesap bakiyesi kesinleşmiş sayılır.
+                  </div>
+
+                  <div style="display: flex; gap: 24px; margin-top: 20px;">
+                      <div style="flex: 1; border: 2px solid #d6d3d1; border-radius: 14px; padding: 20px; min-height: 190px; display: flex; flex-direction: column; justify-content: space-between;">
+                          <div>
+                              <div style="font-size: 12px; font-weight: 900; color: #064e3b; text-transform: uppercase; border-bottom: 1px solid #e7e5e4; padding-bottom: 8px; margin-bottom: 10px;">
+                                  GÖNDEREN İŞLETME (KAŞE / İMZA)
+                              </div>
+                              <div style="font-size: 13px; font-weight: 800; color: #1c1917;">${companyTitle}</div>
+                              <div style="font-size: 11px; color: #57534e; margin-top: 4px;">${escapeHtml(userProfile?.fullName || '')}</div>
+                          </div>
+                          ${userProfile?.stampEnabled !== false ? `
+                          <div style="align-self: center; border: 2px solid ${safeStampColor}; border-radius: 8px; padding: 8px 14px; transform: rotate(-2deg); color: ${safeStampColor}; text-align: center; margin-top: 12px;">
+                              <div style="font-size: 10px; font-weight: 900; text-transform: uppercase;">${safeStampTitle}</div>
+                              <div style="font-size: 9px; font-weight: 700;">${safeStampSub}</div>
+                              <div style="font-size: 8px;">${safeStampTax}</div>
+                          </div>` : '<div style="font-size: 11px; color: #a8a29e; text-align: center;">Kaşe / İmza</div>'}
+                      </div>
+
+                      <div style="flex: 1; border: 2px solid #d6d3d1; border-radius: 14px; padding: 20px; min-height: 190px; display: flex; flex-direction: column; justify-content: space-between;">
+                          <div>
+                              <div style="font-size: 12px; font-weight: 900; color: #1c1917; text-transform: uppercase; border-bottom: 1px solid #e7e5e4; padding-bottom: 8px; margin-bottom: 10px;">
+                                  ÜRETİCİ / MÜŞTERİ ONAYI (İMZA)
+                              </div>
+                              <div style="font-size: 13px; font-weight: 800; color: #1c1917; margin-bottom: 12px;">${safeFarmerName}</div>
+                              <div style="display: flex; gap: 18px; font-size: 12px; font-weight: 800; color: #292524; margin-top: 10px;">
+                                  <span>☐ MUTABIKIZ</span>
+                                  <span>☐ MUTABIK DEĞİLİZ</span>
+                              </div>
+                          </div>
+                          <div style="font-size: 11px; color: #78716c; border-top: 1px dashed #d6d3d1; padding-top: 8px;">
+                              Tarih / İmza:
+                          </div>
+                      </div>
+                  </div>
+              </div>
+          `;
+          document.body.appendChild(container);
+          const canvas = await renderElementToCanvas(container.firstElementChild as HTMLElement, {
+              scale: 3,
+              backgroundColor: '#ffffff',
+              useCORS: true,
+              logging: false,
+          });
+          document.body.removeChild(container);
+          const pdf = await createMultiPagePdf(canvas);
+          const charMap: {[key: string]: string} = {'Ğ':'G','ğ':'g','Ü':'U','ü':'u','Ş':'S','ş':'s','İ':'I','ı':'i','Ö':'O','ö':'o','Ç':'C','ç':'c'};
+          const safeName = selectedFarmer.fullName
+              .replace(/[ĞğÜüŞşİıÖöÇç]/g, m => charMap[m])
+              .replace(/[^a-zA-Z0-9]/g, '_');
+          pdf.save(`${safeName}_Cari_Mutabakat_${new Date().toISOString().split('T')[0]}.pdf`);
+          showToast('Cari Mutabakat Mektubu (PDF) indirildi', 'success');
+      } catch (err) {
+          console.error('Farmer reconciliation PDF error:', err);
+          showToast('Mutabakat PDF oluşturulamadı', 'error');
+      } finally {
+          setIsProcessingPdf(false);
+      }
   };
 
   const getDueDate = (item: any) => {
@@ -1561,24 +1663,37 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   };
 
   const farmersWithDebt = useMemo(() => {
+    const nowMs = Date.now();
     return farmers.map(farmer => {
-      const fPayments = payments.filter(p => !p.deletedAt && p.farmerId === farmer.id);
-      const fMyPayments = myPayments.filter(p => !p.deletedAt && p.farmerId === farmer.id && p.status !== 'CANCELLED' && !p.relatedId);
-      const fPrescriptions = prescriptions.filter(p => !p.deletedAt && p.farmerId === farmer.id);
-      const fManualDebts = manualDebts.filter(d => !d.deletedAt && d.farmerId === farmer.id);
-      
-      const totalPaid = fPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0) + 
-                       fMyPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
-      const totalDebt = fPrescriptions.filter(p => p.priceType !== 'CASH').reduce((acc, p) => {
-        const amt = Number(p.totalAmount) || 0;
-        const isReturn = p.type === 'RETURN' || amt < 0;
-        // If it's a return, it should decrease the debt. 
-        return acc + (isReturn ? -Math.abs(amt) : Math.abs(amt));
-      }, 0) + 
-      fManualDebts.filter(d => !d.id.startsWith('turnover-')).reduce((acc, d) => acc + (Number(d.amount) || 0), 0);
-      
-      const overallBalance = totalPaid - totalDebt;
-      return { ...farmer, overallBalance };
+      const totals = computeFarmerLedgerTotals({
+        farmerId: farmer.id,
+        prescriptions,
+        manualDebts,
+        payments,
+        myPayments
+      });
+      const overallBalance = totals.signedBalance;
+      const curDebtAmt = totals.netDebt > 0 ? totals.netDebt : 0;
+      const debtAgeDays = computeFifoUnpaidDebtAgeDays({
+        farmerId: farmer.id,
+        prescriptions,
+        manualDebts,
+        payments,
+        myPayments,
+        nowMs
+      });
+      const payRatio = totals.totalDebt > 0 ? totals.totalPaid / totals.totalDebt : 1;
+      const overLimit = (farmer.creditLimit || 0) > 0 && curDebtAmt > (farmer.creditLimit || 0);
+      const autoGrade: 'A' | 'B' | 'C' | 'D' =
+          overLimit || (debtAgeDays > 240 && payRatio < 0.25)
+              ? 'D'
+              : curDebtAmt <= 50 || (payRatio >= 0.7 && debtAgeDays <= 90)
+                  ? 'A'
+                  : debtAgeDays <= 180 && payRatio >= 0.35
+                      ? 'B'
+                      : 'C';
+      const effectiveRiskGrade: 'A' | 'B' | 'C' | 'D' = farmer.riskScoreOverride || autoGrade;
+      return { ...farmer, overallBalance, effectiveRiskGrade };
     }).sort((a, b) => a.fullName.localeCompare(b.fullName, 'tr-TR'));
   }, [farmers, payments, myPayments, prescriptions, manualDebts]);
 
@@ -1624,11 +1739,11 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
               
               tableHtml += `
                 <tr style="background-color: ${bg}; border-bottom: 1px solid #e7e5e4;">
-                    <td style="padding: 12px; font-weight: 600;">${f.fullName}</td>
-                    <td style="padding: 12px; font-family: monospace; color: #57534e;">${f.tcNo || '-'}</td>
-                    <td style="padding: 12px; color: #57534e;">${f.phoneNumber || '-'}</td>
-                    <td style="padding: 12px; color: #57534e;">${f.village || '-'}</td>
-                    <td style="padding: 12px; text-align: right; font-family: monospace; font-size: 13px;">${balanceStr} ${statusStr}</td>
+                    <td style="padding: 12px; font-weight: 600;">${escapeHtml(f.fullName)}</td>
+                    <td style="padding: 12px; font-family: monospace; color: #57534e;">${escapeHtml(f.tcNo || '-')}</td>
+                    <td style="padding: 12px; color: #57534e;">${escapeHtml(f.phoneNumber || '-')}</td>
+                    <td style="padding: 12px; color: #57534e;">${escapeHtml(f.village || '-')}</td>
+                    <td style="padding: 12px; text-align: right; font-family: monospace; font-size: 13px;">${escapeHtml(balanceStr)} ${statusStr}</td>
                 </tr>
               `;
           });
@@ -1641,15 +1756,15 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           container.innerHTML = tableHtml;
           document.body.appendChild(container);
           
-          const canvas = await html2canvas(container, {
-              scale: 2,
+          const canvas = await renderElementToCanvas(container, {
+              scale: 3,
               backgroundColor: '#ffffff',
               logging: false
           });
           
           document.body.removeChild(container);
           
-          const pdf = createMultiPagePdf(canvas);
+          const pdf = await createMultiPagePdf(canvas);
           pdf.save('Ciftci_Cari_Listesi.pdf');
           showToast('Kurumsal PDF indirildi', 'success');
           
@@ -1678,401 +1793,60 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   if (selectedFarmer) {
      if (selectedPrescription) {
          return (
-            <div className="pb-24 animate-in slide-in-from-right duration-300">
-                <div className="flex items-center justify-between mb-4 sticky top-0 bg-stone-950/90 backdrop-blur z-20 py-3 border-b border-white/5">
-                    <button onClick={() => setSelectedPrescription(null)} className="flex items-center text-stone-400 hover:text-stone-200 font-medium px-2 py-1 -ml-2 rounded-lg hover:bg-white/5 transition-colors text-xs">
-                        <ChevronLeft className="mr-1" size={18}/> Cariye Dön
-                    </button>
-                    <div className="flex items-center gap-2">
-                        <button 
-                            onClick={() => onEditPrescription(selectedPrescription.id)}
-                            className="flex items-center px-3 py-1.5 bg-stone-800 text-stone-300 rounded-xl border border-white/5 hover:text-emerald-400 hover:bg-stone-700 transition-all active:scale-95"
-                        >
-                            <Edit2 size={14} className="mr-1.5" />
-                            <span className="text-[10px] font-black uppercase tracking-wide">Düzenle</span>
-                        </button>
-                        <button 
-                            onClick={() => {
-                                setPrescriptionToDelete(selectedPrescription.id);
-                                setIsDeleteModalOpen(true);
-                            }}
-                            className="flex items-center px-3 py-1.5 bg-stone-800 text-stone-300 rounded-xl border border-white/5 hover:text-rose-400 hover:bg-stone-700 transition-all active:scale-95"
-                        >
-                            <Trash2 size={14} className="mr-1.5" />
-                            <span className="text-[10px] font-black uppercase tracking-wide">Sil</span>
-                        </button>
-                    </div>
-                </div>
-                <div ref={receiptRef} className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-sm mx-auto relative overflow-hidden text-stone-900 mb-6 border border-stone-300 mt-2">
-                    <div className="absolute top-0 left-0 w-full h-2 bg-emerald-600"></div>
-                    <div className="flex justify-between items-start mb-6 pt-2">
-                        <div>
-                            <h3 className="font-black text-lg text-stone-900 tracking-tight">
-                                {selectedPrescription.totalAmount && selectedPrescription.totalAmount < 0 ? 'İADE MAKBUZU' : 'ZİRAİ FATURA'}
-                            </h3>
-                            <div className="mt-1.5 inline-block bg-stone-900 text-white font-mono text-xs font-black px-2.5 py-1 rounded-md tracking-wider">
-                                FATURA NO: {selectedPrescription.prescriptionNo}
-                            </div>
-                            {(() => {
-                                const fIds = selectedPrescription.fieldIds || (selectedPrescription.fieldId ? [selectedPrescription.fieldId] : []);
-                                if (fIds.length === 0) return null;
-                                const fieldNames = fIds.map(id => selectedFarmer?.fields?.find(f => f.id === id)?.name).filter(Boolean);
-                                if (fieldNames.length === 0) return null;
-                                return (
-                                    <p className="text-[10px] text-emerald-600 font-bold mt-1">
-                                        {fieldNames.length > 1 ? 'Araziler: ' : 'Arazi: '}{fieldNames.join(', ')}
-                                    </p>
-                                );
-                            })()}
-                        </div>
-                        <div className="text-right">
-                            <p className="font-bold text-emerald-700 text-sm">{selectedFarmer.fullName}</p>
-                            <p className="text-[9px] text-stone-500">{new Date(selectedPrescription.date).toLocaleDateString('tr-TR')}</p>
-                        </div>
-                    </div>
-                    
-                    <div className="min-h-[200px]">
-                        {selectedPrescription.totalAmount && selectedPrescription.totalAmount !== 0 ? (
-                            <table className="w-full text-xs">
-                                <thead className="bg-stone-200 text-stone-900 uppercase text-[9px] font-black tracking-wider border-b border-stone-300">
-                                    <tr>
-                                        <th className="p-2 text-left w-[40%]">Ürün Adı</th>
-                                        <th className="p-2 text-center w-[18%]">Adet</th>
-                                        <th className="p-2 text-right w-[20%]">Birim Fiyat</th>
-                                        <th className="p-2 text-right w-[22%]">Toplam</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-stone-200">
-                                    {selectedPrescription.items.map((item, idx) => (
-                                        <tr key={idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-stone-50/50'}>
-                                            <td className="p-2">
-                                                <div className="font-bold text-stone-900 text-xs">{item.pesticideName}</div>
-                                                <div className="text-[9px] text-stone-500 font-mono mt-0.5">Doz: {item.dosage}</div>
-                                            </td>
-                                            <td className="p-2 text-center">
-                                                <span className="inline-block bg-amber-100 text-amber-950 font-black font-mono text-xs px-2 py-0.5 rounded border border-amber-300/80">
-                                                    {item.quantity ? item.quantity.toString().replace(/^-/, '') : '-'}
-                                                </span>
-                                            </td>
-                                            <td className="p-2 text-right font-mono font-bold text-stone-800">
-                                                {item.unitPrice ? formatCurrency(item.unitPrice, userProfile?.currency || 'TRY') : '-'}
-                                            </td>
-                                            <td className="p-2 text-right font-mono font-black text-stone-950">
-                                                {item.totalPrice ? formatCurrency(Math.abs(item.totalPrice), userProfile?.currency || 'TRY') : '-'}
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                                <tfoot>
-                                    <tr className="bg-stone-50/50 border-t border-stone-200">
-                                        <td colSpan={3} className="p-2 text-right font-bold text-stone-500 uppercase text-[9px] tracking-widest pt-3">
-                                            {selectedPrescription.discountAmount && selectedPrescription.discountAmount > 0 ? 'Ara Toplam' : (selectedPrescription.totalAmount < 0 ? 'İade Toplamı' : `${prescriptionLabel} Toplamı`)}
-                                        </td>
-                                        <td className={`p-2 text-right font-black font-mono text-sm pt-3 ${selectedPrescription.discountAmount && selectedPrescription.discountAmount > 0 ? 'text-stone-500 line-through' : 'text-emerald-600'}`}>
-                                            {formatCurrency(Math.abs((selectedPrescription.totalAmount || 0) + (selectedPrescription.discountAmount || 0)), userProfile?.currency || 'TRY')}
-                                        </td>
-                                    </tr>
-                                    {selectedPrescription.discountAmount && selectedPrescription.discountAmount > 0 && (
-                                        <>
-                                            <tr className="bg-stone-50/50">
-                                                <td colSpan={3} className="p-2 text-right font-bold text-rose-500 uppercase text-[9px] tracking-widest pt-1">
-                                                    İskonto (İndirim)
-                                                </td>
-                                                <td className="p-2 text-right font-black text-rose-500 font-mono text-sm pt-1">
-                                                    -{formatCurrency(selectedPrescription.discountAmount, userProfile?.currency || 'TRY')}
-                                                </td>
-                                            </tr>
-                                            <tr className="bg-stone-100 border-t border-stone-200">
-                                                <td colSpan={3} className="p-2 text-right font-bold text-emerald-700 uppercase text-[10px] tracking-widest pt-2 pb-2">
-                                                    İndirimli Tutar
-                                                </td>
-                                                <td className="p-2 text-right font-black text-emerald-700 font-mono text-lg pt-2 pb-2">
-                                                    {formatCurrency(Math.abs(selectedPrescription.totalAmount || 0), userProfile?.currency || 'TRY')}
-                                                </td>
-                                            </tr>
-                                        </>
-                                    )}
-                                </tfoot>
-                            </table>
-                        ) : (
-                            <table className="w-full text-xs">
-                                <thead className="bg-stone-50 text-stone-500 uppercase text-[8px] font-black tracking-widest">
-                                    <tr>
-                                        <th className="p-2 text-left rounded-l-lg">Ürün / İlaç Adı</th>
-                                        <th className="p-2 text-right rounded-r-lg">Uygulama Dozajı</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-stone-100">
-                                    {selectedPrescription.items.map((item, idx) => (
-                                        <tr key={idx} className="group">
-                                            <td className="p-2 font-bold text-stone-800">
-                                                {item.pesticideName}
-                                                {item.quantity && (
-                                                    <span className="ml-1 text-stone-500 font-bold text-[9px] bg-stone-100 px-1.5 py-0.5 rounded-full">
-                                                        {item.quantity.toString().replace(/^-/, '')} Adet
-                                                    </span>
-                                                )}
-                                            </td>
-                                            <td className="p-2 text-right font-mono font-bold text-emerald-600">{item.dosage}</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        )}
-                    </div>
-
-                    <div className="mt-8 pt-4 border-t border-stone-200 flex justify-between items-end">
-                        <div className="text-[7px] text-stone-400 leading-relaxed">
-                            Bu belge Mühendis Kayıt Sistemi<br/>
-                            tarafından oluşturulmuştur.<br/>
-                            <strong>MKS v3.1.2</strong>
-                        </div>
-                        <div className="text-right flex flex-col items-end">
-                            <RealisticStamp profile={userProfile} engineerName={selectedPrescription.engineerName} size="xs" />
-                        </div>
-                    </div>
-                </div>
-                
-                {/* ACTION BUTTONS */}
-                <div className="max-w-sm mx-auto flex gap-2 mt-4">
-                    <button 
-                        onClick={() => handlePdfAction('SHARE')} 
-                        disabled={isProcessingPdf} 
-                        className="flex-1 py-3 rounded-xl bg-emerald-600 text-white font-bold shadow-xl shadow-emerald-900/30 hover:bg-emerald-500 active:scale-95 transition-all flex items-center justify-center disabled:opacity-70 text-xs"
-                    >
-                        {isProcessingPdf ? <Loader2 size={16} className="animate-spin mr-2"/> : <Share2 size={16} className="mr-2"/>} 
-                        WhatsApp PDF
-                    </button>
-                    
-                    <button 
-                        onClick={handleWhatsAppText}
-                        className="flex-1 py-3 rounded-xl bg-[#25D366] text-white font-bold shadow-xl hover:bg-[#20bd5a] active:scale-95 transition-all flex items-center justify-center text-xs"
-                    >
-                        <MessageCircle size={16} className="mr-2"/> 
-                        WP Özet
-                    </button>
-
-                    <button 
-                        onClick={() => handlePdfAction('DOWNLOAD')} 
-                        disabled={isProcessingPdf} 
-                        className="px-4 py-3 rounded-xl bg-stone-800 text-stone-200 font-bold border border-white/10 hover:bg-stone-700 active:scale-95 transition-all flex items-center justify-center disabled:opacity-70 text-xs"
-                    >
-                        {isProcessingPdf ? <Loader2 size={16} className="animate-spin"/> : <Download size={16}/>} 
-                    </button>
-                </div>
-
-                <ConfirmationModal 
-                    isOpen={isDeleteModalOpen}
-                    onClose={() => { setIsDeleteModalOpen(false); setPrescriptionToDelete(null); }}
-                    onConfirm={async () => {
-                        if (prescriptionToDelete) {
-                            await softDeletePrescription(prescriptionToDelete);
-                            showToast(`${prescriptionLabel} silindi`, 'info');
-                            hapticFeedback('medium');
-                            setSelectedPrescription(null);
-                            setPrescriptionToDelete(null);
-                        }
-                    }}
-                    title={`${prescriptionLabel} Silinecek`}
-                    message={t('prescription.delete_confirm', { label: prescriptionLabel.toLowerCase() }) || `Bu ${prescriptionLabel.toLowerCase()}yi silmek istediğinize emin misiniz?`}
-                />
-            </div>
+            <FarmerPrescriptionPreview
+                selectedFarmer={selectedFarmer}
+                selectedPrescription={selectedPrescription}
+                receiptRef={receiptRef}
+                userProfile={userProfile}
+                prescriptionLabel={prescriptionLabel}
+                isProcessingPdf={isProcessingPdf}
+                isDeleteModalOpen={isDeleteModalOpen}
+                deleteConfirmMessage={t('prescription.delete_confirm', { label: prescriptionLabel.toLowerCase() }) || `Bu ${prescriptionLabel.toLowerCase()}yi silmek istediğinize emin misiniz?`}
+                onBack={() => setSelectedPrescription(null)}
+                onEditPrescription={onEditPrescription}
+                onRequestDelete={(id) => {
+                    setPrescriptionToDelete(id);
+                    setIsDeleteModalOpen(true);
+                }}
+                onCloseDeleteModal={() => {
+                    setIsDeleteModalOpen(false);
+                    setPrescriptionToDelete(null);
+                }}
+                onConfirmDelete={async () => {
+                    if (prescriptionToDelete) {
+                        await softDeletePrescription(prescriptionToDelete);
+                        showToast(`${prescriptionLabel} silindi`, 'info');
+                        hapticFeedback('medium');
+                        setSelectedPrescription(null);
+                        setPrescriptionToDelete(null);
+                    }
+                }}
+                onPdfAction={handlePdfAction}
+                onWhatsAppText={handleWhatsAppText}
+            />
          );
      }
 
      if (isViewingReport) {
          return (
-            <div className="pb-24 animate-in slide-in-from-right duration-300">
-                <div className="flex items-center justify-between mb-4 sticky top-0 bg-stone-950/90 backdrop-blur z-20 py-3 border-b border-white/5">
-                    <button onClick={() => setIsViewingReport(false)} className="flex items-center text-stone-400 hover:text-stone-200 font-medium px-2 py-1 -ml-2 rounded-lg hover:bg-white/5 transition-colors text-xs">
-                        <ChevronLeft className="mr-1" size={18}/> Cari Hesaba Dön
-                    </button>
-                </div>
-                
-                <div className="overflow-x-auto pb-4">
-                    <div className="relative mt-4 mb-4 drop-shadow-[0_10px_20px_rgba(0,0,0,0.1)] w-[210mm] mx-auto min-w-[210mm]">
-                        <div ref={reportRef} className="bg-[#fdfdfc] px-8 pt-10 pb-6 rounded-t-xl text-left relative overflow-hidden text-stone-800">
-                            {/* Subtle noise/texture overlay for paper effect */}
-                            <div className="absolute inset-0 opacity-[0.03] pointer-events-none mix-blend-multiply" style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.85%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22/%3E%3C/svg%3E")' }}></div>
-
-                            {/* Top Edge Band */}
-                            <div className="absolute top-0 left-0 w-full h-1.5 bg-blue-600"></div>
-
-                            <div className="flex justify-between items-start mb-8 relative z-10">
-                                <div>
-                                    <h1 className="text-3xl font-black uppercase tracking-tight mb-1">Cari Hesap Raporu</h1>
-                                    <p className="text-xs font-bold text-stone-700 uppercase tracking-widest">{selectedFarmer.fullName}</p>
-                                    {selectedFarmer.tcNo && (
-                                        <p className="text-[11px] font-mono font-bold text-stone-500 mt-0.5">T.C. No: {selectedFarmer.tcNo}</p>
-                                    )}
-                                </div>
-                                <div className="text-right">
-                                    <p className="text-sm font-bold mb-1 text-stone-600">
-                                        Dönem: {reportStartDate ? new Date(reportStartDate).toLocaleDateString('tr-TR') : 'Başlangıç'} - {reportEndDate ? new Date(reportEndDate).toLocaleDateString('tr-TR') : 'Güncel'}
-                                    </p>
-                                    <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">
-                                        Tür: {reportType === 'DETAILED' ? 'Detaylı (Ürün İçerikli)' : 'Özet (Fatura Bilgileri)'}
-                                    </p>
-                                    {reportFieldId !== 'ALL' && (
-                                        <p className="text-xs font-bold text-blue-600 mt-2 bg-blue-50 px-2 py-0.5 rounded-full inline-block">
-                                            Filtre: {selectedFarmer.fields.find(f => f.id === reportFieldId)?.name} Tarlası
-                                        </p>
-                                    )}
-                                    {reportCrop !== 'ALL' && (
-                                        <p className="text-xs font-bold text-emerald-600 mt-2 bg-emerald-50 px-2.5 py-1 rounded-full inline-flex items-center gap-1.5 border border-emerald-200">
-                                            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                                            Ürün Bazlı Cari Rapor: {reportCrop}
-                                        </p>
-                                    )}
-                                </div>
-                            </div>
-
-                            <div className="relative z-10">
-                                <table className="w-full mb-10">
-                                    <thead className="bg-stone-200 text-stone-900 uppercase text-[10px] font-black tracking-wider border-b-2 border-stone-300">
-                                        <tr className="text-left">
-                                            <th className="py-2.5 px-2 w-[15%]">Tarih</th>
-                                            <th className="py-2.5 px-2 w-[22%]">İşlem</th>
-                                            <th className="py-2.5 px-2 w-[23%]">Açıklama / Fatura No</th>
-                                            <th className="py-2.5 px-2 text-right w-[20%]">Borç</th>
-                                            <th className="py-2.5 px-2 text-right w-[20%]">Alacak</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {reportItems.map((item, idx) => {
-                                            const pNo = (item as any).prescriptionNo || (item as any).receiptNo;
-                                            return (
-                                            <React.Fragment key={idx}>
-                                                <tr className={`border-b border-stone-200 ${idx % 2 === 0 ? 'bg-white' : 'bg-stone-50/50'}`}>
-                                                    <td className="py-3 px-2 text-xs font-mono font-bold text-stone-800">{new Date(item.date).toLocaleDateString('tr-TR')}</td>
-                                                    <td className="py-3 px-2 text-xs font-black uppercase tracking-wide text-stone-900">{item.label}</td>
-                                                    <td className="py-3 px-2 text-xs text-stone-800 font-medium">
-                                                        {pNo ? (
-                                                            <div className="flex flex-col gap-0.5 items-start">
-                                                                <span className="bg-stone-900 text-white font-mono text-[10px] font-black px-2 py-0.5 rounded shadow-2xs">
-                                                                    Fatura No: {pNo}
-                                                                </span>
-                                                                {(item as any).note && !(item as any).note.includes(pNo) && (
-                                                                    <span className="text-stone-600 text-[11px]">{(item as any).note}</span>
-                                                                )}
-                                                            </div>
-                                                        ) : (
-                                                            (item as any).note || (item.type === 'CASH' ? `Tutar: ${formatCurrency(Math.abs((item as any).amount || (item as any).totalAmount), userProfile?.currency || 'TRY')}` : '-')
-                                                        )}
-                                                    </td>
-                                                    <td className="py-3 px-2 text-sm text-right font-black font-mono text-rose-700">
-                                                        {item.type === 'DEBT' && ((item as any).totalAmount !== undefined ? (item as any).totalAmount >= 0 : (item as any).amount >= 0) && item.label !== 'İade Makbuzu' ? formatCurrency((item as any).amount || (item as any).totalAmount, userProfile?.currency || 'TRY') : '-'}
-                                                    </td>
-                                                    <td className="py-3 px-2 text-sm text-right font-black font-mono text-emerald-700">
-                                                        {item.type === 'PAYMENT' ? formatCurrency((item as any).amount, userProfile?.currency || 'TRY') : (item.type === 'DEBT' && (((item as any).totalAmount !== undefined ? (item as any).totalAmount < 0 : (item as any).amount < 0) || item.label === 'İade Makbuzu') ? formatCurrency(Math.abs((item as any).amount || (item as any).totalAmount), userProfile?.currency || 'TRY') : '-')}
-                                                    </td>
-                                                </tr>
-                                                {reportType === 'DETAILED' && (item as any).items && (
-                                                    <tr>
-                                                        <td colSpan={5} className="bg-stone-100/70 p-0 border-b border-stone-200">
-                                                            <div className="px-6 py-2.5 ml-6 border-l-4 border-amber-500">
-                                                                <table className="w-full text-xs">
-                                                                    <thead className="bg-stone-300/80 text-stone-900 uppercase font-black tracking-wider text-[9px] border-b border-stone-300">
-                                                                        <tr>
-                                                                            <th className="text-left p-1.5 w-[45%]">Ürün Adı</th>
-                                                                            <th className="text-center p-1.5 w-[20%]">Miktar / Adet</th>
-                                                                            <th className="text-right p-1.5 w-[15%]">B. Fiyat</th>
-                                                                            <th className="text-right p-1.5 w-[20%]">Toplam</th>
-                                                                        </tr>
-                                                                    </thead>
-                                                                    <tbody className="divide-y divide-stone-200">
-                                                                        {(item as any).items.map((subItem: any, sIdx: number) => (
-                                                                            <tr key={sIdx} className={sIdx % 2 === 0 ? 'bg-white/80' : 'bg-stone-50'}>
-                                                                                <td className="py-2 px-1.5 font-bold text-stone-900 text-xs">{subItem.pesticideName}</td>
-                                                                                <td className="py-2 px-1.5 text-center">
-                                                                                    <span className="inline-block bg-amber-100 text-amber-950 font-black font-mono text-xs px-2 py-0.5 rounded border border-amber-300">
-                                                                                        {subItem.quantity} {subItem.unit || 'Adet'}
-                                                                                    </span>
-                                                                                </td>
-                                                                                <td className="py-2 px-1.5 text-right font-mono font-bold text-stone-800">{formatCurrency(subItem.unitPrice || 0, userProfile?.currency || 'TRY')}</td>
-                                                                                <td className="py-2 px-1.5 text-right font-black font-mono text-stone-950">{formatCurrency((subItem.quantity || 0) * (subItem.unitPrice || 0), userProfile?.currency || 'TRY')}</td>
-                                                                            </tr>
-                                                                        ))}
-                                                                    </tbody>
-                                                                </table>
-                                                            </div>
-                                                        </td>
-                                                    </tr>
-                                                )}
-                                            </React.Fragment>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
-
-                                <div className="flex justify-end pt-4 border-t-2 border-dashed border-stone-300">
-                                    <div className="w-80 space-y-2">
-                                        <div className="flex justify-between items-center py-1">
-                                            <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">{reportCrop !== 'ALL' ? `${reportCrop} Toplam Alış` : 'Dönem Toplam Alış'}</span>
-                                            <span className="text-sm font-bold font-mono text-rose-600">{formatCurrency(reportTotalDebt, userProfile?.currency || 'TRY')}</span>
-                                        </div>
-                                        <div className="flex justify-between items-center py-1 border-b border-stone-100/50 pb-2">
-                                            <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">{reportCrop !== 'ALL' ? `${reportCrop} Toplam Ödeme` : 'Dönem Toplam Ödeme'}</span>
-                                            <span className="text-sm font-bold font-mono text-emerald-600">{formatCurrency(reportTotalPaid, userProfile?.currency || 'TRY')}</span>
-                                        </div>
-                                        <div className="flex justify-between items-center pt-2">
-                                            <span className="text-xs font-black text-stone-800 uppercase tracking-wider">{reportCrop !== 'ALL' ? `${reportCrop} Kalan Bakiye` : 'Devreden Bakiye'}</span>
-                                            <span className={`text-xl font-black font-mono tracking-tight ${reportBalance < 0 ? 'text-rose-600' : reportBalance > 0 ? 'text-emerald-600' : 'text-stone-800'}`}>
-                                                {formatCurrency(Math.abs(reportBalance), userProfile?.currency || 'TRY')} {reportBalance < 0 ? '(B)' : reportBalance > 0 ? '(A)' : ''}
-                                            </span>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="mt-8 pt-4 border-t border-stone-200 flex justify-between items-end">
-                                    <div className="text-[9px] text-stone-400/80 font-mono leading-relaxed">
-                                        Bu belge Mühendis Kayıt Sistemi<br/>
-                                        tarafından oluşturulmuştur.<br/>
-                                        <strong>v3.1.2</strong>
-                                    </div>
-                                    <div className="text-right flex flex-col items-end">
-                                        <RealisticStamp profile={userProfile} size="sm" />
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        {/* Jagged / Perforated Bottom Edge */}
-                        <div className="w-full h-3 overflow-hidden block z-10 relative -mt-[1px]">
-                            <svg viewBox="0 0 1200 30" preserveAspectRatio="none" className="w-full h-full block" style={{ fill: '#fdfdfc' }}>
-                                <path d="M0,0 L0,15 L15,30 L30,15 L45,30 L60,15 L75,30 L90,15 L105,30 L120,15 L135,30 L150,15 L165,30 L180,15 L195,30 L210,15 L225,30 L240,15 L255,30 L270,15 L285,30 L300,15 L315,30 L330,15 L345,30 L360,15 L375,30 L390,15 L405,30 L420,15 L435,30 L450,15 L465,30 L480,15 L495,30 L510,15 L525,30 L540,15 L555,30 L570,15 L585,30 L600,15 L615,30 L630,15 L645,30 L660,15 L675,30 L690,15 L705,30 L720,15 L735,30 L750,15 L765,30 L780,15 L795,30 L810,15 L825,30 L840,15 L855,30 L870,15 L885,30 L900,15 L915,30 L930,15 L945,30 L960,15 L975,30 L990,15 L1005,30 L1020,15 L1035,30 L1050,15 L1065,30 L1080,15 L1095,30 L1110,15 L1125,30 L1140,15 L1155,30 L1170,15 L1185,30 L1200,15 L1200,0 Z"></path>
-                            </svg>
-                        </div>
-                    </div>
-                </div>
-
-                {/* ACTION BUTTONS */}
-                <div className="max-w-sm mx-auto flex gap-2 mt-4 px-4">
-                    <button 
-                        onClick={() => handleReportPdfAction('SHARE')} 
-                        disabled={isGeneratingReport} 
-                        className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-bold shadow-xl shadow-blue-900/30 hover:bg-blue-500 active:scale-95 transition-all flex items-center justify-center disabled:opacity-70 text-xs"
-                    >
-                        {isGeneratingReport ? <Loader2 size={16} className="animate-spin mr-2"/> : <Share2 size={16} className="mr-2"/>} 
-                        WhatsApp PDF
-                    </button>
-                    
-                    <button 
-                        onClick={handleReportWhatsAppText}
-                        className="flex-1 py-3 rounded-xl bg-[#25D366] text-white font-bold shadow-xl hover:bg-[#20bd5a] active:scale-95 transition-all flex items-center justify-center text-xs"
-                    >
-                        <MessageCircle size={16} className="mr-2"/> 
-                        WP Özet
-                    </button>
-
-                    <button 
-                        onClick={() => handleReportPdfAction('DOWNLOAD')} 
-                        disabled={isGeneratingReport} 
-                        className="px-4 py-3 rounded-xl bg-stone-800 text-stone-200 font-bold border border-white/10 hover:bg-stone-700 active:scale-95 transition-all flex items-center justify-center disabled:opacity-70 text-xs"
-                    >
-                        {isGeneratingReport ? <Loader2 size={16} className="animate-spin"/> : <Download size={16}/>} 
-                    </button>
-                </div>
-            </div>
+            <FarmerStatementReportView
+                selectedFarmer={selectedFarmer}
+                reportRef={reportRef}
+                reportStartDate={reportStartDate}
+                reportEndDate={reportEndDate}
+                reportType={reportType}
+                reportFieldId={reportFieldId}
+                reportCrop={reportCrop}
+                reportItems={reportItems}
+                reportTotalDebt={reportTotalDebt}
+                reportTotalPaid={reportTotalPaid}
+                reportBalance={reportBalance}
+                userProfile={userProfile}
+                isGeneratingReport={isGeneratingReport}
+                onBack={() => setIsViewingReport(false)}
+                onPdfAction={handleReportPdfAction}
+                onWhatsAppText={handleReportWhatsAppText}
+            />
          );
      }
 
@@ -2113,7 +1887,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                 )}
                             </div>
                         </div>
-                        <div className="flex items-center text-stone-500 text-xs mt-0.5 font-bold gap-3 flex-wrap">
+                        <div className="flex items-center text-stone-500 text-xs mt-0.5 font-bold gap-2.5 flex-wrap">
                             <span className="flex items-center"><MapPin size={10} className="mr-1 text-emerald-500/70"/> {selectedFarmer.village}</span>
                             {selectedFarmer.tcNo && (
                                 <span className="flex items-center text-stone-300 font-mono text-[10px] bg-stone-800/80 px-2 py-0.5 rounded-md border border-white/5">
@@ -2121,7 +1895,71 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                     TC: {selectedFarmer.tcNo}
                                 </span>
                             )}
+                            {(() => {
+                                const unpaidRx = farmerPrescriptions.filter(p => p.priceType !== 'CASH' && (p.totalAmount || 0) > 0);
+                                const oldestTimestamp = unpaidRx.length > 0
+                                    ? Math.min(...unpaidRx.map(p => new Date(p.date).getTime()))
+                                    : Date.now();
+                                const curDebtAmt = overallBalance < 0 ? Math.abs(overallBalance) : 0;
+                                const debtAgeDays = curDebtAmt > 50 ? Math.max(0, Math.floor((Date.now() - oldestTimestamp) / (1000 * 60 * 60 * 24))) : 0;
+                                const payRatio = totalDebt > 0 ? totalPaid / totalDebt : 1;
+                                const overLimit = (selectedFarmer.creditLimit || 0) > 0 && curDebtAmt > (selectedFarmer.creditLimit || 0);
+                                const autoGrade: 'A' | 'B' | 'C' | 'D' =
+                                    overLimit || (debtAgeDays > 240 && payRatio < 0.25)
+                                        ? 'D'
+                                        : curDebtAmt <= 50 || (payRatio >= 0.7 && debtAgeDays <= 90)
+                                            ? 'A'
+                                            : debtAgeDays <= 180 && payRatio >= 0.35
+                                                ? 'B'
+                                                : 'C';
+                                const finalGrade = selectedFarmer.riskScoreOverride || autoGrade;
+                                const riskMap: Record<'A' | 'B' | 'C' | 'D', { label: string; cls: string }> = {
+                                    A: { label: 'A Güvenilir', cls: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' },
+                                    B: { label: 'B Standart', cls: 'bg-sky-500/15 text-sky-400 border-sky-500/30' },
+                                    C: { label: 'C Gecikmeli', cls: 'bg-amber-500/15 text-amber-400 border-amber-500/30' },
+                                    D: { label: 'D Yüksek Risk', cls: 'bg-rose-500/20 text-rose-400 border-rose-500/40' },
+                                };
+                                const riskGrade = riskMap[finalGrade];
+                                return (
+                                    <>
+                                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black border ${riskGrade.cls}`}>
+                                            <ShieldCheck size={10} />
+                                            {riskGrade.label}{selectedFarmer.riskScoreOverride ? ' (Manuel)' : ''}
+                                        </span>
+                                        {debtAgeDays > 0 && (
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-stone-800/90 text-stone-300 border border-white/10">
+                                                <Clock size={10} className="text-amber-400" />
+                                                Yaşlandırma: {debtAgeDays} Gün
+                                            </span>
+                                        )}
+                                    </>
+                                );
+                            })()}
                         </div>
+                        {(selectedFarmer.creditLimit || 0) > 0 && (() => {
+                            const curDebtAmt = overallBalance < 0 ? Math.abs(overallBalance) : 0;
+                            const limit = selectedFarmer.creditLimit || 1;
+                            const pct = Math.min(100, Math.round((curDebtAmt / limit) * 100));
+                            const isExceeded = curDebtAmt > limit;
+                            return (
+                                <div className="mt-2.5 bg-stone-950/70 border border-white/5 rounded-xl p-2">
+                                    <div className="flex items-center justify-between text-[10px] font-bold mb-1">
+                                        <span className={isExceeded ? 'text-rose-400 font-black' : 'text-stone-400'}>
+                                            {isExceeded ? 'Kredi Limiti Aşıldı' : 'Kredi / Açık Hesap Limiti'}
+                                        </span>
+                                        <span className="font-mono text-stone-200">
+                                            {formatCurrency(curDebtAmt, userProfile?.currency || 'TRY')} / {formatCurrency(limit, userProfile?.currency || 'TRY')} (%{Math.round((curDebtAmt / limit) * 100)})
+                                        </span>
+                                    </div>
+                                    <div className="h-1.5 w-full bg-stone-800 rounded-full overflow-hidden">
+                                        <div
+                                            className={`h-full transition-all ${isExceeded ? 'bg-rose-500' : pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                                            style={{ width: `${pct}%` }}
+                                        />
+                                    </div>
+                                </div>
+                            );
+                        })()}
                     </div>
                 </div>
 
@@ -2129,19 +1967,19 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                     {/* Buttons condensed */}
                     {[
                         { icon: Phone, label: 'Ara', href: `tel:${selectedFarmer.phoneNumber}` },
-                        { icon: MessageCircle, label: 'WP', href: `https://wa.me/${selectedFarmer.phoneNumber.replace(/[^0-9]/g, '')}`, target: '_blank' },
-                        { icon: Wallet, label: 'Borç Hatırlat', action: handleSendDebtReminder },
-                        { icon: Navigation, label: 'Yol', action: () => window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedFarmer.village)}`, '_blank') }
+                        { icon: MessageCircle, label: 'WhatsApp', href: `https://wa.me/${selectedFarmer.phoneNumber.replace(/[^0-9]/g, '')}`, target: '_blank' },
+                        { icon: Wallet, label: 'Hatırlat', action: handleSendDebtReminder },
+                        { icon: Navigation, label: 'Konum', action: () => window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedFarmer.village)}`, '_blank') }
                     ].map((btn, i) => (
                         btn.href ? (
-                            <a key={i} href={btn.href} target={btn.target} className="flex flex-col items-center justify-center py-2 bg-stone-800/40 rounded-xl hover:bg-stone-800 transition-all border border-white/5 active:scale-95">
-                                <btn.icon size={16} className="mb-1 text-stone-400"/>
-                                <span className="text-[8px] font-bold text-stone-500 uppercase tracking-tighter">{btn.label}</span>
+                            <a key={i} href={btn.href} target={btn.target} className="flex flex-col items-center justify-center min-h-[46px] py-2 px-1 bg-stone-800/40 rounded-xl hover:bg-stone-800 transition-all border border-white/5 active:scale-95">
+                                <btn.icon size={16} className="mb-1 text-stone-300"/>
+                                <span className="text-[10px] font-bold text-stone-300 truncate max-w-full">{btn.label}</span>
                             </a>
                         ) : (
-                            <button key={i} onClick={btn.action} className="flex flex-col items-center justify-center py-2 bg-stone-800/40 rounded-xl hover:bg-stone-800 transition-all border border-white/5 active:scale-95">
-                                <btn.icon size={16} className="mb-1 text-stone-400"/>
-                                <span className="text-[8px] font-bold text-stone-500 uppercase tracking-tighter">{btn.label}</span>
+                            <button key={i} onClick={btn.action} className="flex flex-col items-center justify-center min-h-[46px] py-2 px-1 bg-stone-800/40 rounded-xl hover:bg-stone-800 transition-all border border-white/5 active:scale-95">
+                                <btn.icon size={16} className="mb-1 text-stone-300"/>
+                                <span className="text-[10px] font-bold text-stone-300 truncate max-w-full">{btn.label}</span>
                             </button>
                         )
                     ))}
@@ -2149,7 +1987,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
 
                 <button 
                     onClick={handleCopyPortalLink}
-                    className="w-full mt-3 py-2.5 bg-emerald-900/20 text-emerald-400 border border-emerald-500/20 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-emerald-900/40 transition-colors"
+                    className="w-full mt-3 min-h-[42px] py-2.5 bg-emerald-900/20 text-emerald-400 border border-emerald-500/20 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-emerald-900/40 transition-colors"
                 >
                     <Copy size={14} />
                     {farmerLabel} Portalı Linkini Kopyala
@@ -2157,9 +1995,9 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
             </div>
 
             {/* Tabs */}
-            <div className="flex p-1 bg-stone-900/60 backdrop-blur rounded-xl mb-2 border border-white/5 shadow-inner">
+            <div className="mks-tab-rail flex gap-1 p-1 bg-stone-900/60 backdrop-blur rounded-xl mb-2 border border-white/5 shadow-inner">
                 {tabs.map(tab => (
-                    <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`flex-1 py-2 text-[9px] font-black uppercase tracking-wider rounded-lg transition-all duration-200 ${activeTab === tab.id ? 'bg-stone-700 text-white shadow-md' : 'text-stone-500 hover:text-stone-300'}`}>
+                    <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`flex-1 min-w-[68px] min-h-[40px] px-2 py-2 text-[11px] font-bold rounded-lg transition-all duration-200 whitespace-nowrap ${activeTab === tab.id ? 'bg-stone-700 text-white shadow-sm' : 'text-stone-400 hover:text-stone-200'}`}>
                         {tab.label}
                     </button>
                 ))}
@@ -2215,6 +2053,31 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                                 )}
                                             </div>
                                         )}
+                                        <div className="flex flex-wrap gap-2 pt-2.5 mt-2 border-t border-white/5">
+                                            <button
+                                                type="button"
+                                                onClick={() => setDirectPolygonEditField(field)}
+                                                className="flex-1 py-2 px-3 rounded-xl bg-stone-900 hover:bg-stone-800 text-sky-300 border border-sky-500/25 text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all"
+                                            >
+                                                <MapPin size={12} />
+                                                <span>{field.polygonGeoJson ? 'Parsel Sınırını Düzenle' : 'Parsel Sınırı Çiz'}</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    if (!field.polygonGeoJson) {
+                                                        setDirectPolygonEditField(field);
+                                                        showToast('Uydu analizi için önce tarlanın sınır poligonunu çizin.', 'info');
+                                                    } else {
+                                                        setSatelliteTargetField(field);
+                                                    }
+                                                }}
+                                                className="flex-1 py-2 px-3 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/35 text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all"
+                                            >
+                                                <Satellite size={12} />
+                                                <span>Uydu Analizi (NDVI / Sulama / Çamur)</span>
+                                            </button>
+                                        </div>
                                     </div>
                                 ))}
                                 <div className="pt-2 border-t border-white/5 flex justify-between items-center">
@@ -2238,9 +2101,12 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                         {/* Balance Card */}
                         <div className="bg-stone-900/80 backdrop-blur p-4 rounded-2xl border border-white/5 shadow-sm">
                             <div className="mb-4">
-                                <div className="flex gap-1.5 w-full">
-                                    <button onClick={() => setIsReportModalOpen(true)} className="flex-1 bg-blue-600 text-white px-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-wider shadow-md active:scale-95 transition-all flex items-center justify-center">
+                                <div className="flex flex-wrap gap-1.5 w-full">
+                                    <button onClick={() => setIsReportModalOpen(true)} className="flex-1 min-w-[68px] bg-blue-600 text-white px-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-wider shadow-md active:scale-95 transition-all flex items-center justify-center">
                                         <Download size={10} className="mr-1"/> Rapor
+                                    </button>
+                                    <button onClick={handleGenerateFarmerReconciliationPdf} className="flex-1 min-w-[78px] bg-indigo-600 text-white px-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-wider shadow-md active:scale-95 transition-all flex items-center justify-center" title="Resmi Cari Hesap Mutabakat Mektubu (PDF)">
+                                        <Scale size={10} className="mr-1"/> Mutabakat
                                     </button>
                                     {canEditFarmer && (
                                         <>
@@ -2429,7 +2295,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                                             </button>
                                                         </div>
                                                     ) : (
-                                                        item.label === 'Manuel Borç' && (
+                                                        (item.label === 'Manuel Borç' || item.label === 'Manuel Borç/Alacak') && (
                                                             <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
                                                                 <button onClick={(e) => { e.stopPropagation(); handleEditManualDebt(item as any); }} className="p-1 text-stone-500 hover:text-emerald-500">
                                                                     <Edit2 size={12}/>
@@ -2515,7 +2381,131 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                             <p className="text-[10px] text-stone-500 mt-1">{selectedFarmer.fullName}</p>
                         </div>
                         
-                        <div className="space-y-4">
+                        <div className="space-y-4 max-h-[75vh] overflow-y-auto pr-1 custom-scrollbar">
+                            {!editingPayment && (
+                                <div className="flex items-center justify-between bg-stone-950 border border-white/10 rounded-2xl p-2.5">
+                                    <div className="flex items-center gap-2">
+                                        <Split size={14} className="text-emerald-400" />
+                                        <div>
+                                            <span className="text-[11px] font-black text-stone-200 block">Parçalı / Karma Tahsilat</span>
+                                            <span className="text-[9px] text-stone-500">Nakit + Kart + Çek aynı anda tahsil et</span>
+                                        </div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsFarmerSplitPayment(prev => !prev)}
+                                        className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider border transition-all ${
+                                            isFarmerSplitPayment
+                                                ? 'bg-emerald-600 text-white border-emerald-400'
+                                                : 'bg-stone-900 text-stone-400 border-white/10 hover:text-white'
+                                        }`}
+                                    >
+                                        {isFarmerSplitPayment ? 'Aktif' : 'Aç'}
+                                    </button>
+                                </div>
+                            )}
+
+                            {!editingPayment && isFarmerSplitPayment ? (
+                                <div className="space-y-2.5">
+                                    {farmerSplitRows.map((row, rIdx) => (
+                                        <div key={row.id} className="bg-stone-950 border border-white/10 rounded-2xl p-3 space-y-2">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-[10px] font-black text-emerald-400 uppercase">{rIdx + 1}. Ödeme Kalemi</span>
+                                                {farmerSplitRows.length > 2 && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setFarmerSplitRows(prev => prev.filter(r => r.id !== row.id))}
+                                                        className="text-stone-500 hover:text-rose-400"
+                                                    >
+                                                        <Trash2 size={13} />
+                                                    </button>
+                                                )}
+                                            </div>
+                                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                                {[
+                                                    { id: 'CASH', label: 'Nakit' },
+                                                    { id: 'CARD', label: 'K. Kartı' },
+                                                    { id: 'CHECK', label: 'Çek' },
+                                                    { id: 'TEDYE', label: 'Tediye' }
+                                                ].map(m => (
+                                                    <button
+                                                        key={m.id}
+                                                        type="button"
+                                                        onClick={() => setFarmerSplitRows(prev => prev.map(r => r.id === row.id ? { ...r, method: m.id as any } : r))}
+                                                        className={`min-h-[40px] py-2 rounded-xl text-xs font-bold border ${
+                                                            row.method === m.id
+                                                                ? 'bg-emerald-600 border-emerald-500 text-white'
+                                                                : 'bg-stone-900 border-stone-800 text-stone-400'
+                                                        }`}
+                                                    >
+                                                        {m.label}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <input
+                                                    type="number"
+                                                    placeholder="Tutar (0.00)"
+                                                    value={row.amount}
+                                                    onChange={e => setFarmerSplitRows(prev => prev.map(r => r.id === row.id ? { ...r, amount: e.target.value } : r))}
+                                                    className="w-full p-2.5 bg-stone-900 border border-stone-800 rounded-xl font-mono font-black text-emerald-400 text-sm outline-none"
+                                                />
+                                                <select
+                                                    value={row.accountId}
+                                                    onChange={e => setFarmerSplitRows(prev => prev.map(r => r.id === row.id ? { ...r, accountId: e.target.value } : r))}
+                                                    className="w-full p-2.5 bg-stone-900 border border-stone-800 rounded-xl text-xs text-stone-200 outline-none"
+                                                >
+                                                    <option value="">Varsayılan Hesap</option>
+                                                    {accounts.map(acc => (
+                                                        <option key={acc.id} value={acc.id}>{acc.name}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            {row.method === 'CARD' && (
+                                                <select
+                                                    value={row.cardOption}
+                                                    onChange={e => setFarmerSplitRows(prev => prev.map(r => r.id === row.id ? { ...r, cardOption: e.target.value as CardSettlementOption } : r))}
+                                                    className="w-full p-2 bg-stone-900 border border-amber-500/20 rounded-xl text-[11px] font-bold text-amber-300 outline-none"
+                                                >
+                                                    <option value="UNBLOCKED">Blokesiz (Anında)</option>
+                                                    <option value="DAYS_15">15 Gün POS Bloke (%0 Komisyon)</option>
+                                                    <option value="DAYS_30">30 Gün POS Bloke (%0 Komisyon)</option>
+                                                    <option value="DAYS_45">45 Gün POS Bloke (%0 Komisyon)</option>
+                                                </select>
+                                            )}
+                                            {(row.method === 'CHECK' || row.method === 'TEDYE') && (
+                                                <input
+                                                    type="date"
+                                                    value={row.dueDate}
+                                                    onChange={e => setFarmerSplitRows(prev => prev.map(r => r.id === row.id ? { ...r, dueDate: e.target.value } : r))}
+                                                    className="w-full p-2 bg-stone-900 border border-stone-800 rounded-xl text-xs text-stone-200 outline-none"
+                                                />
+                                            )}
+                                        </div>
+                                    ))}
+                                    <div className="flex items-center justify-between pt-1">
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                setFarmerSplitRows(prev => [
+                                                    ...prev,
+                                                    { id: `fsp-${Date.now()}`, method: 'CHECK', amount: '', accountId: '', dueDate: new Date().toISOString().split('T')[0], cardOption: 'UNBLOCKED' }
+                                                ])
+                                            }
+                                            className="px-3 py-1.5 rounded-xl bg-stone-800 text-stone-300 text-[10px] font-black uppercase flex items-center gap-1"
+                                        >
+                                            <Plus size={12} /> Kalem Ekle
+                                        </button>
+                                        <div className="text-right">
+                                            <span className="text-[9px] text-stone-500 uppercase font-bold block">Toplam Tahsilat</span>
+                                            <span className="text-sm font-black text-emerald-400 font-mono">
+                                                {formatCurrency(farmerSplitRows.reduce((s, r) => s + parseFloatSafe(r.amount), 0), userProfile?.currency || 'TRY')}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            ) : (
+                            <>
                             <div>
                                 <label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Ödeme Tutarı ({getCurrencySymbol(userProfile?.currency || 'TRY')})</label>
                                 <input 
@@ -2527,8 +2517,8 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                 />
                             </div>
                             <div>
-                                <label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">Ödeme Yöntemi</label>
-                                <div className="grid grid-cols-4 gap-1.5">
+                                <label className="text-xs font-bold text-stone-400 ml-1 mb-1 block">Ödeme Yöntemi</label>
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                                     {[
                                         { id: 'CASH', label: 'Nakit' },
                                         { id: 'CARD', label: 'K. Kartı' },
@@ -2538,7 +2528,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                         <button 
                                             key={method.id}
                                             onClick={() => setPaymentMethod(method.id as any)}
-                                            className={`py-3 rounded-xl text-[9px] font-black uppercase tracking-widest border transition-all ${paymentMethod === method.id ? 'bg-emerald-600 border-emerald-500 text-white shadow-lg shadow-emerald-900/20' : 'bg-stone-950 border-stone-800 text-stone-500'}`}
+                                            className={`min-h-[42px] py-2.5 rounded-xl text-xs font-bold border transition-all ${paymentMethod === method.id ? 'bg-emerald-600 border-emerald-500 text-white shadow-sm' : 'bg-stone-950 border-stone-800 text-stone-400'}`}
                                         >
                                             {method.label}
                                         </button>
@@ -2635,6 +2625,8 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                     ))}
                                 </select>
                             </div>
+                            </>
+                            )}
                             <div>
                                 <label className="text-[9px] font-bold text-stone-500 ml-1 uppercase tracking-wider">İlgili Mahsul / Ürün (İsteğe Bağlı - Ürün Bazlı Ödeme)</label>
                                 <select 
@@ -2659,7 +2651,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                             </div>
                             <button 
                                 onClick={handleSavePayment}
-                                disabled={isSavingPayment || !paymentAmount}
+                                disabled={isSavingPayment || (!editingPayment && isFarmerSplitPayment ? farmerSplitRows.every(r => parseFloatSafe(r.amount) <= 0) : !paymentAmount)}
                                 className="w-full bg-emerald-700 text-white py-3.5 rounded-2xl font-bold text-xs shadow-xl shadow-emerald-900/20 flex justify-center items-center active:scale-95 transition-all border border-emerald-500/20 disabled:opacity-50"
                             >
                                 {isSavingPayment ? <Loader2 size={18} className="animate-spin" /> : 'Tahsilatı Onayla'}
@@ -2787,142 +2779,40 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
             )}
 
 
-            {/* Manual Debt Modal */}
-            {isManualDebtModalOpen && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
-                    <div className="bg-stone-900 rounded-3xl w-full max-w-sm shadow-2xl border border-white/10 overflow-hidden animate-in zoom-in-95 duration-200">
-                        <div className="p-4 border-b border-white/5 flex justify-between items-center">
-                            <h2 className="text-sm font-bold text-stone-100 flex items-center">
-                                {editingManualDebt ? <Edit2 className="mr-2 text-emerald-500" size={16}/> : <Plus className="mr-2 text-rose-500" size={16}/>} 
-                                {editingManualDebt ? 'Borç Düzenle' : 'Borç Ekle'}
-                            </h2>
-                            <div className="flex items-center gap-2">
-                                {editingManualDebt && (
-                                    <button onClick={() => handleDeleteManualDebt(editingManualDebt.id)} className="text-stone-500 hover:text-rose-500 transition-colors p-1" title="Sil">
-                                        <Trash2 size={16}/>
-                                    </button>
-                                )}
-                                <button onClick={() => { setIsManualDebtModalOpen(false); setEditingManualDebt(null); }} className="text-stone-500 hover:text-stone-300 p-1"><X size={18}/></button>
-                            </div>
-                        </div>
-                        <div className="p-4 space-y-4">
-                            <div>
-                                <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Tarih</label>
-                                <input type="date" value={debtDate} onChange={(e) => setDebtDate(e.target.value)} className="w-full bg-stone-950 border border-white/10 rounded-xl px-4 py-3 text-stone-100 text-sm focus:border-rose-500 outline-none transition-all" />
-                            </div>
-                            <div>
-                                <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Tutar ({getCurrencySymbol(userProfile?.currency || 'TRY')})</label>
-                                <input type="number" value={debtAmount} onChange={(e) => setDebtAmount(e.target.value)} className="w-full bg-stone-950 border border-white/10 rounded-xl px-4 py-3 text-stone-100 text-sm focus:border-rose-500 outline-none transition-all" placeholder="0.00" />
-                            </div>
-                            <div>
-                                <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Açıklama / Ürün</label>
-                                <textarea value={debtNote} onChange={(e) => setDebtNote(e.target.value)} className="w-full bg-stone-950 border border-white/10 rounded-xl px-4 py-3 text-stone-100 text-sm focus:border-rose-500 outline-none transition-all h-24 resize-none" placeholder="Örn: Geçmiş borç, Gübre borcu vb." />
-                            </div>
-                            <button disabled={isSavingDebt || !debtAmount} onClick={handleSaveManualDebt} className="w-full bg-rose-700 text-white py-3.5 rounded-xl font-bold text-xs shadow-lg disabled:opacity-50 flex items-center justify-center">
-                                {isSavingDebt ? <Loader2 className="animate-spin mr-2" size={16}/> : <Save className="mr-2" size={16}/>} Kaydet
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            <FarmerManualDebtModal
+                isOpen={isManualDebtModalOpen}
+                editingManualDebt={editingManualDebt}
+                debtDate={debtDate}
+                setDebtDate={setDebtDate}
+                debtAmount={debtAmount}
+                setDebtAmount={setDebtAmount}
+                debtNote={debtNote}
+                setDebtNote={setDebtNote}
+                isSavingDebt={isSavingDebt}
+                currency={userProfile?.currency}
+                onClose={() => { setIsManualDebtModalOpen(false); setEditingManualDebt(null); }}
+                onSave={handleSaveManualDebt}
+                onDelete={handleDeleteManualDebt}
+            />
 
-            {/* Report Modal */}
-            {isReportModalOpen && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
-                    <div className="bg-stone-900 rounded-3xl w-full max-w-sm shadow-2xl border border-white/10 overflow-hidden animate-in zoom-in-95 duration-200">
-                        <div className="p-4 border-b border-white/5 flex justify-between items-center">
-                            <h2 className="text-sm font-bold text-stone-100 flex items-center"><Download className="mr-2 text-blue-500" size={16}/> Cari Rapor Oluştur</h2>
-                            <button onClick={() => setIsReportModalOpen(false)} className="text-stone-500 hover:text-stone-300"><X size={18}/></button>
-                        </div>
-                        <div className="p-4 space-y-4">
-                            <div className="flex gap-2 mb-2 overflow-x-auto no-scrollbar pb-1">
-                                <button 
-                                    onClick={() => {
-                                        setReportStartDate('');
-                                        setReportEndDate('');
-                                    }}
-                                    className="px-3 py-1.5 bg-stone-800 hover:bg-emerald-600 text-stone-300 hover:text-white rounded-xl text-[10px] font-bold border border-white/5 whitespace-nowrap active:scale-95 transition-all"
-                                >
-                                    Tüm Zamanlar
-                                </button>
-                                {availableYears.map(year => (
-                                    <button 
-                                        key={year}
-                                        onClick={() => {
-                                            setReportStartDate(`${year}-01-01`);
-                                            setReportEndDate(`${year}-12-31`);
-                                        }}
-                                        className="px-3 py-1.5 bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-xl text-[10px] font-bold border border-white/5 whitespace-nowrap active:scale-95 transition-all"
-                                    >
-                                        {year} Yılı
-                                    </button>
-                                ))}
-                            </div>
-                            <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Başlangıç</label>
-                                    <input type="date" value={reportStartDate} onChange={(e) => setReportStartDate(e.target.value)} className="w-full bg-stone-950 border border-white/10 rounded-xl px-3 py-2 text-stone-100 text-xs outline-none focus:border-blue-500" />
-                                </div>
-                                <div>
-                                    <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Bitiş</label>
-                                    <input type="date" value={reportEndDate} onChange={(e) => setReportEndDate(e.target.value)} className="w-full bg-stone-950 border border-white/10 rounded-xl px-3 py-2 text-stone-100 text-xs outline-none focus:border-blue-500" />
-                                </div>
-                            </div>
-                             <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Rapor Türü</label>
-                                    <select 
-                                        value={reportType} 
-                                        onChange={(e) => setReportType(e.target.value as any)}
-                                        className="w-full bg-stone-950 border border-white/10 rounded-xl px-3 py-2 text-stone-100 text-xs outline-none focus:border-blue-500"
-                                    >
-                                        <option value="SUMMARY">Özet (Sadece Fatura)</option>
-                                        <option value="DETAILED">Detaylı (Ürün İçerikli)</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Ürün Filtresi</label>
-                                    <select 
-                                        value={reportCrop} 
-                                        onChange={(e) => {
-                                            setReportCrop(e.target.value);
-                                            if (e.target.value !== 'ALL') setReportFieldId('ALL');
-                                        }}
-                                        className="w-full bg-stone-950 border border-white/10 rounded-xl px-3 py-2 text-stone-100 text-xs outline-none focus:border-blue-500"
-                                    >
-                                        <option value="ALL">Tüm Ürünler</option>
-                                        {availableCrops.map(crop => (
-                                            <option key={crop} value={crop}>{crop}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                            </div>
-                            <div className="grid grid-cols-1 gap-3">
-                                <div>
-                                    <label className="text-[10px] font-bold text-stone-500 uppercase mb-1.5 block">Tarla Filtresi</label>
-                                    <select 
-                                        value={reportFieldId} 
-                                        onChange={(e) => {
-                                            setReportFieldId(e.target.value);
-                                            if (e.target.value !== 'ALL') setReportCrop('ALL');
-                                        }}
-                                        className="w-full bg-stone-950 border border-white/10 rounded-xl px-3 py-2 text-stone-100 text-xs outline-none focus:border-blue-500"
-                                    >
-                                        <option value="ALL">Tüm Tarlalar</option>
-                                        {selectedFarmer?.fields.map(field => (
-                                            <option key={field.id} value={field.id}>{field.name} ({field.crop})</option>
-                                        ))}
-                                    </select>
-                                </div>
-                            </div>
-                            <p className="text-[9px] text-stone-500 italic">Tarih seçmezseniz tüm zamanların raporu oluşturulur.</p>
-                            <button onClick={() => { setIsViewingReport(true); setIsReportModalOpen(false); }} className="w-full bg-blue-700 text-white py-3.5 rounded-xl font-bold text-xs shadow-lg flex items-center justify-center">
-                                <FileText className="mr-2" size={16}/> Raporu Görüntüle
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            <FarmerReportFilterModal
+                isOpen={isReportModalOpen}
+                selectedFarmer={selectedFarmer}
+                availableYears={availableYears}
+                availableCrops={availableCrops}
+                reportStartDate={reportStartDate}
+                setReportStartDate={setReportStartDate}
+                reportEndDate={reportEndDate}
+                setReportEndDate={setReportEndDate}
+                reportType={reportType}
+                setReportType={setReportType}
+                reportCrop={reportCrop}
+                setReportCrop={setReportCrop}
+                reportFieldId={reportFieldId}
+                setReportFieldId={setReportFieldId}
+                onClose={() => setIsReportModalOpen(false)}
+                onViewReport={() => { setIsViewingReport(true); setIsReportModalOpen(false); }}
+            />
 
             {selectedPrescription && !isProcessingPdf && (
                 <div className="hidden"></div>
@@ -2941,6 +2831,64 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                     inventory={inventory}
                     visits={farmerVisits}
                     currency={userProfile?.currency}
+                />
+            )}
+
+            {selectedFarmer && directPolygonEditField && (
+                <FieldPolygonDrawerModal
+                    isOpen={true}
+                    fieldName={`${selectedFarmer.fullName} • ${directPolygonEditField.name || directPolygonEditField.crop}`}
+                    initialGeoJson={directPolygonEditField.polygonGeoJson}
+                    initialCenter={
+                        directPolygonEditField.centroidLat && directPolygonEditField.centroidLng
+                            ? { lat: directPolygonEditField.centroidLat, lng: directPolygonEditField.centroidLng }
+                            : selectedFarmer.latitude && selectedFarmer.longitude
+                            ? { lat: selectedFarmer.latitude, lng: selectedFarmer.longitude }
+                            : undefined
+                    }
+                    onClose={() => setDirectPolygonEditField(null)}
+                    onSave={async (payload) => {
+                        const updatedField: Field = {
+                            ...directPolygonEditField,
+                            size: payload.dekar,
+                            polygonGeoJson: payload.polygonGeoJson,
+                            polygonBbox: payload.polygonBbox,
+                            centroidLat: payload.centroidLat,
+                            centroidLng: payload.centroidLng,
+                            tkgmIl: payload.tkgmIl || directPolygonEditField.tkgmIl,
+                            tkgmIlce: payload.tkgmIlce || directPolygonEditField.tkgmIlce,
+                            tkgmMahalle: payload.tkgmMahalle || directPolygonEditField.tkgmMahalle,
+                            tkgmAda: payload.tkgmAda || directPolygonEditField.tkgmAda,
+                            tkgmParsel: payload.tkgmParsel || directPolygonEditField.tkgmParsel,
+                        };
+                        const updatedFarmer: Farmer = {
+                            ...selectedFarmer,
+                            latitude: selectedFarmer.latitude || payload.centroidLat,
+                            longitude: selectedFarmer.longitude || payload.centroidLng,
+                            fields: (selectedFarmer.fields || []).map((f: Field) =>
+                                f.id === updatedField.id ? updatedField : f
+                            ),
+                        };
+                        await updateFarmer(updatedFarmer);
+                        setSelectedFarmer(updatedFarmer);
+                        setDirectPolygonEditField(null);
+                        setSatelliteTargetField(updatedField);
+                        showToast(`Parsel sınırı (${payload.dekar} daa) kaydedildi.`, 'success');
+                    }}
+                />
+            )}
+
+            {selectedFarmer && satelliteTargetField && (
+                <FieldSatelliteAnalyzerModal
+                    isOpen={true}
+                    field={satelliteTargetField}
+                    farmerName={selectedFarmer.fullName}
+                    onClose={() => setSatelliteTargetField(null)}
+                    onEditPolygon={() => {
+                        const fld = satelliteTargetField;
+                        setSatelliteTargetField(null);
+                        setDirectPolygonEditField(fld);
+                    }}
                 />
             )}
         </div>
@@ -2971,6 +2919,18 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
               >
                   <FileText size={14} />
                   Raporla
+              </button>
+              <button
+                  onClick={() => {
+                      setAnnounceTemplate(userProfile?.whatsappTemplates?.announcement || DEFAULT_WHATSAPP_TEMPLATES.announcement);
+                      setSentAnnouncementFarmerIds(new Set());
+                      setIsAnnouncementModalOpen(true);
+                  }}
+                  className="py-1.5 px-3 bg-emerald-600/20 border border-emerald-500/30 rounded-lg text-emerald-400 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 hover:bg-emerald-600/30 transition-colors"
+                  title="Köy ve Mahsul Bazlı Toplu WhatsApp Zirai Duyuru"
+              >
+                  <Megaphone size={13} />
+                  Toplu Duyuru
               </button>
           </div>
           <div className="text-right">
@@ -3021,6 +2981,16 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                     {farmer.fields.length} Tarla
                                 </span>
                              )}
+                             {(farmer as any).effectiveRiskGrade && (
+                                <span className={`text-[8px] px-1.5 py-0.5 rounded border font-black ${
+                                    (farmer as any).effectiveRiskGrade === 'A' ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' :
+                                    (farmer as any).effectiveRiskGrade === 'B' ? 'bg-sky-500/15 text-sky-400 border-sky-500/30' :
+                                    (farmer as any).effectiveRiskGrade === 'C' ? 'bg-amber-500/15 text-amber-400 border-amber-500/30' :
+                                    'bg-rose-500/20 text-rose-400 border-rose-500/40'
+                                }`}>
+                                    Not: {(farmer as any).effectiveRiskGrade}
+                                </span>
+                             )}
                         </div>
                     </div>
                 </div>
@@ -3067,18 +3037,17 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           </button>
       )}
 
-      {/* Modals (Import & Add/Edit) */}
-      {isImportModalOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-in fade-in duration-200">
-            <div className="bg-stone-900 rounded-3xl w-full max-w-md flex flex-col max-h-[85vh] shadow-2xl border border-white/10">
-                <div className="p-4 border-b border-white/5 shrink-0 flex justify-between items-center"><h2 className="text-base font-bold text-stone-100 flex items-center"><Contact className="mr-2 text-emerald-500" size={18}/> Rehber Aktarımı</h2><button onClick={() => setIsImportModalOpen(false)} className="text-stone-500 hover:text-stone-300"><X size={18}/></button></div>
-                <div className="flex-1 overflow-y-auto p-2 space-y-1">{importPreviewList.map(contact => (<div key={contact.id} onClick={() => toggleSelectImport(contact)} className={`flex items-center p-2.5 rounded-xl transition-colors border ${contact.isAlreadyRegistered ? 'opacity-40 bg-stone-950 border-transparent' : selectedImportIds.has(contact.id) ? 'bg-emerald-900/10 border-emerald-500/20' : 'hover:bg-white/5 border-transparent'}`}><div className={`w-4 h-4 rounded flex items-center justify-center mr-3 ${selectedImportIds.has(contact.id) ? 'bg-emerald-600 text-white' : 'border-2 border-stone-700'}`}>{selectedImportIds.has(contact.id) && <Check size={10}/>}</div><div className="flex-1 min-w-0"><p className="font-bold text-stone-200 text-xs truncate">{contact.fullName}</p><p className="text-[10px] text-stone-500 font-mono">{contact.phoneNumber}</p></div></div>))}</div>
-                <div className="p-4 border-t border-white/5 bg-stone-900/80"><button disabled={selectedImportIds.size === 0 || isImporting} onClick={confirmBulkImport} className="w-full bg-emerald-700 text-white py-3 rounded-xl font-bold text-xs shadow-lg disabled:opacity-50 flex items-center justify-center">{isImporting ? <Loader2 className="animate-spin mr-2"/> : <Plus className="mr-2"/>} {selectedImportIds.size} Kişiyi Ekle</button></div>
-            </div>
-        </div>
-      )}
+      <FarmerContactImportModal
+        isOpen={isImportModalOpen}
+        importPreviewList={importPreviewList}
+        selectedImportIds={selectedImportIds}
+        isImporting={isImporting}
+        onClose={() => setIsImportModalOpen(false)}
+        onToggleSelect={toggleSelectImport}
+        onConfirmImport={confirmBulkImport}
+      />
 
-      {/* ADD/EDIT MODAL FOR LIST VIEW - FIX: Using extracted component */}
+      {/* ADD/EDIT MODAL FOR LIST VIEW */}
       <FarmerModal 
         isOpen={isModalOpen}
         onClose={resetModal}
@@ -3091,138 +3060,161 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
         farmerLabel={farmerLabel}
       />
 
-            {/* Repair Modal */}
-            {isRepairModalOpen && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
-                    <div className="bg-[#1c1c1c] border border-stone-800 rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col font-sans">
-                        <div className="p-6 border-b border-stone-800/50 flex items-center justify-between bg-stone-900/50">
-                            <div>
-                                <h3 className="text-xl font-bold text-stone-100 mb-1 flex items-center gap-2">
-                                    <RefreshCw size={20} className="text-red-500" />
-                                    Cari Onarım Uzmanı
-                                </h3>
-                                <p className="text-xs text-stone-400 font-medium">Satış fişlerindeki toplam hesap uyuşmazlıkları tespit edilip düzeltilir.</p>
-                            </div>
-                            {repairState !== 'ANALYZING' && repairState !== 'REPAIRING' && (
-                                <button
-                                    onClick={() => {
-                                        setIsRepairModalOpen(false);
-                                        setRepairState('IDLE');
-                                    }}
-                                    className="p-2 bg-stone-900 hover:bg-stone-800 text-stone-400 hover:text-stone-200 rounded-xl transition-colors shrink-0"
-                                >
-                                    <X size={20} />
-                                </button>
-                            )}
-                        </div>
+      <FarmerBalanceRepairModal
+        isOpen={isRepairModalOpen}
+        repairState={repairState}
+        repairMismatches={repairMismatches}
+        selectedRepairs={selectedRepairs}
+        setSelectedRepairs={setSelectedRepairs}
+        onClose={() => {
+            setIsRepairModalOpen(false);
+            setRepairState('IDLE');
+        }}
+        onRepair={handleRepairFarmers}
+      />
 
-                        <div className="p-6 max-h-[60vh] overflow-y-auto">
-                            {repairState === 'ANALYZING' && (
-                                <div className="flex flex-col items-center justify-center py-10 space-y-4">
-                                    <RefreshCw size={40} className="text-red-500 animate-spin" />
-                                    <div className="text-center">
-                                        <div className="font-bold text-stone-200">Reçeteler Analiz Ediliyor</div>
-                                        <div className="text-xs text-stone-500 mt-1">Geçmiş işlemler taranıyor...</div>
-                                    </div>
-                                </div>
-                            )}
+      {/* Toplu Köy / Ürün Bazlı WhatsApp Zirai Duyuru Modalı (#37) */}
+      {isAnnouncementModalOpen && (() => {
+          const villages = Array.from(new Set<string>(farmers.map(f => (f.village || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'tr-TR'));
+          const crops = Array.from(new Set<string>(farmers.flatMap(f => (f.fields || []).map(fl => (fl.crop || '').trim())).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'tr-TR'));
+          const targetRecipients = farmers.filter(f => {
+              const villageOk = announceVillage === 'ALL' || (f.village || '').trim() === announceVillage;
+              const cropOk = announceCrop === 'ALL' || (f.fields || []).some(fl => (fl.crop || '').trim() === announceCrop);
+              return villageOk && cropOk && Boolean(normalizeWaPhone(f.phoneNumber));
+          });
+          const nextPendingFarmer = targetRecipients.find(f => !sentAnnouncementFarmerIds.has(f.id));
 
-                            {repairState === 'RESULT' && (
-                                <div className="space-y-4">
-                                    {repairMismatches.length === 0 ? (
-                                        <div className="flex flex-col items-center justify-center py-10 space-y-4">
-                                            <div className="w-16 h-16 rounded-full bg-emerald-950/50 border border-emerald-500/20 flex items-center justify-center">
-                                                <ClipboardCheck size={32} className="text-emerald-500" />
-                                            </div>
-                                            <div className="text-center">
-                                                <div className="font-bold text-emerald-400 text-lg">Mükemmel!</div>
-                                                <div className="text-stone-400 text-sm mt-1 mb-2">Tüm çiftçi bakiyeleri kusursuz eşleşiyor.</div>
-                                            </div>
-                                            <button 
-                                                onClick={() => setIsRepairModalOpen(false)}
-                                                className="px-6 py-2.5 bg-stone-800 hover:bg-stone-700 text-white rounded-xl font-bold transition-all text-sm"
-                                            >
-                                                Kapat
-                                            </button>
-                                        </div>
-                                    ) : (
-                                        <>
-                                            <div className="bg-red-950/20 border border-red-500/20 rounded-xl p-4">
-                                                <div className="text-red-400 font-bold mb-2 flex items-center gap-2">
-                                                    <AlertTriangle size={18} />
-                                                    {repairMismatches.length} Çiftçide Uyuşmazlık Bulundu
-                                                </div>
-                                                <p className="text-xs text-stone-300">
-                                                    Satışların içindeki ürün fiyatları toplamı ile reçete genel toplamı uyuşmuyor. Toplamları yeniden hesaplayacağız.
-                                                </p>
-                                            </div>
+          const sendToFarmer = (farmerTarget: Farmer) => {
+              const joinedCrops = Array.from(new Set((farmerTarget.fields || []).map(fl => fl.crop).filter(Boolean))).join(', ');
+              const farmerCrops = joinedCrops || (announceCrop !== 'ALL' ? announceCrop : 'Genel Mahsul');
+              const msg = renderWhatsAppTemplate(announceTemplate, 'announcement', {
+                  firma: userProfile?.companyName || 'Zirai Mühendislik',
+                  isim: farmerTarget.fullName,
+                  koy: farmerTarget.village || '-',
+                  mahsul: announceCrop !== 'ALL' ? announceCrop : farmerCrops,
+                  tarih: new Date().toLocaleDateString('tr-TR'),
+              });
+              const phone = normalizeWaPhone(farmerTarget.phoneNumber);
+              if (!phone) {
+                  showToast('Geçerli telefon numarası bulunamadı', 'error');
+                  return;
+              }
+              window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+              setSentAnnouncementFarmerIds(prev => {
+                  const next = new Set(prev);
+                  next.add(farmerTarget.id);
+                  return next;
+              });
+          };
 
-                                            <div className="space-y-2 mt-4">
-                                                {repairMismatches.map((mismatch, index) => {
-                                                    const isSelected = selectedRepairs.has(mismatch.farmerId);
-                                                    return (
-                                                        <div 
-                                                            key={mismatch.farmerId + index}
-                                                            onClick={() => {
-                                                                const newSet = new Set(selectedRepairs);
-                                                                if (isSelected) newSet.delete(mismatch.farmerId);
-                                                                else newSet.add(mismatch.farmerId);
-                                                                setSelectedRepairs(newSet);
-                                                            }}
-                                                            className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${isSelected ? 'bg-red-950/10 border-red-500/30' : 'bg-stone-900 border-stone-800 hover:border-stone-700'}`}
-                                                        >
-                                                            <div className="flex-1 min-w-0">
-                                                                <div className="font-bold text-stone-200 text-sm truncate">{mismatch.farmerName}</div>
-                                                                <div className="text-[10px] text-stone-500 mt-1 space-y-0.5">
-                                                                    <div className="flex items-center justify-between">
-                                                                        <span>Kayıtlı: <span className="font-mono text-red-400 bg-red-400/10 px-1 rounded">{mismatch.currentBalance.toLocaleString('tr-TR')} ₺</span></span>
-                                                                        <span>Olması Gereken: <span className="font-mono text-emerald-400 bg-emerald-400/10 px-1 rounded">{mismatch.calculatedBalance.toLocaleString('tr-TR')} ₺</span></span>
-                                                                    </div>
-                                                                    {((mismatch.brokenPrescriptions?.length || 0) + (mismatch.brokenPayments?.length || 0) + (mismatch.brokenMyPayments?.length || 0) + (mismatch.brokenManualDebts?.length || 0)) > 0 && (
-                                                                        <div className="text-[9px] text-stone-500 mt-1 italic flex flex-wrap gap-1">
-                                                                            {(mismatch.brokenPrescriptions?.length || 0) > 0 && <span>({mismatch.brokenPrescriptions?.length} reçete)</span>}
-                                                                            {(mismatch.brokenPayments?.length || 0) > 0 && <span>({mismatch.brokenPayments?.length} ödeme)</span>}
-                                                                            {(mismatch.brokenMyPayments?.length || 0) > 0 && <span>({mismatch.brokenMyPayments?.length} tahsilat)</span>}
-                                                                            {(mismatch.brokenManualDebts?.length || 0) > 0 && <span>({mismatch.brokenManualDebts?.length} manuel borç)</span>}
-                                                                            onarılacak.
-                                                                        </div>
-                                                                    )}
-                                                                </div>
-                                                            </div>
-                                                            <div className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 transition-colors ${isSelected ? 'bg-red-500 border-red-500 text-white' : 'border-stone-600'}`}>
-                                                                {isSelected && <Check size={14} strokeWidth={3} />}
-                                                            </div>
-                                                        </div>
-                                                    )
-                                                })}
-                                            </div>
+          return (
+              <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+                  <div className="bg-stone-900 border border-emerald-500/25 w-full max-w-lg rounded-3xl p-5 shadow-2xl max-h-[90vh] flex flex-col">
+                      <div className="flex items-center justify-between mb-4 shrink-0">
+                          <div className="flex items-center gap-2.5">
+                              <div className="w-10 h-10 rounded-2xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center">
+                                  <Megaphone size={20} />
+                              </div>
+                              <div>
+                                  <h3 className="text-base font-black text-stone-100">Toplu Zirai WhatsApp Duyurusu</h3>
+                                  <p className="text-[11px] text-stone-400">Köy ve mahsule göre hedef üreticilere don, hastalık veya ilaçlama uyarısı gönderin</p>
+                              </div>
+                          </div>
+                          <button onClick={() => setIsAnnouncementModalOpen(false)} className="p-2 bg-stone-800 rounded-full text-stone-400 hover:text-white">
+                              <X size={16} />
+                          </button>
+                      </div>
 
-                                            <button 
-                                                onClick={handleRepairFarmers}
-                                                disabled={selectedRepairs.size === 0}
-                                                className="w-full mt-4 py-3 bg-red-600 hover:bg-red-500 text-white font-black rounded-xl text-sm transition-all shadow-lg shadow-red-900/20 min-h-[48px] disabled:opacity-50 flex items-center justify-center gap-2"
-                                            >
-                                                <RefreshCw size={18} />
-                                                Seçilenleri Onar ({selectedRepairs.size})
-                                            </button>
-                                        </>
-                                    )}
-                                </div>
-                            )}
+                      <div className="space-y-3 overflow-y-auto pr-1 custom-scrollbar flex-1">
+                          <div className="grid grid-cols-2 gap-2.5">
+                              <div>
+                                  <label className="text-[9px] font-black text-stone-500 uppercase tracking-wider ml-1 mb-1 block">Köy / Bölge Filtresi</label>
+                                  <select
+                                      value={announceVillage}
+                                      onChange={e => setAnnounceVillage(e.target.value)}
+                                      className="w-full bg-stone-950 border border-white/10 rounded-xl p-2.5 text-xs text-stone-100 outline-none"
+                                  >
+                                      <option value="ALL">Tüm Köyler ({villages.length})</option>
+                                      {villages.map(v => (
+                                          <option key={v} value={v}>{v}</option>
+                                      ))}
+                                  </select>
+                              </div>
+                              <div>
+                                  <label className="text-[9px] font-black text-stone-500 uppercase tracking-wider ml-1 mb-1 block">Mahsul Filtresi</label>
+                                  <select
+                                      value={announceCrop}
+                                      onChange={e => setAnnounceCrop(e.target.value)}
+                                      className="w-full bg-stone-950 border border-white/10 rounded-xl p-2.5 text-xs text-stone-100 outline-none"
+                                  >
+                                      <option value="ALL">Tüm Mahsuller ({crops.length})</option>
+                                      {crops.map(c => (
+                                          <option key={c} value={c}>{c}</option>
+                                      ))}
+                                  </select>
+                              </div>
+                          </div>
 
-                            {repairState === 'REPAIRING' && (
-                                <div className="flex flex-col items-center justify-center py-10 space-y-4">
-                                    <Hammer size={40} className="text-red-500 animate-bounce" />
-                                    <div className="text-center">
-                                        <div className="font-bold text-stone-200 text-lg">Onarılıyor...</div>
-                                        <div className="text-sm text-stone-400 mt-1">Cariler kusursuz hale getiriliyor. Lütfen bekleyin.</div>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            )}
+                          <div>
+                              <div className="flex items-center justify-between mb-1">
+                                  <label className="text-[9px] font-black text-stone-500 uppercase tracking-wider ml-1">Duyuru Mesajı ({'{isim}'}, {'{koy}'}, {'{mahsul}'}, {'{firma}'})</label>
+                              </div>
+                              <textarea
+                                  value={announceTemplate}
+                                  onChange={e => setAnnounceTemplate(e.target.value)}
+                                  className="w-full bg-stone-950 border border-white/10 rounded-2xl p-3 text-xs text-stone-100 outline-none focus:border-emerald-500/50 h-28 resize-none"
+                              />
+                          </div>
+
+                          <div className="bg-stone-950/80 border border-white/5 rounded-2xl p-3">
+                              <div className="flex items-center justify-between mb-2">
+                                  <span className="text-[10px] font-black text-stone-400 uppercase tracking-wider">
+                                      Hedef Alıcılar ({sentAnnouncementFarmerIds.size}/{targetRecipients.length} Gönderildi)
+                                  </span>
+                                  {nextPendingFarmer && (
+                                      <button
+                                          type="button"
+                                          onClick={() => sendToFarmer(nextPendingFarmer)}
+                                          className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1"
+                                      >
+                                          <Send size={11} /> Sıradakine Gönder ({nextPendingFarmer.fullName.split(' ')[0]})
+                                      </button>
+                                  )}
+                              </div>
+                              {targetRecipients.length === 0 ? (
+                                  <p className="text-xs text-stone-500 py-3 text-center">Seçilen köy/mahsul kriterine uyan telefonlu üretici bulunamadı.</p>
+                              ) : (
+                                  <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1 custom-scrollbar">
+                                      {targetRecipients.map(rec => {
+                                          const isSent = sentAnnouncementFarmerIds.has(rec.id);
+                                          return (
+                                              <div key={rec.id} className="flex items-center justify-between bg-stone-900/90 border border-white/5 rounded-xl px-3 py-2">
+                                                  <div>
+                                                      <span className="text-xs font-bold text-stone-200">{rec.fullName}</span>
+                                                      <span className="text-[10px] text-stone-500 ml-2">{rec.village}</span>
+                                                  </div>
+                                                  <button
+                                                      type="button"
+                                                      onClick={() => sendToFarmer(rec)}
+                                                      className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase border ${
+                                                          isSent
+                                                              ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                                                              : 'bg-stone-800 text-stone-200 border-white/10 hover:bg-emerald-600 hover:text-white'
+                                                      }`}
+                                                  >
+                                                      {isSent ? '✓ Gönderildi' : 'WP Gönder'}
+                                                  </button>
+                                              </div>
+                                          );
+                                      })}
+                                  </div>
+                              )}
+                          </div>
+                      </div>
+                  </div>
+              </div>
+          );
+      })()}
 
       <DebtReminderModal
         isOpen={isDebtReminderModalOpen}
@@ -3242,22 +3234,6 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
         title={confirmModal.title}
         message={confirmModal.message}
       />
-
-      {selectedFarmer && (
-        <FarmerFinancialAnalysisModal
-          isOpen={isFinancialAnalysisOpen}
-          onClose={() => setIsFinancialAnalysisOpen(false)}
-          farmer={selectedFarmer}
-          farmerLabel={farmerLabel}
-          prescriptions={farmerPrescriptions}
-          payments={farmerPayments}
-          manualDebts={farmerManualDebts}
-          myPayments={myPayments}
-          inventory={inventory}
-          visits={farmerVisits}
-          currency={userProfile?.currency}
-        />
-      )}
 
     </div>
   );

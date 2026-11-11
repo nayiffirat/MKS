@@ -1,6 +1,14 @@
 import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
-import { initializeFirestore, memoryLocalCache, memoryLruGarbageCollector, doc, getDocFromServer } from "firebase/firestore";
+import {
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  memoryLocalCache,
+  memoryLruGarbageCollector,
+  doc,
+  getDocFromServer
+} from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 import firebaseConfig from '../firebase-applet-config.json';
 
@@ -8,13 +16,28 @@ import firebaseConfig from '../firebase-applet-config.json';
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
-// The database ID must be provided to getFirestore for Enterprise edition (which is the default in AI Studio)
-export const db = initializeFirestore(app, {
-  localCache: memoryLocalCache({ garbageCollector: memoryLruGarbageCollector() })
-});
+
+function createFirestoreInstance() {
+  if (typeof window !== 'undefined' && typeof indexedDB !== 'undefined') {
+    try {
+      return initializeFirestore(app, {
+        localCache: persistentLocalCache({
+          tabManager: persistentMultipleTabManager()
+        })
+      });
+    } catch (err) {
+      console.warn("Firestore persistentLocalCache unavailable, falling back to memoryLocalCache:", err);
+    }
+  }
+  return initializeFirestore(app, {
+    localCache: memoryLocalCache({ garbageCollector: memoryLruGarbageCollector() })
+  });
+}
+
+export const db = createFirestoreInstance();
 export const storage = getStorage(app);
 
-// Enable offline persistence is now handled by persistentLocalCache above
+// Offline persistence is backed by Firestore persistentLocalCache + IndexedDB write-ahead syncOutbox (services/db.ts)
 
 // CRITICAL: Validate Connection to Firestore on boot
 async function testConnection() {

@@ -1,39 +1,30 @@
 
 import { safeStringify } from '../utils/json';
-import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { dbService, setActionBlocked, setActionBlockedCallback } from '../services/db';
-import { WeatherService, AGRI_CITIES } from '../services/weather';
-import { Farmer, UIScale, AppNotification, UserProfile, Reminder, VisitLog, AgriCity, InventoryItem, Prescription, Payment, ManualDebt, Supplier, SupplierPurchase, SupplierPayment, MyPayment, PesticideCategory, ViewState, Expense, Account, Transaction, TeamMember, Message, Language, News, CollectionLog, Plant } from '../types';
+import { Farmer, UIScale, AppNotification, UserProfile, Reminder, VisitLog, InventoryItem, Prescription, Payment, ManualDebt, Supplier, SupplierPurchase, SupplierPayment, MyPayment, Expense, Account, Transaction, TeamMember, Message, Language, News, CollectionLog, Plant, PesticideCategory } from '../types';
 import { DEFAULT_PLANTS } from '../constants/plants';
 import { getTranslation } from '../utils/translations';
+import { Capacitor } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Haptics, ImpactStyle, NotificationType } from '@capacitor/haptics';
 import { auth } from '../services/firebase';
 import { sendPasswordResetEmail } from 'firebase/auth';
-
-let isCreatingDefaultAccount = false;
-
-interface DashboardStats {
-  totalFarmers: number;
-  todayPrescriptions: number;
-  pendingVisits: number;
-  activeReminders: number;
-  tomorrowReminders: number;
-  totalArea: number;
-  totalSales: number;
-  cropDistribution: { crop: string, area: number }[];
-  inventoryValue: number;
-  potentialRevenue: number;
-  cashInventoryValue: number;
-  cashPotentialRevenue: number;
-  totalDebt: number;
-  totalExpenses: number;
-  regionalAlerts: { type: string, village: string, severity: string, count: number }[];
-  cashBalance?: number;
-  bankBalance?: number;
-  totalPendingPayables?: number;
-  totalPendingReceivables?: number;
-}
+import { ToastHost, emitAppToast } from '../components/ToastHost';
+import { DashboardStats, computeFullAppSnapshot } from './statsEngine';
+import {
+  scheduleReminderNotification,
+  cancelReminderNotification,
+  checkWeatherAlertsForProfile
+} from './weatherNotifications';
+import {
+  runUnifiedSmartNotificationCheck,
+  saveNotificationPrefsLocally
+} from '../utils/smartNotificationEngine';
+import { runLegacyDataSync } from './legacySync';
+import { generateUUID } from '../utils/uuid';
+import { round2 } from '../utils/dateUtils';
+import { computeFarmerLedgerTotals } from '../utils/ledger';
 
 interface AppContextType {
   stats: DashboardStats;
@@ -76,7 +67,8 @@ interface AppContextType {
   updateUserSubscription: (uid: string, updates: Partial<UserProfile>) => Promise<void>;
   deleteUser: (uid: string) => Promise<void>;
   sendPasswordReset: (email: string) => Promise<void>;
-  addSystemNotification: (type: AppNotification['type'], title: string, message: string) => Promise<void>;
+  addSystemNotification: (type: AppNotification['type'], title: string, message: string, extra?: Partial<AppNotification>) => Promise<void>;
+  runSmartNotificationsScan: (forceManualScan?: boolean) => Promise<number>;
   prescriptionLabel: string;
   farmerLabel: string;
   farmerPluralLabel: string;
@@ -114,7 +106,7 @@ interface AppContextType {
   refreshNews: () => Promise<void>;
   payments: Payment[];
   trashedPayments: Payment[];
-  addPayment: (payment: Omit<Payment, 'id'>) => Promise<void>;
+  addPayment: (payment: Omit<Payment, 'id'> & { id?: string }) => Promise<string>;
   updatePayment: (payment: Payment) => Promise<void>;
   deletePayment: (id: string) => Promise<void>;
   softDeletePayment: (id: string) => Promise<void>;
@@ -130,7 +122,7 @@ interface AppContextType {
   permanentlyDeleteManualDebt: (id: string) => Promise<void>;
   suppliers: Supplier[];
   trashedSuppliers: Supplier[];
-  addSupplier: (supplier: Omit<Supplier, 'id' | 'totalDebt' | 'balance'>) => Promise<void>;
+  addSupplier: (supplier: Omit<Supplier, 'id' | 'totalDebt' | 'balance'>) => Promise<string>;
   updateSupplier: (supplier: Supplier) => Promise<void>;
   deleteSupplier: (id: string) => Promise<void>;
   softDeleteSupplier: (id: string) => Promise<void>;
@@ -169,6 +161,14 @@ interface AppContextType {
   addAccount: (account: Omit<Account, 'id' | 'balance'>) => Promise<void>;
   updateAccount: (account: Account) => Promise<void>;
   deleteAccount: (id: string) => Promise<void>;
+  transferBetweenAccounts: (params: {
+    fromAccountId: string;
+    toAccountId: string;
+    amount: number;
+    date: string;
+    description?: string;
+    id?: string;
+  }) => Promise<void>;
   transactions: Transaction[];
   addTransaction: (transaction: Omit<Transaction, 'id'>) => Promise<void>;
   deleteTransaction: (id: string) => Promise<void>;
@@ -200,7 +200,7 @@ const DEFAULT_PROFILE: UserProfile = {
   highContrastMode: false,
   colorMode: 'DARK',
   language: 'tr',
-  theme: 'APPLE'
+  theme: 'TECHNICAL'
 };
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -278,15 +278,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       sessionStorage.removeItem('mks_active_team_member');
     }
   };
-  const [toasts, setToasts] = useState<{id: string, message: string, type: 'success' | 'error' | 'info'}[]>([]);
   const [isInitialized, setIsInitialized] = useState(false);
 
   const [uiScale, setUiScaleState] = useState<UIScale>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('mks_ui_scale');
-      return (saved as UIScale) || 'SMALL';
+      if (saved === 'SMALL' || saved === 'MEDIUM' || saved === 'LARGE') {
+        return saved;
+      }
+      return 'MEDIUM';
     }
-    return 'SMALL';
+    return 'MEDIUM';
   });
 
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
@@ -296,7 +298,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const parsed = saved ? JSON.parse(saved) : DEFAULT_PROFILE;
             const merged = { ...DEFAULT_PROFILE, ...parsed };
             if (merged.theme === 'DEFAULT' || !merged.theme) {
-              merged.theme = 'APPLE';
+              merged.theme = 'TECHNICAL';
+              merged.colorMode = 'DARK';
             }
             return merged;
         } catch (e) {
@@ -308,15 +311,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   useEffect(() => {
-    const activeTheme = userProfile.colorMode === 'LIGHT' || userProfile.theme === 'LIGHT'
-      ? 'LIGHT'
-      : (userProfile.theme && userProfile.theme !== 'DEFAULT' ? userProfile.theme : 'APPLE');
-      
-    if (activeTheme) {
-        document.documentElement.setAttribute('data-theme', activeTheme);
-    } else {
-        document.documentElement.removeAttribute('data-theme');
-    }
+    const rawTheme = userProfile.theme;
+    const activeTheme =
+      rawTheme && ['GLASSY_V30', 'APPLE', 'LIGHT', 'ORGANIC', 'TECHNICAL', 'MINIMAL'].includes(rawTheme)
+        ? rawTheme === 'MINIMAL'
+          ? 'TECHNICAL'
+          : rawTheme
+        : 'TECHNICAL';
+
+    document.documentElement.setAttribute('data-theme', activeTheme);
   }, [userProfile.theme, userProfile.colorMode]);
 
   const refreshNotifications = async () => {
@@ -331,7 +334,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const setLanguage = (lang: Language) => {
     setLanguageState(lang);
-    updateUserProfile({ ...userProfile, language: lang });
+    updateUserProfile({ ...userProfile, language: lang }).catch(err => {
+      console.warn('Dil tercihi buluta kaydedilemedi:', err);
+    });
   };
 
   const refreshPlants = async () => {
@@ -344,7 +349,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         console.log("Seeding default plants...");
         // Use batch if possible or just wait for all
         const seedPromises = DEFAULT_PLANTS.map(pData => {
-          const plant: Plant = { ...pData as any, id: crypto.randomUUID() };
+          const plant: Plant = { ...pData as any, id: generateUUID() };
           return dbService.addPlant(plant);
         });
         await Promise.all(seedPromises);
@@ -357,7 +362,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addPlant = async (plantData: Omit<Plant, 'id'>) => {
-    const plant: Plant = { ...plantData, id: crypto.randomUUID() };
+    const plant: Plant = { ...plantData, id: generateUUID() };
     await dbService.addPlant(plant);
     await refreshPlants();
   };
@@ -385,6 +390,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateUserProfile = async (profile: UserProfile) => {
       setUserProfile(profile);
       localStorage.setItem('mks_user_profile', safeStringify(profile));
+      if (profile.notificationPrefs) {
+          saveNotificationPrefsLocally(profile.notificationPrefs);
+      }
       
       // Firebase Sync
       const user = auth.currentUser;
@@ -394,10 +402,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const syncUserProfile = (profile: UserProfile) => {
-      setUserProfile(profile);
-      localStorage.setItem('mks_user_profile', safeStringify(profile));
-      setActiveTeamMember(null);
-      localStorage.removeItem('mks_active_team_member');
+      setUserProfile(prev => {
+          const prevUid = prev.uid || prev.id;
+          const nextUid = profile.uid || profile.id;
+          if (prevUid && nextUid && prevUid !== nextUid) {
+              setActiveTeamMember(null);
+              localStorage.removeItem('mks_active_team_member');
+          }
+          const preservedTheme =
+              profile.theme && profile.theme !== 'DEFAULT'
+                  ? profile.theme
+                  : prev.theme && prev.theme !== 'DEFAULT'
+                      ? prev.theme
+                      : 'TECHNICAL';
+          const merged: UserProfile = {
+              ...DEFAULT_PROFILE,
+              ...prev,
+              ...profile,
+              theme: preservedTheme,
+              colorMode: profile.colorMode ?? prev.colorMode ?? 'DARK',
+          };
+          localStorage.setItem('mks_user_profile', safeStringify(merged));
+          return merged;
+      });
   };
 
   const isAdmin = userProfile.role === 'admin' || auth.currentUser?.email === 'nayiffirat@gmail.com';
@@ -462,144 +489,74 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await Promise.all(promises);
   };
 
-  const addSystemNotification = async (type: AppNotification['type'], title: string, message: string) => {
+  const addSystemNotification = async (
+      type: AppNotification['type'],
+      title: string,
+      message: string,
+      extra?: Partial<AppNotification>
+  ) => {
       const newNotif: AppNotification = {
-          id: crypto.randomUUID(),
+          id: generateUUID(),
           type,
           title,
           message,
           date: new Date().toISOString(),
-          isRead: false
+          isRead: false,
+          ...(extra || {})
       };
       await dbService.addNotification(newNotif);
       await refreshNotifications();
   };
 
-  const scheduleReminderNotification = async (reminder: Reminder) => {
-    try {
-        if (reminder.isCompleted) return;
+  const smartScanRunningRef = useRef(false);
 
-        const [year, month, day] = reminder.date.split('-').map(Number);
-        const rDate = new Date(year, month - 1, day);
-        const notifyDate = new Date(rDate);
-        notifyDate.setDate(notifyDate.getDate() - 1);
-        notifyDate.setHours(20, 0, 0, 0);
-
-        if (notifyDate.getTime() <= Date.now()) return;
-
-        const numericId = Math.abs(reminder.id.split('').reduce((a, b) => { a = ((a << 5) - a) + b.charCodeAt(0); return a & a; }, 0));
-
-        await LocalNotifications.schedule({
-            notifications: [
-                {
-                    title: `Yarın Yapılacaklar: ${reminder.title}`,
-                    body: reminder.description || "Planlanmış görevinizi unutmayın.",
-                    id: numericId,
-                    schedule: { at: notifyDate },
-                    sound: 'default'
-                }
-            ]
-        });
-    } catch (e) {
-        console.warn("Notification scheduling failed:", e);
-    }
-  };
-
-  const cancelReminderNotification = async (reminderId: string) => {
-    try {
-        const numericId = Math.abs(reminderId.split('').reduce((a, b) => { a = ((a << 5) - a) + b.charCodeAt(0); return a & a; }, 0));
-        await LocalNotifications.cancel({ notifications: [{ id: numericId }] });
-    } catch (e) {}
-  };
-
-  // --- GÜNLÜK ÖZET BİLDİRİMİ (Akşam 20:00) ---
-  const scheduleDailyBriefing = async (tomorrowCount: number) => {
-    try {
-        // Her seferinde eski günlük bildirimi sil (ID: 999999)
-        await LocalNotifications.cancel({ notifications: [{ id: 999999 }] });
-
-        const now = new Date();
-        const scheduledTime = new Date();
-        scheduledTime.setHours(20, 0, 0, 0);
-
-        // Eğer saat 20:00'ı geçtiyse, yarına kur
-        if (now > scheduledTime) {
-            scheduledTime.setDate(scheduledTime.getDate() + 1);
-        }
-
-        const bodyText = tomorrowCount > 0 
-            ? `Yarın için planlanmış ${tomorrowCount} göreviniz var. Hazırlıklara başlayın.`
-            : `Yarın için planlanmış bir saha göreviniz yok. İyi dinlenmeler!`;
-
-        await LocalNotifications.schedule({
-            notifications: [{
-                id: 999999,
-                title: "🗓️ Yarının Planı",
-                body: bodyText,
-                schedule: { at: scheduledTime, allowWhileIdle: true },
-                sound: 'default',
-                actionTypeId: '',
-                extra: null
-            }]
-        });
-        
-    } catch (e) {
-        console.warn("Daily briefing schedule failed:", e);
-    }
-  };
+  const runSmartNotificationsScan = useCallback(async (forceManualScan = false): Promise<number> => {
+      if (!auth.currentUser) return 0;
+      if (smartScanRunningRef.current && !forceManualScan) return 0;
+      smartScanRunningRef.current = true;
+      try {
+          const allSupplierPays = await dbService.getSupplierPayments().catch(() => [] as SupplierPayment[]);
+          const count = await runUnifiedSmartNotificationCheck({
+              userProfile,
+              farmers,
+              suppliers,
+              prescriptions,
+              payments,
+              myPayments,
+              supplierPayments: allSupplierPays,
+              reminders,
+              collectionLogs,
+              forceManualScan,
+              onEmitNotification: async (notif) => {
+                  const created: AppNotification = {
+                      id: generateUUID(),
+                      type: notif.type,
+                      category: notif.category,
+                      title: notif.title,
+                      message: notif.message,
+                      targetView: notif.targetView,
+                      actionLabel: notif.actionLabel,
+                      callItems: notif.callItems,
+                      date: new Date().toISOString(),
+                      isRead: false
+                  };
+                  await dbService.addNotification(created);
+              }
+          });
+          if (count > 0) {
+              await refreshNotifications();
+          }
+          return count;
+      } catch (err) {
+          console.warn('Akıllı bildirim taraması uyarısı:', err);
+          return 0;
+      } finally {
+          smartScanRunningRef.current = false;
+      }
+  }, [userProfile, farmers, suppliers, prescriptions, payments, myPayments, reminders, collectionLogs]);
 
   const checkWeatherAlerts = async () => {
-    try {
-        let targetLoc: AgriCity = AGRI_CITIES[0];
-        if (userProfile.selectedCity) {
-            targetLoc = userProfile.selectedCity;
-        } else {
-            const savedCity = localStorage.getItem('mks_selected_city');
-            if (savedCity) targetLoc = JSON.parse(savedCity);
-        }
-
-        // Günlük kontrol mekanizması (LocalStorage tabanlı)
-        const todayKey = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD formatı
-        const storedLog = localStorage.getItem('mks_daily_alert_log');
-        let dailyLog: { date: string, sentTypes: string[] } = { date: todayKey, sentTypes: [] };
-
-        if (storedLog) {
-            try {
-                const parsed = JSON.parse(storedLog);
-                if (parsed.date === todayKey) {
-                    dailyLog = parsed;
-                    // Eğer bugün ZATEN herhangi bir hava durumu bildirimi gönderilmişse, çık.
-                    if (dailyLog.sentTypes.length > 0) return;
-                }
-            } catch (e) {}
-        }
-
-        const weather = await WeatherService.getForecast(targetLoc.lat, targetLoc.lon);
-        const minTemp = weather.daily.temperature_2m_min[0];
-        const maxTemp = weather.daily.temperature_2m_max[0];
-        const precip = weather.daily.precipitation_sum[0];
-
-        // Sadece bir tane bildirim gönderilir (Öncelik sırasına göre)
-        if (minTemp <= 2) {
-            // 1. Don Riski Kontrolü
-            await addSystemNotification('WARNING', `Don Riski (${targetLoc.name})`, `Dikkat! Gece sıcaklığı ${minTemp}°C seviyesine düşecek. Ürünlerde don riski yüksektir.`);
-            dailyLog.sentTypes.push('FROST');
-        } else if (maxTemp >= 38) {
-            // 2. Sıcaklık Uyarısı Kontrolü
-            await addSystemNotification('WARNING', `Sıcaklık Uyarısı (${targetLoc.name})`, `Günün en yüksek sıcaklığı ${maxTemp}°C olacak. Bitki su stresine karşı sulamayı planlayın.`);
-            dailyLog.sentTypes.push('HEAT');
-        } else if (precip >= 15) {
-            // 3. Yağış Uyarısı Kontrolü
-            await addSystemNotification('WARNING', `Yağış Uyarısı (${targetLoc.name})`, `Bugün ${precip}mm yağış bekleniyor. İlaçlama planlarını revize edin.`);
-            dailyLog.sentTypes.push('RAIN');
-        }
-
-        // Logu kaydet
-        localStorage.setItem('mks_daily_alert_log', safeStringify(dailyLog));
-
-    } catch (e) {
-        console.error("Weather alert check failed:", e);
-    }
+    await checkWeatherAlertsForProfile(userProfile, addSystemNotification);
   };
 
   const refreshInventory = async () => {
@@ -673,32 +630,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addPrescription = async (pData: Omit<Prescription, 'id' | 'prescriptionNo'>) => {
-    const id = `REC-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const id = await dbService.nextDocumentCounter('REC');
     const accountsList = await dbService.getAccounts();
     const defaultAcc = accountsList.find(a => a.type === 'CASH') || accountsList[0];
     const targetAccId = pData.accountId || defaultAcc?.id;
+    const shouldProcess = pData.isProcessed !== false;
 
     const prescription: Prescription = { 
         ...pData, 
         id, 
         prescriptionNo: id,
         createdById: activeTeamMember?.id,
+        isProcessed: shouldProcess,
         isInventoryProcessed: false,
         accountId: pData.priceType === 'CASH' ? targetAccId : undefined
     };
     await dbService.addPrescription(prescription);
-    await dbService.processInventory(prescription);
+    if (shouldProcess) {
+        await dbService.processInventory(prescription);
+    }
 
-    if (prescription.priceType === 'CASH' && targetAccId) {
+    if (prescription.priceType === 'CASH' && targetAccId && shouldProcess) {
         const allTxs = await dbService.getTransactions();
-        const existingTx = allTxs.find(t => t.relatedId === id);
+        const existingTx = allTxs.find(t => t.relatedId === id && !t.deletedAt);
         if (!existingTx) {
             const farmer = farmers.find(f => f.id === prescription.farmerId);
             await dbService.addTransaction({
-                id: crypto.randomUUID(),
+                id: generateUUID(),
                 accountId: targetAccId,
                 type: prescription.type === 'RETURN' ? 'EXPENSE' : 'INCOME',
-                amount: Math.abs(prescription.totalAmount || 0),
+                amount: round2(Math.abs(prescription.totalAmount || 0)),
                 date: prescription.date,
                 description: prescription.type === 'RETURN' ? 'Peşin İade Kasadan Çıkış' : 'Peşin Satış Tahsilatı',
                 category: 'Satış/İade',
@@ -717,7 +678,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const refreshPrescriptions = async () => {
-    const allItems = await dbService.getAllPrescriptions();
+    const allItems = await dbService.getAllPrescriptionsRaw();
     const activeItems = allItems.filter(p => !p.deletedAt);
     const trashedItems = allItems.filter(p => !!p.deletedAt);
     
@@ -740,8 +701,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const togglePrescriptionStatus = async (id: string): Promise<Prescription | null> => {
     let p = prescriptions.find(item => item.id === id);
     if (!p) {
-        const all = await dbService.getAllPrescriptions();
-        p = all.find(item => item.id === id);
+        const all = await dbService.getAllPrescriptionsRaw();
+        p = all.find(item => item.id === id && !item.deletedAt);
     }
     if (!p) return null;
 
@@ -758,7 +719,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     
     // Fetch the absolute latest state from DB to ensure isInventoryProcessed is correct
-    const latest = await dbService.getAllPrescriptions();
+    const latest = await dbService.getAllPrescriptionsRaw();
     const finalUpdated = latest.find(item => item.id === id) || updated;
 
     await refreshPrescriptions();
@@ -768,507 +729,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return finalUpdated;
   };
 
-  const refreshStats = async (syncedReminders?: Reminder[]) => {
-    const now = new Date();
-    const thirtyDaysInMs = 30 * 24 * 60 * 60 * 1000;
+  const refreshSeqRef = useRef(0);
 
-    const [
-        allPrescriptionsRaw,
-        rawFarmerList, 
-        rawVisitList, 
-        reminderListFromDB, 
-        inventoryData, 
-        rawPaymentList, 
-        rawManualDebtList, 
-        rawSupplierList, 
-        myPaymentList, 
-        rawExpenseList, 
-        teamMemberList, 
-        messageList,
-        collectionLogList
-    ] = await Promise.all([
-        dbService.getAllPrescriptions(),
-        dbService.getFarmers(),
-        dbService.getAllVisits(),
-        dbService.getReminders(),
-        dbService.getInventory(),
-        dbService.getPayments(),
-        dbService.getManualDebts(),
-        dbService.getSuppliers(),
-        dbService.getMyPayments(),
-        dbService.getExpenses(),
-        dbService.getTeamMembers(),
-        dbService.getMessages(),
-        dbService.getCollectionLogs()
-    ]);
-
-    // --- AUTO UNBLOCK EXPIRED CARD PAYMENTS ---
-    const todayISO = now.toISOString().split('T')[0];
-    const accountsListForUnblock = await dbService.getAccounts();
-    const defaultAcc = accountsListForUnblock[0];
-
-    for (const p of myPaymentList) {
-      if (p.deletedAt) continue;
-      if ((p.type === 'DEFERRED_CARD' || p.cardOption) && p.status === 'PENDING') {
-        const dueDateStr = (p.unblockDate || p.dueDate || '').split('T')[0];
-        if (dueDateStr && todayISO >= dueDateStr) {
-          p.status = 'PAID';
-          p.autoCollected = true;
-          await dbService.updateMyPayment(p);
-
-          const accId = p.accountId || defaultAcc?.id;
-          if (accId) {
-            const allTxs = await dbService.getTransactions();
-            const existingTx = allTxs.find(t => t.relatedId === p.id);
-            if (!existingTx) {
-              const name = p.farmerName || 'Müşteri';
-              await dbService.addTransaction({
-                id: crypto.randomUUID(),
-                accountId: accId,
-                type: 'INCOME',
-                amount: p.amount,
-                date: now.toISOString(),
-                description: `${name} - Kredi Kartı Blokesi Kalktı (Otomatik Hesaba Aktarıldı)`,
-                relatedId: p.id,
-                category: 'Kredi Kartı Bloke Tahsilatı'
-              });
-            }
-          }
-
-          if (p.relatedId) {
-            const origP = rawPaymentList.find(orig => orig.id === p.relatedId);
-            if (origP) {
-              await dbService.updatePayment({
-                ...origP,
-                isUnblocked: true
-              });
-            }
-          }
-        }
-      }
-    }
-
-    // --- PRESCRIPTIONS FILTERING & AUTO-DELETE ---
-    const validPrescriptions: Prescription[] = [];
-    const trashed: Prescription[] = [];
-
-    for (const p of allPrescriptionsRaw) {
-        if (p.deletedAt) {
-            const deletedTime = new Date(p.deletedAt).getTime();
-            if (now.getTime() - deletedTime > thirtyDaysInMs) {
-                await dbService.deletePrescription(p.id);
-            } else {
-                trashed.push(p);
-            }
-        } else {
-            validPrescriptions.push(p);
-        }
-    }
-
-    const prescriptions = validPrescriptions;
-
-    // Fetch all purchases and payments at once
-    const [allPurchasesRaw, allPaymentsRaw] = await Promise.all([
-        dbService.getSupplierPurchases(),
-        dbService.getSupplierPayments()
-    ]);
-    
-    const flatPurchases = allPurchasesRaw.filter(p => !p.deletedAt);
-    const flatPayments = allPaymentsRaw.filter(p => !p.deletedAt);
-    
-    const trashedPurchases = allPurchasesRaw.filter(p => !!p.deletedAt);
-    const trashedPay = allPaymentsRaw.filter(p => !!p.deletedAt);
-
-    // Separate active and trashed items
-    const farmerList = rawFarmerList.filter(f => !f.deletedAt);
-    const trashedF = rawFarmerList.filter(f => f.deletedAt);
-    
-    const visitList = rawVisitList.filter(v => !v.deletedAt);
-    const trashedV = rawVisitList.filter(v => v.deletedAt);
-    
-    const paymentList = rawPaymentList.filter(p => !p.deletedAt);
-    const trashedP = rawPaymentList.filter(p => p.deletedAt);
-    
-    const manualDebtList = rawManualDebtList.filter(d => !d.deletedAt);
-    const trashedMD = rawManualDebtList.filter(d => d.deletedAt);
-    
-    const expenseList = rawExpenseList.filter(e => !e.deletedAt);
-    const trashedE = rawExpenseList.filter(e => e.deletedAt);
-
-    const supplierList = rawSupplierList.filter(s => !s.deletedAt);
-    const trashedS = rawSupplierList.filter(s => s.deletedAt);
-
-    const trashedSPurchases = allPurchasesRaw.filter(p => p.deletedAt);
-    const trashedSPayments = allPaymentsRaw.filter(p => p.deletedAt);
-    const trashedMyPayments = myPaymentList.filter(p => p.deletedAt);
-    const trashedTransactions = (await dbService.getTransactions()).filter(tx => tx.deletedAt);
-
-    // Auto-delete trashed items older than 30 days in parallel to avoid hanging
-    const deletePromises: Promise<any>[] = [];
-
-    for (const f of trashedF) {
-        if (now.getTime() - new Date(f.deletedAt!).getTime() > thirtyDaysInMs) {
-            deletePromises.push(dbService.deleteFarmer(f.id));
-        }
-    }
-    for (const v of trashedV) {
-        if (now.getTime() - new Date(v.deletedAt!).getTime() > thirtyDaysInMs) {
-            deletePromises.push(dbService.deleteVisit(v.id));
-        }
-    }
-    for (const p of trashedP) {
-        if (now.getTime() - new Date(p.deletedAt!).getTime() > thirtyDaysInMs) {
-            deletePromises.push(dbService.deletePayment(p.id));
-        }
-    }
-    for (const s of trashedS) {
-        if (now.getTime() - new Date(s.deletedAt!).getTime() > thirtyDaysInMs) {
-            deletePromises.push(dbService.deleteSupplier(s.id));
-        }
-    }
-    for (const d of trashedMD) {
-        if (now.getTime() - new Date(d.deletedAt!).getTime() > thirtyDaysInMs) {
-            deletePromises.push(dbService.deleteManualDebt(d.id));
-        }
-    }
-    for (const e of trashedE) {
-        if (now.getTime() - new Date(e.deletedAt!).getTime() > thirtyDaysInMs) {
-            deletePromises.push(dbService.deleteExpense(e.id));
-        }
-    }
-    for (const p of trashedSPurchases) {
-        if (now.getTime() - new Date(p.deletedAt!).getTime() > thirtyDaysInMs) {
-            deletePromises.push(dbService.deleteSupplierPurchase(p.id));
-        }
-    }
-    for (const p of trashedSPayments) {
-        if (now.getTime() - new Date(p.deletedAt!).getTime() > thirtyDaysInMs) {
-            deletePromises.push(dbService.deleteSupplierPayment(p.id));
-        }
-    }
-    for (const p of trashedMyPayments) {
-        if (now.getTime() - new Date(p.deletedAt!).getTime() > thirtyDaysInMs) {
-            deletePromises.push(dbService.deleteMyPayment(p.id));
-        }
-    }
-
-    for (const tx of trashedTransactions) {
-        if (now.getTime() - new Date(tx.deletedAt!).getTime() > thirtyDaysInMs) {
-            deletePromises.push(dbService.deleteTransaction(tx.id));
-        }
-    }
-
-    if (deletePromises.length > 0) {
-        // Don't await deletions, they can happen in background to prevent UI hang
-        Promise.allSettled(deletePromises).catch(err => console.warn('Background cleanup failed:', err));
-    }
-
-    setTrashedFarmers(trashedF.filter(f => now.getTime() - new Date(f.deletedAt!).getTime() <= thirtyDaysInMs));
-    setTrashedVisits(trashedV.filter(v => now.getTime() - new Date(v.deletedAt!).getTime() <= thirtyDaysInMs));
-    setTrashedPayments(trashedP.filter(p => now.getTime() - new Date(p.deletedAt!).getTime() <= thirtyDaysInMs));
-    setTrashedSuppliers(trashedS.filter(s => now.getTime() - new Date(s.deletedAt!).getTime() <= thirtyDaysInMs));
-    setTrashedManualDebts(trashedMD.filter(d => now.getTime() - new Date(d.deletedAt!).getTime() <= thirtyDaysInMs));
-    setTrashedExpenses(trashedE.filter(e => now.getTime() - new Date(e.deletedAt!).getTime() <= thirtyDaysInMs));
-    setTrashedSupplierPurchases(trashedSPurchases.filter(p => now.getTime() - new Date(p.deletedAt!).getTime() <= thirtyDaysInMs));
-    setTrashedSupplierPayments(trashedSPayments.filter(p => now.getTime() - new Date(p.deletedAt!).getTime() <= thirtyDaysInMs));
-    setTrashedMyPayments(trashedMyPayments.filter(p => now.getTime() - new Date(p.deletedAt!).getTime() <= thirtyDaysInMs));
-
-    setVisits(visitList);
-
-    const finalReminders = [...(syncedReminders || reminderListFromDB)];
-    
-    const updatedSupplierList = supplierList.map((s) => {
-        const purchasesForSupplier = flatPurchases.filter(p => p.supplierId === s.id);
-        const paymentsForSupplier = flatPayments.filter(p => p.supplierId === s.id);
-        // Only include checks that are not already part of the supplier's flatPayments (i.e. those without a relatedId linking them back)
-        const checks = myPaymentList.filter(p => p.supplierId === s.id && !p.deletedAt && p.status !== 'CANCELLED' && !p.relatedId);
-        
-        const totalPurchased = purchasesForSupplier.reduce((acc, p) => {
-            const amt = Math.abs(Number(p.totalAmount) || 0);
-            // Treat RETURN or negative totalAmount as a reduction of what we purchased
-            return acc + ((p.type === 'RETURN' || (p.totalAmount && p.totalAmount < 0)) ? -amt : amt);
-        }, 0);
-
-        // Payments TO supplier increase totalPaid, Payments FROM supplier (RECEIVE) decrease totalPaid
-        const totalPaid = paymentsForSupplier.reduce((acc, p) => {
-            const amt = Number(p.amount) || 0;
-            return acc + (p.type === 'RECEIVE' ? -amt : amt);
-        }, 0) + 
-        checks.reduce((acc, p) => acc + (Number(p.amount) || 0), 0); // Independent checks
-        
-        return {
-            ...s,
-            totalDebt: purchasesForSupplier.filter(p => p.type !== 'RETURN' && !(p.totalAmount && p.totalAmount < 0)).reduce((acc, p) => acc + (Math.abs(Number(p.totalAmount)) || 0), 0),
-            balance: (totalPaid || 0) - (totalPurchased || 0) // Negative means we owe money
-        };
-    });
-    
-    // --- SMART CALENDAR LOGIC ---
-    // Generate reminders based on crop stages if not already present
-    const today = new Date();
-    const todayStr = today.toISOString().split('T')[0];
-
-    farmerList.forEach(farmer => {
-        farmer.fields.forEach(field => {
-            if (field.crop && field.plantingDate) {
-                const pDate = new Date(field.plantingDate);
-                const diffDays = Math.floor((today.getTime() - pDate.getTime()) / (1000 * 60 * 60 * 24));
-                
-                let title = '';
-                let description = '';
-
-                // Example logic for Cotton
-                if (field.crop.toLocaleLowerCase('tr-TR').includes('pamuk')) {
-                    if (diffDays >= 20 && diffDays <= 25) {
-                        title = `${farmer.fullName} - Pamuk Üst Gübreleme`;
-                        description = `${field.name} tarlasında pamuk 4-6 yaprak evresinde. Üst gübreleme zamanı.`;
-                    } else if (diffDays >= 60 && diffDays <= 65) {
-                        title = `${farmer.fullName} - Pamuk Zararlı Kontrolü`;
-                        description = `${field.name} tarlasında pamuk taraklanma döneminde. Yeşil kurt ve emici böcek kontrolü yapılmalı.`;
-                    }
-                } 
-                // Example logic for Corn (Mısır)
-                else if (field.crop.toLocaleLowerCase('tr-TR').includes('mısır')) {
-                    if (diffDays >= 30 && diffDays <= 35) {
-                        title = `${farmer.fullName} - Mısır Üst Gübreleme`;
-                        description = `${field.name} tarlasında mısır diz boyu seviyesinde. Üst gübreleme ve boğaz doldurma zamanı.`;
-                    }
-                }
-                // Example logic for Wheat (Buğday)
-                else if (field.crop.toLocaleLowerCase('tr-TR').includes('buğday')) {
-                    if (diffDays >= 45 && diffDays <= 55) {
-                        title = `${farmer.fullName} - Buğday Ot İlacı`;
-                        description = `${field.name} tarlasında buğday kardeşlenme sonunda. Yabancı ot mücadelesi için uygun dönem.`;
-                    }
-                }
-
-                if (title && !finalReminders.find(r => r.title === title)) {
-                    finalReminders.push({
-                        id: `auto-${crypto.randomUUID()}`,
-                        title,
-                        description,
-                        date: todayStr,
-                        isCompleted: false,
-                        priority: 'MEDIUM',
-                        recurrence: 'NONE'
-                    });
-                }
-            }
-        });
-    });
-
-    // --- REGIONAL ALERTS LOGIC ---
-    const alerts: Record<string, { type: string, village: string, severity: string, count: number }> = {};
-    visitList.forEach(v => {
-        if ((v.pestFound || v.diseaseFound) && v.severity === 'HIGH') {
-            const key = `${v.pestFound || v.diseaseFound}-${v.village || 'Bilinmeyen'}`;
-            if (!alerts[key]) {
-                alerts[key] = {
-                    type: v.pestFound || v.diseaseFound || 'Bilinmeyen',
-                    village: v.village || 'Bilinmeyen',
-                    severity: 'HIGH',
-                    count: 0
-                };
-            }
-            alerts[key].count++;
-        }
-    });
-    const regionalAlerts = Object.values(alerts).filter(a => a.count >= 2); // At least 2 findings in same village
-
-    // --- DEBT TRACKING LOGIC ---
-    const farmerDebts: Record<string, number> = {};
-    
-    // Add prescriptions to debt
-    prescriptions.forEach(p => {
-        if (p.priceType !== 'CASH') {
-            const amt = Number(p.totalAmount) || 0;
-            const isReturn = p.type === 'RETURN' || amt < 0;
-            const netAmt = isReturn ? -Math.abs(amt) : Math.abs(amt);
-            farmerDebts[p.farmerId] = Math.round(((farmerDebts[p.farmerId] || 0) + netAmt + Number.EPSILON) * 100) / 100;
-        }
-    });
-
-    // Add manual debts (Including turnover entries for individual balances)
-    manualDebtList.forEach(d => {
-        const amt = Number(d.amount) || 0;
-        farmerDebts[d.farmerId] = Math.round(((farmerDebts[d.farmerId] || 0) + amt + Number.EPSILON) * 100) / 100;
-    });
-
-    // Subtract payments from debt
-    paymentList.forEach(pay => {
-        const amt = Number(pay.amount) || 0;
-        farmerDebts[pay.farmerId] = Math.round(((farmerDebts[pay.farmerId] || 0) - amt + Number.EPSILON) * 100) / 100;
-    });
-
-    // Subtract myPayments (checks/notes) from farmer debt, only if independent
-    myPaymentList.forEach(pay => {
-        if (pay.farmerId && !pay.deletedAt && pay.status !== 'CANCELLED' && !pay.relatedId) {
-            const amt = Number(pay.amount) || 0;
-            farmerDebts[pay.farmerId] = Math.round(((farmerDebts[pay.farmerId] || 0) - amt + Number.EPSILON) * 100) / 100;
-        }
-    });
-
-    // Total debt is the sum of all positive balances (money owed to the engineer)
-    const totalDebt = Object.values(farmerDebts).reduce((acc, val) => {
-        const v = Number(val) || 0;
-        return acc + (v > 0 ? v : 0);
-    }, 0);
-
-    // Update farmer objects with balance
-    const updatedFarmerList = farmerList.map(f => ({
-        ...f,
-        balance: -(Math.round(((farmerDebts[f.id] || 0) + Number.EPSILON) * 100) / 100) // Balance is negative if they owe money
-    }));
-
-    if (syncedReminders) {
-        await LocalNotifications.cancel({ notifications: syncedReminders.map(r => ({ id: Math.abs(r.id.split('').reduce((a, b) => { a = ((a << 5) - a) + b.charCodeAt(0); return a & a; }, 0)) })) });
-        for (const r of syncedReminders) {
-            await scheduleReminderNotification(r);
-        }
-    }
-
-    // Yarının tarihini bul (YYYY-MM-DD)
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowStr = tomorrow.toISOString().split('T')[0];
-
-    const todaysPrescriptionsCount = prescriptions.filter(p => p.date.startsWith(todayStr)).length;
-    
-    // Yarının görevlerini hesapla
-    const tomorrowRemindersCount = finalReminders.filter(r => r.date === tomorrowStr && !r.isCompleted).length;
-
-    // Günlük özeti planla (Her veri değişiminde o anki duruma göre 20:00'ı günceller)
-    await scheduleDailyBriefing(tomorrowRemindersCount);
-
-    // Ürün dağılımı ve toplam alan hesapla
-    const distribution: Record<string, number> = {};
-    let totalArea = 0;
-    
-    updatedFarmerList.forEach(f => {
-        (f.fields || []).forEach(field => {
-            const area = Number(field.size) || 0;
-            const crop = field.crop || 'Belirtilmedi';
-            distribution[crop] = (distribution[crop] || 0) + area;
-            totalArea += area;
-        });
-    });
-
-    // Toplam Satış Tutarı Hesapla (Satışlardan İadeleri Düşerek)
-    const totalSales = prescriptions.reduce((acc, p) => {
-        const amt = Number(p.totalAmount) || 0;
-        const isReturn = p.type === 'RETURN' || amt < 0;
-        const netAmt = isReturn ? -Math.abs(amt) : Math.abs(amt);
-        return acc + netAmt;
-    }, 0);
-
-    // Toplam Gider Hesapla
-    const totalExpenses = expenseList.reduce((acc, e) => acc + e.amount, 0);
-
-    // Calculate Inventory Value and Potential Revenue
-    const inventoryValue = inventoryData.reduce((acc, item) => acc + (item.buyingPrice * item.quantity), 0);
-    const potentialRevenue = inventoryData.reduce((acc, item) => acc + (item.sellingPrice * item.quantity), 0);
-    const cashInventoryValue = inventoryData.reduce((acc, item) => acc + ((item.cashBuyingPrice || 0) * item.quantity), 0);
-    const cashPotentialRevenue = inventoryData.reduce((acc, item) => acc + ((item.cashPrice || 0) * item.quantity), 0);
-
-    const cropDistribution = Object.entries(distribution)
-        .map(([crop, area]) => ({ crop, area }))
-        .sort((a, b) => b.area - a.area);
-
-    setReminders(finalReminders);
-    setFarmers(updatedFarmerList);
-    setInventory(inventoryData);
-    setPrescriptions(prescriptions);
-    setTrashedPrescriptions(trashed);
-    setSupplierPurchases(flatPurchases);
-    setTrashedSupplierPurchases(trashedPurchases);
-    setPayments(paymentList);
-    setManualDebts(manualDebtList);
-    setExpenses(expenseList);
-    setSuppliers(updatedSupplierList);
-    setMyPayments(myPaymentList);
-    setTeamMembers(teamMemberList);
-    setMessages(messageList);
-    setCollectionLogs(collectionLogList);
-    
-    // Reconcile and audit accounts & transactions to fix any discrepancies or duplicates
-    await dbService.reconcileAccountBalances();
-
-    let accountList = await dbService.getAccounts();
-    
-    // Deduplicate "Nakit Kasam" if multiple were created due to race conditions
-    const nakitKasamAccounts = accountList.filter(a => a.name === 'Nakit Kasam');
-    if (nakitKasamAccounts.length > 1) {
-        // Keep the first one, delete the rest if they have 0 balance
-        for (let i = 1; i < nakitKasamAccounts.length; i++) {
-            if (nakitKasamAccounts[i].balance === 0) {
-                await dbService.deleteAccount(nakitKasamAccounts[i].id);
-                accountList = accountList.filter(a => a.id !== nakitKasamAccounts[i].id);
-            }
-        }
-    }
-
-    // Create default "Nakit Kasam" if no accounts exist
-    if (accountList.length === 0 && !isCreatingDefaultAccount) {
-        isCreatingDefaultAccount = true;
-        try {
-            // Check again inside the lock
-            const currentAccounts = await dbService.getAccounts();
-            if (currentAccounts.length === 0) {
-                const defaultAccount: Account = {
-                    id: crypto.randomUUID(),
-                    name: 'Nakit Kasam',
-                    type: 'CASH',
-                    balance: 0,
-                    bankLogo: '💸' // Motivating money emoji
-                };
-                await dbService.addAccount(defaultAccount);
-                accountList = [defaultAccount];
-            } else {
-                accountList = currentAccounts;
-            }
-        } finally {
-            isCreatingDefaultAccount = false;
-        }
-    }
-
-    const transactionList = (await dbService.getTransactions()).filter(tx => !tx.deletedAt);
-    const activeMyPayments = myPaymentList.filter(p => !p.deletedAt);
-    setAccounts(accountList);
-    setTransactions(transactionList);
-    
-    const cashBalance = accountList.filter(a => a.type === 'CASH').reduce((acc, a) => acc + a.balance, 0);
-    const bankBalance = accountList.filter(a => a.type === 'BANK').reduce((acc, a) => acc + a.balance, 0);
-
-    const totalPendingPayables = activeMyPayments.filter(p => (p.supplierId || p.supplierName) && p.status === 'PENDING').reduce((acc, p) => acc + p.amount, 0);
-    const totalPendingReceivables = activeMyPayments.filter(p => (p.farmerId || p.farmerName) && p.status === 'PENDING').reduce((acc, p) => acc + p.amount, 0);
-
-    setStats({
-      totalFarmers: updatedFarmerList.length,
-      todayPrescriptions: todaysPrescriptionsCount,
-      pendingVisits: visits.length,
-      activeReminders: finalReminders.filter(r => !r.isCompleted).length,
-      tomorrowReminders: tomorrowRemindersCount,
-      totalArea,
-      totalSales,
-      cropDistribution,
-      inventoryValue,
-      potentialRevenue,
-      cashInventoryValue,
-      cashPotentialRevenue,
-      totalDebt,
-      totalExpenses,
-      regionalAlerts,
-      cashBalance,
-      bankBalance,
-      totalPendingPayables,
-      totalPendingReceivables
-    });
-    
+  const refreshStats = useCallback(async (syncedReminders?: Reminder[]) => {
+    const seq = ++refreshSeqRef.current;
+    const snap = await computeFullAppSnapshot(syncedReminders);
+    if (seq !== refreshSeqRef.current) return;
+    setTrashedFarmers(snap.trashedFarmers);
+    setTrashedVisits(snap.trashedVisits);
+    setTrashedPayments(snap.trashedPayments);
+    setTrashedSuppliers(snap.trashedSuppliers);
+    setTrashedManualDebts(snap.trashedManualDebts);
+    setTrashedExpenses(snap.trashedExpenses);
+    setTrashedSupplierPurchases(snap.trashedSupplierPurchases);
+    setTrashedSupplierPayments(snap.trashedSupplierPayments);
+    setTrashedMyPayments(snap.trashedMyPayments);
+    setVisits(snap.visits);
+    setReminders(snap.reminders);
+    setFarmers(snap.farmers);
+    setInventory(snap.inventory);
+    setPrescriptions(snap.prescriptions);
+    setTrashedPrescriptions(snap.trashedPrescriptions);
+    setSupplierPurchases(snap.supplierPurchases);
+    setPayments(snap.payments);
+    setManualDebts(snap.manualDebts);
+    setExpenses(snap.expenses);
+    setSuppliers(snap.suppliers);
+    setMyPayments(snap.myPayments);
+    setTeamMembers(snap.teamMembers);
+    setMessages(snap.messages);
+    setCollectionLogs(snap.collectionLogs);
+    setAccounts(snap.accounts);
+    setTransactions(snap.transactions);
+    setStats(snap.stats);
     await refreshNotifications();
-  };
+  }, []);
 
   const addFarmer = async (farmerData: Omit<Farmer, 'id'>) => {
-    const newFarmer: Farmer = { ...farmerData, id: crypto.randomUUID(), createdById: activeTeamMember?.id };
+    const newFarmer: Farmer = { ...farmerData, id: generateUUID(), createdById: activeTeamMember?.id };
     await dbService.addFarmer(newFarmer);
     await refreshStats();
   };
@@ -1344,13 +842,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const bulkAddFarmers = async (farmersData: Omit<Farmer, 'id'>[]) => {
-    const promises = farmersData.map(data => dbService.addFarmer({ ...data, id: crypto.randomUUID() }));
+    const promises = farmersData.map(data => dbService.addFarmer({ ...data, id: generateUUID() }));
     await Promise.all(promises);
     await refreshStats();
   };
 
   const addReminder = async (reminderData: Omit<Reminder, 'id'>) => {
-      const newReminder: Reminder = { ...reminderData, id: crypto.randomUUID() };
+      const newReminder: Reminder = { ...reminderData, id: generateUUID() };
       await dbService.addReminder(newReminder);
       await scheduleReminderNotification(newReminder);
       await refreshStats();
@@ -1401,7 +899,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               
               const nextReminder: Reminder = {
                   ...reminder,
-                  id: crypto.randomUUID(), // Yeni ID
+                  id: generateUUID(), // Yeni ID
                   date: nextDate.toISOString().split('T')[0], // Yeni Tarih
                   isCompleted: false // Yeni görev aktif başlar
               };
@@ -1420,7 +918,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addVisit = async (visitData: Omit<VisitLog, 'id'>) => {
-    const id = crypto.randomUUID();
+    const id = generateUUID();
     const visit: VisitLog = { ...visitData, id, createdById: activeTeamMember?.id };
     await dbService.addVisit(visit);
     await refreshStats();
@@ -1458,21 +956,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const softDeletePrescription = async (id: string) => {
-    const allPrescriptions = await dbService.getAllPrescriptions();
-    const target = allPrescriptions.find(p => p.id === id);
+    const allPrescriptions = await dbService.getAllPrescriptionsRaw();
+    const target = allPrescriptions.find(p => p.id === id && !p.deletedAt);
     if (target) {
+      const wasActiveProcessed = target.isProcessed !== false;
+
       // Revert transaction if it was CASH
       const allTransactions = await dbService.getTransactions();
-      const relatedTx = allTransactions.find(tx => tx.relatedId === id);
-      if (relatedTx) {
-          await dbService.deleteTransaction(relatedTx.id);
+      const relatedTxs = allTransactions.filter(tx => tx.relatedId === id && !tx.deletedAt);
+      for (const relatedTx of relatedTxs) {
+        await dbService.deleteTransaction(relatedTx.id);
       }
 
       if (target.isInventoryProcessed) {
         await dbService.revertInventory(target);
       }
+
+      // D-07: Re-read fresh record after revertInventory so reverted flags are never overwritten with stale target,
+      // while preserving whether the prescription was active (`isProcessed`) prior to soft-deletion.
+      const postRevertList = await dbService.getAllPrescriptionsRaw();
+      const freshTarget = postRevertList.find(p => p.id === id) || target;
       await dbService.updatePrescription({
-        ...target,
+        ...freshTarget,
+        isProcessed: wasActiveProcessed,
         isInventoryProcessed: false,
         deletedAt: new Date().toISOString()
       });
@@ -1483,30 +989,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const restorePrescription = async (id: string) => {
-    const allPrescriptions = await dbService.getAllPrescriptions();
-    const target = allPrescriptions.find(p => p.id === id);
+    const allPrescriptions = await dbService.getAllPrescriptionsRaw();
+    const target = allPrescriptions.find(p => p.id === id && !!p.deletedAt);
     if (target) {
-      if (target.priceType === 'CASH') {
-          const accountList = await dbService.getAccounts();
-          const targetAccount = target.accountId ? accountList.find(a => a.id === target.accountId) : accountList.find(a => a.type === 'CASH') || accountList[0];
-          if (targetAccount) {
-              const txId = crypto.randomUUID();
+      const shouldProcess = target.isProcessed !== false;
+
+      const restored: Prescription = {
+        ...target,
+        isProcessed: shouldProcess,
+        isInventoryProcessed: false,
+        deletedAt: undefined
+      };
+      await dbService.updatePrescription(restored);
+
+      // D-07: Only process inventory & recreate CASH transaction if prescription was active before deletion
+      if (shouldProcess) {
+        await dbService.processInventory(restored);
+        if (target.priceType === 'CASH') {
+          const allTxs = await dbService.getTransactions();
+          const existingTx = allTxs.find(tx => tx.relatedId === target.id && !tx.deletedAt);
+          if (!existingTx) {
+            const accountList = await dbService.getAccounts();
+            const targetAccount = target.accountId
+              ? accountList.find(a => a.id === target.accountId)
+              : accountList.find(a => a.type === 'CASH') || accountList[0];
+            if (targetAccount) {
+              const farmer = farmers.find(f => f.id === target.farmerId);
               await dbService.addTransaction({
-                  id: txId,
-                  accountId: targetAccount.id,
-                  type: target.type === 'RETURN' ? 'EXPENSE' : 'INCOME',
-                  amount: Math.abs(target.totalAmount || 0),
-                  date: target.date,
-                  description: target.type === 'RETURN' ? 'Peşin İade Kasadan Çıkış (Geri Yüklenen)' : 'Peşin Satış Tahsilatı (Geri Yüklenen)',
-                  category: 'Satış/İade',
-                  relatedId: target.id
+                id: generateUUID(),
+                accountId: targetAccount.id,
+                type: target.type === 'RETURN' ? 'EXPENSE' : 'INCOME',
+                amount: round2(Math.abs(target.totalAmount || 0)),
+                date: target.date,
+                description: target.type === 'RETURN' ? 'Peşin İade Kasadan Çıkış (Geri Yüklenen)' : 'Peşin Satış Tahsilatı (Geri Yüklenen)',
+                category: 'Satış/İade',
+                relatedId: target.id,
+                partyName: farmer?.fullName,
+                partyType: 'FARMER',
+                partyId: target.farmerId
               });
+            }
           }
+        }
       }
 
-      const restored = { ...target, deletedAt: undefined as any };
-      await dbService.updatePrescription(restored);
-      await dbService.processInventory(restored);
       await refreshPrescriptions();
       await refreshInventory();
       await refreshStats();
@@ -1514,12 +1040,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const permanentlyDeletePrescription = async (id: string) => {
+    const allPrescriptions = await dbService.getAllPrescriptionsRaw();
+    const target = allPrescriptions.find(p => p.id === id);
+    if (target && !target.deletedAt && target.isInventoryProcessed) {
+      await dbService.revertInventory(target);
+    }
+    const allTransactions = await dbService.getTransactions();
+    for (const tx of allTransactions.filter(t => t.relatedId === id && !t.deletedAt)) {
+      await dbService.deleteTransaction(tx.id);
+    }
     await dbService.deletePrescription(id);
+    await refreshPrescriptions();
+    await refreshInventory();
     await refreshStats();
   };
 
   const addNews = async (newsData: Omit<News, 'id'>) => {
-    const newNews: News = { ...newsData, id: crypto.randomUUID() };
+    const newNews: News = { ...newsData, id: generateUUID() };
     await dbService.addNews(newNews);
     await refreshNews();
   };
@@ -1534,218 +1071,248 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await refreshNews();
   };
 
-  const addPayment = async (paymentData: Omit<Payment, 'id'>) => {
-    const paymentId = crypto.randomUUID();
-    let newPayment: Payment = { ...paymentData, id: paymentId, createdById: activeTeamMember?.id };
-    
-    const farmer = farmers.find(f => f.id === newPayment.farmerId);
+  const buildFarmerPaymentEffects = async (rawPayment: Payment): Promise<{
+    payment: Payment;
+    desiredTransaction: Transaction | null;
+    desiredMyPayment: MyPayment | null;
+  }> => {
+    const cleanAmount = round2(rawPayment.amount);
+    if (!Number.isFinite(cleanAmount) || cleanAmount <= 0) {
+      throw new Error("Geçerli bir ödeme tutarı giriniz (0'dan büyük olmalıdır).");
+    }
+
+    let farmer = farmers.find(f => f.id === rawPayment.farmerId);
+    if (!farmer) {
+      const dbFarmers = await dbService.getFarmers();
+      farmer = dbFarmers.find(f => f.id === rawPayment.farmerId);
+    }
     const farmerName = farmer?.fullName || 'Bilinmeyen Çiftçi';
 
-    if (newPayment.method === 'CARD') {
-      if (newPayment.cardOption === 'UNBLOCKED' || !newPayment.cardOption) {
-        const commRate = newPayment.commissionRate !== undefined ? newPayment.commissionRate : 4;
-        const commAmount = (newPayment.amount * commRate) / 100;
-        const netAmt = newPayment.amount - commAmount;
-        
-        newPayment.cardOption = 'UNBLOCKED';
-        newPayment.commissionRate = commRate;
-        newPayment.commissionAmount = commAmount;
-        newPayment.netAmount = netAmt;
-        newPayment.isUnblocked = true;
+    const [allTxs, allMyPays] = await Promise.all([
+      dbService.getTransactions(),
+      dbService.getMyPayments()
+    ]);
+    const existingTx = allTxs.find(tx => !tx.deletedAt && tx.relatedId === rawPayment.id);
+    const existingMyPay = allMyPays.find(mp => !mp.deletedAt && mp.relatedId === rawPayment.id);
 
-        if (newPayment.accountId) {
-          await dbService.addTransaction({
-            id: crypto.randomUUID(),
-            accountId: newPayment.accountId,
+    let normalizedPayment: Payment = {
+      ...rawPayment,
+      amount: cleanAmount,
+      deletedAt: undefined
+    };
+    let desiredTransaction: Transaction | null = null;
+    let desiredMyPayment: MyPayment | null = null;
+
+    if (normalizedPayment.method === 'CARD') {
+      const rawCardOpt = String(normalizedPayment.cardOption || '');
+      const isImmediatePos =
+        !normalizedPayment.cardOption ||
+        normalizedPayment.cardOption === 'UNBLOCKED' ||
+        rawCardOpt === 'SAME_DAY' ||
+        rawCardOpt === 'NEXT_DAY';
+
+      if (isImmediatePos) {
+        const commRate =
+          normalizedPayment.commissionRate !== undefined
+            ? round2(Math.max(0, Number(normalizedPayment.commissionRate) || 0))
+            : 4;
+        const commAmount = round2((cleanAmount * commRate) / 100);
+        const netAmt = round2(Math.max(0, cleanAmount - commAmount));
+
+        let txDate = normalizedPayment.date;
+        if (rawCardOpt === 'NEXT_DAY' && normalizedPayment.date) {
+          const nextD = new Date(normalizedPayment.date);
+          if (!Number.isNaN(nextD.getTime())) {
+            nextD.setDate(nextD.getDate() + 1);
+            txDate = nextD.toISOString();
+          }
+        }
+
+        normalizedPayment = {
+          ...normalizedPayment,
+          cardOption: 'UNBLOCKED',
+          commissionRate: commRate,
+          commissionAmount: commAmount,
+          netAmount: netAmt,
+          unblockDate: undefined,
+          isUnblocked: true
+        };
+
+        if (normalizedPayment.accountId) {
+          desiredTransaction = {
+            id: existingTx?.id || generateUUID(),
+            accountId: normalizedPayment.accountId,
             type: 'INCOME',
             amount: netAmt,
-            date: newPayment.date,
+            date: txDate,
             description: `${farmerName} Kredi Kartı Tahsilatı (Net: ${netAmt.toLocaleString('tr-TR')} TL, %${commRate} POS Komisyonu: ${commAmount.toLocaleString('tr-TR')} TL)`,
-            relatedId: paymentId,
+            relatedId: normalizedPayment.id,
             category: 'Çiftçi Ödemesi',
             partyName: farmerName,
             partyType: 'FARMER',
-            partyId: newPayment.farmerId
-          });
+            partyId: normalizedPayment.farmerId
+          };
         }
       } else {
-        // Bloke günlü kart (15, 30, 45 Gün)
-        const days = newPayment.cardOption === 'DAYS_15' ? 15 : newPayment.cardOption === 'DAYS_30' ? 30 : 45;
-        const d = new Date(newPayment.date || Date.now());
+        // Bloke günlü kart (15, 30, 45 Gün) — D-05: Hesaba/Kasaya ANINDA geçmez; sadece DEFERRED_CARD oluşur!
+        const days =
+          normalizedPayment.cardOption === 'DAYS_15'
+            ? 15
+            : normalizedPayment.cardOption === 'DAYS_30'
+              ? 30
+              : 45;
+        const d = new Date(normalizedPayment.date || Date.now());
         d.setDate(d.getDate() + days);
         const unblockDateStr = d.toISOString().split('T')[0];
+        const commRate = round2(Math.max(0, Number(normalizedPayment.commissionRate) || 0));
+        const commAmount = round2((cleanAmount * commRate) / 100);
+        const netAmt = round2(Math.max(0, cleanAmount - commAmount));
+        const alreadyUnblocked = existingMyPay?.status === 'PAID';
 
-        newPayment.unblockDate = unblockDateStr;
-        newPayment.isUnblocked = false;
-        newPayment.commissionRate = 0;
-        newPayment.commissionAmount = 0;
-        newPayment.netAmount = newPayment.amount;
+        normalizedPayment = {
+          ...normalizedPayment,
+          unblockDate: unblockDateStr,
+          isUnblocked: alreadyUnblocked,
+          commissionRate: commRate,
+          commissionAmount: commAmount,
+          netAmount: netAmt
+        };
 
         const dateFormatted = new Date(unblockDateStr).toLocaleDateString('tr-TR');
-        await addMyPayment({
-          farmerId: newPayment.farmerId,
+        desiredMyPayment = {
+          id: existingMyPay?.id || generateUUID(),
+          farmerId: normalizedPayment.farmerId,
           farmerName,
-          amount: newPayment.amount,
-          issueDate: newPayment.date,
+          amount: netAmt,
+          issueDate: normalizedPayment.date,
           dueDate: unblockDateStr,
           type: 'DEFERRED_CARD',
-          status: 'PENDING',
-          cardOption: newPayment.cardOption,
+          status: alreadyUnblocked ? 'PAID' : 'PENDING',
+          cardOption: normalizedPayment.cardOption,
           unblockDate: unblockDateStr,
-          note: `Kredi Kartı (${days} Gün Bloke) - Bloke Kalkış: ${dateFormatted}${newPayment.note ? ' - ' + newPayment.note : ''}`,
-          accountId: newPayment.accountId,
-          relatedId: paymentId
-        });
+          commissionRate: commRate,
+          commissionAmount: commAmount,
+          note: `Kredi Kartı (${days} Gün Bloke) - Bloke Kalkış: ${dateFormatted}${normalizedPayment.note ? ' - ' + normalizedPayment.note : ''}`,
+          accountId: normalizedPayment.accountId,
+          relatedId: normalizedPayment.id,
+          createdById: normalizedPayment.createdById
+        };
+
+        // Eğer bloke kart daha önce çözülüp Kasa'ya geçtiyse, bloke çözüm kaydına bağlı işlemi de yeni net tutara eşitle
+        if (alreadyUnblocked && existingMyPay) {
+          const unblockTx = allTxs.find(tx => !tx.deletedAt && tx.relatedId === existingMyPay.id);
+          if (unblockTx && normalizedPayment.accountId) {
+            await dbService.updateTransaction({
+              ...unblockTx,
+              accountId: normalizedPayment.accountId,
+              amount: netAmt,
+              partyName: farmerName,
+              partyType: 'FARMER',
+              partyId: normalizedPayment.farmerId
+            });
+          }
+        }
       }
-    } else if (newPayment.method === 'CHECK' || newPayment.method === 'TEDYE') {
-        await addMyPayment({
-            farmerId: newPayment.farmerId,
-            farmerName,
-            amount: newPayment.amount,
-            issueDate: newPayment.date,
-            dueDate: newPayment.dueDate || newPayment.date,
-            type: newPayment.method === 'CHECK' ? 'CHECK' : 'TEDYE',
-            status: 'PENDING',
-            note: newPayment.note,
-            accountId: newPayment.accountId,
-            relatedId: paymentId
-        });
-    } else if (newPayment.accountId) {
-      await dbService.addTransaction({
-        id: crypto.randomUUID(),
-        accountId: newPayment.accountId,
-        type: 'INCOME',
-        amount: newPayment.amount,
-        date: newPayment.date,
-        description: `${farmerName} ödemesi`,
-        relatedId: paymentId,
-        category: 'Çiftçi Ödemesi',
-        partyName: farmerName,
-        partyType: 'FARMER',
-        partyId: newPayment.farmerId
-      });
+    } else if (
+      normalizedPayment.method === 'CHECK' ||
+      normalizedPayment.method === 'TEDYE' ||
+      String(normalizedPayment.method) === 'PROMISSORY' ||
+      String(normalizedPayment.method) === 'PROMISSORY_NOTE'
+    ) {
+      normalizedPayment = {
+        ...normalizedPayment,
+        cardOption: undefined,
+        unblockDate: undefined,
+        isUnblocked: undefined,
+        commissionRate: undefined,
+        commissionAmount: undefined,
+        netAmount: undefined
+      };
+      const mpType: MyPayment['type'] =
+        normalizedPayment.method === 'CHECK'
+          ? 'CHECK'
+          : normalizedPayment.method === 'TEDYE'
+            ? 'TEDYE'
+            : 'PROMISSORY_NOTE';
+      desiredMyPayment = {
+        id: existingMyPay?.id || generateUUID(),
+        farmerId: normalizedPayment.farmerId,
+        farmerName,
+        amount: cleanAmount,
+        issueDate: normalizedPayment.date,
+        dueDate: normalizedPayment.dueDate || normalizedPayment.date,
+        type: mpType,
+        status: existingMyPay?.status || 'PENDING',
+        portfolioStatus: mpType === 'TEDYE' ? undefined : (existingMyPay?.portfolioStatus || 'PORTFOLIO'),
+        note: normalizedPayment.note,
+        accountId: normalizedPayment.accountId,
+        relatedId: normalizedPayment.id,
+        createdById: normalizedPayment.createdById
+      };
+    } else {
+      normalizedPayment = {
+        ...normalizedPayment,
+        cardOption: undefined,
+        unblockDate: undefined,
+        isUnblocked: undefined,
+        commissionRate: undefined,
+        commissionAmount: undefined,
+        netAmount: undefined
+      };
+      if (normalizedPayment.accountId) {
+        desiredTransaction = {
+          id: existingTx?.id || generateUUID(),
+          accountId: normalizedPayment.accountId,
+          type: 'INCOME',
+          amount: cleanAmount,
+          date: normalizedPayment.date,
+          description: `${farmerName} ödemesi`,
+          relatedId: normalizedPayment.id,
+          category: 'Çiftçi Ödemesi',
+          partyName: farmerName,
+          partyType: 'FARMER',
+          partyId: normalizedPayment.farmerId
+        };
+      }
     }
-    
-    await dbService.addPayment(newPayment);
+
+    return { payment: normalizedPayment, desiredTransaction, desiredMyPayment };
+  };
+
+  const addPayment = async (paymentData: Omit<Payment, 'id'> & { id?: string }): Promise<string> => {
+    const paymentId = paymentData.id || generateUUID();
+    const draftPayment: Payment = {
+      ...paymentData,
+      id: paymentId,
+      createdById: activeTeamMember?.id
+    };
+    const effects = await buildFarmerPaymentEffects(draftPayment);
+    await dbService.savePaymentWithEffects(effects);
     await refreshStats();
+    return paymentId;
   };
 
   const updatePayment = async (payment: Payment) => {
-    await dbService.updatePayment(payment);
-    
-    if (payment.method === 'CHECK' || payment.method === 'TEDYE') {
-        const myPaymentsList = await dbService.getMyPayments();
-        const relatedMyPay = myPaymentsList.find(p => p.relatedId === payment.id);
-        if (relatedMyPay) {
-            const farmer = farmers.find(f => f.id === payment.farmerId);
-            await dbService.updateMyPayment({
-                ...relatedMyPay,
-                amount: payment.amount,
-                dueDate: payment.dueDate || payment.date,
-                note: payment.note,
-                accountId: payment.accountId,
-                farmerName: farmer?.fullName || relatedMyPay.farmerName
-            });
-        } else {
-            const farmer = farmers.find(f => f.id === payment.farmerId);
-            await addMyPayment({
-                farmerId: payment.farmerId,
-                farmerName: farmer?.fullName || 'Bilinmeyen Çiftçi',
-                amount: payment.amount,
-                issueDate: payment.date,
-                dueDate: payment.dueDate || payment.date,
-                type: payment.method === 'CHECK' ? 'CHECK' : 'TEDYE',
-                status: 'PENDING',
-                note: payment.note,
-                accountId: payment.accountId,
-                relatedId: payment.id
-            });
-        }
-    } else {
-        const allTransactions = await dbService.getTransactions();
-        const relatedTx = allTransactions.find(tx => tx.relatedId === payment.id);
-        const txAmount = (payment.method === 'CARD' && payment.netAmount !== undefined) ? payment.netAmount : payment.amount;
-        if (relatedTx) {
-            if (payment.accountId) {
-                const farmer = farmers.find(f => f.id === payment.farmerId);
-                await dbService.updateTransaction({
-                    ...relatedTx,
-                    accountId: payment.accountId,
-                    amount: txAmount,
-                    date: payment.date,
-                    description: `${farmer?.fullName || 'Çiftçi'} ödemesi`,
-                    partyName: farmer?.fullName,
-                    partyType: 'FARMER',
-                    partyId: payment.farmerId
-                });
-            } else {
-                await dbService.deleteTransaction(relatedTx.id);
-            }
-        } else if (payment.accountId) {
-            const farmer = farmers.find(f => f.id === payment.farmerId);
-            await dbService.addTransaction({
-                id: crypto.randomUUID(),
-                accountId: payment.accountId,
-                type: 'INCOME',
-                amount: txAmount,
-                date: payment.date,
-                description: `${farmer?.fullName || 'Çiftçi'} ödemesi`,
-                relatedId: payment.id,
-                category: 'Çiftçi Ödemesi',
-                partyName: farmer?.fullName,
-                partyType: 'FARMER',
-                partyId: payment.farmerId
-            });
-        }
-    }
-    
+    const effects = await buildFarmerPaymentEffects(payment);
+    await dbService.savePaymentWithEffects(effects);
     await refreshStats();
   };
 
   const deletePayment = async (id: string) => {
-    const allTransactions = await dbService.getTransactions();
-    const relatedTx = allTransactions.find(tx => tx.relatedId === id);
-    if (relatedTx) {
-      await dbService.deleteTransaction(relatedTx.id);
-    }
-    
-    const myPays = await dbService.getMyPayments();
-    const relatedMyPays = myPays.filter(p => p.relatedId === id);
-    for (const p of relatedMyPays) {
-        await deleteMyPayment(p.id);
-    }
-
-    await dbService.deletePayment(id);
+    await dbService.deletePaymentWithEffects(id);
     await refreshStats();
   };
 
   const softDeletePayment = async (id: string) => {
-    const payment = payments.find(p => p.id === id);
-    if (payment) {
-        // İlgili işlemleri (işlemler ve myPayments) tamamen silerek bakiyeyi geri al
-        const allTransactions = await dbService.getTransactions();
-        const relatedTx = allTransactions.find(tx => tx.relatedId === id);
-        if (relatedTx) {
-          await dbService.deleteTransaction(relatedTx.id);
-        }
-        
-        const myPays = await dbService.getMyPayments();
-        const relatedMyPays = myPays.filter(p => p.relatedId === id);
-        for (const p of relatedMyPays) {
-            await dbService.deleteMyPayment(p.id);
-        }
-
-        await dbService.updatePayment({ ...payment, deletedAt: new Date().toISOString() });
-        await refreshStats();
-    }
+    await dbService.deletePaymentWithEffects(id);
+    await refreshStats();
   };
 
   const restorePayment = async (id: string) => {
     const payment = trashedPayments.find(p => p.id === id);
     if (payment) {
-        // İşlemleri yeniden oluşturmak için updatePayment fonksiyonunu kullanıyoruz
-        const restoredPayment = { ...payment, deletedAt: undefined as any };
-        await updatePayment(restoredPayment);
+      const restoredPayment: Payment = { ...payment, deletedAt: undefined };
+      await updatePayment(restoredPayment);
     }
   };
 
@@ -1754,8 +1321,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addManualDebt = async (debt: Omit<ManualDebt, 'id'>) => {
-    const id = crypto.randomUUID();
-    await dbService.addManualDebt({ ...debt, id, createdById: activeTeamMember?.id });
+    const id = generateUUID();
+    await dbService.addManualDebt({ ...debt, amount: round2(debt.amount), id, createdById: activeTeamMember?.id });
     await refreshStats();
   };
 
@@ -1789,15 +1356,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await deleteManualDebt(id);
   };
 
-  const addSupplier = async (supplierData: Omit<Supplier, 'id' | 'totalDebt' | 'balance'>) => {
+  const addSupplier = async (supplierData: Omit<Supplier, 'id' | 'totalDebt' | 'balance'>): Promise<string> => {
     const newSupplier: Supplier = { 
         ...supplierData, 
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         totalDebt: 0,
         balance: 0
     };
     await dbService.addSupplier(newSupplier);
     await refreshStats();
+    return newSupplier.id;
   };
 
   const updateSupplier = async (supplier: Supplier) => {
@@ -1809,9 +1377,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // 1. Delete all associated purchases and revert inventory
     const purchases = await dbService.getSupplierPurchases(id);
     for (const p of purchases) {
-        // Only revert inventory if the purchase was not already soft-deleted (trashed)
-        if (!p.deletedAt) {
-            await dbService.updateInventoryFromPurchase(p, true); // Revert inventory
+        // Only revert inventory if the purchase was processed and not already soft-deleted
+        if (!p.deletedAt && p.isInventoryProcessed !== false) {
+            await dbService.updateInventoryFromPurchase(p, true);
         }
         await dbService.deleteSupplierPurchase(p.id);
     }
@@ -1861,152 +1429,144 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addSupplierPurchase = async (purchaseData: Omit<SupplierPurchase, 'id'>) => {
-    const purchaseId = crypto.randomUUID();
-    const purchase: SupplierPurchase = { ...purchaseData, id: purchaseId, createdById: activeTeamMember?.id };
-    
-    // 1. Handle new pesticides and update their IDs in the purchase record
-    for (let i = 0; i < purchase.items.length; i++) {
-        const item = purchase.items[i];
-        if (item.pesticideId.startsWith('new-')) {
-            const finalPesticideId = crypto.randomUUID();
-            purchase.items[i].pesticideId = finalPesticideId;
-            
-            await dbService.addGlobalPesticide({
-                id: finalPesticideId,
-                name: item.pesticideName,
-                activeIngredient: 'Belirtilmedi',
-                defaultDosage: '100ml/100L',
-                category: PesticideCategory.OTHER,
-                description: 'Tedarikçi alımı ile otomatik eklendi.'
-            });
+    const purchaseId = generateUUID();
+    const clonedItems = (purchaseData.items || []).map(item => ({ ...item }));
+    const purchase: SupplierPurchase = {
+      ...purchaseData,
+      id: purchaseId,
+      items: clonedItems,
+      createdById: activeTeamMember?.id
+    };
 
-            // Create inventory item for the new pesticide
-            await dbService.addInventoryItem({
-                id: crypto.randomUUID(),
-                pesticideId: finalPesticideId,
-                pesticideName: item.pesticideName,
-                category: PesticideCategory.OTHER,
-                quantity: 0, // Will be updated by updateInventoryFromPurchase
-                unit: item.unit,
-                buyingPrice: Number(item.buyingPrice),
-                sellingPrice: Number(item.buyingPrice) * 1.2,
-                lastUpdated: new Date().toISOString()
-            });
-        }
+    // 1. Handle new pesticides and update their IDs on cloned items (never mutating caller state)
+    for (let i = 0; i < purchase.items.length; i++) {
+      const item = purchase.items[i];
+      if (String(item.pesticideId).startsWith('new-')) {
+        const finalPesticideId = generateUUID();
+        purchase.items[i] = { ...item, pesticideId: finalPesticideId };
+
+        await dbService.addGlobalPesticide({
+          id: finalPesticideId,
+          name: item.pesticideName,
+          activeIngredient: 'Belirtilmedi',
+          defaultDosage: '',
+          category: PesticideCategory.OTHER,
+          description: 'Tedarikçi alımı ile otomatik eklendi.',
+          barcode: item.gtin || item.barcode
+        });
+
+        await dbService.addInventoryItem({
+          id: generateUUID(),
+          pesticideId: finalPesticideId,
+          pesticideName: item.pesticideName,
+          category: PesticideCategory.OTHER,
+          quantity: 0,
+          unit: item.unit,
+          buyingPrice: round2(Number(item.buyingPrice) || 0),
+          sellingPrice: round2((Number(item.buyingPrice) || 0) * 1.2),
+          gtin: item.gtin,
+          barcode: item.gtin || item.barcode,
+          lastUpdated: new Date().toISOString()
+        });
+      }
     }
-    
-    // 2. Update Inventory (Add quantities)
-    await dbService.updateInventoryFromPurchase(purchase, false);
-    
-    // 3. Save the purchase
-    await dbService.addSupplierPurchase({ ...purchase, isInventoryProcessed: true });
-    
+
+    purchase.totalAmount = round2(
+      purchase.items.reduce(
+        (acc, item) => acc + (Number(item.buyingPrice) || 0) * (Number(item.quantity) || 0),
+        0
+      )
+    );
+
+    // 2. AK-19: Save purchase + update inventory atomically in one IDB transaction
+    await dbService.saveSupplierPurchaseWithInventory(purchase, null);
+
+    await refreshInventory();
     await refreshStats();
   };
 
-  const updateSupplierPurchase = async (purchase: SupplierPurchase) => {
+  const updateSupplierPurchase = async (purchaseInput: SupplierPurchase) => {
     try {
-        console.log('Starting updateSupplierPurchase for:', purchase.id);
-        // Recalculate totalAmount
-        const items = purchase.items || [];
-        purchase.totalAmount = items.reduce((acc, item) => {
-            const price = Number(item.buyingPrice) || 0;
-            const qty = Number(item.quantity) || 0;
-            return Math.round(((acc + (price * qty)) + Number.EPSILON) * 100) / 100;
-        }, 0);
+      const oldPurchase = await dbService.getSupplierPurchaseById(purchaseInput.id);
+      const clonedItems = (purchaseInput.items || []).map(item => ({ ...item }));
 
-        // 1. Get old purchase to revert inventory - Use direct lookup instead of getAll
-        const oldPurchase = await dbService.getSupplierPurchaseById(purchase.id);
-        
-        if (oldPurchase) {
-            console.log('Reverting old inventory for:', purchase.id);
-            await dbService.updateInventoryFromPurchase(oldPurchase, true); // Revert old
-        } else {
-            console.warn('Old purchase not found for reverting inventory:', purchase.id);
+      for (let i = 0; i < clonedItems.length; i++) {
+        const item = clonedItems[i];
+        if (String(item.pesticideId).startsWith('new-')) {
+          const finalPesticideId = generateUUID();
+          clonedItems[i] = { ...item, pesticideId: finalPesticideId };
+
+          await dbService.addGlobalPesticide({
+            id: finalPesticideId,
+            name: item.pesticideName,
+            activeIngredient: 'Belirtilmedi',
+            defaultDosage: '',
+            category: PesticideCategory.OTHER,
+            description: 'Tedarikçi alımı ile otomatik eklendi.',
+            barcode: item.gtin || item.barcode
+          });
+
+          await dbService.addInventoryItem({
+            id: generateUUID(),
+            pesticideId: finalPesticideId,
+            pesticideName: item.pesticideName,
+            category: PesticideCategory.OTHER,
+            quantity: 0,
+            unit: item.unit,
+            buyingPrice: round2(Number(item.buyingPrice) || 0),
+            sellingPrice: round2((Number(item.buyingPrice) || 0) * 1.2),
+            gtin: item.gtin,
+            barcode: item.gtin || item.barcode,
+            lastUpdated: new Date().toISOString()
+          });
         }
+      }
 
-        // 2. Handle new pesticides in the updated purchase
-        for (let i = 0; i < items.length; i++) {
-            const item = items[i];
-            if (String(item.pesticideId).startsWith('new-')) {
-                console.log('Adding new pesticide from purchase:', item.pesticideName);
-                const finalPesticideId = crypto.randomUUID();
-                items[i].pesticideId = finalPesticideId;
-                
-                await dbService.addGlobalPesticide({
-                    id: finalPesticideId,
-                    name: item.pesticideName,
-                    activeIngredient: 'Belirtilmedi',
-                    defaultDosage: '100ml/100L',
-                    category: PesticideCategory.OTHER,
-                    description: 'Tedarikçi alımı ile otomatik eklendi.'
-                });
+      const updatedPurchase: SupplierPurchase = {
+        ...purchaseInput,
+        items: clonedItems,
+        totalAmount: round2(
+          clonedItems.reduce(
+            (acc, item) => acc + (Number(item.buyingPrice) || 0) * (Number(item.quantity) || 0),
+            0
+          )
+        )
+      };
 
-                await dbService.addInventoryItem({
-                    id: crypto.randomUUID(),
-                    pesticideId: finalPesticideId,
-                    pesticideName: item.pesticideName,
-                    category: PesticideCategory.OTHER,
-                    quantity: 0,
-                    unit: item.unit,
-                    buyingPrice: Number(item.buyingPrice) || 0,
-                    sellingPrice: (Number(item.buyingPrice) || 0) * 1.2,
-                    lastUpdated: new Date().toISOString()
-                });
-            }
-        }
+      // AK-19: Revert old inventory (if processed) + apply new inventory + save purchase in one IDB transaction
+      await dbService.saveSupplierPurchaseWithInventory(updatedPurchase, oldPurchase);
 
-        // 3. Apply new inventory changes
-        console.log('Applying new inventory for:', purchase.id);
-        await dbService.updateInventoryFromPurchase(purchase, false);
-
-        // 4. Update purchase in DB
-        console.log('Finalizing purchase update in DB:', purchase.id);
-        await dbService.updateSupplierPurchase({ ...purchase, isInventoryProcessed: true });
-
-        await refreshStats();
-        console.log('updateSupplierPurchase completed successfully');
+      await refreshInventory();
+      await refreshStats();
     } catch (error) {
-        console.error('Error in updateSupplierPurchase:', error);
-        throw error;
+      console.error('Error in updateSupplierPurchase:', error);
+      throw error;
     }
   };
 
   const softDeleteSupplierPurchase = async (id: string) => {
-    const allPurchases = await dbService.getSupplierPurchases(); 
-    const purchase = allPurchases.find(p => p.id === id);
-    if (purchase && !purchase.deletedAt) {
-      // Revert inventory
-      await dbService.updateInventoryFromPurchase(purchase, true);
-      
-      // Mark as deleted
-      await dbService.updateSupplierPurchase({
-        ...purchase,
-        isInventoryProcessed: false,
-        deletedAt: new Date().toISOString()
-      });
-      await refreshStats();
-    }
+    await dbService.softDeleteSupplierPurchaseWithInventory(id);
+    await refreshInventory();
+    await refreshStats();
   };
 
   const restoreSupplierPurchase = async (id: string) => {
     const purchase = trashedSupplierPurchases.find(p => p.id === id);
     if (purchase) {
-      // Restore inventory
-      await dbService.updateInventoryFromPurchase(purchase, false);
-      
-      await dbService.updateSupplierPurchase({ ...purchase, isInventoryProcessed: true, deletedAt: null as any });
+      const restored: SupplierPurchase = { ...purchase, isInventoryProcessed: false, deletedAt: undefined };
+      await dbService.saveSupplierPurchaseWithInventory(restored, null);
+      await refreshInventory();
       await refreshStats();
     }
   };
 
   const permanentlyDeleteSupplierPurchase = async (id: string) => {
-    const all = await dbService.getSupplierPurchases();
-    const target = all.find(p => p.id === id);
-    if (target && !target.deletedAt) {
-        await dbService.updateInventoryFromPurchase(target, true);
+    const target = await dbService.getSupplierPurchaseById(id);
+    if (target && !target.deletedAt && target.isInventoryProcessed !== false) {
+      await dbService.updateInventoryFromPurchase(target, true);
     }
     await dbService.deleteSupplierPurchase(id);
+    await refreshInventory();
     await refreshStats();
   };
 
@@ -2015,8 +1575,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addSupplierPayment = async (paymentData: Omit<SupplierPayment, 'id'>) => {
-    const paymentId = crypto.randomUUID();
-    const payment: SupplierPayment = { ...paymentData, id: paymentId, createdById: activeTeamMember?.id };
+    const paymentId = generateUUID();
+    const payment: SupplierPayment = { ...paymentData, amount: round2(paymentData.amount), id: paymentId, createdById: activeTeamMember?.id };
     await dbService.addSupplierPayment(payment);
     
     const supplier = suppliers.find(s => s.id === payment.supplierId);
@@ -2039,15 +1599,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } else if (payment.method === 'CARD') {
         if (payment.installments && payment.installments > 1) {
             // Split into installments
-            const installmentAmount = payment.amount / payment.installments;
+            const installmentAmount = round2(payment.amount / payment.installments);
             for (let i = 0; i < payment.installments; i++) {
                 const dueDate = new Date(payment.date);
                 dueDate.setMonth(dueDate.getMonth() + i + 1);
+                const sliceAmt =
+                  i === payment.installments - 1
+                    ? round2(payment.amount - installmentAmount * (payment.installments - 1))
+                    : installmentAmount;
                 
                 await addMyPayment({
                     supplierId: payment.supplierId,
                     supplierName,
-                    amount: installmentAmount,
+                    amount: sliceAmt,
                     issueDate: payment.date,
                     dueDate: dueDate.toISOString(),
                     type: 'OTHER',
@@ -2076,7 +1640,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             });
         } else if (payment.accountId) {
             await dbService.addTransaction({
-                id: crypto.randomUUID(),
+                id: generateUUID(),
                 accountId: payment.accountId,
                 type: payment.type === 'RECEIVE' ? 'INCOME' : 'EXPENSE',
                 amount: payment.amount,
@@ -2091,7 +1655,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
     } else if (payment.accountId) {
         await dbService.addTransaction({
-            id: crypto.randomUUID(),
+            id: generateUUID(),
             accountId: payment.accountId,
             type: payment.type === 'RECEIVE' ? 'INCOME' : 'EXPENSE',
             amount: payment.amount,
@@ -2108,7 +1672,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await refreshStats();
   };
 
-  const updateSupplierPayment = async (payment: SupplierPayment) => {
+  const updateSupplierPayment = async (paymentInput: SupplierPayment) => {
+    const payment: SupplierPayment = { ...paymentInput, amount: round2(paymentInput.amount) };
     await dbService.updateSupplierPayment(payment);
     
     const supplier = suppliers.find(s => s.id === payment.supplierId);
@@ -2143,15 +1708,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         });
     } else if (payment.method === 'CARD') {
         if (payment.installments && payment.installments > 1) {
-            const installmentAmount = payment.amount / payment.installments;
+            const installmentAmount = round2(payment.amount / payment.installments);
             for (let i = 0; i < payment.installments; i++) {
                 const dueDate = new Date(payment.date);
                 dueDate.setMonth(dueDate.getMonth() + i + 1);
+                const sliceAmt =
+                  i === payment.installments - 1
+                    ? round2(payment.amount - installmentAmount * (payment.installments - 1))
+                    : installmentAmount;
                 
                 await addMyPayment({
                     supplierId: payment.supplierId,
                     supplierName,
-                    amount: installmentAmount,
+                    amount: sliceAmt,
                     issueDate: payment.date,
                     dueDate: dueDate.toISOString(),
                     type: 'OTHER',
@@ -2179,26 +1748,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             });
         } else if (payment.accountId) {
             await dbService.addTransaction({
-                id: crypto.randomUUID(),
+                id: generateUUID(),
                 accountId: payment.accountId,
                 type: payment.type === 'RECEIVE' ? 'INCOME' : 'EXPENSE',
                 amount: payment.amount,
                 date: payment.date,
                 description: payment.type === 'RECEIVE' ? `${supplierName} tahsilatı (Kart)` : `${supplierName} ödemesi (Kart)`,
                 relatedId: payment.id,
-                category: payment.type === 'RECEIVE' ? 'Tedarikçi Tahsilatı' : 'Tedarikçi Ödemesi'
+                category: payment.type === 'RECEIVE' ? 'Tedarikçi Tahsilatı' : 'Tedarikçi Ödemesi',
+                partyName: supplierName,
+                partyType: 'SUPPLIER',
+                partyId: payment.supplierId
             });
         }
     } else if (payment.accountId) {
         await dbService.addTransaction({
-            id: crypto.randomUUID(),
+            id: generateUUID(),
             accountId: payment.accountId,
             type: payment.type === 'RECEIVE' ? 'INCOME' : 'EXPENSE',
             amount: payment.amount,
             date: payment.date,
             description: payment.type === 'RECEIVE' ? `${supplierName} tahsilatı` : `${supplierName} ödemesi`,
             relatedId: payment.id,
-            category: payment.type === 'RECEIVE' ? 'Tedarikçi Tahsilatı' : 'Tedarikçi Ödemesi'
+            category: payment.type === 'RECEIVE' ? 'Tedarikçi Tahsilatı' : 'Tedarikçi Ödemesi',
+            partyName: supplierName,
+            partyType: 'SUPPLIER',
+            partyId: payment.supplierId
         });
     }
 
@@ -2253,44 +1828,60 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addMyPayment = async (paymentData: Omit<MyPayment, 'id'>) => {
-    const payment: MyPayment = { ...paymentData, id: crypto.randomUUID(), createdById: activeTeamMember?.id };
+    const payment: MyPayment = { ...paymentData, amount: round2(paymentData.amount), id: generateUUID(), createdById: activeTeamMember?.id };
     await dbService.addMyPayment(payment);
     await refreshStats();
   };
 
-  const updateMyPayment = async (payment: MyPayment) => {
+  const updateMyPayment = async (paymentInput: MyPayment) => {
+    const payment: MyPayment = { ...paymentInput, amount: round2(paymentInput.amount) };
     const allMyPayments = await dbService.getMyPayments();
     const oldPayment = allMyPayments.find(p => p.id === payment.id);
     await dbService.updateMyPayment(payment);
     
     // If status changed to PAID and accountId is present, create transaction
     if (payment.status === 'PAID' && oldPayment?.status !== 'PAID' && payment.accountId) {
-      const isIncome = !!payment.farmerId;
-      const typeLabel = payment.type === 'CHECK' ? 'Çek' : payment.type === 'TEDYE' ? 'Tedye' : 'Senet';
+      const isIncome = !!payment.farmerId || !!payment.farmerName;
+      const typeLabel =
+        payment.type === 'CHECK' ? 'Çek' :
+        payment.type === 'TEDYE' ? 'Tedye' :
+        payment.type === 'DEFERRED_CARD' ? 'POS Bloke Çözümü' :
+        payment.type === 'CARD_INSTALLMENT' ? 'Kart Taksidi' : 'Senet';
       const name = payment.farmerName || payment.supplierName || 'Bilinmeyen';
       
       const allTransactions = await dbService.getTransactions();
-      const existingTx = allTransactions.find(tx => tx.relatedId === payment.id);
+      const existingTx = allTransactions.find(tx => tx.relatedId === payment.id && !tx.deletedAt);
       if (!existingTx) {
         await dbService.addTransaction({
-          id: crypto.randomUUID(),
+          id: generateUUID(),
           accountId: payment.accountId,
           type: isIncome ? 'INCOME' : 'EXPENSE',
           amount: payment.amount,
           date: new Date().toISOString(),
           description: `${name} - ${typeLabel} ${isIncome ? 'Tahsilatı' : 'Ödemesi'}`,
           relatedId: payment.id,
-          category: isIncome ? 'Çek/Senet Tahsilatı' : 'Çek/Senet Ödemesi',
+          category: payment.type === 'DEFERRED_CARD' ? 'POS Bloke Çözümü' : (isIncome ? 'Çek/Senet Tahsilatı' : 'Çek/Senet Ödemesi'),
           partyName: name,
-          partyType: isIncome ? 'FARMER' : 'SUPPLIER'
+          partyType: isIncome ? 'FARMER' : 'SUPPLIER',
+          partyId: payment.farmerId || payment.supplierId
         });
       }
     } else if (payment.status !== 'PAID' && oldPayment?.status === 'PAID') {
       // If status changed from PAID to something else, delete the transaction
       const allTransactions = await dbService.getTransactions();
-      const relatedTx = allTransactions.find(tx => tx.relatedId === payment.id);
+      const relatedTx = allTransactions.find(tx => tx.relatedId === payment.id && !tx.deletedAt);
       if (relatedTx) {
         await dbService.deleteTransaction(relatedTx.id);
+      }
+    }
+
+    if (payment.type === 'DEFERRED_CARD' && payment.relatedId) {
+      const linkedPayment = payments.find(p => p.id === payment.relatedId);
+      if (linkedPayment) {
+        await dbService.updatePayment({
+          ...linkedPayment,
+          isUnblocked: payment.status === 'PAID'
+        });
       }
     }
     
@@ -2334,12 +1925,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addExpense = async (expenseData: Omit<Expense, 'id'>) => {
-    const newExpense: Expense = { ...expenseData, id: crypto.randomUUID(), createdById: activeTeamMember?.id };
+    const newExpense: Expense = { ...expenseData, amount: round2(expenseData.amount), id: generateUUID(), createdById: activeTeamMember?.id };
     await dbService.addExpense(newExpense);
     
     if (newExpense.accountId) {
       await dbService.addTransaction({
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         accountId: newExpense.accountId,
         type: 'EXPENSE',
         amount: newExpense.amount,
@@ -2356,12 +1947,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await refreshStats();
   };
 
-  const updateExpense = async (expense: Expense) => {
+  const updateExpense = async (expenseInput: Expense) => {
+    const expense: Expense = { ...expenseInput, amount: round2(expenseInput.amount) };
     await dbService.updateExpense(expense);
     
     // Handle transaction update
     const allTransactions = await dbService.getTransactions();
-    const relatedTx = allTransactions.find(tx => tx.relatedId === expense.id);
+    const relatedTx = allTransactions.find(tx => tx.relatedId === expense.id && !tx.deletedAt);
     if (relatedTx) {
       if (expense.accountId) {
         // Update existing transaction
@@ -2379,7 +1971,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } else if (expense.accountId) {
       // Create new transaction if account was added
       await dbService.addTransaction({
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         accountId: expense.accountId,
         type: 'EXPENSE',
         amount: expense.amount,
@@ -2433,28 +2025,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addAccount = async (accountData: Omit<Account, 'id' | 'balance'>) => {
-    const newAccount: Account = { ...accountData, id: crypto.randomUUID(), balance: 0 };
+    const newAccount: Account = { ...accountData, id: generateUUID(), balance: 0 };
     await dbService.addAccount(newAccount);
     await refreshStats();
   };
 
   const updateAccount = async (account: Account) => {
-    await dbService.updateAccount(account);
+    await dbService.updateAccount({ ...account, balance: round2(account.balance) });
     await refreshStats();
   };
 
   const deleteAccount = async (id: string) => {
-    const allTransactions = await dbService.getTransactions();
-    const accountTxs = allTransactions.filter(tx => tx.accountId === id);
-    for (const tx of accountTxs) {
-      await dbService.deleteTransaction(tx.id);
+    const currentAccounts = await dbService.getAccounts();
+    const targetAcc = currentAccounts.find(a => a.id === id);
+    if (targetAcc && Math.abs(round2(Number(targetAcc.balance) || 0)) >= 0.01) {
+      showToast('Bakiyesi sıfır olmayan hesap silinemez. Önce Virman ile bakiyeyi başka bir hesaba aktarın.', 'error');
+      throw new Error('NON_ZERO_ACCOUNT_BALANCE');
     }
+    // AK-23: Never wipe historical transactions when archiving/deleting an account; preserve audit trail!
     await dbService.deleteAccount(id);
     await refreshStats();
   };
 
-  const addTransaction = async (txData: Omit<Transaction, 'id'>) => {
-    const newTx: Transaction = { ...txData, id: crypto.randomUUID() };
+  const transferBetweenAccounts = async (params: {
+    fromAccountId: string;
+    toAccountId: string;
+    amount: number;
+    date: string;
+    description?: string;
+    id?: string;
+  }) => {
+    await dbService.transferBetweenAccounts(params);
+    await refreshStats();
+  };
+
+  const addTransaction = async (txData: Omit<Transaction, 'id'> & { id?: string }) => {
+    const newTx: Transaction = { ...txData, amount: round2(txData.amount), id: txData.id || generateUUID() };
     await dbService.addTransaction(newTx);
     await refreshStats();
   };
@@ -2465,7 +2071,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addCollectionLog = async (logData: Omit<CollectionLog, 'id'>) => {
-    const id = crypto.randomUUID();
+    const id = generateUUID();
     const log = { ...logData, id, createdById: activeTeamMember?.id };
     await dbService.addCollectionLog(log);
     setCollectionLogs(prev => [log, ...prev]);
@@ -2484,7 +2090,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addTeamMember = async (member: Omit<TeamMember, 'id' | 'createdAt'>) => {
     const newMember: TeamMember = {
       ...member,
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       createdAt: new Date().toISOString()
     };
     await dbService.addTeamMember(newMember);
@@ -2505,7 +2111,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!activeTeamMember && userProfile.role !== 'admin') return;
     
     await dbService.sendMessage({
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       senderId: activeTeamMember?.id || 'admin-bypass',
       senderName: activeTeamMember?.fullName || userProfile.fullName || 'Yönetici',
       text,
@@ -2517,45 +2123,80 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const performManualTurnover = async (): Promise<{ success: boolean; year: number }> => {
     try {
       const currentYear = new Date().getFullYear();
-      const logs = await dbService.getTurnoverLogs();
-      
-      const finLog = logs.find(l => l.year === currentYear && l.type === 'FINANCIAL');
-      if (finLog) {
-        showToast(`${currentYear} yılı devri zaten yapılmış.`, 'info');
-        return { success: true, year: currentYear };
+      const lastYear = currentYear - 1;
+
+      // D-06: Read fresh truth directly from IndexedDB and align 100% with computeFarmerLedgerTotals
+      const [allFarmers, allPresc, allDebts, allPays, allMyPays, allInv, logs] = await Promise.all([
+        dbService.getFarmers(),
+        dbService.getAllPrescriptionsRaw(),
+        dbService.getManualDebts(),
+        dbService.getPayments(),
+        dbService.getMyPayments(),
+        dbService.getInventory(),
+        dbService.getTurnoverLogs()
+      ]);
+
+      const alreadyHadLog = logs.some(l => l.year === currentYear && l.type === 'FINANCIAL');
+
+      const prevPresc = allPresc.filter(p => {
+        if (p.deletedAt) return false;
+        const yr = new Date(p.date).getFullYear();
+        return !Number.isNaN(yr) && yr <= lastYear;
+      });
+      const prevDebts = allDebts.filter(d => {
+        if (d.deletedAt) return false;
+        const yr = new Date(d.date).getFullYear();
+        return !Number.isNaN(yr) && yr <= lastYear;
+      });
+      const prevPays = allPays.filter(p => {
+        if (p.deletedAt) return false;
+        const yr = new Date(p.date).getFullYear();
+        return !Number.isNaN(yr) && yr <= lastYear;
+      });
+      const prevMyPays = allMyPays.filter(mp => {
+        if (mp.deletedAt) return false;
+        if (mp.relatedId) return true; // Keep bounced/cancelled link truth for getBouncedRelatedPaymentIds
+        const yr = new Date(mp.issueDate).getFullYear();
+        return !Number.isNaN(yr) && yr <= lastYear;
+      });
+
+      const farmerIdSet = new Set<string>();
+      allFarmers.forEach(f => { if (!f.deletedAt) farmerIdSet.add(f.id); });
+      prevPresc.forEach(p => { if (p.farmerId) farmerIdSet.add(p.farmerId); });
+      prevDebts.forEach(d => { if (d.farmerId) farmerIdSet.add(d.farmerId); });
+      prevPays.forEach(p => { if (p.farmerId) farmerIdSet.add(p.farmerId); });
+      prevMyPays.forEach(mp => { if (mp.farmerId) farmerIdSet.add(mp.farmerId); });
+
+      const farmerBalances: Record<string, number> = {};
+      for (const farmerId of farmerIdSet) {
+        const totals = computeFarmerLedgerTotals({
+          farmerId,
+          prescriptions: prevPresc,
+          manualDebts: prevDebts,
+          payments: prevPays,
+          myPayments: prevMyPays
+        });
+        if (Math.abs(totals.netDebt) >= 0.01) {
+          farmerBalances[farmerId] = totals.netDebt;
+        }
       }
 
-      // Calculate balances up to the end of previous year
-      const lastYear = currentYear - 1;
-      const farmerBalances: Record<string, number> = {};
-      
-      // We need to calculate balance for ALL transactions BEFORE currentYear
-      prescriptions.forEach(p => {
-        const pYear = new Date(p.date).getFullYear();
-        if (pYear <= lastYear && p.priceType !== 'CASH') {
-          farmerBalances[p.farmerId] = (farmerBalances[p.farmerId] || 0) + (p.totalAmount || 0);
-        }
-      });
-      
-      manualDebts.forEach(d => {
-        const dYear = new Date(d.date).getFullYear();
-        if (dYear <= lastYear) {
-          farmerBalances[d.farmerId] = (farmerBalances[d.farmerId] || 0) + d.amount;
-        }
-      });
-      
-      payments.forEach(p => {
-        const pYear = new Date(p.date).getFullYear();
-        if (pYear <= lastYear) {
-          farmerBalances[p.farmerId] = (farmerBalances[p.farmerId] || 0) - p.amount;
-        }
-      });
-      
       await dbService.performFinancialTurnover(currentYear, farmerBalances);
-      await dbService.performInventoryTurnover(currentYear, inventory);
-      
-      await addSystemNotification('SUCCESS', `${currentYear} Yılı Devri`, `${currentYear} yılı için devir işlemleri başarıyla tamamlandı.`);
-      showToast(`${currentYear} yılı devri tamamlandı.`, 'success');
+      await dbService.performInventoryTurnover(currentYear, allInv);
+
+      await addSystemNotification(
+        'SUCCESS',
+        `${currentYear} Yılı Devri`,
+        alreadyHadLog
+          ? `${currentYear} yılı devir bakiyeleri önceki yıl kayıtlarıyla yeniden doğrulandı ve eşitlendi.`
+          : `${currentYear} yılı için tüm cari ve stok devir işlemleri sıfır veri kaybıyla tamamlandı.`
+      );
+      showToast(
+        alreadyHadLog
+          ? `${currentYear} yılı devir bakiyeleri yeniden doğrulandı ve güncellendi.`
+          : `${currentYear} yılı devri kusursuz tamamlandı.`,
+        'success'
+      );
       await refreshStats();
       return { success: true, year: currentYear };
     } catch (e) {
@@ -2570,15 +2211,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem('mks_ui_scale', scale);
   };
 
-  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
-    const id = Math.random().toString(36).substring(2, 9);
-    setToasts(prev => [...prev, { id, message, type }]);
-    setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id));
-    }, 3000);
-  };
+  const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    emitAppToast(message, type);
+  }, []);
 
-  const hapticFeedback = async (type: 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error' = 'light') => {
+  const hapticFeedback = useCallback(async (type: 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error' = 'light') => {
     try {
       if (type === 'success' || type === 'warning' || type === 'error') {
         const hType = type === 'success' ? NotificationType.Success : 
@@ -2594,7 +2231,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (e) {
       // Ignore if not supported
     }
-  };
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -2606,101 +2243,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [uiScale]);
 
   const syncLegacyData = async () => {
-    const isSynced = localStorage.getItem('mks_inventory_sync_v2');
-    if (isSynced) return;
-
-    console.log("Starting legacy data synchronization...");
-    
-    const [allPrescriptions, allPurchases] = await Promise.all([
-        dbService.getAllPrescriptions(),
-        dbService.getSupplierPurchases()
-    ]);
-
-    // 1. Fix Prescriptions: Process those that are marked as processed but didn't update inventory, or set isProcessed if inventory was processed
-    for (const p of allPrescriptions) {
-        if (p.deletedAt) continue;
-        if (p.isInventoryProcessed && p.isProcessed === false) {
-            p.isProcessed = true;
-            await dbService.updatePrescription(p);
-        } else if (p.isProcessed && !p.isInventoryProcessed) {
-            await dbService.processInventory(p);
-        }
-    }
-
-    // 2. Fix Supplier Purchases: Ensure all quantities and total amounts are mathematically perfect and not NaN
-    for (const p of allPurchases) {
-        if (p.deletedAt) continue;
-        let isCorrupted = false;
-
-        // Ensure isInventoryProcessed is set
-        if (p.isInventoryProcessed === undefined) {
-            p.isInventoryProcessed = true;
-            isCorrupted = true;
-        }
-
-        // Recalculate true total
-        let trueTotal = 0;
-        if (p.items && p.items.length > 0) {
-            p.items.forEach(item => {
-                const q = parseFloat(String(item.quantity).replace(',', '.')) || 0;
-                const price = parseFloat(String(item.buyingPrice).replace(',', '.')) || 0;
-                trueTotal += (q * price);
-                if (q !== item.quantity || price !== item.buyingPrice) {
-                    item.quantity = q;
-                    item.buyingPrice = price;
-                    isCorrupted = true;
-                }
-            });
-            
-            // Reapply sign logic based on type or legacy notes
-            const isReturnOrSale = p.type === 'RETURN' || 
-                                   (p.note && (p.note.includes('İADE') || p.note.includes('SATIŞ') || p.note.includes('azalış')));
-            
-            if (isReturnOrSale && trueTotal > 0) {
-                trueTotal = -Math.abs(trueTotal);
-            }
-        } else if (p.totalAmount) {
-            // No items, just raw amount? Parse it just in case
-            trueTotal = parseFloat(String(p.totalAmount).replace(',', '.')) || 0;
-        }
-
-        if (p.totalAmount !== trueTotal || isNaN(p.totalAmount)) {
-            p.totalAmount = trueTotal;
-            isCorrupted = true;
-        }
-
-        if (isCorrupted) {
-            await dbService.updateSupplierPurchase(p);
-        }
-    }
-
-    // 3. Fix Supplier Payments: Ensure amounts are mathematically perfect and not NaN
-    const allSupplierPayments = await dbService.getSupplierPayments();
-    for (const p of allSupplierPayments) {
-        if (p.deletedAt) continue;
-        let isCorrupted = false;
-        let trueAmount = parseFloat(String(p.amount).replace(',', '.')) || 0;
-        
-        // Reapply sign logic for RECEIVE type if needed
-        if (p.type === 'RECEIVE' && trueAmount > 0) {
-            // Amount is usually stored positive in DB, but its reduction is handled dynamically. Let's ensure it's positive in the DB.
-            trueAmount = Math.abs(trueAmount);
-        }
-
-        if (p.amount !== trueAmount || isNaN(p.amount)) {
-            p.amount = trueAmount;
-            isCorrupted = true;
-        }
-
-        if (isCorrupted) {
-            await dbService.updateSupplierPayment(p);
-        }
-    }
-
-    // Force recalculate supplier debts inside the state just to be safe
-    localStorage.setItem('mks_inventory_sync_v2', 'true'); // Bump version to trigger for everyone
-    console.log("Legacy data synchronization completed.");
-    await refreshStats();
+    await runLegacyDataSync(refreshStats);
   };
 
   useEffect(() => {
@@ -2712,19 +2255,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             setLanguageState(userProfile.language);
         }
         
-        await cleanupOldData();
-        await syncLegacyData();
-        await refreshStats();
-        await refreshNews();
-        await refreshPlants();
-        await checkWeatherAlerts();
-        
         setIsInitialized(true);
 
+        // Run background housekeeping safely without blocking login or triggering Web permission dialogs
         try {
-            const permission = await LocalNotifications.requestPermissions();
-            if (permission.display !== 'granted') console.warn("Bildirim izinleri verilmedi.");
-        } catch (e) {}
+            if (auth.currentUser || localStorage.getItem('lastUserId')) {
+                await cleanupOldData().catch(() => {});
+                await syncLegacyData().catch(() => {});
+                await refreshNews().catch(() => {});
+                await refreshPlants().catch(() => {});
+                checkWeatherAlerts().catch(() => {});
+            }
+        } catch (err) {
+            console.warn("AppProvider background init warning:", err);
+        }
+
+        if (Capacitor.isNativePlatform()) {
+            try {
+                const permission = await LocalNotifications.requestPermissions();
+                if (permission.display !== 'granted') console.warn("Bildirim izinleri verilmedi.");
+            } catch (e) {}
+        }
     };
     init();
   }, []);
@@ -2733,13 +2284,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const farmerLabel = t('label.farmer');
     const farmerPluralLabel = t('label.farmers');
 
-    return (
-    <AppContext.Provider value={{ 
+    const contextValue = useMemo<AppContextType>(() => ({
         stats, refreshStats, addFarmer, updateFarmer, deleteFarmer, bulkAddFarmers, softDeleteFarmer, restoreFarmer, permanentlyDeleteFarmer,
         farmers, trashedFarmers, visits, trashedVisits, reminders, addReminder, editReminder, toggleReminder, deleteReminder,
         uiScale, setUiScale, 
         notifications, unreadCount, clearNotifications, markAllAsRead,
-        userProfile, updateUserProfile, syncUserProfile, isAdmin, subscriptionStatus, subscriptionEndsAt, getAllUsers, updateUserSubscription, deleteUser, sendPasswordReset, addSystemNotification,
+        userProfile, updateUserProfile, syncUserProfile, isAdmin, subscriptionStatus, subscriptionEndsAt, getAllUsers, updateUserSubscription, deleteUser, sendPasswordReset, addSystemNotification, runSmartNotificationsScan,
         teamMembers, addTeamMember, updateTeamMember, deleteTeamMember, activeTeamMember, setActiveTeamMember,
         messages, sendMessage,
         prescriptionLabel, farmerLabel, farmerPluralLabel,
@@ -2752,7 +2302,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         suppliers, trashedSuppliers, trashedSupplierPurchases, trashedSupplierPayments, addSupplier, updateSupplier, deleteSupplier, softDeleteSupplier, restoreSupplier, permanentlyDeleteSupplier, addSupplierPurchase, updateSupplierPurchase, deleteSupplierPurchase, softDeleteSupplierPurchase, restoreSupplierPurchase, permanentlyDeleteSupplierPurchase, addSupplierPayment, updateSupplierPayment, deleteSupplierPayment, softDeleteSupplierPayment, restoreSupplierPayment, permanentlyDeleteSupplierPayment,
         myPayments, addMyPayment, updateMyPayment, deleteMyPayment, softDeleteMyPayment, restoreMyPayment, permanentlyDeleteMyPayment,
         expenses, trashedExpenses, addExpense, updateExpense, deleteExpense, softDeleteExpense, restoreExpense, permanentlyDeleteExpense,
-        accounts, addAccount, updateAccount, deleteAccount,
+        accounts, addAccount, updateAccount, deleteAccount, transferBetweenAccounts,
         transactions, addTransaction, deleteTransaction,
         performManualTurnover,
         isInitialized,
@@ -2760,25 +2310,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         language, setLanguage, t,
         collectionLogs, addCollectionLog, updateCollectionLog, deleteCollectionLog,
         plants, addPlant, updatePlant, deletePlant, refreshPlants
-    }}>
-      {children}
-      {/* Toast Container */}
-      <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[9999] flex flex-col gap-2 w-full max-w-[90%] pointer-events-none">
-        {toasts.map(toast => (
-          <div 
-            key={toast.id}
-            className={`px-4 py-3 rounded-2xl shadow-2xl border flex items-center gap-3 animate-in slide-in-from-bottom-4 duration-300 pointer-events-auto ${
-              toast.type === 'success' ? 'bg-emerald-600 border-emerald-500 text-white' :
-              toast.type === 'error' ? 'bg-rose-600 border-rose-500 text-white' :
-              'bg-stone-800 border-stone-700 text-stone-100'
-            }`}
-          >
-            <div className="flex-1 font-bold text-sm">{toast.message}</div>
-          </div>
-        ))}
-      </div>
-    </AppContext.Provider>
-  );
+    }), [
+        stats, farmers, trashedFarmers, visits, trashedVisits, reminders, uiScale,
+        notifications, unreadCount, userProfile, isAdmin, subscriptionStatus, subscriptionEndsAt,
+        teamMembers, activeTeamMember, messages, prescriptionLabel, farmerLabel, farmerPluralLabel,
+        inventory, trashedInventory, prescriptions, trashedPrescriptions, supplierPurchases,
+        news, payments, trashedPayments, manualDebts, trashedManualDebts,
+        suppliers, trashedSuppliers, trashedSupplierPurchases, trashedSupplierPayments,
+        myPayments, expenses, trashedExpenses, accounts, transactions,
+        isInitialized, language, collectionLogs, plants, refreshStats, runSmartNotificationsScan, showToast, hapticFeedback
+    ]);
+
+    return (
+      <AppContext.Provider value={contextValue}>
+        {children}
+        <ToastHost />
+      </AppContext.Provider>
+    );
 };
 
 export const useAppViewModel = () => {

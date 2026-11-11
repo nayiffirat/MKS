@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { Farmer, Prescription, Payment, ManualDebt, InventoryItem, VisitLog } from '../types';
 import { formatCurrency } from '../utils/currency';
+import { useAppViewModel } from '../context/AppContext';
 
 interface FarmerFinancialAnalysisModalProps {
   isOpen: boolean;
@@ -53,6 +54,11 @@ export const FarmerFinancialAnalysisModal: React.FC<FarmerFinancialAnalysisModal
   visits = [],
   currency = 'TRY'
 }) => {
+  const { userProfile, activeTeamMember } = useAppViewModel();
+  const hideCostAndProfit = Boolean(
+    userProfile?.hideCostAndProfit ||
+    (userProfile?.hideBuyingPricesForStaff && activeTeamMember?.role === 'SALES')
+  );
   const [selectedYear, setSelectedYear] = useState<string>('ALL');
   const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'PRODUCTS' | 'PAYMENTS' | 'MONTHLY'>('OVERVIEW');
   const [copied, setCopied] = useState(false);
@@ -313,12 +319,15 @@ export const FarmerFinancialAnalysisModal: React.FC<FarmerFinancialAnalysisModal
 
   // Copy Summary Function
   const handleCopySummary = () => {
+    const costLines = hideCostAndProfit
+      ? ''
+      : `📦 *Satış Maliyeti (COGS):* ${formatCurrency(metrics.totalCost, currency)}\n` +
+        `✨ *Net Ticari Kâr:* ${formatCurrency(metrics.netProfit, currency)} (%${metrics.profitMargin.toFixed(1)} Kâr Marjı)\n`;
     const text = `📊 *${farmer.fullName} - Finansal Analiz Raporu* (${selectedYear === 'ALL' ? 'Tüm Zamanlar' : selectedYear})\n` +
       `📍 Köy: ${farmer.village || 'Belirtilmemiş'}\n` +
       `----------------------------------------\n` +
       `💰 *Toplam Satış (Ciro):* ${formatCurrency(metrics.netSales, currency)}\n` +
-      `📦 *Satış Maliyeti (COGS):* ${formatCurrency(metrics.totalCost, currency)}\n` +
-      `✨ *Net Ticari Kâr:* ${formatCurrency(metrics.netProfit, currency)} (%${metrics.profitMargin.toFixed(1)} Kâr Marjı)\n` +
+      costLines +
       `💳 *Tahsil Edilen Tutar:* ${formatCurrency(metrics.totalPayments, currency)} (%${metrics.collectionRate.toFixed(1)} Tahsilat)\n` +
       `⚠️ *Kalan Borç Bakiye:* ${formatCurrency(metrics.remainingBalance, currency)}\n` +
       `----------------------------------------\n` +
@@ -421,11 +430,11 @@ export const FarmerFinancialAnalysisModal: React.FC<FarmerFinancialAnalysisModal
                 </div>
               </div>
               <div className="text-base sm:text-lg font-black text-white font-mono tracking-tight">
-                {formatCurrency(metrics.totalCost, currency)}
+                {hideCostAndProfit ? '••••••' : formatCurrency(metrics.totalCost, currency)}
               </div>
               <div className="text-[9px] text-stone-400 font-medium mt-1 flex items-center gap-1">
                 <Layers size={10} className="text-amber-400" />
-                <span>Stok Alış Maliyetleri</span>
+                <span>{hideCostAndProfit ? 'Tezgah Modunda Gizli' : 'Stok Alış Maliyetleri'}</span>
               </div>
             </div>
 
@@ -439,12 +448,12 @@ export const FarmerFinancialAnalysisModal: React.FC<FarmerFinancialAnalysisModal
                 </div>
               </div>
               <div className="text-base sm:text-lg font-black text-white font-mono tracking-tight">
-                {formatCurrency(metrics.netProfit, currency)}
+                {hideCostAndProfit ? '••••••' : formatCurrency(metrics.netProfit, currency)}
               </div>
               <div className="text-[9px] font-bold mt-1 flex items-center gap-1">
                 <Percent size={10} className={metrics.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'} />
                 <span className={metrics.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
-                  %{metrics.profitMargin.toFixed(1)} Kâr Marjı
+                  {hideCostAndProfit ? 'Gizli' : `%${metrics.profitMargin.toFixed(1)} Kâr Marjı`}
                 </span>
               </div>
             </div>
@@ -531,21 +540,25 @@ export const FarmerFinancialAnalysisModal: React.FC<FarmerFinancialAnalysisModal
                     <span className="font-mono text-sm text-blue-400">{formatCurrency(metrics.netSales, currency)}</span>
                   </div>
 
-                  <div className="flex justify-between items-center py-2 border-b border-white/5">
-                    <span className="text-stone-400 font-medium">Satılan Ürünlerin Stok Alış Maliyeti (COGS)</span>
-                    <span className="font-bold font-mono text-amber-400">-{formatCurrency(metrics.totalCost, currency)}</span>
-                  </div>
+                  {!hideCostAndProfit && (
+                    <>
+                      <div className="flex justify-between items-center py-2 border-b border-white/5">
+                        <span className="text-stone-400 font-medium">Satılan Ürünlerin Stok Alış Maliyeti (COGS)</span>
+                        <span className="font-bold font-mono text-amber-400">-{formatCurrency(metrics.totalCost, currency)}</span>
+                      </div>
 
-                  <div className="flex justify-between items-center py-3 bg-emerald-500/10 border border-emerald-500/20 px-3 rounded-xl">
-                    <div>
-                      <span className="text-emerald-400 font-black uppercase tracking-wider text-xs block">Net Ticari Kâr</span>
-                      <span className="text-[10px] text-stone-400 font-medium">Satış Geliri - Satış Maliyeti</span>
-                    </div>
-                    <div className="text-right">
-                      <span className="font-mono text-base font-black text-emerald-400 block">{formatCurrency(metrics.netProfit, currency)}</span>
-                      <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">%{metrics.profitMargin.toFixed(1)} Kâr Oranı</span>
-                    </div>
-                  </div>
+                      <div className="flex justify-between items-center py-3 bg-emerald-500/10 border border-emerald-500/20 px-3 rounded-xl">
+                        <div>
+                          <span className="text-emerald-400 font-black uppercase tracking-wider text-xs block">Net Ticari Kâr</span>
+                          <span className="text-[10px] text-stone-400 font-medium">Satış Geliri - Satış Maliyeti</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="font-mono text-base font-black text-emerald-400 block">{formatCurrency(metrics.netProfit, currency)}</span>
+                          <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">%{metrics.profitMargin.toFixed(1)} Kâr Oranı</span>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -637,13 +650,13 @@ export const FarmerFinancialAnalysisModal: React.FC<FarmerFinancialAnalysisModal
                         <div>
                           <span className="text-[9px] text-stone-500 font-bold uppercase block">Stok Maliyeti</span>
                           <span className="text-xs font-mono font-bold text-amber-400">
-                            {formatCurrency(prod.totalCost, currency)}
+                            {hideCostAndProfit ? '••••' : formatCurrency(prod.totalCost, currency)}
                           </span>
                         </div>
                         <div>
                           <span className="text-[9px] text-stone-500 font-bold uppercase block">Kâr / Marj</span>
                           <span className={`text-xs font-mono font-black ${prod.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                            {formatCurrency(prod.netProfit, currency)} (%{prod.profitMargin.toFixed(0)})
+                            {hideCostAndProfit ? '••••' : `${formatCurrency(prod.netProfit, currency)} (%${prod.profitMargin.toFixed(0)})`}
                           </span>
                         </div>
                       </div>
@@ -745,9 +758,11 @@ export const FarmerFinancialAnalysisModal: React.FC<FarmerFinancialAnalysisModal
                         <div className="flex gap-3 font-mono text-[11px]">
                           <span className="text-blue-400">Satış: {formatCurrency(m.sales, currency)}</span>
                           <span className="text-purple-400">Tahsilat: {formatCurrency(m.payments, currency)}</span>
-                          <span className={m.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
-                            Kâr: {formatCurrency(m.profit, currency)}
-                          </span>
+                          {!hideCostAndProfit && (
+                            <span className={m.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                              Kâr: {formatCurrency(m.profit, currency)}
+                            </span>
+                          )}
                         </div>
                       </div>
 

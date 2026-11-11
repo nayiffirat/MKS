@@ -1,6 +1,4 @@
-import { createMultiPagePdf } from './pdfHelper';
-import { jsPDF } from 'jspdf';
-import html2canvas from 'html2canvas';
+import { createMultiPagePdf, renderElementToCanvas } from './pdfHelper';
 import { format } from 'date-fns';
 import { formatCurrency } from './currency';
 import { 
@@ -559,7 +557,7 @@ export async function generateYearEndReportPDF(params: YearEndReportParams): Pro
   document.body.appendChild(container);
 
   try {
-    const canvas = await html2canvas(container, {
+    const canvas = await renderElementToCanvas(container, {
       scale: 2,
       backgroundColor: '#ffffff',
       logging: false
@@ -567,7 +565,7 @@ export async function generateYearEndReportPDF(params: YearEndReportParams): Pro
 
     document.body.removeChild(container);
 
-    const pdf = createMultiPagePdf(canvas);
+    const pdf = await createMultiPagePdf(canvas);
     pdf.save(`MKS_${targetYear}_Yil_Sonu_Devir_ve_Bilanço_Raporu.pdf`);
   } catch (err) {
     if (document.body.contains(container)) {

@@ -1,17 +1,25 @@
 
 import React, { useState } from 'react';
-import { ChevronLeft, Newspaper, Calendar, ChevronRight, X, Megaphone } from 'lucide-react';
+import { ChevronLeft, Newspaper, Calendar, ChevronRight, Megaphone } from 'lucide-react';
 import { useAppViewModel } from '../context/AppContext';
 import { News as NewsType } from '../types';
 import { EmptyState } from './EmptyState';
+import { ModalCloseButton } from './ModalCloseButton';
+import { useBackHandler } from '../utils/navigationManager';
+import { buildWaUrl } from '../utils/whatsappTemplates';
+import { SUPPORT_WHATSAPP } from '../constants';
 
 interface NewsProps {
     onBack: () => void;
 }
 
+const AD_WA_URL = buildWaUrl(SUPPORT_WHATSAPP, 'Ücretsiz reklam hakkında bilgi almak istiyorum.');
+
 export const News: React.FC<NewsProps> = ({ onBack }) => {
     const { news } = useAppViewModel();
     const [selectedNews, setSelectedNews] = useState<NewsType | null>(null);
+    const closeNews = () => setSelectedNews(null);
+    useBackHandler(!!selectedNews, closeNews, 'News_detail', 50);
 
     return (
         <div className="p-4 space-y-4 pb-24 animate-in fade-in duration-300">
@@ -24,16 +32,16 @@ export const News: React.FC<NewsProps> = ({ onBack }) => {
                 </button>
                 <div>
                     <h1 className="text-xl font-black text-stone-100">MKS Haber</h1>
-                    <p className="text-[10px] font-bold text-blue-500 uppercase tracking-widest">Sektörel Gelişmeler ve Duyurular</p>
+                    <p className="text-[11px] font-bold text-blue-500 uppercase tracking-widest">Sektörel Gelişmeler ve Duyurular</p>
                 </div>
                 <a 
-                    href="https://wa.me/905428254087?text=%C3%9Ccretsiz%20reklam%20hakk%C4%B1nda%20bilgi%20almak%20istiyorum."
+                    href={AD_WA_URL}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="ml-auto flex items-center gap-2 px-3 py-2 bg-emerald-600/10 border border-emerald-500/20 rounded-xl text-emerald-400 hover:bg-emerald-600 hover:text-white transition-all active:scale-95 group"
                 >
                     <Megaphone size={14} className="group-hover:rotate-12 transition-transform" />
-                    <span className="text-[10px] font-black uppercase tracking-widest">Ücretsiz Reklam</span>
+                    <span className="text-[11px] font-black uppercase tracking-widest">Ücretsiz Reklam</span>
                 </a>
             </div>
 
@@ -68,10 +76,10 @@ export const News: React.FC<NewsProps> = ({ onBack }) => {
                                 </div>
                                 <div className="flex-1 min-w-0 flex flex-col justify-center">
                                     <div className="flex items-center gap-2 mb-1.5">
-                                        <span className="px-1.5 py-0.5 bg-blue-500/10 text-blue-400 text-[8px] font-black rounded uppercase tracking-widest border border-blue-500/20">
+                                        <span className="px-1.5 py-0.5 bg-blue-500/10 text-blue-400 text-[11px] leading-none font-black rounded uppercase tracking-widest border border-blue-500/20">
                                             {item.category || 'Haber'}
                                         </span>
-                                        <div className="flex items-center gap-1 text-[9px] font-bold text-stone-500">
+                                        <div className="flex items-center gap-1 text-[11px] font-bold text-stone-500">
                                             <Calendar size={10} />
                                             {new Date(item.date).toLocaleDateString('tr-TR')}
                                         </div>
@@ -90,8 +98,11 @@ export const News: React.FC<NewsProps> = ({ onBack }) => {
 
             {/* News Detail Modal */}
             {selectedNews && (
-                <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-300">
-                    <div className="bg-stone-900 w-full max-w-lg rounded-3xl border border-white/10 overflow-hidden flex flex-col max-h-[90vh] shadow-2xl">
+                <div
+                    className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-300"
+                    onClick={e => { if (e.target === e.currentTarget) closeNews(); }}
+                >
+                    <div className="bg-stone-900 w-full max-w-lg rounded-3xl border border-white/10 overflow-hidden flex flex-col max-h-[90dvh] shadow-2xl">
                         <div className="relative h-48 sm:h-64 bg-stone-800 shrink-0">
                             {selectedNews.imageUrl ? (
                                 <img 
@@ -105,18 +116,16 @@ export const News: React.FC<NewsProps> = ({ onBack }) => {
                                     <Newspaper size={64} />
                                 </div>
                             )}
-                            <button 
-                                onClick={() => setSelectedNews(null)}
-                                className="absolute top-4 right-4 p-2 bg-black/50 backdrop-blur-md rounded-full text-white hover:bg-black/70 transition-colors"
-                            >
-                                <X size={20} />
-                            </button>
+                            <ModalCloseButton
+                                onClick={closeNews}
+                                className="absolute top-4 right-4 !rounded-full !bg-black/50 backdrop-blur-md !text-white hover:!bg-black/70"
+                            />
                             <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-stone-900 to-transparent">
                                 <div className="flex items-center gap-2 mb-1">
-                                    <span className="px-2 py-0.5 bg-blue-600 text-[8px] font-black text-white rounded uppercase tracking-widest">
+                                    <span className="px-2 py-0.5 bg-blue-600 text-[11px] leading-none font-black text-white rounded uppercase tracking-widest">
                                         {selectedNews.category || 'Haber'}
                                     </span>
-                                    <span className="text-[10px] font-bold text-stone-400">
+                                    <span className="text-[11px] font-bold text-stone-400">
                                         {new Date(selectedNews.date).toLocaleDateString('tr-TR')}
                                     </span>
                                 </div>

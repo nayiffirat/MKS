@@ -1,0 +1,26 @@
+====================================================================
+  MKS (MÜHENDİS KAYIT SİSTEMİ) v8.2.1 — MASAÜSTÜ KURULUM KILAVUZU
+====================================================================
+
+1. HIZLI BAŞLATMA (TEK TIK KURULUM):
+   - "MKS_Masaustu_Kurulum.exe" dosyasına çift tıklayın.
+   - Uygulama kendisini otomatik olarak "%LOCALAPPDATA%\MKS" dizinine kurar,
+     Masaüstü ve Başlat Menüsü kısayollarını oluşturur ve tam ekran
+     uygulama modunda (adres çubuksuz pencere) açılır.
+   - Hesabınız bulut (Firebase) ve çevrimdışı yerel veritabanı (IndexedDB)
+     ile gerçek zamanlı senkronize çalışır; telefondan girdiğiniz her veri
+     bilgisayarınızda anında görünür.
+
+2. OTOMATİK BAŞLIK ÇUBUĞU GÜNCELLEME SİSTEMİ:
+   - Yeni bir güncelleme yayınlandığında, masaüstü penceresinin sağ üst
+     köşesindeki Aşağı İndir (—) ve Kapat (X) butonlarının hemen yanında
+     yeşil "↻ Güncelle" butonu otomatik olarak açılır.
+   - Butona tıkladığınızda verileriniz ve açık oturumunuz korunarak yeni
+     sürüm indirilir, kurulur ve pencere otomatik olarak yeniden başlatılır.
+
+3. YEREL SUNUCU MODU (OPSİYONEL - COPERNICUS UYDU & AI KÖPRÜSÜ):
+   - Kendi bilgisayarınızda yerel arka uç sunucusunu (Port 3000) çalıştırmak
+     isterseniz "Baslat_MKS_Yerel_Sunucu.bat" dosyasını açabilirsiniz.
+   - Yerel sunucu açıkken "MKS_Masaustu_Kurulum.exe" otomatik olarak
+     http://127.0.0.1:3000 adresine bağlanır; kapalıyken doğrudan güvenli
+     bulut sunucusuna bağlanır.

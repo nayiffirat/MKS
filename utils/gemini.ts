@@ -1,59 +1,93 @@
 import { API_BASE } from './api';
+import { auth } from '../services/firebase';
 
-export const generateAIContent = async (modelName: string, contents: any, config?: any) => {
+export const DEFAULT_GEMINI_MODEL = 'gemini-3-flash-preview';
+
+export const generateAIContent = async (modelName: string, contents: any, config?: any): Promise<string> => {
+  const payload = JSON.stringify({
+    model: modelName || DEFAULT_GEMINI_MODEL,
+    contents: contents,
+    config: config
+  });
+
+  let idToken: string | null = null;
   try {
-    const response = await fetch(`${API_BASE}/api/generate`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: modelName || 'gemini-3.6-flash',
-        contents: contents,
-        config: config
-      })
-    });
-
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
-      throw new Error(errData.error || `HTTP error! status: ${response.status}`);
+    if (auth.currentUser) {
+      idToken = await auth.currentUser.getIdToken();
     }
-
-    const data = await response.json();
-    return data.text;
-  } catch (error: any) {
-    const errorMessage = error?.message || String(error);
-    console.error("Gemini API Proxy Error:", errorMessage);
-    throw new Error(errorMessage);
+  } catch {
+    idToken = null;
   }
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(idToken ? { Authorization: `Bearer ${idToken}` } : {})
+  };
+
+  // Denenecek uç noktalar (Önce mevcut origin / API_BASE, ardından yerel sunucu 3000)
+  const endpoints = Array.from(
+    new Set([
+      `${API_BASE}/api/generate`,
+      '/api/generate',
+      'http://127.0.0.1:3000/api/generate'
+    ])
+  );
+
+  let lastError = 'Yapay zeka servisine ulaşılamadı.';
+
+  for (const url of endpoints) {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: payload
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        lastError = errData.error || `HTTP ${response.status}`;
+        continue;
+      }
+
+      const data = await response.json();
+      if (data && typeof data.text === 'string' && data.text.trim()) {
+        return data.text;
+      }
+    } catch (err: any) {
+      lastError = err?.message || String(err);
+    }
+  }
+
+  console.error('MKS AI Proxy Error:', lastError);
+  throw new Error(lastError);
 };
 
 /**
  * Ziraat Mühendisi Yapay Zeka Sorusu Sor
  */
-export const askAgronomistAI = async (userPrompt: string, cropContext?: string) => {
-  const systemContext = `Sen Türkiye'nin en deneyimli, uzman Ziraat Mühendisisin (TARGEM / TAGEM ve Ziraat Fakültesi teknik kaynaklarına %100 hakimsin).
-Sana sorulan tarımsal sorulara son derece detaylı, akademik ama çiftçi ve ziraat mühendisinin doğrudan tarlada uygulayabileceği pratik, net ve Türkçe yanıtlar ver.
+export const askAgronomistAI = async (userPrompt: string, cropContext?: string, businessContext?: string) => {
+  const systemContext = `Sen Türkiye'nin en deneyimli, uzman Ziraat Mühendisi ve MKS (Mühendis Kayıt Sistemi) Yapay Zeka Danışmanısın (TARGEM / TAGEM ve Ziraat Fakültesi teknik kaynaklarına %100 hakimsin).
+Sana sorulan tarımsal veya işletme/stok/finans sorularına son derece detaylı, akademik ama çiftçi ve ziraat mühendisinin doğrudan sahada ve bayide uygulayabileceği pratik, net ve Türkçe yanıtlar ver.
 
-Yanıt verirken şu başlıkları ve yapıları kullan:
+Eğer soru bitki hastalıkları, zararlılar, gübreleme veya ilaçlama hakkındaysa şu başlıkları kullan:
 1. **Teşhis & Durum Özeti**: Sorunun teknik ve fizyolojik tanımı.
 2. **Kültürel ve Biyolojik Önlemler**: İlaçsız çözüm, havalandırma, budama, sulama, ekim nöbeti.
-3. **Kimyasal Mücadele & Etken Maddeler**: Türkiye'de ruhsatlı resmi etken maddeler (Aktif maddeler) ve örnek ilaç ticari isimleri.
+3. **Kimyasal Mücadele & Etken Maddeler**: Türkiye'de ruhsatlı resmi etken maddeler (Aktif maddeler), depodaki mevcut uygun ilaçlar ve örnek ticari isimler.
 4. **Dozaj & PHI (Hasat Arası Süre)**: Uygulama zamanı ve güvenlik kuralları.
 5. **Kritik Uyarılar**: Hava sıcaklığı, rüzgar, pH, tank karışım uyarıları.
 
-${cropContext ? `İlgili Bitki Bağlamı: ${cropContext}` : ''}`;
+Eğer soru MKS içindeki stoklar, çiftçi borçları, kasa durumu veya finansal analiz hakkındaysa aşağıdaki canlı işletme verilerini baz alarak net rakamlarla yanıt ver.
+${cropContext ? `\nİlgili Bitki Bağlamı: ${cropContext}` : ''}
+${businessContext ? `\nCANLI MKS İŞLETME & DEPO VERİLERİ:\n${businessContext}` : ''}`;
 
   const contents = [
     {
       role: 'user',
-      parts: [
-        { text: `${systemContext}\n\nÇiftçi/Kullanıcı Sorusu: ${userPrompt}` }
-      ]
+      parts: [{ text: `${systemContext}\n\nKullanıcı Sorusu: ${userPrompt}` }]
     }
   ];
 
-  return await generateAIContent('gemini-3.6-flash', contents);
+  return await generateAIContent(DEFAULT_GEMINI_MODEL, contents);
 };
 
 /**
@@ -95,6 +129,5 @@ ${cropHint ? `Kullanıcı Notu/Bitki Bilgisi: ${cropHint}` : ''}`;
     }
   ];
 
-  return await generateAIContent('gemini-3.6-flash', contents);
+  return await generateAIContent(DEFAULT_GEMINI_MODEL, contents);
 };
-

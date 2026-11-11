@@ -13,8 +13,7 @@ import { format, subDays, startOfMonth, endOfMonth, startOfYear, parseISO, isWit
 import { tr } from 'date-fns/locale';
 import { useAppViewModel } from '../context/AppContext';
 import { formatCurrency } from '../utils/currency';
-import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
+import { loadJsPdf } from '../utils/pdfHelper';
 
 type Granularity = 'daily' | 'weekly' | 'monthly';
 type ActiveViewTab = 'TREND' | 'COMPARISON' | 'CATEGORIES' | 'TRANSACTIONS';
@@ -404,6 +403,7 @@ export const IncomeExpenseChartReport: React.FC = () => {
   const exportPDFReport = async () => {
     setIsExportingPdf(true);
     try {
+      const jsPDF = await loadJsPdf();
       const doc = new jsPDF({
         orientation: 'p',
         unit: 'mm',
@@ -561,11 +561,11 @@ export const IncomeExpenseChartReport: React.FC = () => {
               <div>
                 <h2 className="text-lg font-black text-stone-100 tracking-tight flex items-center gap-2">
                   Gelir - Gider Analiz Raporu
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-extrabold uppercase">
+                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-extrabold uppercase">
                     Canlı
                   </span>
                 </h2>
-                <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">
+                <p className="text-[11px] font-bold text-stone-400 uppercase tracking-widest">
                   İşletmenizin nakit akışını ve mali performansını tarih aralığına göre inceleyin
                 </p>
               </div>
@@ -590,7 +590,7 @@ export const IncomeExpenseChartReport: React.FC = () => {
           {/* Custom Date Pickers */}
           <div className="md:col-span-5 flex items-center gap-2">
             <div className="flex-1">
-              <label className="text-[10px] font-black text-stone-400 uppercase tracking-wider mb-1 block">
+              <label className="text-[11px] font-black text-stone-400 uppercase tracking-wider mb-1 block">
                 Başlangıç Tarihi
               </label>
               <div className="relative">
@@ -606,7 +606,7 @@ export const IncomeExpenseChartReport: React.FC = () => {
             <span className="text-stone-500 font-bold pt-4">-</span>
 
             <div className="flex-1">
-              <label className="text-[10px] font-black text-stone-400 uppercase tracking-wider mb-1 block">
+              <label className="text-[11px] font-black text-stone-400 uppercase tracking-wider mb-1 block">
                 Bitiş Tarihi
               </label>
               <div className="relative">
@@ -624,17 +624,17 @@ export const IncomeExpenseChartReport: React.FC = () => {
           <div className="md:col-span-7 flex flex-wrap items-center gap-1.5 pt-2 md:pt-4">
             {[
               { id: 'TODAY', label: 'Bugün' },
-              { id: 'THIS_WEEK', label: 'Son 7 Gün' },
-              { id: 'THIS_MONTH', label: 'Bu Ay' },
-              { id: 'LAST_MONTH', label: 'Geçen Ay' },
-              { id: 'LAST_30', label: 'Son 30 Gün' },
-              { id: 'THIS_YEAR', label: 'Bu Yıl' },
-              { id: 'ALL', label: 'Tüm Zamanlar' },
+              { id: 'THIS_WEEK', label: 'Son 7 gün' },
+              { id: 'THIS_MONTH', label: 'Bu ay' },
+              { id: 'LAST_MONTH', label: 'Geçen ay' },
+              { id: 'LAST_30', label: 'Son 30 gün' },
+              { id: 'THIS_YEAR', label: 'Bu yıl' },
+              { id: 'ALL', label: 'Tümü' },
             ].map(preset => (
               <button
                 key={preset.id}
                 onClick={() => applyPreset(preset.id as any)}
-                className="px-2.5 py-1.5 bg-stone-950/60 hover:bg-stone-800 text-stone-300 hover:text-white rounded-lg text-[10px] font-bold border border-white/5 active:scale-95 transition-all"
+                className="min-h-[38px] px-3 py-1.5 bg-stone-950/60 hover:bg-stone-800 text-stone-300 hover:text-white rounded-xl text-xs font-bold border border-white/10 active:scale-95 transition-all"
               >
                 {preset.label}
               </button>
@@ -651,18 +651,18 @@ export const IncomeExpenseChartReport: React.FC = () => {
         <div className="bg-stone-900/80 backdrop-blur-md border border-emerald-500/20 rounded-2xl p-4 shadow-xl relative overflow-hidden group hover:border-emerald-500/40 transition-all">
           <div className="absolute -right-4 -bottom-4 w-20 h-20 bg-emerald-500/10 rounded-full blur-xl group-hover:scale-125 transition-transform"></div>
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest flex items-center gap-1.5">
+            <span className="text-[11px] font-black text-emerald-400 uppercase tracking-widest flex items-center gap-1.5">
               <ArrowDownLeft size={14} className="text-emerald-400" />
               Toplam Gelir
             </span>
-            <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 font-bold border border-emerald-500/20">
+            <span className="text-[11px] px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 font-bold border border-emerald-500/20">
               {summaryMetrics.incomeCount} İşlem
             </span>
           </div>
           <div className="text-2xl font-black font-mono text-emerald-400 tracking-tight">
             {formatCurrency(summaryMetrics.totalIncome, userProfile?.currency || 'TRY')}
           </div>
-          <div className="text-[10px] font-bold text-stone-400 mt-2 flex items-center gap-1">
+          <div className="text-[11px] font-bold text-stone-400 mt-2 flex items-center gap-1">
             <span>Günlük Ort:</span>
             <span className="text-stone-200 font-mono">{formatCurrency(summaryMetrics.avgDailyIncome, userProfile?.currency || 'TRY')}</span>
           </div>
@@ -672,18 +672,18 @@ export const IncomeExpenseChartReport: React.FC = () => {
         <div className="bg-stone-900/80 backdrop-blur-md border border-rose-500/20 rounded-2xl p-4 shadow-xl relative overflow-hidden group hover:border-rose-500/40 transition-all">
           <div className="absolute -right-4 -bottom-4 w-20 h-20 bg-rose-500/10 rounded-full blur-xl group-hover:scale-125 transition-transform"></div>
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] font-black text-rose-400 uppercase tracking-widest flex items-center gap-1.5">
+            <span className="text-[11px] font-black text-rose-400 uppercase tracking-widest flex items-center gap-1.5">
               <ArrowUpRight size={14} className="text-rose-400" />
               Toplam Gider
             </span>
-            <span className="text-[10px] px-2 py-0.5 rounded-md bg-rose-500/10 text-rose-400 font-bold border border-rose-500/20">
+            <span className="text-[11px] px-2 py-0.5 rounded-md bg-rose-500/10 text-rose-400 font-bold border border-rose-500/20">
               {summaryMetrics.expenseCount} İşlem
             </span>
           </div>
           <div className="text-2xl font-black font-mono text-rose-400 tracking-tight">
             {formatCurrency(summaryMetrics.totalExpense, userProfile?.currency || 'TRY')}
           </div>
-          <div className="text-[10px] font-bold text-stone-400 mt-2 flex items-center gap-1">
+          <div className="text-[11px] font-bold text-stone-400 mt-2 flex items-center gap-1">
             <span>Günlük Ort:</span>
             <span className="text-stone-200 font-mono">{formatCurrency(summaryMetrics.avgDailyExpense, userProfile?.currency || 'TRY')}</span>
           </div>
@@ -697,13 +697,13 @@ export const IncomeExpenseChartReport: React.FC = () => {
             summaryMetrics.netProfit >= 0 ? 'bg-indigo-500/10' : 'bg-rose-500/10'
           }`}></div>
           <div className="flex items-center justify-between mb-2">
-            <span className={`text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 ${
+            <span className={`text-[11px] font-black uppercase tracking-widest flex items-center gap-1.5 ${
               summaryMetrics.netProfit >= 0 ? 'text-indigo-400' : 'text-rose-400'
             }`}>
               <Wallet size={14} />
               Net Durum (Kar/Zarar)
             </span>
-            <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold border ${
+            <span className={`text-[11px] px-2 py-0.5 rounded-md font-bold border ${
               summaryMetrics.netProfit >= 0 ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
             }`}>
               %{summaryMetrics.margin.toFixed(1)} Marj
@@ -714,7 +714,7 @@ export const IncomeExpenseChartReport: React.FC = () => {
           }`}>
             {summaryMetrics.netProfit >= 0 ? '+' : ''}{formatCurrency(summaryMetrics.netProfit, userProfile?.currency || 'TRY')}
           </div>
-          <div className="text-[10px] font-bold text-stone-400 mt-2 flex items-center gap-1">
+          <div className="text-[11px] font-bold text-stone-400 mt-2 flex items-center gap-1">
             <span>Dönem Süresi:</span>
             <span className="text-stone-200">{summaryMetrics.days} Gün</span>
           </div>
@@ -723,7 +723,7 @@ export const IncomeExpenseChartReport: React.FC = () => {
         {/* Income-to-Expense Ratio Card */}
         <div className="bg-stone-900/80 backdrop-blur-md border border-white/5 rounded-2xl p-4 shadow-xl relative overflow-hidden group hover:border-white/10 transition-all">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] font-black text-stone-400 uppercase tracking-widest flex items-center gap-1.5">
+            <span className="text-[11px] font-black text-stone-400 uppercase tracking-widest flex items-center gap-1.5">
               <Activity size={14} className="text-amber-400" />
               Gelir / Gider Oranı
             </span>
@@ -733,7 +733,7 @@ export const IncomeExpenseChartReport: React.FC = () => {
               ? `${(summaryMetrics.totalIncome / summaryMetrics.totalExpense).toFixed(2)}x` 
               : '100%'}
           </div>
-          <div className="text-[10px] font-bold text-stone-400 mt-2 flex items-center gap-1">
+          <div className="text-[11px] font-bold text-stone-400 mt-2 flex items-center gap-1">
             <span>Finansal Sağlık:</span>
             <span className={`font-bold ${summaryMetrics.totalIncome >= summaryMetrics.totalExpense ? 'text-emerald-400' : 'text-rose-400'}`}>
               {summaryMetrics.totalIncome >= summaryMetrics.totalExpense ? 'Pozitif Akış' : 'Gider Fazlası'}
@@ -744,22 +744,22 @@ export const IncomeExpenseChartReport: React.FC = () => {
       </div>
 
       {/* Tab Navigation & Granularity Toggle */}
-      <div className="bg-stone-900/60 border border-white/5 rounded-2xl p-2 flex flex-col sm:flex-row items-center justify-between gap-3">
+      <div className="bg-stone-900/60 border border-white/5 rounded-2xl p-2 flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 overflow-hidden">
         
         {/* Main Tab Controls */}
-        <div className="flex items-center gap-1 w-full sm:w-auto overflow-x-auto pb-1 sm:pb-0">
+        <div className="mks-tab-rail w-full lg:w-auto">
           {[
-            { id: 'TREND', label: 'Gelir - Gider Trendi', icon: TrendingUp },
-            { id: 'COMPARISON', label: 'Karşılaştırma Sütunları', icon: BarChart2 },
-            { id: 'CATEGORIES', label: 'Kategori Dağılımları', icon: PieChart },
-            { id: 'TRANSACTIONS', label: 'Detaylı Hareket Tablosu', icon: FileText }
+            { id: 'TREND', label: 'Gelir - Gider trendi', icon: TrendingUp },
+            { id: 'COMPARISON', label: 'Karşılaştırma', icon: BarChart2 },
+            { id: 'CATEGORIES', label: 'Kategori dağılımı', icon: PieChart },
+            { id: 'TRANSACTIONS', label: 'Detaylı hareketler', icon: FileText }
           ].map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as ActiveViewTab)}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition-all ${
+              className={`shrink-0 min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition-all ${
                 activeTab === tab.id
-                  ? 'bg-emerald-500 text-stone-950 font-black shadow-lg shadow-emerald-950/30'
+                  ? 'bg-emerald-500 text-stone-950 font-extrabold shadow-sm'
                   : 'text-stone-400 hover:text-stone-200 hover:bg-stone-800/50'
               }`}
             >
@@ -771,8 +771,8 @@ export const IncomeExpenseChartReport: React.FC = () => {
 
         {/* Granularity Switcher (for Charts) */}
         {activeTab !== 'TRANSACTIONS' && (
-          <div className="flex items-center gap-1 bg-stone-950/80 border border-white/5 rounded-xl p-1 self-end sm:self-auto">
-            <span className="text-[9px] font-black text-stone-400 uppercase tracking-widest px-2">Ölçek:</span>
+          <div className="flex items-center gap-1 bg-stone-950/80 border border-white/10 rounded-xl p-1 self-start lg:self-auto shrink-0">
+            <span className="text-[11px] font-bold text-stone-400 px-2">Ölçek:</span>
             {[
               { id: 'daily', label: 'Günlük' },
               { id: 'weekly', label: 'Haftalık' },
@@ -781,7 +781,7 @@ export const IncomeExpenseChartReport: React.FC = () => {
               <button
                 key={g.id}
                 onClick={() => setGranularity(g.id as Granularity)}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-extrabold transition-all ${
+                className={`min-h-[36px] px-3 py-1 rounded-lg text-xs font-bold transition-all ${
                   granularity === g.id
                     ? 'bg-stone-800 text-emerald-400 border border-white/10'
                     : 'text-stone-400 hover:text-stone-200'
@@ -806,7 +806,7 @@ export const IncomeExpenseChartReport: React.FC = () => {
                 <TrendingUp className="text-emerald-500" size={16} />
                 Nakit Akış Zaman Serisi Analizi
               </h3>
-              <p className="text-[10px] font-bold text-stone-400 uppercase tracking-wider">
+              <p className="text-[11px] font-bold text-stone-400 uppercase tracking-wider">
                 Seçili tarih aralığında Gelir, Gider ve Net Kar değişimi
               </p>
             </div>
@@ -882,7 +882,7 @@ export const IncomeExpenseChartReport: React.FC = () => {
                 <BarChart2 className="text-blue-500" size={16} />
                 Dönemsel Gelir ve Gider Karşılaştırması
               </h3>
-              <p className="text-[10px] font-bold text-stone-400 uppercase tracking-wider">
+              <p className="text-[11px] font-bold text-stone-400 uppercase tracking-wider">
                 Her dönem dilimi için doğrudan Gelir ve Gider sütun kıyası
               </p>
             </div>
@@ -926,7 +926,7 @@ export const IncomeExpenseChartReport: React.FC = () => {
                 <PieChart className="text-rose-500" size={16} />
                 Gider Kategorileri Dağılımı
               </h3>
-              <p className="text-[10px] font-bold text-stone-400 uppercase tracking-wider mb-4">
+              <p className="text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-4">
                 Toplam Giderin harcama kalemlerine göre dağılımı
               </p>
             </div>
@@ -973,7 +973,7 @@ export const IncomeExpenseChartReport: React.FC = () => {
                         </div>
                         <div className="flex items-center gap-3">
                           <span className="font-mono font-black text-stone-100">{formatCurrency(item.value, userProfile?.currency || 'TRY')}</span>
-                          <span className="text-[10px] font-bold text-rose-400 px-1.5 py-0.5 rounded bg-rose-500/10 font-mono">%{pct}</span>
+                          <span className="text-[11px] font-bold text-rose-400 px-1.5 py-0.5 rounded bg-rose-500/10 font-mono">%{pct}</span>
                         </div>
                       </div>
                     );
@@ -990,7 +990,7 @@ export const IncomeExpenseChartReport: React.FC = () => {
                 <PieChart className="text-emerald-500" size={16} />
                 Gelir Kaynakları Dağılımı
               </h3>
-              <p className="text-[10px] font-bold text-stone-400 uppercase tracking-wider mb-4">
+              <p className="text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-4">
                 Toplam Gelirin tahsilat ve satış kanallarına göre dağılımı
               </p>
             </div>
@@ -1037,7 +1037,7 @@ export const IncomeExpenseChartReport: React.FC = () => {
                         </div>
                         <div className="flex items-center gap-3">
                           <span className="font-mono font-black text-stone-100">{formatCurrency(item.value, userProfile?.currency || 'TRY')}</span>
-                          <span className="text-[10px] font-bold text-emerald-400 px-1.5 py-0.5 rounded bg-emerald-500/10 font-mono">%{pct}</span>
+                          <span className="text-[11px] font-bold text-emerald-400 px-1.5 py-0.5 rounded bg-emerald-500/10 font-mono">%{pct}</span>
                         </div>
                       </div>
                     );
@@ -1092,7 +1092,7 @@ export const IncomeExpenseChartReport: React.FC = () => {
           {/* Table */}
           <div className="overflow-x-auto rounded-2xl border border-white/5">
             <table className="w-full text-left text-xs">
-              <thead className="bg-stone-950 text-stone-400 text-[10px] uppercase tracking-wider font-extrabold border-b border-white/5">
+              <thead className="bg-stone-950 text-stone-400 text-[11px] uppercase tracking-wider font-extrabold border-b border-white/5">
                 <tr>
                   <th className="p-3">Tarih</th>
                   <th className="p-3">Tür</th>
@@ -1115,7 +1115,7 @@ export const IncomeExpenseChartReport: React.FC = () => {
                         {format(tx.date, 'dd.MM.yyyy HH:mm')}
                       </td>
                       <td className="p-3">
-                        <span className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider ${
+                        <span className={`px-2 py-0.5 rounded-md text-[11px] font-black uppercase tracking-wider ${
                           tx.type === 'INCOME' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
                         }`}>
                           {tx.type === 'INCOME' ? 'GELİR' : 'GİDER'}

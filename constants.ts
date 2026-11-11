@@ -3,6 +3,16 @@ import { Pesticide, PesticideCategory } from './types';
 
 export const APP_NAME = "Mühendis Kayıt Sistemi";
 
+/** Uygulama sürümü (public/version.json ile aynı tutulmalı). */
+export const APP_VERSION = '8.2.1';
+export const APP_VERSION_LABEL = `v${APP_VERSION} Kurumsal`;
+
+/** Destek hattı WhatsApp numarası (uluslararası biçim, + olmadan). */
+export const SUPPORT_WHATSAPP = '905428254087';
+
+/** Marka amblem zemini (logo.svg / PNG ikonların arka planı). theme-color ise aktif temanın zemin rengidir. */
+export const BRAND_BG = '#080D14';
+
 export const MOCK_PESTICIDES: Pesticide[] = [
   // --- SYNGENTA ---
   { id: 'syn-1', name: 'Amistar Trio', activeIngredient: 'Azoxystrobin + Propiconazole + Cyproconazole', defaultDosage: '60 ml/da', category: PesticideCategory.FUNGICIDE, description: 'Buğdayda pas ve külleme hastalıkları için sistemik çözüm.' },

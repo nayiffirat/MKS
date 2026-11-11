@@ -18,15 +18,21 @@ interface PaymentsProps {
 export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
     const { 
         myPayments, updateMyPayment, deleteMyPayment, addMyPayment,
+        addSupplierPayment,
         showToast, hapticFeedback, userProfile, stats,
         farmers, suppliers, t
     } = useAppViewModel();
     const [searchTerm, setSearchTerm] = useState('');
     const [filter, setFilter] = useState<'ALL' | 'PENDING' | 'PAID'>('ALL');
+    const [portfolioFilter, setPortfolioFilter] = useState<'ALL' | 'PORTFOLIO' | 'ENDORSED' | 'BOUNCED'>('ALL');
     const [activeTab, setActiveTab] = useState<'RECEIVABLES' | 'PAYABLES'>('RECEIVABLES');
     const [paymentToDelete, setPaymentToDelete] = useState<string | null>(null);
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
+    const [endorseTargetPayment, setEndorseTargetPayment] = useState<MyPayment | null>(null);
+    const [selectedEndorseSupplierId, setSelectedEndorseSupplierId] = useState('');
+    const [endorseNote, setEndorseNote] = useState('');
+    const [isEndorsing, setIsEndorsing] = useState(false);
     const [newPayment, setNewPayment] = useState({
         type: 'CHECK' as MyPayment['type'],
         amount: '',
@@ -34,7 +40,10 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
         note: '',
         targetId: '', // farmerId or supplierId
         targetName: '', // custom name if not selected from list
-        isManualTarget: false
+        isManualTarget: false,
+        checkSerialNo: '',
+        bankName: '',
+        drawerName: ''
     });
 
     const handleAddPayment = async () => {
@@ -57,6 +66,10 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
             type: newPayment.type,
             status: 'PENDING',
             note: newPayment.note,
+            checkSerialNo: newPayment.checkSerialNo.trim() || undefined,
+            bankName: newPayment.bankName.trim() || undefined,
+            drawerName: newPayment.drawerName.trim() || undefined,
+            portfolioStatus: activeTab === 'RECEIVABLES' ? 'PORTFOLIO' : 'ISSUED',
         };
 
         if (activeTab === 'RECEIVABLES') {
@@ -90,7 +103,10 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
                 note: '',
                 targetId: '',
                 targetName: '',
-                isManualTarget: false
+                isManualTarget: false,
+                checkSerialNo: '',
+                bankName: '',
+                drawerName: ''
             });
         } catch (error) {
             console.error('Add payment error:', error);
@@ -180,13 +196,87 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
 
     const handleTogglePaid = async (payment: MyPayment) => {
         const newStatus = payment.status === 'PAID' ? 'PENDING' : 'PAID';
-        await updateMyPayment({ ...payment, status: newStatus });
         const isReceivable = !!payment.farmerId || !!payment.farmerName;
+        const nextPortfolioStatus =
+            payment.portfolioStatus === 'ENDORSED'
+                ? 'ENDORSED'
+                : newStatus === 'PAID'
+                    ? (isReceivable ? 'COLLECTED' : 'ISSUED')
+                    : (isReceivable ? 'PORTFOLIO' : 'ISSUED');
+        await updateMyPayment({ ...payment, status: newStatus, portfolioStatus: nextPortfolioStatus });
         const msg = newStatus === 'PAID' 
             ? (isReceivable ? 'Tahsil edildi olarak işaretlendi' : 'Ödeme ödendi olarak işaretlendi')
             : 'Bekliyor olarak işaretlendi';
         showToast(msg, 'success');
         hapticFeedback('success');
+    };
+
+    const handleToggleBounced = async (payment: MyPayment) => {
+        const isCurrentlyBounced = payment.portfolioStatus === 'BOUNCED';
+        await updateMyPayment({
+            ...payment,
+            status: 'PENDING',
+            portfolioStatus: isCurrentlyBounced ? 'PORTFOLIO' : 'BOUNCED'
+        });
+        showToast(isCurrentlyBounced ? 'Portföye geri alındı' : 'Karşılıksız / Protestolu olarak işaretlendi', isCurrentlyBounced ? 'info' : 'error');
+        hapticFeedback('warning');
+    };
+
+    const handleConfirmEndorse = async () => {
+        if (!endorseTargetPayment || !selectedEndorseSupplierId || isEndorsing) return;
+        if (
+            endorseTargetPayment.status === 'PAID' ||
+            endorseTargetPayment.portfolioStatus === 'BOUNCED' ||
+            endorseTargetPayment.portfolioStatus === 'ENDORSED' ||
+            endorseTargetPayment.portfolioStatus === 'COLLECTED'
+        ) {
+            showToast('Tahsil edilmiş, karşılıksız veya zaten ciro edilmiş evrak tekrar ciro edilemez', 'error');
+            return;
+        }
+        const supplier = suppliers.find(s => s.id === selectedEndorseSupplierId);
+        if (!supplier) {
+            showToast('Lütfen ciro edilecek tedarikçiyi seçin', 'error');
+            return;
+        }
+        try {
+            setIsEndorsing(true);
+            const docLabel = endorseTargetPayment.type === 'PROMISSORY_NOTE' ? 'Senedi' : 'Çeki';
+            const serialPart = endorseTargetPayment.checkSerialNo ? ` • Seri No: ${endorseTargetPayment.checkSerialNo}` : '';
+            const bankPart = endorseTargetPayment.bankName ? ` • ${endorseTargetPayment.bankName}` : '';
+            const duePart = ` • Vade: ${new Date(endorseTargetPayment.dueDate).toLocaleDateString('tr-TR')}`;
+            const extraNote = endorseNote.trim() ? ` (${endorseNote.trim()})` : '';
+
+            await addSupplierPayment({
+                supplierId: supplier.id,
+                amount: endorseTargetPayment.amount,
+                date: new Date().toISOString(),
+                method: 'OTHER',
+                dueDate: endorseTargetPayment.dueDate,
+                isPaid: true,
+                note: `Müşteri ${docLabel} Cirosu: ${endorseTargetPayment.farmerName || 'Müşteri'}${serialPart}${bankPart}${duePart}${extraNote}`
+            });
+
+            await updateMyPayment({
+                ...endorseTargetPayment,
+                status: 'PAID',
+                accountId: undefined,
+                portfolioStatus: 'ENDORSED',
+                endorsedToSupplierId: supplier.id,
+                endorsedToSupplierName: supplier.name,
+                endorsedDate: new Date().toISOString(),
+            });
+
+            showToast(`${docLabel} ${supplier.name} carisine ciro edildi ve borçtan düşüldü`, 'success');
+            hapticFeedback('success');
+            setEndorseTargetPayment(null);
+            setSelectedEndorseSupplierId('');
+            setEndorseNote('');
+        } catch (err) {
+            console.error('Endorse error:', err);
+            showToast('Ciro işlemi sırasında hata oluştu', 'error');
+        } finally {
+            setIsEndorsing(false);
+        }
     };
 
     const handleDelete = async (id: string) => {
@@ -208,13 +298,22 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
     });
 
     const filteredPayments = tabFilteredPayments.filter(p => {
+        const q = searchTerm.toLocaleLowerCase('tr-TR');
         const name = (p.supplierName || p.farmerName || '').toLocaleLowerCase('tr-TR');
-        const matchesSearch = name.includes(searchTerm.toLocaleLowerCase('tr-TR')) || 
-                             (p.note || '').toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR'));
+        const matchesSearch = name.includes(q) || 
+                             (p.note || '').toLocaleLowerCase('tr-TR').includes(q) ||
+                             (p.checkSerialNo || '').toLocaleLowerCase('tr-TR').includes(q) ||
+                             (p.bankName || '').toLocaleLowerCase('tr-TR').includes(q) ||
+                             (p.endorsedToSupplierName || '').toLocaleLowerCase('tr-TR').includes(q);
         const matchesFilter = filter === 'ALL' || 
                              (filter === 'PAID' && p.status === 'PAID') || 
                              (filter === 'PENDING' && p.status === 'PENDING');
-        return matchesSearch && matchesFilter;
+        const effectivePortfolio = p.portfolioStatus || (p.status === 'PAID' ? 'COLLECTED' : 'PORTFOLIO');
+        const matchesPortfolio =
+            activeTab !== 'RECEIVABLES' ||
+            portfolioFilter === 'ALL' ||
+            effectivePortfolio === portfolioFilter;
+        return matchesSearch && matchesFilter && matchesPortfolio;
     });
 
     const pendingCount = tabFilteredPayments.filter(p => p.status === 'PENDING').length;
@@ -223,73 +322,96 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
     return (
         <div className="min-h-screen bg-stone-950 pb-24">
             {/* Header */}
-            <div className="bg-stone-900/50 backdrop-blur-xl border-b border-white/5 sticky top-0 z-30 px-4 py-4">
-                <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-3">
+            <div className="bg-stone-900/50 backdrop-blur-xl border-b border-white/5 sticky top-0 z-30 px-4 py-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2.5 mb-3.5">
+                    <div className="flex items-center gap-2.5 min-w-0">
                         {onBack && (
-                            <button onClick={onBack} className="p-2 bg-stone-800 rounded-xl text-stone-400">
-                                <ArrowLeft size={20} />
+                            <button onClick={onBack} className="p-2 min-h-[40px] min-w-[40px] flex items-center justify-center bg-stone-800 rounded-xl text-stone-300 shrink-0">
+                                <ArrowLeft size={18} />
                             </button>
                         )}
-                        <div>
-                            <h1 className="text-xl font-black text-white tracking-tight">Çek, Senet, Tedye</h1>
-                            <p className="text-[10px] font-bold text-stone-500 uppercase tracking-widest">Müşteri Alacakları ve Ödemelerim</p>
+                        <div className="min-w-0">
+                            <h1 className="text-lg sm:text-xl font-bold text-white tracking-tight truncate">Çek, Senet ve Tahsilat</h1>
+                            <p className="text-xs font-medium text-stone-400 truncate">Müşteri alacakları ve tedarikçi ödemeleri</p>
                         </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                        <button 
-                            onClick={() => setIsAddModalOpen(true)}
-                            className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 text-white rounded-xl font-bold text-xs shadow-lg shadow-emerald-900/20 active:scale-95 transition-all"
-                        >
-                            <Plus size={16} />
-                            Ödeme Ekle
-                        </button>
-                        <div className={`px-3 py-1.5 rounded-full border ${activeTab === 'RECEIVABLES' ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-rose-500/10 border-rose-500/20'}`}>
-                            <span className={`text-[10px] font-black uppercase tracking-widest ${activeTab === 'RECEIVABLES' ? 'text-emerald-500' : 'text-rose-500'}`}>
-                                {pendingCount} Bekleyen
+                    <div className="flex items-center gap-2 shrink-0">
+                        <div className={`px-2.5 py-1.5 rounded-full border ${activeTab === 'RECEIVABLES' ? 'bg-emerald-500/10 border-emerald-500/25' : 'bg-rose-500/10 border-rose-500/25'}`}>
+                            <span className={`text-[11px] font-bold tabular-nums ${activeTab === 'RECEIVABLES' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                {pendingCount} bekleyen
                             </span>
                         </div>
+                        <button 
+                            onClick={() => setIsAddModalOpen(true)}
+                            className="flex items-center gap-1.5 px-3.5 py-2 min-h-[40px] bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs shadow-sm active:scale-95 transition-all"
+                        >
+                            <Plus size={15} />
+                            <span>Ödeme ekle</span>
+                        </button>
                     </div>
                 </div>
 
                 {/* Tabs */}
-                <div className="flex p-1 bg-stone-950/50 backdrop-blur rounded-xl mb-4 border border-white/5 shadow-inner">
+                <div className="grid grid-cols-2 p-1 bg-stone-950/60 backdrop-blur rounded-xl mb-3 border border-white/5">
                     <button 
                         onClick={() => setActiveTab('RECEIVABLES')} 
-                        className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all duration-200 ${activeTab === 'RECEIVABLES' ? 'bg-emerald-600 text-white shadow-md' : 'text-stone-500 hover:text-stone-300'}`}
+                        className={`min-h-[40px] px-2 py-2 text-xs font-bold rounded-lg transition-all duration-200 ${activeTab === 'RECEIVABLES' ? 'bg-emerald-600 text-white shadow-sm' : 'text-stone-400 hover:text-stone-200'}`}
                     >
-                        Müşteri Alacakları
+                        Müşteri alacakları
                     </button>
                     <button 
                         onClick={() => setActiveTab('PAYABLES')} 
-                        className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all duration-200 ${activeTab === 'PAYABLES' ? 'bg-rose-600 text-white shadow-md' : 'text-stone-500 hover:text-stone-300'}`}
+                        className={`min-h-[40px] px-2 py-2 text-xs font-bold rounded-lg transition-all duration-200 ${activeTab === 'PAYABLES' ? 'bg-rose-600 text-white shadow-sm' : 'text-stone-400 hover:text-stone-200'}`}
                     >
-                        Tedarikçi Ödemeleri
+                        Tedarikçi ödemeleri
                     </button>
                 </div>
 
                 {/* Search & Filter */}
                 <div className="flex gap-2">
-                    <div className="relative flex-1">
+                    <div className="relative flex-1 min-w-0">
                         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-500" />
                         <input 
                             type="text"
-                            placeholder="İsim veya not ara..."
+                            placeholder="İsim, banka veya evrak no ara..."
                             value={searchTerm}
                             onChange={e => setSearchTerm(e.target.value)}
-                            className="w-full bg-stone-950 border border-white/5 rounded-xl py-2.5 pl-10 pr-4 text-sm text-white outline-none focus:border-emerald-500/30 transition-all"
+                            className="w-full bg-stone-950 border border-white/10 rounded-xl py-2.5 pl-9 pr-3 text-sm text-white outline-none focus:border-emerald-500/40 transition-all"
                         />
                     </div>
                     <select 
                         value={filter}
                         onChange={e => setFilter(e.target.value as any)}
-                        className="bg-stone-950 border border-white/5 rounded-xl px-3 text-xs font-bold text-stone-400 outline-none"
+                        className="bg-stone-950 border border-white/10 rounded-xl px-3 text-xs font-bold text-stone-300 outline-none shrink-0"
                     >
                         <option value="ALL">Tümü</option>
                         <option value="PENDING">Bekleyen</option>
                         <option value="PAID">Ödenen</option>
                     </select>
                 </div>
+
+                {activeTab === 'RECEIVABLES' && (
+                    <div className="mks-tab-rail mt-3">
+                        {[
+                            { id: 'ALL', label: 'Tüm portföy' },
+                            { id: 'PORTFOLIO', label: 'Portföyde bekleyen' },
+                            { id: 'ENDORSED', label: 'Ciro edilenler' },
+                            { id: 'BOUNCED', label: 'Karşılıksız / Protesto' }
+                        ].map(chip => (
+                            <button
+                                key={chip.id}
+                                onClick={() => setPortfolioFilter(chip.id as any)}
+                                className={`shrink-0 min-h-[38px] px-3.5 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap border transition-all ${
+                                    portfolioFilter === chip.id
+                                        ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                                        : 'bg-stone-950/70 border-white/10 text-stone-400 hover:text-stone-200'
+                                }`}
+                            >
+                                {chip.label}
+                            </button>
+                        ))}
+                    </div>
+                )}
             </div>
 
             <div className="px-4 py-6 space-y-6">
@@ -382,31 +504,65 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
                                                     {new Date(payment.dueDate).toLocaleDateString('tr-TR')}
                                                 </span>
                                             </div>
+                                            {(payment.checkSerialNo || payment.bankName || payment.drawerName || payment.portfolioStatus) && (
+                                                <div className="mt-1.5 flex flex-wrap gap-1.5 items-center">
+                                                    {payment.checkSerialNo && (
+                                                        <span className="px-2 py-0.5 rounded-md bg-stone-800/90 border border-white/10 text-stone-200 text-[10px] font-mono font-bold">
+                                                            #{payment.checkSerialNo}
+                                                        </span>
+                                                    )}
+                                                    {payment.bankName && (
+                                                        <span className="px-2 py-0.5 rounded-md bg-blue-500/10 border border-blue-500/20 text-blue-300 text-[10px] font-bold">
+                                                            {payment.bankName}
+                                                        </span>
+                                                    )}
+                                                    {payment.drawerName && (
+                                                        <span className="px-2 py-0.5 rounded-md bg-stone-800 text-stone-300 text-[10px] font-bold">
+                                                            Keşideci: {payment.drawerName}
+                                                        </span>
+                                                    )}
+                                                    {payment.portfolioStatus === 'ENDORSED' && (
+                                                        <span className="px-2 py-0.5 rounded-md bg-violet-500/15 border border-violet-500/35 text-violet-300 text-[10px] font-bold">
+                                                            Ciro edildi → {payment.endorsedToSupplierName || 'Tedarikçi'}
+                                                        </span>
+                                                    )}
+                                                    {payment.portfolioStatus === 'BOUNCED' && (
+                                                        <span className="px-2 py-0.5 rounded-md bg-rose-500/20 border border-rose-500/40 text-rose-300 text-[10px] font-bold">
+                                                            Karşılıksız / Protesto
+                                                        </span>
+                                                    )}
+                                                    {payment.portfolioStatus === 'PORTFOLIO' && payment.status === 'PENDING' && (payment.type === 'CHECK' || payment.type === 'PROMISSORY_NOTE') && (
+                                                        <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/25 text-emerald-300 text-[10px] font-bold">
+                                                            Portföyde
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            )}
                                             {payment.type === 'DEFERRED_CARD' && (
-                                                <div className="mt-1.5 flex flex-wrap gap-1 items-center">
-                                                    <span className="px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-bold">
-                                                        📅 Bloke Kalkış Tarihi: {new Date(payment.dueDate).toLocaleDateString('tr-TR')}
+                                                <div className="mt-1.5 flex flex-wrap gap-1.5 items-center">
+                                                    <span className="px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-bold">
+                                                        Bloke kalkış: {new Date(payment.dueDate).toLocaleDateString('tr-TR')}
                                                     </span>
                                                     {payment.status === 'PAID' ? (
-                                                        <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 text-[9px] font-bold border border-emerald-500/30">
-                                                            ✓ Bloke Kalktı (Otomatik Tahsil Edildi)
+                                                        <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 text-[10px] font-bold border border-emerald-500/30">
+                                                            Bloke kalktı (tahsil edildi)
                                                         </span>
                                                     ) : (
-                                                        <span className="px-2 py-0.5 rounded-md bg-stone-800 text-stone-400 text-[9px] font-bold">
-                                                            ⏳ Bloke Bekliyor
+                                                        <span className="px-2 py-0.5 rounded-md bg-stone-800 text-stone-400 text-[10px] font-bold">
+                                                            Bloke bekliyor
                                                         </span>
                                                     )}
                                                 </div>
                                             )}
                                         </div>
                                     </div>
-                                    <div className="text-right">
-                                        <div className="text-lg font-black text-white tracking-tight">
+                                    <div className="text-right shrink-0">
+                                        <div className="text-lg font-black text-white tracking-tight tabular-nums">
                                             {formatCurrency(payment.amount, userProfile?.currency || 'TRY')}
                                         </div>
                                         <div className="flex items-center justify-end gap-1 mt-0.5">
-                                            <Clock size={10} className="text-stone-600" />
-                                            <span className="text-[9px] font-bold text-stone-600 uppercase">
+                                            <Clock size={10} className="text-stone-500" />
+                                            <span className="text-[10px] font-semibold text-stone-400 tabular-nums">
                                                 Vade: {new Date(payment.dueDate).toLocaleDateString('tr-TR')}
                                             </span>
                                         </div>
@@ -414,36 +570,65 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
                                 </div>
 
                                 {payment.note && (
-                                    <div className="bg-stone-950/50 p-2 rounded-lg mb-4">
-                                        <p className="text-[11px] text-stone-400 italic">"{payment.note}"</p>
+                                    <div className="bg-stone-950/50 p-2.5 rounded-xl mb-3">
+                                        <p className="text-xs text-stone-300 italic">"{payment.note}"</p>
                                     </div>
                                 )}
 
-                                <div className="flex items-center gap-2 pt-2 border-t border-white/5">
+                                <div className="flex flex-wrap items-center gap-2 pt-2.5 border-t border-white/5">
                                     <button 
                                         onClick={() => handleTogglePaid(payment)}
-                                        className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
+                                        className={`flex-1 min-w-[140px] min-h-[40px] px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
                                             payment.status === 'PAID'
-                                            ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20'
-                                            : 'bg-stone-800 text-stone-400 border border-white/5 hover:bg-stone-700'
+                                            ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                                            : 'bg-stone-800 text-stone-200 border border-white/10 hover:bg-stone-700'
                                         }`}
                                     >
                                         {payment.status === 'PAID' ? <CheckCircle2 size={14} /> : <Check size={14} />}
-                                        {payment.status === 'PAID' 
-                                            ? (payment.farmerId || payment.farmerName ? 'TAHSİL EDİLDİ' : 'ÖDENDİ') 
-                                            : (payment.farmerId || payment.farmerName ? 'TAHSİL EDİLDİ İŞARETLE' : 'ÖDENDİ İŞARETLE')}
+                                        {payment.portfolioStatus === 'ENDORSED'
+                                            ? 'Ciro edildi'
+                                            : payment.status === 'PAID' 
+                                                ? (payment.farmerId || payment.farmerName ? 'Tahsil edildi' : 'Ödendi') 
+                                                : (payment.farmerId || payment.farmerName ? 'Tahsil edildi işaretle' : 'Ödendi işaretle')}
                                     </button>
+                                    {(payment.farmerId || payment.farmerName) && (payment.type === 'CHECK' || payment.type === 'PROMISSORY_NOTE') && payment.status === 'PENDING' && payment.portfolioStatus !== 'ENDORSED' && payment.portfolioStatus !== 'BOUNCED' && payment.portfolioStatus !== 'COLLECTED' && (
+                                        <button
+                                            onClick={() => {
+                                                setEndorseTargetPayment(payment);
+                                                setSelectedEndorseSupplierId(suppliers[0]?.id || '');
+                                                setEndorseNote('');
+                                            }}
+                                            className="min-h-[40px] px-3.5 py-2 bg-violet-500/15 text-violet-300 font-bold text-xs rounded-xl hover:bg-violet-500/25 transition-all border border-violet-500/30"
+                                            title="Müşteri çekini/senedini tedarikçiye ciro et ve borçtan düş"
+                                        >
+                                            Ciro et
+                                        </button>
+                                    )}
+                                    {(payment.farmerId || payment.farmerName) && (payment.type === 'CHECK' || payment.type === 'PROMISSORY_NOTE') && payment.portfolioStatus !== 'ENDORSED' && (
+                                        <button
+                                            onClick={() => handleToggleBounced(payment)}
+                                            className={`min-h-[40px] px-3 py-2 font-bold text-xs rounded-xl transition-all border flex items-center gap-1 ${
+                                                payment.portfolioStatus === 'BOUNCED'
+                                                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                                                    : 'bg-stone-800 text-stone-300 border-white/10 hover:text-rose-400'
+                                            }`}
+                                            title="Karşılıksız / Protestolu İşaretle"
+                                        >
+                                            <AlertCircle size={14} />
+                                            <span className="hidden sm:inline">Protesto</span>
+                                        </button>
+                                    )}
                                     {(payment.farmerId || payment.farmerName) && (
                                         <button 
                                             onClick={() => handleSendReceipt(payment)}
-                                            className="px-4 py-2 bg-emerald-500/10 text-emerald-500 font-bold text-xs uppercase tracking-widest rounded-xl hover:bg-emerald-500/20 transition-all border border-emerald-500/20 flex flex-col items-center justify-center"
+                                            className="min-h-[40px] px-3.5 py-2 bg-emerald-500/10 text-emerald-400 font-bold text-xs rounded-xl hover:bg-emerald-500/20 transition-all border border-emerald-500/20 flex items-center justify-center"
                                         >
-                                            MAKBUZ
+                                            Makbuz
                                         </button>
                                     )}
                                     <button 
                                         onClick={() => handleDelete(payment.id)}
-                                        className="p-2 bg-stone-800 text-stone-500 rounded-xl hover:bg-rose-500/10 hover:text-rose-500 transition-all border border-white/5"
+                                        className="min-h-[40px] min-w-[40px] p-2 bg-stone-800 text-stone-400 rounded-xl hover:bg-rose-500/10 hover:text-rose-500 transition-all border border-white/10 flex items-center justify-center"
                                     >
                                         <Trash2 size={16} />
                                     </button>
@@ -560,6 +745,41 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
                                 </div>
                             </div>
 
+                            {(newPayment.type === 'CHECK' || newPayment.type === 'PROMISSORY_NOTE') && (
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 bg-stone-950/60 p-3 rounded-2xl border border-white/5">
+                                    <div>
+                                        <label className="text-[9px] font-black text-stone-500 uppercase tracking-widest ml-1 mb-1 block">Seri / Evrak No</label>
+                                        <input
+                                            type="text"
+                                            placeholder="Örn: CK-849201"
+                                            value={newPayment.checkSerialNo}
+                                            onChange={(e) => setNewPayment({ ...newPayment, checkSerialNo: e.target.value })}
+                                            className="w-full bg-stone-900 border border-white/5 rounded-xl p-2.5 text-xs font-mono text-stone-100 outline-none focus:border-emerald-500/50"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-[9px] font-black text-stone-500 uppercase tracking-widest ml-1 mb-1 block">Banka / Şube</label>
+                                        <input
+                                            type="text"
+                                            placeholder="Örn: Ziraat Bankası"
+                                            value={newPayment.bankName}
+                                            onChange={(e) => setNewPayment({ ...newPayment, bankName: e.target.value })}
+                                            className="w-full bg-stone-900 border border-white/5 rounded-xl p-2.5 text-xs text-stone-100 outline-none focus:border-emerald-500/50"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-[9px] font-black text-stone-500 uppercase tracking-widest ml-1 mb-1 block">Keşideci Adı</label>
+                                        <input
+                                            type="text"
+                                            placeholder="Asıl borçlu (opsiyonel)"
+                                            value={newPayment.drawerName}
+                                            onChange={(e) => setNewPayment({ ...newPayment, drawerName: e.target.value })}
+                                            className="w-full bg-stone-900 border border-white/5 rounded-xl p-2.5 text-xs text-stone-100 outline-none focus:border-emerald-500/50"
+                                        />
+                                    </div>
+                                </div>
+                            )}
+
                             <div>
                                 <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest ml-1 mb-1.5 block">Not</label>
                                 <textarea
@@ -584,6 +804,94 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
                                 className="flex-1 py-4 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-2xl font-bold text-sm active:scale-95 transition-all shadow-lg shadow-emerald-900/20"
                             >
                                 {isSubmittingPayment ? 'Kaydediliyor...' : 'Kaydet'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Endorse Check/Promissory Note to Supplier Modal (#26) */}
+            {endorseTargetPayment && (
+                <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="bg-stone-900 border border-violet-500/30 w-full max-w-md rounded-3xl p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+                        <div className="flex items-center justify-between mb-4">
+                            <div>
+                                <h3 className="text-lg font-bold text-stone-100">Tedarikçiye Ciro Et</h3>
+                                <p className="text-xs text-stone-400 mt-0.5">
+                                    Müşteri evrakı seçilen tedarikçi carisinden otomatik düşülür
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setEndorseTargetPayment(null)}
+                                className="p-2 bg-stone-800 rounded-full text-stone-400 hover:text-white"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        <div className="bg-stone-950 border border-white/5 rounded-2xl p-4 mb-4 space-y-1">
+                            <div className="flex justify-between items-center">
+                                <span className="text-xs font-bold text-stone-400">{endorseTargetPayment.farmerName || 'Müşteri'}</span>
+                                <span className="text-base font-black text-violet-300 font-mono">
+                                    {formatCurrency(endorseTargetPayment.amount, userProfile?.currency || 'TRY')}
+                                </span>
+                            </div>
+                            <div className="text-[11px] text-stone-500">
+                                Vade: {new Date(endorseTargetPayment.dueDate).toLocaleDateString('tr-TR')}
+                                {endorseTargetPayment.checkSerialNo ? ` • No: ${endorseTargetPayment.checkSerialNo}` : ''}
+                                {endorseTargetPayment.bankName ? ` • ${endorseTargetPayment.bankName}` : ''}
+                            </div>
+                        </div>
+
+                        {suppliers.length === 0 ? (
+                            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-amber-300 text-xs font-bold mb-4">
+                                Ciro yapılacak kayıtlı tedarikçi bulunamadı. Önce Tedarikçiler ekranından firma ekleyin.
+                            </div>
+                        ) : (
+                            <div className="space-y-3 mb-5">
+                                <div>
+                                    <label className="text-[10px] font-black text-stone-400 uppercase tracking-widest ml-1 mb-1.5 block">
+                                        Ciro Edilecek Tedarikçi *
+                                    </label>
+                                    <select
+                                        value={selectedEndorseSupplierId}
+                                        onChange={(e) => setSelectedEndorseSupplierId(e.target.value)}
+                                        className="w-full bg-stone-950 border border-white/10 rounded-2xl p-3.5 text-sm text-stone-100 outline-none focus:border-violet-500/50"
+                                    >
+                                        <option value="">Tedarikçi Seçiniz...</option>
+                                        {suppliers.map(s => (
+                                            <option key={s.id} value={s.id}>{s.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-black text-stone-400 uppercase tracking-widest ml-1 mb-1.5 block">
+                                        Ciro Açıklaması (Opsiyonel)
+                                    </label>
+                                    <input
+                                        type="text"
+                                        placeholder="Örn: Gübre faturası mahsuben teslim edildi"
+                                        value={endorseNote}
+                                        onChange={(e) => setEndorseNote(e.target.value)}
+                                        className="w-full bg-stone-950 border border-white/10 rounded-2xl p-3 text-xs text-stone-100 outline-none focus:border-violet-500/50"
+                                    />
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => setEndorseTargetPayment(null)}
+                                className="flex-1 py-3.5 bg-stone-800 text-stone-300 rounded-2xl font-bold text-xs"
+                            >
+                                Vazgeç
+                            </button>
+                            <button
+                                disabled={isEndorsing || !selectedEndorseSupplierId || suppliers.length === 0}
+                                onClick={handleConfirmEndorse}
+                                className="flex-1 py-3.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white rounded-2xl font-black text-xs uppercase tracking-wider shadow-lg shadow-violet-900/30"
+                            >
+                                {isEndorsing ? 'Ciro İşleniyor...' : 'Ciroyu Onayla'}
                             </button>
                         </div>
                     </div>

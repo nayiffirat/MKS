@@ -2,11 +2,13 @@
 import React, { useState, useMemo } from 'react';
 import { useAppViewModel } from '../context/AppContext';
 import { Expense } from '../types';
-import { Plus, Trash2, Receipt, Calendar, Tag, ChevronLeft, AlertCircle, TrendingDown, User, Edit2, X, ChevronRight } from 'lucide-react';
+import { Plus, Trash2, Receipt, Calendar, Tag, ChevronLeft, AlertCircle, TrendingDown, User, Edit2, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { formatCurrency, getCurrencySymbol } from '../utils/currency';
 import { ConfirmationModal } from './ConfirmationModal';
 import { EmptyState } from './EmptyState';
+import { ModalCloseButton } from './ModalCloseButton';
+import { useBackHandler } from '../utils/navigationManager';
 
 interface ExpensesProps {
   onBack: () => void;
@@ -29,6 +31,10 @@ export const ExpensesScreen: React.FC<ExpensesProps> = ({ onBack }) => {
   const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+
+  useBackHandler(isAddModalOpen, () => setIsAddModalOpen(false), 'Expenses_add', 50);
+  useBackHandler(!!selectedExpense && !editingExpense, () => setSelectedExpense(null), 'Expenses_detail', 50);
+  useBackHandler(!!editingExpense, () => setEditingExpense(null), 'Expenses_edit', 50);
   
   const [newExpense, setNewExpense] = useState<Omit<Expense, 'id'>>({
     title: '',
@@ -142,7 +148,7 @@ export const ExpensesScreen: React.FC<ExpensesProps> = ({ onBack }) => {
   };
 
   return (
-    <div className="min-h-screen bg-stone-950 text-stone-100 pb-24">
+    <div className="min-h-dvh bg-stone-950 text-stone-100 pb-24">
       {/* Header */}
       <div className="sticky top-0 z-30 bg-stone-950/80 backdrop-blur-md border-b border-stone-800 px-4 py-4 flex items-center gap-4">
         <button 
@@ -261,7 +267,7 @@ export const ExpensesScreen: React.FC<ExpensesProps> = ({ onBack }) => {
                         <Calendar size={12} />
                         {new Date(expense.date).toLocaleDateString('tr-TR')}
                       </span>
-                      <span className="flex items-center bg-stone-800/50 px-1.5 py-0.5 rounded text-[10px] font-bold text-stone-400">
+                      <span className="flex items-center bg-stone-800/50 px-1.5 py-0.5 rounded text-[11px] font-bold text-stone-400">
                         <User size={10} className="mr-1" />
                         {expense.createdById ? (teamMembers.find(m => m.id === expense.createdById)?.fullName || 'Yönetici') : 'Yönetici'}
                       </span>
@@ -294,17 +300,12 @@ export const ExpensesScreen: React.FC<ExpensesProps> = ({ onBack }) => {
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
-              className="relative w-full max-w-lg bg-stone-900 rounded-t-[2rem] sm:rounded-[2rem] border border-stone-800 shadow-2xl overflow-hidden"
+              className="relative w-full max-w-lg bg-stone-900 rounded-t-[2rem] sm:rounded-[2rem] border border-stone-800 shadow-2xl overflow-y-auto max-h-[90dvh] custom-scrollbar"
             >
               <div className="p-6">
                 <div className="flex items-center justify-between mb-6">
                   <h2 className="text-2xl font-black">Yeni Gider Kaydı</h2>
-                  <button 
-                    onClick={() => setIsAddModalOpen(false)}
-                    className="p-2 hover:bg-stone-800 rounded-full"
-                  >
-                    <Plus size={24} className="rotate-45" />
-                  </button>
+                  <ModalCloseButton onClick={() => setIsAddModalOpen(false)} />
                 </div>
 
                 <form onSubmit={handleAddExpense} className="space-y-4">
@@ -370,7 +371,7 @@ export const ExpensesScreen: React.FC<ExpensesProps> = ({ onBack }) => {
                           key={cat.id}
                           type="button"
                           onClick={() => setNewExpense({...newExpense, category: cat.id as any})}
-                          className={`py-2 px-1 rounded-xl text-[10px] font-bold border transition-all ${
+                          className={`py-2 px-1 rounded-xl text-[11px] font-bold border transition-all ${
                             newExpense.category === cat.id 
                               ? 'bg-emerald-600 border-emerald-500 text-white' 
                               : 'bg-stone-950 border-stone-800 text-stone-500 hover:border-stone-700'
@@ -426,12 +427,7 @@ export const ExpensesScreen: React.FC<ExpensesProps> = ({ onBack }) => {
               <div className="p-6">
                 <div className="flex items-center justify-between mb-6">
                   <h3 className="text-xl font-bold text-white">Gider Detayı</h3>
-                  <button 
-                    onClick={() => setSelectedExpense(null)}
-                    className="p-2 bg-stone-800 hover:bg-stone-700 rounded-full text-stone-400 hover:text-white transition-colors"
-                  >
-                    <X size={20} />
-                  </button>
+                  <ModalCloseButton onClick={() => setSelectedExpense(null)} />
                 </div>
 
                 <div className="space-y-6">
@@ -530,16 +526,11 @@ export const ExpensesScreen: React.FC<ExpensesProps> = ({ onBack }) => {
               initial={{ opacity: 0, y: 100, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 100, scale: 0.95 }}
-              className="relative w-full max-w-md bg-stone-900 border border-stone-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+              className="relative w-full max-w-md bg-stone-900 border border-stone-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90dvh]"
             >
               <div className="p-6 border-b border-stone-800 flex justify-between items-center bg-stone-900/50 backdrop-blur-md sticky top-0 z-10">
                 <h3 className="text-xl font-bold text-white">Gideri Düzenle</h3>
-                <button 
-                  onClick={() => setEditingExpense(null)}
-                  className="p-2 bg-stone-800 hover:bg-stone-700 rounded-full text-stone-400 hover:text-white transition-colors"
-                >
-                  <X size={20} />
-                </button>
+                <ModalCloseButton onClick={() => setEditingExpense(null)} />
               </div>
               
               <div className="p-6 overflow-y-auto custom-scrollbar">
@@ -609,7 +600,7 @@ export const ExpensesScreen: React.FC<ExpensesProps> = ({ onBack }) => {
                           key={cat.id}
                           type="button"
                           onClick={() => setEditingExpense({...editingExpense, category: cat.id as any})}
-                          className={`py-2 px-1 rounded-xl text-[10px] font-bold border transition-all ${
+                          className={`py-2 px-1 rounded-xl text-[11px] font-bold border transition-all ${
                             editingExpense.category === cat.id 
                               ? 'bg-emerald-600 border-emerald-500 text-white' 
                               : 'bg-stone-950 border-stone-800 text-stone-500 hover:border-stone-700'

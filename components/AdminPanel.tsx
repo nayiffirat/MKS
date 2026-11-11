@@ -6,6 +6,26 @@ import { ConfirmationModal } from './ConfirmationModal';
 import { ListSkeleton } from './Skeleton';
 import { EmptyState } from './EmptyState';
 import { dbService } from '../services/db';
+import { useBackHandler } from '../utils/navigationManager';
+import {
+    MKS_FEATURE_CATALOG,
+    DEFAULT_FEATURE_MATRIX,
+    DEFAULT_SUBSCRIPTION_PLANS,
+    getFeatureMatrix,
+    getSubscriptionPlans,
+    saveSubscriptionConfigToCloud,
+    syncSubscriptionConfigFromCloud,
+    SubscriptionTierId,
+    FeatureKey,
+    TierFeatureMatrix,
+    SubscriptionPlanDefinition
+} from '../utils/subscriptionManager';
+import { Crown, CheckCircle2, Lock, RotateCcw, Download } from 'lucide-react';
+import {
+    publishCloudReleaseToAllDevices,
+    getCloudReleaseManifest
+} from '../utils/desktopUpdateManager';
+import { MKS_CLIENT_BUILD, MKS_CLIENT_VERSION } from '../utils/smartNotificationEngine';
 
 interface AdminPanelProps {
     onBack: () => void;
@@ -13,18 +33,98 @@ interface AdminPanelProps {
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     const { getAllUsers, updateUserSubscription, deleteUser, sendPasswordReset, showToast, hapticFeedback, news, addNews, updateNews, deleteNews, refreshNews } = useAppViewModel();
-    const [activeTab, setActiveTab] = useState<'USERS' | 'ERRORS' | 'NEWS'>('USERS');
-    const [users, setUsers] = useState<(UserProfile & { uid: string, email?: string })[]>([]);
+    const [activeTab, setActiveTab] = useState<'USERS' | 'PLANS_MATRIX' | 'ERRORS' | 'NEWS'>('USERS');
+    const [users, setUsers] = useState<(UserProfile & { uid: string, email?: string, subscriptionTier?: SubscriptionTierId })[]>([]);
     const [systemErrors, setSystemErrors] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [userFilter, setUserFilter] = useState<'ALL' | 'trial' | 'active' | 'expired'>('ALL');
-    const [editingUser, setEditingUser] = useState<(UserProfile & { uid: string, email?: string }) | null>(null);
+    const [editingUser, setEditingUser] = useState<(UserProfile & { uid: string, email?: string, subscriptionTier?: SubscriptionTierId }) | null>(null);
     const [editingNews, setEditingNews] = useState<Partial<News> | null>(null);
     const fileInputRef = React.useRef<HTMLInputElement>(null);
     const [isSaving, setIsSaving] = useState(false);
     const [isSyncing, setIsSyncing] = useState(false);
     const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+    const [featureMatrix, setFeatureMatrix] = useState<TierFeatureMatrix>(() => getFeatureMatrix());
+    const [editablePlans, setEditablePlans] = useState<SubscriptionPlanDefinition[]>(() => getSubscriptionPlans());
+    const [isSavingMatrix, setIsSavingMatrix] = useState(false);
+    const [releaseVersionInput, setReleaseVersionInput] = useState(MKS_CLIENT_VERSION);
+    const [releaseBuildInput, setReleaseBuildInput] = useState<number>(MKS_CLIENT_BUILD + 1);
+    const [releaseNotesInput, setReleaseNotesInput] = useState('Masaüstü ve web için yeni özellikler ile sistem iyileştirmeleri hazır.');
+    const [isPublishingRelease, setIsPublishingRelease] = useState(false);
+
+    useEffect(() => {
+        getCloudReleaseManifest().then(remote => {
+            if (remote && remote.build) {
+                setReleaseVersionInput(remote.version || MKS_CLIENT_VERSION);
+                setReleaseBuildInput(Math.max(MKS_CLIENT_BUILD + 1, Number(remote.build) + 1));
+                if (remote.notes) setReleaseNotesInput(remote.notes);
+            }
+        }).catch(() => {});
+    }, []);
+
+    const handlePublishDesktopAndWebUpdate = async () => {
+        setIsPublishingRelease(true);
+        hapticFeedback('medium');
+        try {
+            const ok = await publishCloudReleaseToAllDevices({
+                version: releaseVersionInput,
+                build: releaseBuildInput,
+                notes: releaseNotesInput
+            });
+            if (ok) {
+                showToast(`MKS v${releaseVersionInput} (Yapı ${releaseBuildInput}) güncelleme butonu tüm açık Masaüstü ve Web uygulamalarına gönderildi!`, 'success');
+                setReleaseBuildInput(prev => prev + 1);
+                hapticFeedback('success');
+            } else {
+                showToast('Bulut sürüm sinyali gönderilemedi, bağlantınızı kontrol edin.', 'error');
+            }
+        } finally {
+            setIsPublishingRelease(false);
+        }
+    };
+
+    useBackHandler(!!editingUser, () => setEditingUser(null), 'admin_edit_user', 60);
+    useBackHandler(!!editingNews, () => setEditingNews(null), 'admin_edit_news', 60);
+
+    const handleToggleMatrixFeature = (tier: SubscriptionTierId, key: FeatureKey) => {
+        setFeatureMatrix(prev => ({
+            ...prev,
+            [tier]: {
+                ...prev[tier],
+                [key]: !prev[tier]?.[key]
+            }
+        }));
+    };
+
+    const handleUpdatePlanPrice = (tier: SubscriptionTierId, field: 'monthlyPriceTRY' | 'yearlyPriceTRY', val: number) => {
+        setEditablePlans(prev =>
+            prev.map(p => (p.id === tier ? { ...p, [field]: Math.max(0, val) } : p))
+        );
+    };
+
+    const handleSaveMatrixToCloud = async () => {
+        setIsSavingMatrix(true);
+        hapticFeedback('medium');
+        try {
+            const ok = await saveSubscriptionConfigToCloud(featureMatrix, editablePlans);
+            setEditablePlans(getSubscriptionPlans());
+            if (ok) {
+                showToast('Paket fiyatları ve özellik yetki matrisi tüm cihazlara yayınlandı!', 'success');
+                hapticFeedback('success');
+            } else {
+                showToast('Matris bu cihaza kaydedildi (Bulut senkronizasyonu bekleniyor).', 'info');
+            }
+        } finally {
+            setIsSavingMatrix(false);
+        }
+    };
+
+    const handleResetMatrixDefaults = () => {
+        setFeatureMatrix(DEFAULT_FEATURE_MATRIX);
+        setEditablePlans(DEFAULT_SUBSCRIPTION_PLANS);
+        showToast('Varsayılan PRO (Reklamlı) / ULTRA / MAX ayarları yüklendi. Kaydet butonuna basınız.', 'info');
+    };
 
     const handleSyncNews = async () => {
         setIsSyncing(true);
@@ -73,6 +173,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     useEffect(() => {
         loadUsers();
         loadErrors();
+        syncSubscriptionConfigFromCloud().then(() => {
+            setFeatureMatrix(getFeatureMatrix());
+            setEditablePlans(getSubscriptionPlans());
+        });
     }, []);
 
     const loadUsers = async (showSuccessFeedback = false) => {
@@ -123,10 +227,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                 companyName: editingUser.companyName,
                 title: editingUser.title,
                 role: editingUser.role,
-                password: editingUser.password,
                 subscriptionStatus: editingUser.subscriptionStatus,
-                subscriptionEndsAt: editingUser.subscriptionEndsAt
-            });
+                subscriptionEndsAt: editingUser.subscriptionEndsAt,
+                subscriptionTier: editingUser.subscriptionTier || 'PRO'
+            } as any);
             showToast('Kullanıcı güncellendi.', 'success');
             hapticFeedback('success');
             setEditingUser(null);
@@ -272,25 +376,78 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
             </div>
 
             {/* Tabs */}
-            <div className="flex bg-stone-900/50 p-1 rounded-2xl border border-white/5">
+            <div className="grid grid-cols-2 sm:grid-cols-4 bg-stone-900/50 p-1 rounded-2xl border border-white/5 gap-1">
                 <button 
                     onClick={() => setActiveTab('USERS')}
-                    className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${activeTab === 'USERS' ? 'bg-stone-800 text-white shadow-lg' : 'text-stone-500 hover:text-stone-300'}`}
+                    className={`py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${activeTab === 'USERS' ? 'bg-stone-800 text-white shadow-lg' : 'text-stone-500 hover:text-stone-300'}`}
                 >
                     <Users size={14} /> Kullanıcılar
                 </button>
                 <button 
+                    onClick={() => setActiveTab('PLANS_MATRIX')}
+                    className={`py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${activeTab === 'PLANS_MATRIX' ? 'bg-amber-500 text-stone-950 shadow-lg' : 'text-amber-400/80 hover:text-amber-300'}`}
+                >
+                    <Crown size={14} /> Paket & Özellikler
+                </button>
+                <button 
                     onClick={() => { setActiveTab('ERRORS'); loadErrors(); }}
-                    className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${activeTab === 'ERRORS' ? 'bg-stone-800 text-white shadow-lg' : 'text-stone-500 hover:text-stone-300'}`}
+                    className={`py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${activeTab === 'ERRORS' ? 'bg-stone-800 text-white shadow-lg' : 'text-stone-500 hover:text-stone-300'}`}
                 >
                     <AlertCircle size={14} /> Hatalar
                 </button>
                 <button 
                     onClick={() => setActiveTab('NEWS')}
-                    className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${activeTab === 'NEWS' ? 'bg-stone-800 text-white shadow-lg' : 'text-stone-500 hover:text-stone-300'}`}
+                    className={`py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${activeTab === 'NEWS' ? 'bg-stone-800 text-white shadow-lg' : 'text-stone-500 hover:text-stone-300'}`}
                 >
                     <Newspaper size={14} /> Haberler
                 </button>
+            </div>
+
+            {/* Masaüstü & Web Canlı Güncelleme Yayınlama Kartı */}
+            <div className="p-4 rounded-2xl bg-emerald-950/25 border border-emerald-500/25 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                        <h2 className="text-xs sm:text-sm font-bold text-white flex items-center gap-2">
+                            <Download size={15} className="text-emerald-400" />
+                            <span>Masaüstü (.exe) ve Web Uygulamalarına Canlı Güncelleme Gönder</span>
+                        </h2>
+                        <p className="text-[11px] text-stone-400 mt-0.5">
+                            Yayınladığınız anda açık olan tüm masaüstü uygulamalarında kapatma ve aşağı indirme butonlarının yanında <strong className="text-emerald-300">Güncelle</strong> butonu açılır.
+                        </p>
+                    </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+                    <input
+                        type="text"
+                        value={releaseVersionInput}
+                        onChange={e => setReleaseVersionInput(e.target.value)}
+                        placeholder="Sürüm (ör. 8.2.2)"
+                        className="sm:col-span-2 bg-stone-950/80 border border-white/10 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500/50"
+                    />
+                    <input
+                        type="number"
+                        value={releaseBuildInput}
+                        onChange={e => setReleaseBuildInput(Number(e.target.value) || MKS_CLIENT_BUILD + 1)}
+                        placeholder="Yapı No"
+                        className="sm:col-span-2 bg-stone-950/80 border border-white/10 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500/50"
+                    />
+                    <input
+                        type="text"
+                        value={releaseNotesInput}
+                        onChange={e => setReleaseNotesInput(e.target.value)}
+                        placeholder="Kısa güncelleme notu..."
+                        className="sm:col-span-5 bg-stone-950/80 border border-white/10 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500/50"
+                    />
+                    <button
+                        type="button"
+                        onClick={handlePublishDesktopAndWebUpdate}
+                        disabled={isPublishingRelease}
+                        className="sm:col-span-3 min-h-[40px] px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                    >
+                        {isPublishingRelease ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+                        <span>Güncelleme Yayınla</span>
+                    </button>
+                </div>
             </div>
 
             {/* Search */}
@@ -305,26 +462,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                         className="w-full bg-stone-900 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-white placeholder:text-stone-600 focus:outline-none focus:border-emerald-500/50 transition-colors"
                     />
                 </div>
-                {activeTab === 'USERS' && (
-                    <button
-                        onClick={() => {
-                            if (isPasswordVisible) {
-                                setIsPasswordVisible(false);
-                            } else {
-                                const pwd = window.prompt("Lütfen yönetici şifresini girin:");
-                                if (pwd === "636311") {
-                                    setIsPasswordVisible(true);
-                                } else if (pwd !== null) {
-                                    showToast("Hatalı şifre!", "error");
-                                }
-                            }
-                        }}
-                        className={`p-4 border rounded-2xl transition-colors flex items-center justify-center flex-shrink-0 ${isPasswordVisible ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-400' : 'bg-stone-900 border-white/10 text-stone-400 hover:text-white'}`}
-                        title={isPasswordVisible ? "Şifreleri Gizle" : "Şifreleri Göster"}
-                    >
-                        {isPasswordVisible ? <EyeOff size={18} /> : <Eye size={18} />}
-                    </button>
-                )}
             </div>
 
             {activeTab === 'USERS' && (
@@ -405,14 +542,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                                             </span>
                                         </div>
                                         <p className="text-xs text-stone-400 truncate">{user.email || user.uid}</p>
-                                        {user.password && (
-                                            <div className="flex items-center gap-1.5 mt-1">
-                                                <KeyRound size={10} className="text-stone-500" />
-                                                <p className="text-[10px] text-emerald-400 font-mono tracking-wider">
-                                                    {isPasswordVisible ? user.password : '********'}
-                                                </p>
-                                            </div>
-                                        )}
                                     </div>
 
                                     <div className="flex flex-col items-end gap-2 flex-shrink-0">
@@ -428,6 +557,158 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                         })}
                     </div>
                 )
+            ) : activeTab === 'PLANS_MATRIX' ? (
+                <div className="space-y-6">
+                    {/* Top Action Bar */}
+                    <div className="bg-stone-900/90 border border-amber-500/30 rounded-3xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                        <div>
+                            <div className="inline-flex items-center gap-1.5 text-amber-400 text-[10px] font-black uppercase tracking-widest mb-1">
+                                <Crown size={13} />
+                                <span>PRO (REKLAMLI) • ULTRA (REKLAMSIZ) • MAX (REKLAMSIZ)</span>
+                            </div>
+                            <h2 className="text-lg font-black text-white">Paket Fiyatları & Özellik Yetki Matrisi</h2>
+                            <p className="text-xs text-stone-400 mt-0.5">
+                                Hangi pakette hangi ekranların ve özelliklerin açılacağını buradan tek tıkla seçebilirsiniz. Kaydettiğinizde tüm kullanıcılara ve vitrin sayfasına anında yansır.
+                            </p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 shrink-0">
+                            <button
+                                onClick={handleResetMatrixDefaults}
+                                className="px-3.5 py-2.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-bold flex items-center gap-1.5 transition-all"
+                            >
+                                <RotateCcw size={14} />
+                                <span>Varsayılanlar</span>
+                            </button>
+                            <button
+                                onClick={handleSaveMatrixToCloud}
+                                disabled={isSavingMatrix}
+                                className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black flex items-center gap-2 shadow-lg shadow-emerald-950/50 transition-all disabled:opacity-50"
+                            >
+                                {isSavingMatrix ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+                                <span>Matrisi Kaydet & Yayınla</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* 1. Paket Fiyatları & Reklam Durumu */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {editablePlans.map(plan => {
+                            const isAdFree = !!featureMatrix[plan.id]?.AD_FREE;
+                            return (
+                                <div key={plan.id} className="bg-stone-900/70 border border-white/10 rounded-2xl p-4 space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <span className="font-black text-white text-base">{plan.name}</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleToggleMatrixFeature(plan.id, 'AD_FREE')}
+                                            className={`px-2.5 py-1 rounded-full text-[10px] font-black border transition-all ${
+                                                isAdFree
+                                                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                                                    : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                                            }`}
+                                        >
+                                            {isAdFree ? '✨ %100 Reklamsız' : '📢 Reklamlı (AdMob)'}
+                                        </button>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2.5">
+                                        <div>
+                                            <label className="block text-[10px] font-bold text-stone-400 uppercase mb-1">Aylık Fiyat (₺)</label>
+                                            <input
+                                                type="number"
+                                                value={plan.monthlyPriceTRY}
+                                                onChange={e => handleUpdatePlanPrice(plan.id, 'monthlyPriceTRY', Number(e.target.value))}
+                                                className="w-full bg-stone-950 border border-white/10 rounded-xl px-3 py-2 text-white font-mono font-bold text-sm"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-[10px] font-bold text-stone-400 uppercase mb-1">Yıllık Fiyat (₺)</label>
+                                            <input
+                                                type="number"
+                                                value={plan.yearlyPriceTRY}
+                                                onChange={e => handleUpdatePlanPrice(plan.id, 'yearlyPriceTRY', Number(e.target.value))}
+                                                className="w-full bg-stone-950 border border-white/10 rounded-xl px-3 py-2 text-white font-mono font-bold text-sm"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    {/* 2. Hangi Versiyonda Hangi Özellik Açılacak? (Canlı Matris Tablosu) */}
+                    <div className="bg-stone-900/80 border border-white/10 rounded-3xl overflow-hidden">
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left border-collapse">
+                                <thead>
+                                    <tr className="bg-stone-950 border-b border-white/10 text-[11px] font-black uppercase tracking-wider text-stone-300">
+                                        <th className="p-4 min-w-[240px]">Özellik / Modül Adı</th>
+                                        <th className="p-4 text-center w-32 text-emerald-400">
+                                            <div>MKS PRO</div>
+                                            <div className="text-[9px] font-bold text-amber-400">
+                                                {featureMatrix.PRO?.AD_FREE ? 'Reklamsız' : 'Reklamlı'}
+                                            </div>
+                                        </th>
+                                        <th className="p-4 text-center w-32 text-sky-400">
+                                            <div>MKS ULTRA</div>
+                                            <div className="text-[9px] font-bold text-emerald-400">
+                                                {featureMatrix.ULTRA?.AD_FREE ? 'Reklamsız' : 'Reklamlı'}
+                                            </div>
+                                        </th>
+                                        <th className="p-4 text-center w-32 text-amber-400">
+                                            <div>MKS MAX</div>
+                                            <div className="text-[9px] font-bold text-emerald-400">
+                                                {featureMatrix.MAX?.AD_FREE ? 'Reklamsız' : 'Reklamlı'}
+                                            </div>
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-white/5">
+                                    {MKS_FEATURE_CATALOG.map(feat => (
+                                        <tr key={feat.key} className="hover:bg-white/[0.02] transition-colors">
+                                            <td className="p-3.5">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase bg-white/10 text-stone-300">
+                                                        {feat.category}
+                                                    </span>
+                                                    <span className="font-bold text-xs text-white">{feat.title}</span>
+                                                </div>
+                                                <p className="text-[11px] text-stone-400 mt-0.5">{feat.description}</p>
+                                            </td>
+                                            {(['PRO', 'ULTRA', 'MAX'] as SubscriptionTierId[]).map(tier => {
+                                                const isEnabled = !!featureMatrix[tier]?.[feat.key];
+                                                return (
+                                                    <td key={tier} className="p-3 text-center">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleToggleMatrixFeature(tier, feat.key)}
+                                                            className={`px-3 py-1.5 rounded-xl text-[11px] font-black inline-flex items-center justify-center gap-1.5 border transition-all active:scale-95 ${
+                                                                isEnabled
+                                                                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                                                                    : 'bg-stone-950 text-stone-500 border-white/10 hover:text-stone-300'
+                                                            }`}
+                                                        >
+                                                            {isEnabled ? (
+                                                                <>
+                                                                    <CheckCircle2 size={13} className="text-emerald-400" />
+                                                                    <span>Açık</span>
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <Lock size={12} className="text-stone-600" />
+                                                                    <span>Kapalı</span>
+                                                                </>
+                                                            )}
+                                                        </button>
+                                                    </td>
+                                                );
+                                            })}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
             ) : activeTab === 'ERRORS' ? (
                 <div className="space-y-3">
                     {systemErrors.length === 0 ? (
@@ -566,17 +847,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                                         className="w-full bg-stone-950 border border-white/10 rounded-xl pl-11 pr-4 py-3 text-white focus:outline-none focus:border-emerald-500"
                                     />
                                 </div>
-                                <div className="relative">
-                                    <KeyRound size={16} className="absolute left-4 top-4 text-stone-500" />
-                                    <input 
-                                        type={isPasswordVisible ? "text" : "password"}
-                                        value={editingUser.password || ''}
-                                        onChange={(e) => setEditingUser({...editingUser, password: e.target.value})}
-                                        placeholder="Kullanıcı Şifresi (Gösterim Amaçlı)"
-                                        className="w-full bg-stone-950 border border-white/10 rounded-xl pl-11 pr-4 py-3 text-emerald-400 font-mono tracking-wider focus:outline-none focus:border-emerald-500"
-                                    />
-                                    <p className="text-[10px] text-stone-500 mt-1.5 pl-1 leading-tight">Not: Bu şifre kullanıcının sisteme giriş yaparken kullandığı şifreyi ifade eder. Değiştirildiğinde kullanıcının asıl Firebase üyeliğindeki şifre değişmez, sadece bu panelde görüntülenen kayıt güncellenir. Tam şifre sıfırlama işlemi için aşağıdaki e-posta bağlantısını kullanın.</p>
-                                </div>
                                 <input 
                                     type="text" 
                                     value={editingUser.fullName || ''}
@@ -626,6 +896,32 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                                     >
                                         <Shield size={16} /> Admin
                                     </button>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-stone-500 mb-2 uppercase tracking-widest">Paket Seviyesi (PRO / ULTRA / MAX)</label>
+                                <div className="grid grid-cols-3 gap-2 mb-4">
+                                    {([
+                                        { id: 'PRO' as const, label: 'MKS PRO', sub: 'Reklamlı', cls: 'bg-emerald-900/30 border-emerald-500 text-emerald-400' },
+                                        { id: 'ULTRA' as const, label: 'MKS ULTRA', sub: 'Reklamsız', cls: 'bg-sky-900/30 border-sky-500 text-sky-400' },
+                                        { id: 'MAX' as const, label: 'MKS MAX', sub: 'VIP Reklamsız', cls: 'bg-amber-900/30 border-amber-500 text-amber-400' }
+                                    ]).map(pk => {
+                                        const active = (editingUser.subscriptionTier || 'PRO') === pk.id;
+                                        return (
+                                            <button
+                                                key={pk.id}
+                                                type="button"
+                                                onClick={() => setEditingUser({ ...editingUser, subscriptionTier: pk.id })}
+                                                className={`py-2.5 px-2 rounded-xl font-bold text-xs border flex flex-col items-center justify-center transition-all ${
+                                                    active ? pk.cls : 'bg-stone-900 border-white/10 text-stone-500'
+                                                }`}
+                                            >
+                                                <span>{pk.label}</span>
+                                                <span className="text-[9px] opacity-80">{pk.sub}</span>
+                                            </button>
+                                        );
+                                    })}
                                 </div>
                             </div>
 

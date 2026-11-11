@@ -118,7 +118,7 @@ export const useWeatherViewModel = () => {
 
     if (isRainyOrSnowy) {
       return { 
-          status: 'İLAÇLAMAYA UYGUN DEĞİL', 
+          status: 'İlaçlamaya uygun değil', 
           message: 'Yağışlı veya fırtınalı hava. Atılan ilaç yıkanıp gideceği veya tehlikeli olacağı için ilaçlama yapılamaz.', 
           color: 'text-red-400', 
           bg: 'bg-red-500/10',
@@ -130,7 +130,7 @@ export const useWeatherViewModel = () => {
 
     if (windSpeed > 15) {
       return { 
-          status: 'İLAÇLAMAYA UYGUN DEĞİL', 
+          status: 'İlaçlamaya uygun değil', 
           message: 'Şiddetli rüzgar! İlaç savrulacağı için ilaçlama kesinlikle yapılamaz.', 
           color: 'text-red-400', 
           bg: 'bg-red-500/10',
@@ -142,7 +142,7 @@ export const useWeatherViewModel = () => {
 
     if (temperature < 5 || temperature > 35) {
       return { 
-          status: 'İLAÇLAMAYA UYGUN DEĞİL', 
+          status: 'İlaçlamaya uygun değil', 
           message: 'Ekstrem sıcaklık! İlaç etkisini kaybedebilir veya bitkiyi yakabilir.', 
           color: 'text-rose-400', 
           bg: 'bg-rose-500/10',
@@ -156,7 +156,7 @@ export const useWeatherViewModel = () => {
     // In summer, mid day (11 to 17) is usually very hot and sunny, stomatas close, evaporation is high
     if (isSummer && (hour >= 11 && hour <= 17)) {
       return { 
-          status: 'ŞU AN UYGUN DEĞİL', 
+          status: 'Şu an uygun değil', 
           message: 'Yaz sıcağında güneş tepedeyken ilaçlama yapılmaz. Sabah erken veya akşam serinliğini bekleyin.', 
           color: 'text-orange-400', 
           bg: 'bg-orange-500/10',
@@ -168,7 +168,7 @@ export const useWeatherViewModel = () => {
 
     if (windSpeed > 10) {
       return { 
-          status: 'DİKKATLİ OLUN', 
+          status: 'Dikkatli ilaçlama', 
           message: 'Rüzgar hızı sınırda. İlaçlama yapılabilir ancak damla çapını büyütün ve sürüklenmeye dikkat edin.', 
           color: 'text-yellow-400', 
           bg: 'bg-yellow-500/10',
@@ -179,7 +179,7 @@ export const useWeatherViewModel = () => {
     }
 
     return { 
-        status: 'İLAÇLAMAYA UYGUN', 
+        status: 'İlaçlamaya uygun', 
         message: 'Hava koşulları (rüzgar, sıcaklık ve yağış durumu) ilaçlama için mükemmel.', 
         color: 'text-emerald-400', 
         bg: 'bg-emerald-500/10',

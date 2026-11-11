@@ -1,31 +1,135 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Global pesticides are read-only for anyone authed
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isRootAdmin() {
+      return isSignedIn()
+        && request.auth.token.email == "nayiffirat@gmail.com"
+        && request.auth.token.email_verified == true;
+    }
+
+    // 1. Global Tarım İlaçları Kataloğu (Yalnızca giriş yapmış mühendisler okuyabilir, Root Admin yönetir)
     match /pesticides/{docId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.token.email == "nayiffirat@gmail.com";
+      allow read: if isSignedIn();
+      allow write: if isRootAdmin();
     }
 
-    // Global news are read-only
+    // 2. Küresel Tarımsal Haberler
     match /MKS/{orgId}/news/{docId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.token.email == "nayiffirat@gmail.com";
+      allow read: if isSignedIn();
+      allow write: if isRootAdmin();
     }
 
-    // Users can access their own data
+    // 3. Sistem Ayarları ve Abonelik Fiyat/Özellik Matrisi
+    match /MKS/{orgId}/system_settings/{docId} {
+      allow get: if true;
+      allow list: if isSignedIn();
+      allow write: if isRootAdmin();
+    }
+
+    // 4. Hata Günlükleri (Giriş yapmış istemciler raporlayabilir, yalnızca Root Admin okuyup silebilir)
+    match /MKS/{orgId}/system_errors/{docId} {
+      allow create, update: if isSignedIn();
+      allow read, delete: if isRootAdmin();
+    }
+
+    // 5. İzole Telefon -> E-posta Giriş Dizini (Liste sorgusu tamamen kapalı, yalnızca tekil 10 haneli numara okuması açık)
+    match /MKS/{orgId}/phone_directory/{phoneKey} {
+      allow get: if phoneKey.matches('^5[0-9]{9}$');
+      allow list: if isRootAdmin();
+      allow create, update: if isRootAdmin() || (
+        isSignedIn()
+        && phoneKey.matches('^5[0-9]{9}$')
+        && request.resource.data.uid == request.auth.uid
+      );
+      allow delete: if isRootAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
+    }
+
+    // 6. İzole Üretici Portalı Paylaşımları (Capability Token ile tekil okuma; liste sorgusu kapalı; alış fiyatı ve TC No içermez)
+    match /MKS/{orgId}/portal_shares/{portalToken} {
+      allow get: if portalToken.size() >= 16 && portalToken.size() <= 128;
+      allow list: if isRootAdmin();
+      allow create: if isRootAdmin() || (
+        isSignedIn()
+        && portalToken.size() >= 16
+        && request.resource.data.engineerId == request.auth.uid
+      );
+      allow update: if isRootAdmin() || (
+        isSignedIn()
+        && resource.data.engineerId == request.auth.uid
+        && request.resource.data.engineerId == request.auth.uid
+      );
+      allow delete: if isRootAdmin() || (isSignedIn() && resource.data.engineerId == request.auth.uid);
+    }
+
+    // 6b. Üretici Portalı Mühendis Soru/Fotoğraf & Ödeme Bildirim Kutusu (#35 & #38)
+    match /MKS/{orgId}/portal_inquiries/{inquiryId} {
+      allow create: if request.resource.data.portalToken is string
+        && request.resource.data.portalToken.size() >= 16
+        && request.resource.data.portalToken.size() <= 128
+        && exists(/databases/$(database)/documents/MKS/$(orgId)/portal_shares/$(request.resource.data.portalToken))
+        && get(/databases/$(database)/documents/MKS/$(orgId)/portal_shares/$(request.resource.data.portalToken)).data.engineerId == request.resource.data.engineerId;
+      allow read, update, delete: if isRootAdmin() || (
+        isSignedIn() && resource.data.engineerId == request.auth.uid
+      );
+    }
+
+    // 7. Canlı Destek Kanalları (Liste sorgusu yalnızca Root Admin'e açık; kullanıcı sadece kendi kanalına erişebilir)
+    match /MKS/{orgId}/support_threads/{threadId} {
+      allow get, create, update: if isRootAdmin()
+        || (isSignedIn() && threadId == ('user_' + request.auth.uid))
+        || threadId.matches('^guest_[a-zA-Z0-9_\\-]{6,64}$');
+      allow list, delete: if isRootAdmin();
+    }
+
+    // 8. Mühendis / Bayi Kullanıcı Profilleri ve Tüm Alt Koleksiyonları (%100 Kiracı İzolasyonu)
     match /MKS/{orgId}/users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-      
+      allow get: if isOwner(userId) || isRootAdmin();
+      allow list: if isRootAdmin();
+
+      allow create: if isRootAdmin() || (
+        isOwner(userId)
+        && !('password' in request.resource.data)
+        && (!('role' in request.resource.data) || request.resource.data.role == 'user')
+        && (!('subscriptionStatus' in request.resource.data) || request.resource.data.subscriptionStatus == 'trial')
+        && (!('subscriptionTier' in request.resource.data) || request.resource.data.subscriptionTier == 'PRO')
+        && (!('subscriptionEndsAtMs' in request.resource.data) || request.resource.data.subscriptionEndsAtMs <= request.time.toMillis() + 8 * 86400000)
+      );
+
+      allow update: if isRootAdmin() || (
+        isOwner(userId)
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'role',
+          'subscriptionStatus',
+          'subscriptionTier',
+          'subscriptionEndsAt',
+          'subscriptionEndsAtMs'
+        ])
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['password'])
+          || !('password' in request.resource.data)
+        )
+      );
+
+      allow delete: if isRootAdmin();
+
+      // Çiftçiler, reçeteler (alış fiyatları dahil), ödemeler, stoklar, ekip üyeleri vb. tüm özel koleksiyonlar
       match /{document=**} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+        allow read, write: if isOwner(userId) || isRootAdmin();
       }
     }
 
-    // Default allow for backward compatibility if I missed anything, but verify uid
+    // 9. Varsayılan Kilit: Yukarıda açıkça izin verilmeyen her yol kilitlidir (yalnızca doğrulanmış Root Admin)
     match /{document=**} {
-      allow read, write: if request.auth != null && request.auth.token.email == "nayiffirat@gmail.com";
+      allow read, write: if isRootAdmin();
     }
 
   }

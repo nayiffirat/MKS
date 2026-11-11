@@ -1,4 +1,4 @@
-import { createMultiPagePdf } from '../utils/pdfHelper';
+import { createMultiPagePdf, renderElementToCanvas } from '../utils/pdfHelper';
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
@@ -8,10 +8,7 @@ import {
     AlertCircle, CheckCircle2, FlaskConical, Info, X, User, RefreshCcw,
     Receipt, Save, Barcode, Download, ArrowDownLeft, FileText, Wallet, AlertTriangle
 } from 'lucide-react';
-import BarcodeScanner from './BarcodeScanner';
-import { jsPDF } from 'jspdf';
-import html2canvas from 'html2canvas';
-import autoTable from 'jspdf-autotable';
+import BarcodeScanner from './LazyBarcodeScanner';
 import { format } from 'date-fns';
 import { useAppViewModel } from '../context/AppContext';
 import { dbService } from '../services/db';
@@ -22,6 +19,11 @@ import { ConfirmationModal } from './ConfirmationModal';
 import { ListSkeleton } from './Skeleton';
 import { EmptyState } from './EmptyState';
 import { turkishMatchesAny } from '../utils/search';
+import { useBackHandler, useScrollLock } from '../utils/navigationManager';
+import { parseGS1Barcode, findItemByScan, itemMatchesScan, canonicalBarcodeFromParsed, GS1ParseResult } from '../utils/gs1Parser';
+import { playScanBeep, playErrorBeep } from '../utils/hardwareBarcodeScanner';
+import { toTelHref } from '../utils/whatsappTemplates';
+import { round2 } from '../utils/dateUtils';
 
 const trToEn = (str: string) => {
     return str.replace(/Ğ/g, 'G')
@@ -75,6 +77,21 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
     const [reportOptions, setReportOptions] = useState({ supplierId: 'ALL', dateRange: 'ALL_TIME' });
     const [isGeneratingReport, setIsGeneratingReport] = useState(false);
     const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
+
+    // Register 1-step-at-a-time back stack & scroll lock for Suppliers
+    const anySupplierModalOpen =
+        isAddModalOpen || isEditModalOpen || isPurchaseModalOpen || isReturnModalOpen ||
+        isSaleModalOpen || isPaymentModalOpen || isDebtModalOpen || isReportModalOpen;
+    useScrollLock(anySupplierModalOpen);
+    useBackHandler(isReportModalOpen, () => setIsReportModalOpen(false), 'supplier_report_modal', 70);
+    useBackHandler(isPurchaseModalOpen, () => setIsPurchaseModalOpen(false), 'supplier_purchase_modal', 70);
+    useBackHandler(isReturnModalOpen, () => setIsReturnModalOpen(false), 'supplier_return_modal', 70);
+    useBackHandler(isSaleModalOpen, () => setIsSaleModalOpen(false), 'supplier_sale_modal', 70);
+    useBackHandler(isPaymentModalOpen, () => setIsPaymentModalOpen(false), 'supplier_payment_modal', 70);
+    useBackHandler(isDebtModalOpen, () => setIsDebtModalOpen(false), 'supplier_debt_modal', 70);
+    useBackHandler(isEditModalOpen, () => setIsEditModalOpen(false), 'supplier_edit_modal', 70);
+    useBackHandler(isAddModalOpen, () => setIsAddModalOpen(false), 'supplier_add_modal', 70);
+    useBackHandler(!!selectedSupplier, () => setSelectedSupplier(null), 'supplier_detail_view', 55);
     
     useEffect(() => {
         if (isInitialized && initialSupplierId) {
@@ -170,7 +187,7 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
         setIsSavingPurchase(true);
 
         try {
-            const totalAmount = newPurchase.items.reduce((acc, item) => acc + (item.buyingPrice * item.quantity), 0);
+            const totalAmount = round2(newPurchase.items.reduce((acc, item) => acc + (item.buyingPrice * item.quantity), 0));
             const date = new Date().toISOString();
             
             await addSupplierPurchase({
@@ -238,6 +255,7 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
                     </div>
                 `;
 
+                const allSupplierPayments = await dbService.getSupplierPayments();
                 const suppliersToReport = reportOptions.supplierId === 'ALL' 
                     ? suppliers 
                     : suppliers.filter(s => s.id === reportOptions.supplierId);
@@ -280,15 +298,29 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
                         });
                     });
 
-                    myPayments.filter(p => !p.deletedAt && p.status !== 'CANCELLED' && p.supplierId === supplier.id).forEach(p => {
+                    allSupplierPayments.filter(p => !p.deletedAt && p.supplierId === supplier.id).forEach(p => {
+                        const pDate = new Date(p.date);
+                        if (pDate < start || pDate > end) return;
+                        const isReceive = p.type === 'RECEIVE';
+
+                        ledger.push({
+                            date: pDate,
+                            type: isReceive ? 'Tedarikçiden Tahsilat' : 'Ödeme',
+                            docNo: '-',
+                            amount: Math.abs(Number(p.amount) || 0),
+                            isDebtToUs: isReceive
+                        });
+                    });
+
+                    myPayments.filter(p => !p.deletedAt && p.status !== 'CANCELLED' && !p.relatedId && p.supplierId === supplier.id).forEach(p => {
                         const pDate = new Date(p.issueDate);
                         if (pDate < start || pDate > end) return;
 
                         ledger.push({
                             date: pDate,
-                            type: 'Ödeme',
+                            type: p.type === 'CHECK' ? 'Çek Ödemesi' : 'Senet Ödemesi',
                             docNo: '-',
-                            amount: p.amount,
+                            amount: Math.abs(Number(p.amount) || 0),
                             isDebtToUs: false
                         });
                     });
@@ -354,7 +386,7 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
                 container.innerHTML = htmlContent;
                 document.body.appendChild(container);
 
-                const canvas = await html2canvas(container, {
+                const canvas = await renderElementToCanvas(container, {
                     scale: 2,
                     backgroundColor: '#ffffff',
                     logging: false
@@ -362,7 +394,7 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
 
                 document.body.removeChild(container);
                 
-                const pdf = createMultiPagePdf(canvas);
+                const pdf = await createMultiPagePdf(canvas);
                 pdf.save(`Tedarikci_Raporu_${format(new Date(), 'yyyyMMdd_HHmm')}.pdf`);
                 
                 setIsGeneratingReport(false);
@@ -379,7 +411,7 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
         const targetSupplierId = manualSupplierId || selectedSupplier?.id;
         if (!targetSupplierId || newReturn.items.length === 0) return;
         
-        const totalAmount = newReturn.items.reduce((acc, item) => acc + (item.buyingPrice * item.quantity), 0);
+        const totalAmount = round2(newReturn.items.reduce((acc, item) => acc + (item.buyingPrice * item.quantity), 0));
         
         await addSupplierPurchase({
             supplierId: targetSupplierId,
@@ -401,7 +433,7 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
         const targetSupplierId = manualSupplierId || selectedSupplier?.id;
         if (!targetSupplierId || newSale.items.length === 0) return;
         
-        const totalAmount = newSale.items.reduce((acc, item) => acc + (item.buyingPrice * item.quantity), 0);
+        const totalAmount = round2(newSale.items.reduce((acc, item) => acc + (item.buyingPrice * item.quantity), 0));
         
         // Convert quantities to negative for sales
         const saleItems = newSale.items.map(item => ({
@@ -703,12 +735,14 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
                             </div>
                         </div>
 
-                        <div className="flex gap-2">
-                            <a href={`tel:${supplier.phoneNumber}`} onClick={e => e.stopPropagation()} className="flex items-center gap-1.5 flex-1 justify-center py-2.5 bg-stone-900 border border-white/5 rounded-xl text-stone-300 font-bold text-[11px] hover:bg-stone-800 transition-colors">
-                                <Phone size={12} />
-                                Ara
-                            </a>
-                        </div>
+                        {toTelHref(supplier.phoneNumber) && (
+                            <div className="flex gap-2">
+                                <a href={toTelHref(supplier.phoneNumber)} onClick={e => e.stopPropagation()} aria-label={`${supplier.name} ara`} className="flex items-center gap-1.5 flex-1 justify-center min-h-[44px] py-2.5 bg-stone-900 border border-white/5 rounded-xl text-stone-300 font-bold text-[11px] hover:bg-stone-800 transition-colors">
+                                    <Phone size={12} />
+                                    Ara
+                                </a>
+                            </div>
+                        )}
                     </div>
                 ))}
             </div>
@@ -981,7 +1015,7 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
 };
 
 const DebtModal = ({ supplier, onClose, onSave }: any) => {
-    const { userProfile, teamMembers } = useAppViewModel();
+    const { userProfile, teamMembers, hapticFeedback } = useAppViewModel();
     const [amount, setAmount] = useState('');
     const [note, setNote] = useState('');
     const [isSaving, setIsSaving] = useState(false);
@@ -1053,7 +1087,7 @@ const SupplierDetailView = ({
     isSaleModalOpen, setIsSaleModalOpen, handleAddSale, newSale, setNewSale,
     onEdit, accounts, softDeleteSupplier, myPayments
 }: any) => {
-    const { userProfile, teamMembers } = useAppViewModel();
+    const { userProfile, teamMembers, hapticFeedback } = useAppViewModel();
     const [activeTab, setActiveTab] = useState<'PURCHASES' | 'PAYMENTS'>('PURCHASES');
     const [purchases, setPurchases] = useState<SupplierPurchase[]>([]);
     const [payments, setPayments] = useState<SupplierPayment[]>([]);
@@ -1091,7 +1125,10 @@ const SupplierDetailView = ({
             return acc + Math.abs(p.totalAmount || 0);
         }
         return acc;
-    }, 0) + payments.reduce((acc: any, p: any) => acc + (p.amount || 0), 0);
+    }, 0) + payments.reduce((acc: any, p: any) => {
+        const amt = Number(p.amount) || 0;
+        return acc + (p.type === 'RECEIVE' ? -amt : amt);
+    }, 0);
 
     const kalanBakiye = totalAlinan - totalOdenen;
 
@@ -1138,8 +1175,10 @@ const SupplierDetailView = ({
                     return date >= start && date <= end;
                 });
 
-                const totalDebt = filteredPurchases.reduce((acc, p) => acc + (p.totalAmount > 0 ? p.totalAmount : 0), 0);
-                const totalCredit = filteredPurchases.reduce((acc, p) => acc + (p.totalAmount < 0 ? Math.abs(p.totalAmount) : 0), 0) + filteredPayments.reduce((acc: any, p: any) => acc + (p.amount || 0), 0);
+                const totalDebt = filteredPurchases.reduce((acc, p) => acc + (p.totalAmount > 0 ? p.totalAmount : 0), 0)
+                    + filteredPayments.filter((p: any) => p.type === 'RECEIVE').reduce((acc: any, p: any) => acc + (Number(p.amount) || 0), 0);
+                const totalCredit = filteredPurchases.reduce((acc, p) => acc + (p.totalAmount < 0 ? Math.abs(p.totalAmount) : 0), 0)
+                    + filteredPayments.filter((p: any) => p.type !== 'RECEIVE').reduce((acc: any, p: any) => acc + (Number(p.amount) || 0), 0);
                 const periodBalance = totalCredit - totalDebt;
 
                 const allTransactions = [
@@ -1176,12 +1215,13 @@ const SupplierDetailView = ({
                             method = p.type === 'CHECK' ? 'Müşteri Çeki' : (p.type === 'PROMISSORY_NOTE' ? 'Müşteri Senedi' : 'Cari Ödemesi');
                         }
                         
+                        const isReceive = p.type === 'RECEIVE';
                         return {
                             date: new Date(p.date),
-                            type,
+                            type: isReceive ? 'Tahsilat' : type,
                             desc: `${method}${p.note ? ` - ${p.note}` : ''}`,
-                            debt: 0,
-                            credit: p.amount
+                            debt: isReceive ? p.amount : 0,
+                            credit: isReceive ? 0 : p.amount
                         };
                     })
                 ].sort((a, b) => a.date.getTime() - b.date.getTime());
@@ -1292,7 +1332,7 @@ const SupplierDetailView = ({
                 container.innerHTML = htmlContent;
                 document.body.appendChild(container);
 
-                const canvas = await html2canvas(container, {
+                const canvas = await renderElementToCanvas(container, {
                     scale: 2,
                     backgroundColor: '#ffffff',
                     logging: false
@@ -1300,7 +1340,7 @@ const SupplierDetailView = ({
 
                 document.body.removeChild(container);
                 
-                const doc = createMultiPagePdf(canvas);
+                const doc = await createMultiPagePdf(canvas);
                 doc.save(`${supplier.name.replace(/\s+/g, '_')}_Ekstre_${reportOptions.type}.pdf`);
                 
                 showToast('Rapor başarıyla oluşturuldu', 'success');
@@ -1407,6 +1447,151 @@ const SupplierDetailView = ({
         return Array.from(productMap.values());
     }, [purchases]);
 
+    const generateReconciliationPdf = async () => {
+        try {
+            hapticFeedback('medium');
+            showToast('Cari Mutabakat Mektubu hazırlanıyor...', 'info');
+            const todayStr = new Date().toLocaleDateString('tr-TR');
+            const absBal = Math.abs(kalanBakiye);
+            const directionText =
+                kalanBakiye > 0.01
+                    ? 'ALACAKLI (Şirketimiz Borçlu)'
+                    : kalanBakiye < -0.01
+                        ? 'BORÇLU (Şirketimiz Alacaklı)'
+                        : 'BAKİYE SIFIR (Mutabık)';
+            const balFormatted = formatCurrency(absBal, userProfile?.currency || 'TRY');
+            const escapeSuppHtml = (val: unknown) =>
+                String(val ?? '')
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+            const companyTitle = escapeSuppHtml(userProfile?.companyName || userProfile?.stampTitle || 'ZİRAİ MÜHENDİSLİK & TARIM MARKET');
+            const safeSuppName = escapeSuppHtml(supplier.name);
+            const safeSuppTax = (supplier.vkn || supplier.tcNo) ? `VKN / TCKN: <strong>${escapeSuppHtml(supplier.vkn || supplier.tcNo)}</strong> • ` : '';
+            const safeSuppPhone = escapeSuppHtml(supplier.phoneNumber || '-');
+            const safeSuppAddr = supplier.address ? `<br/>Adres: ${escapeSuppHtml(supplier.address)}` : '';
+            const safeUserFullName = escapeSuppHtml(userProfile?.fullName || 'Ziraat Mühendisi');
+            const safeUserPhone = userProfile?.phoneNumber ? `• ${escapeSuppHtml(userProfile.phoneNumber)}` : '';
+            const safeStampColor = /^#[0-9a-fA-F]{3,8}$/.test(userProfile?.stampColor || '') ? userProfile!.stampColor! : '#1d4ed8';
+            const safeStampTitle = escapeSuppHtml((userProfile?.stampTitle || userProfile?.companyName || 'ZİRAİ MÜHENDİSLİK').toUpperCase());
+            const safeStampSub = escapeSuppHtml(userProfile?.stampSubTitle || userProfile?.fullName || 'Yetkili Onayı');
+            const safeStampTax = escapeSuppHtml(userProfile?.stampTaxInfo || 'Resmi Cari Mutabakat Onayı');
+
+            const container = document.createElement('div');
+            container.style.position = 'fixed';
+            container.style.left = '-9999px';
+            container.style.top = '0';
+            container.innerHTML = `
+                <div style="width: 794px; min-height: 1080px; padding: 56px 60px; background: #ffffff; color: #1c1917; font-family: 'Segoe UI', Roboto, Arial, sans-serif; box-sizing: border-box;">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid #064e3b; padding-bottom: 20px; margin-bottom: 28px;">
+                        <div>
+                            <h1 style="margin: 0; font-size: 24px; font-weight: 900; color: #064e3b; text-transform: uppercase;">${companyTitle}</h1>
+                            <p style="margin: 6px 0 0; font-size: 13px; color: #57534e; font-weight: 600;">${safeUserFullName} ${safeUserPhone}</p>
+                        </div>
+                        <div style="text-align: right;">
+                            <div style="background: #ecfdf5; border: 1px solid #10b981; color: #065f46; padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 900; letter-spacing: 1px;">
+                                CARİ HESAP MUTABAKAT MEKTUBU
+                            </div>
+                            <p style="margin: 8px 0 0; font-size: 12px; color: #57534e; font-weight: 700;">Tarih: ${escapeSuppHtml(todayStr)}</p>
+                        </div>
+                    </div>
+
+                    <div style="background: #fafaf9; border: 1px solid #e7e5e4; border-radius: 12px; padding: 18px 22px; margin-bottom: 26px;">
+                        <p style="margin: 0 0 6px; font-size: 11px; font-weight: 800; color: #78716c; text-transform: uppercase; letter-spacing: 1px;">SAYIN FİRMA / MUHATAP BİLGİLERİ</p>
+                        <h2 style="margin: 0; font-size: 19px; font-weight: 900; color: #1c1917;">${safeSuppName}</h2>
+                        <p style="margin: 6px 0 0; font-size: 13px; color: #44403c;">
+                            ${safeSuppTax}
+                            Telefon: <strong>${safeSuppPhone}</strong>
+                            ${safeSuppAddr}
+                        </p>
+                    </div>
+
+                    <p style="font-size: 14px; line-height: 1.75; color: #292524; margin-bottom: 24px;">
+                        Sayın Yetkili,<br/>
+                        Şirketimiz nezdindeki cari hesabınızın <strong>${escapeSuppHtml(todayStr)}</strong> tarihi itibarıyla yapılan kontroller sonucunda aşağıda detayları belirtilen bakiyeyi verdiği tespit edilmiştir. Türk Ticaret Kanunu'nun ilgili hükümleri uyarınca mutabık olup olmadığınızı aşağıda yer alan bölümü kaşeleyip imzalayarak tarafımıza bildirmenizi rica ederiz.
+                    </p>
+
+                    <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 14px;">
+                        <thead>
+                            <tr style="background: #064e3b; color: #ffffff;">
+                                <th style="padding: 12px 16px; text-align: left; border-radius: 8px 0 0 0;">Mutabakat Tarihi</th>
+                                <th style="padding: 12px 16px; text-align: right;">Toplam Alım</th>
+                                <th style="padding: 12px 16px; text-align: right;">Toplam Ödeme</th>
+                                <th style="padding: 12px 16px; text-align: right;">Net Cari Bakiye</th>
+                                <th style="padding: 12px 16px; text-align: center; border-radius: 0 8px 0 0;">Bakiye Yönü (Sizin Açınızdan)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr style="background: #f5f5f4; font-weight: 700;">
+                                <td style="padding: 14px 16px; border-bottom: 2px solid #d6d3d1;">${escapeSuppHtml(todayStr)}</td>
+                                <td style="padding: 14px 16px; text-align: right; border-bottom: 2px solid #d6d3d1;">${escapeSuppHtml(formatCurrency(totalAlinan, userProfile?.currency || 'TRY'))}</td>
+                                <td style="padding: 14px 16px; text-align: right; border-bottom: 2px solid #d6d3d1;">${escapeSuppHtml(formatCurrency(totalOdenen, userProfile?.currency || 'TRY'))}</td>
+                                <td style="padding: 14px 16px; text-align: right; font-size: 16px; font-weight: 900; color: #064e3b; border-bottom: 2px solid #d6d3d1;">${escapeSuppHtml(balFormatted)}</td>
+                                <td style="padding: 14px 16px; text-align: center; font-size: 12px; font-weight: 900; border-bottom: 2px solid #d6d3d1;">${escapeSuppHtml(directionText)}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+
+                    <div style="border: 1px dashed #a8a29e; background: #fffbeb; border-radius: 10px; padding: 14px 18px; margin-bottom: 36px; font-size: 12px; color: #78350f;">
+                        <strong>Not:</strong> İşbu mutabakat mektubuna tebliğ tarihinden itibaren 1 (bir) ay içerisinde yazılı itiraz edilmediği takdirde 6102 sayılı TTK m. 94 gereğince cari hesap bakiyesi kabul edilmiş sayılır. Varsa mutabakatsızlık durumunda cari hesap ekstrenizi tarafımıza iletmenizi rica ederiz.
+                    </div>
+
+                    <div style="display: flex; gap: 24px; margin-top: 20px;">
+                        <div style="flex: 1; border: 2px solid #d6d3d1; border-radius: 14px; padding: 20px; min-height: 190px; display: flex; flex-direction: column; justify-content: space-between;">
+                            <div>
+                                <div style="font-size: 12px; font-weight: 900; color: #064e3b; text-transform: uppercase; border-bottom: 1px solid #e7e5e4; padding-bottom: 8px; margin-bottom: 10px;">
+                                    GÖNDEREN FİRMA (KAŞE / İMZA)
+                                </div>
+                                <div style="font-size: 13px; font-weight: 800; color: #1c1917;">${companyTitle}</div>
+                                <div style="font-size: 11px; color: #57534e; margin-top: 4px;">${escapeSuppHtml(userProfile?.fullName || '')}</div>
+                            </div>
+                            ${userProfile?.stampEnabled !== false ? `
+                            <div style="align-self: center; border: 2px solid ${safeStampColor}; border-radius: 8px; padding: 8px 14px; transform: rotate(-2deg); color: ${safeStampColor}; text-align: center; margin-top: 12px;">
+                                <div style="font-size: 10px; font-weight: 900; text-transform: uppercase;">${safeStampTitle}</div>
+                                <div style="font-size: 9px; font-weight: 700;">${safeStampSub}</div>
+                                <div style="font-size: 8px;">${safeStampTax}</div>
+                            </div>` : '<div style="font-size: 11px; color: #a8a29e; text-align: center;">Kaşe / İmza</div>'}
+                        </div>
+
+                        <div style="flex: 1; border: 2px solid #d6d3d1; border-radius: 14px; padding: 20px; min-height: 190px; display: flex; flex-direction: column; justify-content: space-between;">
+                            <div>
+                                <div style="font-size: 12px; font-weight: 900; color: #1c1917; text-transform: uppercase; border-bottom: 1px solid #e7e5e4; padding-bottom: 8px; margin-bottom: 10px;">
+                                    KARŞI FİRMA ONAYI (KAŞE / İMZA)
+                                </div>
+                                <div style="font-size: 13px; font-weight: 800; color: #1c1917; margin-bottom: 12px;">${safeSuppName}</div>
+                                <div style="display: flex; gap: 18px; font-size: 12px; font-weight: 800; color: #292524; margin-top: 10px;">
+                                    <span>☐ MUTABIKIZ</span>
+                                    <span>☐ MUTABIK DEĞİLİZ</span>
+                                </div>
+                            </div>
+                            <div style="font-size: 11px; color: #78716c; border-top: 1px dashed #d6d3d1; padding-top: 8px;">
+                                Tarih / Yetkili Kaşe ve İmza:
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(container);
+            const canvas = await renderElementToCanvas(container.firstElementChild as HTMLElement, {
+                scale: 3,
+                backgroundColor: '#ffffff',
+                useCORS: true,
+                logging: false,
+            });
+            document.body.removeChild(container);
+            const pdf = await createMultiPagePdf(canvas);
+            const safeName = trToEn(supplier.name).replace(/[^a-zA-Z0-9]/g, '_');
+            const fileName = `${safeName}_Cari_Mutabakat_${new Date().toISOString().split('T')[0]}.pdf`;
+            pdf.save(fileName);
+            showToast('Cari Mutabakat Mektubu (PDF) indirildi', 'success');
+        } catch (err) {
+            console.error('Supplier reconciliation PDF error:', err);
+            showToast('Mutabakat PDF oluşturulamadı', 'error');
+        }
+    };
+
     return (
         <div className="p-4 space-y-6 animate-in slide-in-from-right duration-500">
             <div className="flex items-center justify-between">
@@ -1417,6 +1602,14 @@ const SupplierDetailView = ({
                     <h1 className="text-xl font-black text-stone-100 tracking-tight">{supplier.name}</h1>
                 </div>
                 <div className="flex gap-2">
+                    <button
+                        onClick={generateReconciliationPdf}
+                        className="px-3.5 py-2.5 bg-emerald-950/50 text-emerald-400 rounded-xl hover:bg-emerald-900/50 transition-colors border border-emerald-500/25 active:scale-95 flex items-center gap-1.5"
+                        title="Resmi Cari Mutabakat Mektubu (PDF)"
+                    >
+                        <FileText size={14} />
+                        <span className="text-[10px] font-black uppercase tracking-widest">Mutabakat</span>
+                    </button>
                     <button 
                         onClick={() => setIsReportModalOpen(true)}
                         className="px-4 py-2.5 bg-stone-900 text-stone-400 rounded-xl hover:text-blue-400 transition-colors border border-white/5 active:scale-95"
@@ -1979,13 +2172,74 @@ const PurchaseModal = ({
     const [localSupplierId, setLocalSupplierId] = useState(supplier?.id || '');
     
     const [step, setStep] = useState<1 | 2>(isEdit ? 2 : 1);
+    // Scan waiting for a "new product" record (B-12: offer to add the product when it is not in the warehouse).
+    const [pendingScan, setPendingScan] = useState<GS1ParseResult | null>(null);
+
+    /** Lines are keyed by product + lot + SKT so two lots of one product stay separate (B-04). */
+    const lineKey = (i: any) => `${i.pesticideId}|${String(i.lotNumber || '').trim().toLocaleUpperCase('tr-TR')}|${i.expiryDate || ''}`;
+
+    /** Lot / SKT / GTIN / seri fields captured from a scan for a purchase line. */
+    const scanFields = (scan?: GS1ParseResult | null) => {
+        if (!scan) return {};
+        const canonical = canonicalBarcodeFromParsed(scan);
+        return {
+            ...(scan.gtin ? { gtin: scan.gtin } : {}),
+            ...(canonical ? { barcode: canonical } : {}),
+            ...(scan.batch ? { lotNumber: scan.batch } : {}),
+            ...(scan.expiryDate ? { expiryDate: scan.expiryDate } : {}),
+            ...(scan.serial ? { serialNumber: scan.serial, serialNumbers: [scan.serial] } : {})
+        };
+    };
+
+    /** Every serial already in the warehouse (batches + legacy field) or in this purchase. */
+    const isSerialAlreadyRegistered = (serial: string): string | null => {
+        const s = serial.trim();
+        if (!s) return null;
+        for (const inv of (inventory || []) as InventoryItem[]) {
+            if (inv.deletedAt) continue;
+            if (String(inv.serialNumber || '').trim() === s) return inv.pesticideName;
+            for (const b of inv.batches || []) if ((b.serialNumbers || []).some(x => String(x).trim() === s)) return inv.pesticideName;
+        }
+        for (const line of newPurchase.items as any[]) {
+            if (String(line.serialNumber || '').trim() === s || (line.serialNumbers || []).some((x: string) => String(x).trim() === s)) return `${line.pesticideName} (bu fiş)`;
+        }
+        return null;
+    };
     
-    const handleScan = (barcode: string) => {
-        const item = inventory.find((i: InventoryItem) => i.barcode === barcode);
+    const handleScan = (raw: string, format?: string) => {
+        const parsed = parseGS1Barcode(raw, format);
+        if (!parsed.valid) {
+            playErrorBeep();
+            showToast(`Barkod okunamadı: ${(parsed.errors || []).join(' • ') || 'geçersiz kod'}`, 'error');
+            return;
+        }
+        // Purchases (stock-in) reject a box that was already received; returns/sales are stock-out.
+        if (parsed.serial && !isReturn && !isSale) {
+            const owner = isSerialAlreadyRegistered(parsed.serial);
+            if (owner) {
+                playErrorBeep();
+                showToast(`Bu karekod zaten girilmiş: Seri ${parsed.serial} (${owner}).`, 'error');
+                return;
+            }
+        }
+        if (parsed.ambiguous) showToast('Karekodda GS ayırıcısı yok: Lot / Seri değerlerini kutudan kontrol edin.', 'info');
+        if (parsed.expired) showToast(`Dikkat: Bu kutunun SKT'si geçmiş (${parsed.expiryDate}).`, 'error');
+
+        // Already on this receipt (e.g. a brand-new product added earlier) → match the line first.
+        const lineHit = (newPurchase.items as any[]).find(l => itemMatchesScan(l, parsed));
+        const item = findItemByScan<InventoryItem>(inventory, parsed);
         if (item) {
-            handleAddItem(item);
+            playScanBeep();
+            handleAddItem(item, parsed);
+        } else if (lineHit) {
+            playScanBeep();
+            handleAddItem({ pesticideId: lineHit.pesticideId, pesticideName: lineHit.pesticideName, unit: lineHit.unit, buyingPrice: lineHit.buyingPrice, sellingPrice: lineHit.sellingPrice } as InventoryItem, parsed);
         } else {
-            showToast('Ürün bulunamadı', 'error');
+            playErrorBeep();
+            setPendingScan(parsed);
+            setNewPesticide({ name: '', category: PesticideCategory.OTHER, unit: 'Adet' });
+            setIsAddingNewPesticide(true);
+            showToast('Ürün depoda bulunamadı. Yeni ürün olarak ekleyebilirsiniz.', 'info');
         }
     };
     
@@ -1995,14 +2249,16 @@ const PurchaseModal = ({
     }, [inventory, searchTerm]);
 
     const handleAddNewPesticideToPurchaseLocal = () => {
-        if (!newPesticide.name) return;
+        if (!newPesticide.name || !String(newPesticide.name).trim()) return;
+        const scan = pendingScan;
         
         // Check if it already exists in inventory
-        const existingItem = inventory.find((i: InventoryItem) => i.pesticideName.toLocaleLowerCase('tr-TR').trim() === newPesticide.name.toLocaleLowerCase('tr-TR').trim());
+        const existingItem = inventory.find((i: InventoryItem) => !i.deletedAt && i.pesticideName.toLocaleLowerCase('tr-TR').trim() === newPesticide.name.toLocaleLowerCase('tr-TR').trim());
         
         if (existingItem) {
-            handleAddItem(existingItem);
+            handleAddItem(existingItem, scan);
             setIsAddingNewPesticide(false);
+            setPendingScan(null);
             setNewPesticide({ name: '', category: PesticideCategory.OTHER, unit: 'Adet' });
             return;
         }
@@ -2010,11 +2266,13 @@ const PurchaseModal = ({
         const tempId = `new-${crypto.randomUUID()}`;
         const newItem = {
             pesticideId: tempId,
-            pesticideName: newPesticide.name,
+            pesticideName: String(newPesticide.name).trim(),
             quantity: (isReturn || isSale) ? -1 : 1,
             unit: newPesticide.unit,
             buyingPrice: 0,
-            sellingPrice: 0
+            sellingPrice: 0,
+            // B-04/B-12: GTIN / Lot / SKT / Seri of the scanned box travel with the purchase line.
+            ...scanFields(scan)
         };
         
         setNewPurchase({
@@ -2023,10 +2281,52 @@ const PurchaseModal = ({
         });
         
         setIsAddingNewPesticide(false);
+        setPendingScan(null);
         setNewPesticide({ name: '', category: PesticideCategory.OTHER, unit: 'Adet' });
     };
 
-    const handleAddItem = (item: InventoryItem) => {
+    const handleAddItem = (item: InventoryItem, scan?: GS1ParseResult | null) => {
+        const sign = (isReturn || isSale) ? -1 : 1;
+        if (scan) {
+            const fields: any = scanFields(scan);
+            const key = lineKey({ pesticideId: item.pesticideId, lotNumber: fields.lotNumber, expiryDate: fields.expiryDate });
+            const same = newPurchase.items.find((i: any) => lineKey(i) === key);
+            if (same) {
+                // Another box of the same lot: +1 and collect its serial.
+                setNewPurchase({
+                    ...newPurchase,
+                    items: newPurchase.items.map((i: any) => lineKey(i) !== key ? i : {
+                        ...i,
+                        quantity: round2((Number(i.quantity) || 0) + sign),
+                        ...(fields.gtin && !i.gtin ? { gtin: fields.gtin } : {}),
+                        ...(fields.barcode && !i.barcode ? { barcode: fields.barcode } : {}),
+                        ...(fields.serialNumber ? {
+                            serialNumber: fields.serialNumber,
+                            serialNumbers: Array.from(new Set([...(i.serialNumbers || (i.serialNumber ? [i.serialNumber] : [])), fields.serialNumber]))
+                        } : {})
+                    })
+                });
+                setSearchTerm('');
+                return;
+            }
+            setNewPurchase({
+                ...newPurchase,
+                items: [...newPurchase.items, {
+                    pesticideId: item.pesticideId,
+                    pesticideName: item.pesticideName,
+                    quantity: sign,
+                    unit: item.unit,
+                    buyingPrice: item.buyingPrice || 0,
+                    sellingPrice: item.sellingPrice || 0,
+                    ...(item.gtin ? { gtin: item.gtin } : {}),
+                    ...(item.barcode ? { barcode: item.barcode } : {}),
+                    ...fields
+                }]
+            });
+            setSearchTerm('');
+            return;
+        }
+
         const exists = newPurchase.items.find((i: any) => i.pesticideId === item.pesticideId);
         if (exists) return;
 
@@ -2035,7 +2335,7 @@ const PurchaseModal = ({
             items: [...newPurchase.items, {
                 pesticideId: item.pesticideId,
                 pesticideName: item.pesticideName,
-                quantity: (isReturn || isSale) ? -1 : 1,
+                quantity: sign,
                 unit: item.unit,
                 buyingPrice: item.buyingPrice || 0,
                 sellingPrice: item.sellingPrice || 0
@@ -2044,25 +2344,26 @@ const PurchaseModal = ({
         setSearchTerm('');
     };
 
-    const removeItem = (id: string) => {
+    // Lines are addressed by index: one product may appear on several lines (different lots / SKT).
+    const removeItem = (idx: number) => {
         setNewPurchase({
             ...newPurchase,
-            items: newPurchase.items.filter((i: any) => i.pesticideId !== id)
+            items: newPurchase.items.filter((_: any, i: number) => i !== idx)
         });
     };
 
-    const updateItem = (id: string, field: string, value: any) => {
+    const updateItem = (idx: number, field: string, value: any) => {
         let finalValue = value;
         if (field === 'quantity' && (isReturn || isSale)) {
             finalValue = -Math.abs(value);
         }
         setNewPurchase({
             ...newPurchase,
-            items: newPurchase.items.map((i: any) => i.pesticideId === id ? { ...i, [field]: finalValue } : i)
+            items: newPurchase.items.map((it: any, i: number) => i === idx ? { ...it, [field]: finalValue } : it)
         });
     };
 
-    const total = newPurchase.items.reduce((acc: number, item: any) => acc + (item.buyingPrice * item.quantity), 0);
+    const total = round2(newPurchase.items.reduce((acc: number, item: any) => acc + (item.buyingPrice * item.quantity), 0));
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300 overflow-y-auto">
@@ -2082,7 +2383,7 @@ const PurchaseModal = ({
                                 Geri
                             </button>
                         )}
-                        <button onClick={onClose} className="p-2 bg-stone-800 rounded-full text-stone-500"><X size={16} /></button>
+                        <button type="button" onClick={onClose} aria-label="Kapat" data-mks-modal-close="true" className="w-11 h-11 flex items-center justify-center bg-stone-800 rounded-full text-stone-500 hover:text-stone-300"><X size={16} /></button>
                     </div>
                 </div>
 
@@ -2095,16 +2396,34 @@ const PurchaseModal = ({
                                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-600" size={14} />
                                     <input 
                                         type="text" 
-                                        className="w-full bg-stone-950 border border-white/5 rounded-2xl py-3 pl-9 pr-4 text-xs text-stone-100 outline-none focus:border-emerald-500/50 transition-all font-bold"
-                                        placeholder="Ürün adı veya barkod..."
+                                        data-barcode-input="true"
+                                        autoComplete="off"
+                                        className="w-full min-h-[44px] bg-stone-950 border border-white/5 rounded-2xl py-3 pl-9 pr-4 text-xs text-stone-100 outline-none focus:border-emerald-500/50 transition-all font-bold"
+                                        placeholder="Ürün adı veya barkod / karekod (Enter)..."
                                         value={searchTerm}
                                         onChange={(e) => setSearchTerm(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key !== 'Enter') return;
+                                            e.preventDefault();
+                                            const val = searchTerm.trim();
+                                            if (!val) return;
+                                            // Barcode / GS1 karekod typed or wedge-scanned into the field → treat as a scan.
+                                            const looksLikeCode = /^[\d\s]{8,}$/.test(val) || /\u001D|^\(\d{2}\)|^\]|^01\d{14}|^https?:\/\//i.test(val);
+                                            if (looksLikeCode || filteredInventory.length === 0) {
+                                                handleScan(val);
+                                                setSearchTerm('');
+                                            } else if (filteredInventory.length === 1) {
+                                                handleAddItem(filteredInventory[0]);
+                                            }
+                                        }}
                                     />
                                 </div>
                                 <button 
+                                    type="button"
                                     onClick={() => setIsScanning(true)}
-                                    className="bg-stone-800 p-3 rounded-xl border border-white/5 text-stone-300 hover:bg-stone-700 transition-colors"
-                                    title="Barkod Tara"
+                                    className="min-h-[44px] min-w-[44px] bg-stone-800 p-3 rounded-xl border border-white/5 text-stone-300 hover:bg-stone-700 transition-colors flex items-center justify-center"
+                                    title="Barkod / Karekod Tara"
+                                    aria-label="Barkod / Karekod Tara"
                                 >
                                     <Barcode size={20} />
                                 </button>
@@ -2146,20 +2465,27 @@ const PurchaseModal = ({
                         <div className="bg-stone-950/30 rounded-[2rem] p-4 border border-white/5 min-h-[250px]">
                             <h4 className="text-[10px] font-black text-stone-600 uppercase tracking-widest mb-4 ml-1 text-center">Seçilen Ürünler ({newPurchase.items.length})</h4>
                             <div className="space-y-2 max-h-[350px] overflow-y-auto pr-1 custom-scrollbar">
-                                {newPurchase.items.map((item: any) => (
-                                    <div key={item.pesticideId} className="flex items-center justify-between p-3.5 bg-stone-900/50 rounded-[1.5rem] border border-white/5 group animate-in slide-in-from-right-2 duration-200">
-                                        <div className="flex items-center gap-4">
-                                            <div className="w-10 h-10 rounded-xl bg-stone-950 flex items-center justify-center text-emerald-500/30 border border-white/5">
+                                {newPurchase.items.map((item: any, idx: number) => (
+                                    <div key={`${item.pesticideId}-${idx}`} className="flex items-center justify-between p-3.5 bg-stone-900/50 rounded-[1.5rem] border border-white/5 group animate-in slide-in-from-right-2 duration-200">
+                                        <div className="flex items-center gap-4 min-w-0">
+                                            <div className="w-10 h-10 shrink-0 rounded-xl bg-stone-950 flex items-center justify-center text-emerald-500/30 border border-white/5">
                                                 <FlaskConical size={18} />
                                             </div>
-                                            <div className="flex flex-col">
-                                                <span className="text-sm font-bold text-stone-200">{item.pesticideName}</span>
-                                                <span className="text-[9px] text-stone-500 font-black uppercase">{item.unit}</span>
+                                            <div className="flex flex-col min-w-0">
+                                                <span className="text-sm font-bold text-stone-200 truncate">{item.pesticideName}</span>
+                                                <span className="text-[11px] text-stone-500 font-black uppercase">
+                                                    {Math.abs(Number(item.quantity) || 0)} {item.unit}
+                                                    {item.lotNumber ? ` • Lot ${item.lotNumber}` : ''}
+                                                    {item.expiryDate ? ` • SKT ${item.expiryDate}` : ''}
+                                                    {(item.serialNumbers?.length || (item.serialNumber ? 1 : 0)) > 0 ? ` • ${item.serialNumbers?.length || 1} seri` : ''}
+                                                </span>
                                             </div>
                                         </div>
                                         <button 
-                                            onClick={() => removeItem(item.pesticideId)} 
-                                            className="p-3 text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all"
+                                            type="button"
+                                            onClick={() => removeItem(idx)} 
+                                            aria-label="Listeden çıkar"
+                                            className="min-h-[44px] min-w-[44px] p-3 text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all flex items-center justify-center shrink-0"
                                         >
                                             <X size={16} />
                                         </button>
@@ -2255,8 +2581,8 @@ const PurchaseModal = ({
                         </div>
 
                         <div className="space-y-3 max-h-[450px] overflow-y-auto pr-2 custom-scrollbar">
-                            {newPurchase.items.map((item: any) => (
-                                <div key={item.pesticideId} className="bg-stone-950/40 border border-white/5 rounded-[2rem] p-5 space-y-5 hover:bg-stone-950/60 transition-all duration-300">
+                            {newPurchase.items.map((item: any, idx: number) => (
+                                <div key={`${item.pesticideId}-${idx}`} className="bg-stone-950/40 border border-white/5 rounded-[2rem] p-5 space-y-5 hover:bg-stone-950/60 transition-all duration-300">
                                     <div className="flex justify-between items-center border-b border-white/5 pb-3">
                                         <div className="flex items-center gap-3">
                                             <div className="p-2 bg-stone-900 rounded-xl text-emerald-500">
@@ -2265,9 +2591,11 @@ const PurchaseModal = ({
                                             <span className="text-sm font-black text-stone-100">{item.pesticideName}</span>
                                         </div>
                                         <button 
-                                            onClick={() => removeItem(item.pesticideId)} 
-                                            className="p-2 text-stone-600 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all"
+                                            type="button"
+                                            onClick={() => removeItem(idx)} 
+                                            className="min-h-[44px] min-w-[44px] p-2 text-stone-600 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all flex items-center justify-center"
                                             title="Listeden Çıkar"
+                                            aria-label="Listeden Çıkar"
                                         >
                                             <Trash2 size={16} />
                                         </button>
@@ -2280,7 +2608,7 @@ const PurchaseModal = ({
                                                 type="number" 
                                                 className="w-full bg-stone-900 border border-white/5 rounded-xl p-3 text-[13px] font-black text-stone-100 outline-none focus:border-emerald-500/50 transition-all font-mono text-center"
                                                 value={item.buyingPrice || ''}
-                                                onChange={(e) => updateItem(item.pesticideId, 'buyingPrice', parseFloat(e.target.value.replace(',', '.')) || 0)}
+                                                onChange={(e) => updateItem(idx, 'buyingPrice', parseFloat(e.target.value.replace(',', '.')) || 0)}
                                             />
                                         </div>
                                         <div className="space-y-1.5">
@@ -2289,7 +2617,7 @@ const PurchaseModal = ({
                                                 type="number" 
                                                 className="w-full bg-stone-900 border border-white/5 rounded-xl p-3 text-[13px] font-black text-stone-100 outline-none focus:border-blue-500/50 transition-all font-mono text-center"
                                                 value={item.sellingPrice || ''}
-                                                onChange={(e) => updateItem(item.pesticideId, 'sellingPrice', parseFloat(e.target.value.replace(',', '.')) || 0)}
+                                                onChange={(e) => updateItem(idx, 'sellingPrice', parseFloat(e.target.value.replace(',', '.')) || 0)}
                                             />
                                         </div>
                                         <div className="space-y-1.5">
@@ -2298,10 +2626,41 @@ const PurchaseModal = ({
                                                 type="number" 
                                                 className="w-full bg-stone-900 border border-white/5 rounded-xl p-3 text-[13px] font-black text-stone-100 outline-none focus:border-amber-500/50 transition-all font-mono text-center"
                                                 value={Math.abs(item.quantity) || ''}
-                                                onChange={(e) => updateItem(item.pesticideId, 'quantity', parseFloat(e.target.value.replace(',', '.')) || 0)}
+                                                onChange={(e) => updateItem(idx, 'quantity', parseFloat(e.target.value.replace(',', '.')) || 0)}
                                             />
                                         </div>
                                     </div>
+
+                                    {/* B-04: Lot / SKT of the received batch (filled automatically from GS1 karekod scans) */}
+                                    {!isSale && (
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div className="space-y-1.5">
+                                                <label className="text-[11px] font-black text-stone-600 uppercase tracking-widest block text-center">Lot / Parti</label>
+                                                <input
+                                                    type="text"
+                                                    className="w-full min-h-[44px] bg-stone-900 border border-white/5 rounded-xl p-3 text-[13px] font-bold text-stone-100 outline-none focus:border-emerald-500/50 transition-all font-mono text-center"
+                                                    value={item.lotNumber || ''}
+                                                    placeholder="—"
+                                                    onChange={(e) => updateItem(idx, 'lotNumber', e.target.value)}
+                                                />
+                                            </div>
+                                            <div className="space-y-1.5">
+                                                <label className="text-[11px] font-black text-stone-600 uppercase tracking-widest block text-center">SKT</label>
+                                                <input
+                                                    type="date"
+                                                    className="w-full min-h-[44px] bg-stone-900 border border-white/5 rounded-xl p-3 text-[13px] font-bold text-stone-100 outline-none focus:border-emerald-500/50 transition-all font-mono text-center"
+                                                    value={item.expiryDate || ''}
+                                                    onChange={(e) => updateItem(idx, 'expiryDate', e.target.value)}
+                                                />
+                                            </div>
+                                            {(item.gtin || item.serialNumbers?.length || item.serialNumber) && (
+                                                <p className="col-span-2 text-[11px] font-mono text-stone-500 text-center break-all">
+                                                    {item.gtin ? `GTIN ${item.gtin}` : ''}
+                                                    {(item.serialNumbers?.length || item.serialNumber) ? ` • Seri: ${(item.serialNumbers || [item.serialNumber]).slice(0, 3).join(', ')}${(item.serialNumbers?.length || 0) > 3 ? ` +${item.serialNumbers.length - 3}` : ''}` : ''}
+                                                </p>
+                                            )}
+                                        </div>
+                                    )}
                                     
                                     <div className="flex justify-between items-center px-2 pt-1">
                                         <span className="text-[10px] font-black text-stone-600 uppercase tracking-widest">Ara Toplam</span>
@@ -2368,8 +2727,16 @@ const PurchaseModal = ({
                                 </div>
                                 Yeni Ürün Kaydı
                             </h3>
-                            <button onClick={() => setIsAddingNewPesticide(false)} className="p-2 bg-stone-800 rounded-full text-stone-500 hover:text-white transition-colors"><X size={18} /></button>
+                            <button type="button" onClick={() => { setIsAddingNewPesticide(false); setPendingScan(null); }} aria-label="Kapat" className="w-11 h-11 flex items-center justify-center bg-stone-800 rounded-full text-stone-500 hover:text-white transition-colors"><X size={18} /></button>
                         </div>
+                        {pendingScan && (
+                            <div className="mb-5 -mt-4 text-[11px] font-mono text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2 break-all">
+                                Okutulan kod depoda yok: {pendingScan.gtin ? `GTIN ${pendingScan.gtin}` : canonicalBarcodeFromParsed(pendingScan)}
+                                {pendingScan.batch ? ` • Lot ${pendingScan.batch}` : ''}
+                                {pendingScan.expiryDate ? ` • SKT ${pendingScan.expiryDate}` : ''}
+                                {pendingScan.serial ? ` • Seri ${pendingScan.serial}` : ''}
+                            </div>
+                        )}
                         <div className="space-y-5">
                             <div>
                                 <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest ml-2 mb-2 block">Ürün Adı</label>
@@ -2401,14 +2768,16 @@ const PurchaseModal = ({
                         </div>
                         <div className="flex gap-4 mt-10">
                             <button 
-                                onClick={() => setIsAddingNewPesticide(false)}
-                                className="flex-1 py-4 bg-stone-800 text-stone-400 rounded-2xl font-bold text-xs uppercase tracking-widest hover:text-stone-300 transition-colors"
+                                type="button"
+                                onClick={() => { setIsAddingNewPesticide(false); setPendingScan(null); }}
+                                className="flex-1 min-h-[44px] py-4 bg-stone-800 text-stone-400 rounded-2xl font-bold text-xs uppercase tracking-widest hover:text-stone-300 transition-colors"
                             >
                                 Vazgeç
                             </button>
                             <button 
+                                type="button"
                                 onClick={handleAddNewPesticideToPurchaseLocal}
-                                className="flex-1 py-4 bg-emerald-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-emerald-900/40 active:scale-95 transition-all"
+                                className="flex-1 min-h-[44px] py-4 bg-emerald-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-emerald-900/40 active:scale-95 transition-all"
                             >
                                 Listeye Ekle
                             </button>
@@ -2420,8 +2789,8 @@ const PurchaseModal = ({
             {isScanning && (
                 <div className="fixed inset-0 z-[150] bg-black">
                     <BarcodeScanner 
-                        onScan={(code) => {
-                            handleScan(code);
+                        onScan={(code, meta) => {
+                            handleScan(code, meta?.format);
                             setIsScanning(false);
                         }}
                         onClose={() => setIsScanning(false)}
@@ -2502,28 +2871,28 @@ const PaymentModal = ({ supplier, onClose, onSave, newPayment, setNewPayment, ac
                             
                             {newPayment.producerCardMonths > 0 ? (
                                 <div>
-                                    <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest ml-1 mb-1.5 block">Ödeme Vadesi (Ay)</label>
-                                    <div className="grid grid-cols-6 gap-1">
+                                    <label className="text-xs font-bold text-stone-400 ml-1 mb-1.5 block">Ödeme Vadesi (Ay)</label>
+                                    <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
                                         {[1, 2, 3, 4, 5, 6].map(m => (
                                             <button 
                                                 key={m}
                                                 onClick={() => setNewPayment({...newPayment, producerCardMonths: m})}
-                                                className={`py-2 rounded-lg text-[10px] font-black border transition-all ${newPayment.producerCardMonths === m ? 'bg-blue-600 border-blue-500 text-white' : 'bg-stone-950 border-white/5 text-stone-500'}`}
+                                                className={`min-h-[40px] py-2 rounded-xl text-xs font-bold border transition-all ${newPayment.producerCardMonths === m ? 'bg-blue-600 border-blue-500 text-white' : 'bg-stone-950 border-white/5 text-stone-400'}`}
                                             >
-                                                {m}
+                                                {m} Ay
                                             </button>
                                         ))}
                                     </div>
                                 </div>
                             ) : (
                                 <div>
-                                    <label className="text-[10px] font-black text-stone-500 uppercase tracking-widest ml-1 mb-1.5 block">Taksit Sayısı</label>
-                                    <div className="grid grid-cols-6 gap-1">
+                                    <label className="text-xs font-bold text-stone-400 ml-1 mb-1.5 block">Taksit Sayısı</label>
+                                    <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
                                         {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(t => (
                                             <button 
                                                 key={t}
                                                 onClick={() => setNewPayment({...newPayment, installments: t})}
-                                                className={`py-2 rounded-lg text-[10px] font-black border transition-all ${newPayment.installments === t ? 'bg-blue-600 border-blue-500 text-white' : 'bg-stone-950 border-white/5 text-stone-500'}`}
+                                                className={`min-h-[40px] py-2 rounded-xl text-xs font-bold border transition-all ${newPayment.installments === t ? 'bg-blue-600 border-blue-500 text-white' : 'bg-stone-950 border-white/5 text-stone-400'}`}
                                             >
                                                 {t}
                                             </button>

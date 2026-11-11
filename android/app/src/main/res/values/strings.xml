@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Mühendis Kayıt Sistemi</string>
+    <string name="title_activity_main">Mühendis Kayıt Sistemi</string>
+    <string name="package_name">com.nayiffirat.mks</string>
+    <string name="custom_url_scheme">com.nayiffirat.mks</string>
+</resources>

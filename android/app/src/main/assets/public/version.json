@@ -1,0 +1,11 @@
+{
+  "version": "8.2.1",
+  "build": 28,
+  "desktopVersion": "8.2.1.0",
+  "desktopBuild": 28,
+  "desktopDownloadUrl": "/downloads/MKS_Masaustu_Kurulum.exe",
+  "androidDownloadUrl": "/downloads/MKS_Android.apk",
+  "releasedAt": "2026-11-11",
+  "title": "MKS v8.2.1 Masaüstü Canlı Güncelleme & Kurumsal ERP Paketi",
+  "notes": "Masaüstü uygulaması pencere kontrol çubuğuna canlı güncelleme butonu, temel ERP vitrin önceliği ve kurumsal marka paketi eklendi."
+}

@@ -46,6 +46,8 @@ export const Kasa: React.FC<KasaProps> = ({ onBack }) => {
     deleteAccount, 
     addTransaction, 
     deleteTransaction,
+    updatePayment,
+    updateMyPayment,
     showToast,
     hapticFeedback,
     userProfile
@@ -950,7 +952,213 @@ export const Kasa: React.FC<KasaProps> = ({ onBack }) => {
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
         {viewMode === 'ACCOUNTS' ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-6">
+            {(() => {
+              const todayStart = new Date();
+              todayStart.setHours(0, 0, 0, 0);
+
+              const linkedPaymentIdsInMyPayments = new Set(
+                myPayments
+                  .filter(mp => !mp.deletedAt && mp.relatedId)
+                  .map(mp => mp.relatedId as string)
+              );
+
+              type BlockedItem = {
+                key: string;
+                source: 'MY_PAYMENT' | 'PAYMENT';
+                farmerName: string;
+                amount: number;
+                unblockDate: string;
+                daysRemaining: number;
+                badgeLabel: string;
+                accountId?: string;
+                accountName?: string;
+                rawMyPayment?: typeof myPayments[number];
+                rawPayment?: typeof payments[number];
+              };
+
+              const items: BlockedItem[] = [];
+
+              myPayments.forEach(mp => {
+                if (mp.deletedAt || mp.status !== 'PENDING') return;
+                if (mp.type !== 'DEFERRED_CARD' && mp.type !== 'CARD_INSTALLMENT') return;
+                if (!mp.farmerId && !mp.farmerName) return;
+                const dStr = mp.unblockDate || mp.dueDate;
+                const targetDate = new Date(dStr);
+                targetDate.setHours(0, 0, 0, 0);
+                const diffDays = Math.ceil((targetDate.getTime() - todayStart.getTime()) / (1000 * 60 * 60 * 24));
+                const farmerObj = farmers.find(f => f.id === mp.farmerId);
+                const accObj = accounts.find(a => a.id === mp.accountId);
+                const optLabel =
+                  mp.cardOption === 'DAYS_15' ? '15 Gün POS Bloke' :
+                  mp.cardOption === 'DAYS_30' ? '30 Gün POS Bloke' :
+                  mp.cardOption === 'DAYS_45' ? '45 Gün POS Bloke' :
+                  mp.type === 'CARD_INSTALLMENT' ? 'Üretici Kart / Taksit' : 'POS Bloke';
+
+                items.push({
+                  key: `mp-${mp.id}`,
+                  source: 'MY_PAYMENT',
+                  farmerName: mp.farmerName || farmerObj?.fullName || 'Müşteri',
+                  amount: mp.amount,
+                  unblockDate: dStr,
+                  daysRemaining: diffDays,
+                  badgeLabel: optLabel,
+                  accountId: mp.accountId,
+                  accountName: accObj?.name,
+                  rawMyPayment: mp
+                });
+              });
+
+              payments.forEach(p => {
+                if (p.deletedAt || p.method !== 'CARD' || !p.cardOption || p.cardOption === 'UNBLOCKED' || p.isUnblocked) return;
+                if (linkedPaymentIdsInMyPayments.has(p.id)) return;
+                const dStr = p.unblockDate || p.date;
+                const targetDate = new Date(dStr);
+                targetDate.setHours(0, 0, 0, 0);
+                const diffDays = Math.ceil((targetDate.getTime() - todayStart.getTime()) / (1000 * 60 * 60 * 24));
+                const farmerObj = farmers.find(f => f.id === p.farmerId);
+                const accObj = accounts.find(a => a.id === p.accountId);
+                const optLabel =
+                  p.cardOption === 'DAYS_15' ? '15 Gün POS Bloke' :
+                  p.cardOption === 'DAYS_30' ? '30 Gün POS Bloke' : '45 Gün POS Bloke';
+
+                items.push({
+                  key: `p-${p.id}`,
+                  source: 'PAYMENT',
+                  farmerName: farmerObj?.fullName || 'Çiftçi',
+                  amount: p.netAmount ?? p.amount,
+                  unblockDate: dStr,
+                  daysRemaining: diffDays,
+                  badgeLabel: optLabel,
+                  accountId: p.accountId,
+                  accountName: accObj?.name,
+                  rawPayment: p
+                });
+              });
+
+              items.sort((a, b) => new Date(a.unblockDate).getTime() - new Date(b.unblockDate).getTime());
+
+              const totalBlocked = items.reduce((sum, it) => sum + it.amount, 0);
+              const inflow7d = items.filter(it => it.daysRemaining <= 7).reduce((sum, it) => sum + it.amount, 0);
+              const inflow30d = items.filter(it => it.daysRemaining <= 30).reduce((sum, it) => sum + it.amount, 0);
+
+              return (
+                <div className="bg-stone-900/90 border border-amber-500/20 rounded-3xl p-5 shadow-lg">
+                  <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-2xl bg-amber-500/15 text-amber-400 flex items-center justify-center">
+                        <Calendar size={20} />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-black text-stone-100 uppercase tracking-wider">
+                          POS & Üretici Kartı Bloke Çözüm Takvimi
+                        </h3>
+                        <p className="text-[11px] text-stone-400">
+                          Blokede bekleyen kart tahsilatlarının banka hesabınıza geçiş takvimi
+                        </p>
+                      </div>
+                    </div>
+                    <span className="px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/25 text-amber-300 text-[10px] font-black uppercase tracking-widest">
+                      {items.length} Bekleyen Bloke
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3 mb-4">
+                    <div className="bg-stone-950/70 border border-white/5 rounded-2xl p-3">
+                      <span className="text-[9px] font-black text-stone-500 uppercase tracking-wider block">7 Gün İçinde</span>
+                      <span className="text-sm sm:text-base font-black text-emerald-400 font-mono mt-0.5 block">
+                        {formatCurrency(inflow7d)}
+                      </span>
+                    </div>
+                    <div className="bg-stone-950/70 border border-white/5 rounded-2xl p-3">
+                      <span className="text-[9px] font-black text-stone-500 uppercase tracking-wider block">30 Gün İçinde</span>
+                      <span className="text-sm sm:text-base font-black text-sky-400 font-mono mt-0.5 block">
+                        {formatCurrency(inflow30d)}
+                      </span>
+                    </div>
+                    <div className="bg-stone-950/70 border border-white/5 rounded-2xl p-3">
+                      <span className="text-[9px] font-black text-stone-500 uppercase tracking-wider block">Toplam Bloke</span>
+                      <span className="text-sm sm:text-base font-black text-amber-400 font-mono mt-0.5 block">
+                        {formatCurrency(totalBlocked)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {items.length === 0 ? (
+                    <div className="text-center py-4 bg-stone-950/40 rounded-2xl border border-white/5 text-xs text-stone-500 font-medium">
+                      Şu anda blokede bekleyen POS veya üretici kartı tahsilatı bulunmuyor.
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-64 overflow-y-auto pr-1 custom-scrollbar">
+                      {items.map(item => (
+                        <div
+                          key={item.key}
+                          className="flex flex-wrap items-center justify-between gap-3 bg-stone-950/80 border border-white/5 rounded-2xl p-3"
+                        >
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-bold text-stone-100">{item.farmerName}</span>
+                              <span className="px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/25 text-amber-300 text-[9px] font-bold">
+                                {item.badgeLabel}
+                              </span>
+                              <span className={`px-2 py-0.5 rounded-md text-[9px] font-black ${
+                                item.daysRemaining <= 0
+                                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/35'
+                                  : item.daysRemaining <= 3
+                                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/35'
+                                    : 'bg-stone-800 text-stone-400'
+                              }`}>
+                                {item.daysRemaining < 0
+                                  ? `${Math.abs(item.daysRemaining)} Gün Geçti (Çözülmeye Hazır)`
+                                  : item.daysRemaining === 0
+                                    ? 'Bugün Çözülüyor!'
+                                    : `${item.daysRemaining} Gün Kaldı`}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-stone-500 mt-1">
+                              Çözüm Tarihi: {new Date(item.unblockDate).toLocaleDateString('tr-TR')}
+                              {item.accountName ? ` • Hedef: ${item.accountName}` : ''}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2.5 ml-auto">
+                            <span className="text-sm font-black text-stone-100 font-mono">
+                              {formatCurrency(item.amount)}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const fallbackBank = accounts.find(a => a.type === 'BANK')?.id || accounts[0]?.id;
+                                const targetAcc = item.accountId || fallbackBank;
+                                if (item.source === 'MY_PAYMENT' && item.rawMyPayment) {
+                                  await updateMyPayment({
+                                    ...item.rawMyPayment,
+                                    status: 'PAID',
+                                    accountId: targetAcc
+                                  });
+                                } else if (item.source === 'PAYMENT' && item.rawPayment) {
+                                  await updatePayment({
+                                    ...item.rawPayment,
+                                    isUnblocked: true,
+                                    accountId: targetAcc
+                                  });
+                                }
+                                showToast('POS blokesi çözüldü ve banka hesabına aktarıldı', 'success');
+                                hapticFeedback('success');
+                              }}
+                              className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-black uppercase tracking-wider active:scale-95 transition-all"
+                            >
+                              ✓ Hesaba Geçti
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {accounts.map(account => (
               <div 
                 key={account.id} 
@@ -1026,6 +1234,7 @@ export const Kasa: React.FC<KasaProps> = ({ onBack }) => {
                 </button>
               </div>
             )}
+            </div>
           </div>
         ) : (
           <div className="space-y-4">

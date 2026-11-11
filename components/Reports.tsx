@@ -1,15 +1,29 @@
-import { createMultiPagePdf } from '../utils/pdfHelper';
+import { createMultiPagePdf, renderElementToCanvas } from '../utils/pdfHelper';
 import React, { useState, useMemo } from 'react';
 import { useAppViewModel } from '../context/AppContext';
-import { Printer, FileText, Download, Users, Package, Receipt, Loader2, ChevronRight, Calendar, X, Store, BarChart3, LayoutGrid } from 'lucide-react';
-import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import { Printer, FileText, Download, Users, Package, Receipt, Loader2, ChevronRight, Calendar, Store, BarChart3, LayoutGrid } from 'lucide-react';
 import { format } from 'date-fns';
 import { tr } from 'date-fns/locale';
 import { formatCurrency } from '../utils/currency';
-import html2canvas from 'html2canvas';
 import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
+import { ModalCloseButton } from './ModalCloseButton';
+import { useBackHandler } from '../utils/navigationManager';
 import { generateYearEndReportPDF } from '../utils/yearEndReportGenerator';
+import {
+  computeFarmerLedgerTotals,
+  getBouncedRelatedPaymentIds,
+  getIndependentFarmerMyPayments,
+  getPrescriptionCreditImpact,
+  isTurnoverDebtRecord
+} from '../utils/ledger';
+
+const escapeHtml = (val: unknown): string =>
+  String(val ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 
 export const Reports: React.FC = () => {
   const { 
@@ -22,17 +36,23 @@ export const Reports: React.FC = () => {
     myPayments,
     accounts, 
     userProfile,
+    activeTeamMember,
     farmerLabel,
     farmerPluralLabel,
     prescriptionLabel,
     suppliers,
     supplierPurchases
   } = useAppViewModel();
+  const hideCostAndProfit = Boolean(
+    userProfile?.hideCostAndProfit ||
+    (userProfile?.hideBuyingPricesForStaff && activeTeamMember?.role === 'SALES')
+  );
   const [generating, setGenerating] = useState<string | null>(null);
   const [activeViewMode, setActiveViewMode] = useState<'ANALYTICS' | 'PDF_LIST'>('ANALYTICS');
   const [startDate, setStartDate] = useState<string>(format(new Date(new Date().getFullYear(), 0, 1), 'yyyy-MM-dd'));
   const [endDate, setEndDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
+  useBackHandler(!!selectedReportId, () => setSelectedReportId(null), 'Reports_dateRange', 50);
   const [selectedYearEndYear, setSelectedYearEndYear] = useState<number>(new Date().getFullYear());
 
   const availableYears = useMemo(() => {
@@ -105,7 +125,7 @@ export const Reports: React.FC = () => {
   const generateTableHtml = (title: string, headers: string[], rows: any[][], footers?: any[][], headerColor = '#1f2937') => {
       let html = `<div style="margin-bottom: 32px; page-break-inside: avoid;">`;
       if (title) {
-          html += `<h3 style="font-size: 16px; font-weight: 700; margin: 0 0 12px 0; color: #1c1917; border-bottom: 2px solid #e7e5e4; padding-bottom: 8px;">${title}</h3>`;
+          html += `<h3 style="font-size: 16px; font-weight: 700; margin: 0 0 12px 0; color: #1c1917; border-bottom: 2px solid #e7e5e4; padding-bottom: 8px;">${escapeHtml(title)}</h3>`;
       }
       
       html += `<table style="width: 100%; border-collapse: collapse; font-size: 11px; text-align: left; margin-bottom: 8px;">
@@ -114,7 +134,7 @@ export const Reports: React.FC = () => {
       
       headers.forEach((h, i) => {
           const isRight = h.toLowerCase().includes('bakiye') || h.toLowerCase().includes('tutar') || h.toLowerCase().includes('maliyet') || h.toLowerCase().includes('fiyat');
-          html += `<th style="padding: 10px; border-bottom: 2px solid ${headerColor}; ${i === 0 ? 'border-top-left-radius: 6px;' : ''} ${i === headers.length - 1 ? 'border-top-right-radius: 6px;' : ''} ${isRight ? 'text-align: right;' : ''}">${h}</th>`;
+          html += `<th style="padding: 10px; border-bottom: 2px solid ${headerColor}; ${i === 0 ? 'border-top-left-radius: 6px;' : ''} ${i === headers.length - 1 ? 'border-top-right-radius: 6px;' : ''} ${isRight ? 'text-align: right;' : ''}">${escapeHtml(h)}</th>`;
       });
       
       html += `    </tr>
@@ -135,11 +155,12 @@ export const Reports: React.FC = () => {
                   const isBold = typeof cell === 'string' && (cell.includes('BORÇ') || cell.includes('ALACAK') || cell.includes('ALACAKLI') || cell.includes('BORÇLU'));
                   const color = cell === 'ALACAKLI HESAP' || cell === 'ALACAKLIYIZ' ? '#059669' : (cell === 'BORÇLU HESAP (BİZE)' || cell === 'BORÇLUYUZ (TEDARİKÇİYE)' ? '#dc2626' : '#3f3f46');
 
-                  let displayContent = cell;
+                  const safeCell = escapeHtml(cell);
+                  let displayContent = safeCell;
                   if (isBelgeNo && cell && cell !== '-') {
-                      displayContent = `<span style="background-color: #18181b; color: #ffffff; font-family: monospace; font-weight: 800; padding: 2px 7px; border-radius: 4px; font-size: 10.5px; display: inline-block;">${cell}</span>`;
+                      displayContent = `<span style="background-color: #18181b; color: #ffffff; font-family: monospace; font-weight: 800; padding: 2px 7px; border-radius: 4px; font-size: 10.5px; display: inline-block;">${safeCell}</span>`;
                   } else if (isQuantity && cell) {
-                      displayContent = `<span style="background-color: #fef3c7; color: #78350f; border: 1px solid #fde68a; font-family: monospace; font-weight: 800; padding: 2px 7px; border-radius: 4px; font-size: 11px; display: inline-block;">${cell}</span>`;
+                      displayContent = `<span style="background-color: #fef3c7; color: #78350f; border: 1px solid #fde68a; font-family: monospace; font-weight: 800; padding: 2px 7px; border-radius: 4px; font-size: 11px; display: inline-block;">${safeCell}</span>`;
                   }
 
                   html += `<td style="padding: 10px; color: ${color}; ${isRight ? 'text-align: right; font-family: monospace; font-weight: 600;' : ''} ${isBold ? 'font-weight: 700;' : ''}">${displayContent}</td>`;
@@ -156,7 +177,7 @@ export const Reports: React.FC = () => {
               html += `<tr>`;
               row.forEach((cell, j) => {
                   const isRight = j > 0;
-                  html += `<td style="padding: 10px; border-top: 2px solid #e5e7eb; color: #1f2937; ${isRight ? 'text-align: right; font-family: monospace;' : ''}">${cell}</td>`;
+                  html += `<td style="padding: 10px; border-top: 2px solid #e5e7eb; color: #1f2937; ${isRight ? 'text-align: right; font-family: monospace;' : ''}">${escapeHtml(cell)}</td>`;
               });
               html += `</tr>`;
           });
@@ -179,24 +200,24 @@ export const Reports: React.FC = () => {
           container.style.color = '#1c1917';
           container.style.fontFamily = 'system-ui, -apple-system, sans-serif';
 
-          const stampTitle = (userProfile?.stampTitle || userProfile?.companyName || 'MKS SİSTEMİ').toUpperCase();
-          const stampSubTitle = userProfile?.stampSubTitle || (userProfile?.title ? `${userProfile.title} ${userProfile?.fullName || ''}` : userProfile?.fullName || 'Ziraat Mühendisi');
-          const stampTax = userProfile?.stampTaxInfo || 'Vergi D. - 1234567890';
-          const stampColor = userProfile?.stampColor || '#1d4ed8';
+          const stampTitle = escapeHtml((userProfile?.stampTitle || userProfile?.companyName || 'MKS SİSTEMİ').toUpperCase());
+          const stampSubTitle = escapeHtml(userProfile?.stampSubTitle || (userProfile?.title ? `${userProfile.title} ${userProfile?.fullName || ''}` : userProfile?.fullName || 'Ziraat Mühendisi'));
+          const stampTax = escapeHtml(userProfile?.stampTaxInfo || 'Vergi D. - 1234567890');
+          const stampColor = /^#[0-9a-fA-F]{3,8}$/.test(userProfile?.stampColor || '') ? userProfile!.stampColor! : '#1d4ed8';
 
           let baseHtml = `
               <div style="margin-bottom: 30px;">
                   <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px;">
                       <div>
                           <h1 style="font-size: 26px; font-weight: 800; margin: 0 0 8px 0; color: #10b981; text-transform: uppercase;">
-                              ${userProfile?.companyName || "MKS SİSTEMİ"}
+                              ${escapeHtml(userProfile?.companyName || "MKS SİSTEMİ")}
                           </h1>
-                          <h2 style="font-size: 18px; font-weight: 700; margin: 0 0 4px 0; color: #1c1917;">${title}</h2>
-                          ${subtitle ? `<p style="margin: 0; font-size: 13px; color: #57534e;">${subtitle}</p>` : ''}
+                          <h2 style="font-size: 18px; font-weight: 700; margin: 0 0 4px 0; color: #1c1917;">${escapeHtml(title)}</h2>
+                          ${subtitle ? `<p style="margin: 0; font-size: 13px; color: #57534e;">${escapeHtml(subtitle)}</p>` : ''}
                       </div>
                       <div style="text-align: right; color: #78716c; font-size: 11px;">
                           <p style="margin: 0 0 4px 0;"><strong>Tarih:</strong> ${format(new Date(), 'dd.MM.yyyy HH:mm')}</p>
-                          <p style="margin: 0;"><strong>Oluşturan:</strong> ${userProfile?.fullName || 'Sistem'}</p>
+                          <p style="margin: 0;"><strong>Oluşturan:</strong> ${escapeHtml(userProfile?.fullName || 'Sistem')}</p>
                       </div>
                   </div>
               </div>
@@ -226,15 +247,15 @@ export const Reports: React.FC = () => {
           container.innerHTML = baseHtml;
           document.body.appendChild(container);
 
-          const canvas = await html2canvas(container, {
-              scale: 2,
+          const canvas = await renderElementToCanvas(container, {
+              scale: 3,
               backgroundColor: '#ffffff',
               logging: false
           });
 
           document.body.removeChild(container);
           
-          const doc = createMultiPagePdf(canvas);
+          const doc = await createMultiPagePdf(canvas);
           doc.save(fileName);
       } catch(e) {
           console.error("PDF Oluşturma Hatası", e);
@@ -274,15 +295,13 @@ export const Reports: React.FC = () => {
         let totalReceivable = 0;
         let totalPayableToFarmers = 0;
         const farmerData = farmers.map(farmer => {
-            const totalPaid = payments.filter(p => p.farmerId === farmer.id && !p.deletedAt).reduce((acc, p) => acc + p.amount, 0) + 
-                              myPayments.filter(p => p.farmerId === farmer.id && !p.deletedAt && p.status !== 'CANCELLED' && !p.relatedId).reduce((acc, p) => acc + p.amount, 0);
-            const totalDebt = prescriptions.filter(p => p.farmerId === farmer.id && !p.deletedAt && p.priceType !== 'CASH').reduce((acc, p) => {
-                const amt = Number(p.totalAmount) || 0;
-                const isReturn = p.type === 'RETURN' || amt < 0;
-                return acc + (isReturn ? -Math.abs(amt) : Math.abs(amt));
-            }, 0) + 
-                              manualDebts.filter(d => d.farmerId === farmer.id && !d.deletedAt && !d.id.startsWith('turnover-')).reduce((acc, d) => acc + d.amount, 0);
-            const balance = totalPaid - totalDebt;
+            const { signedBalance: balance } = computeFarmerLedgerTotals({
+                farmerId: farmer.id,
+                prescriptions,
+                manualDebts,
+                payments,
+                myPayments
+            });
             return { name: farmer.fullName, phone: farmer.phoneNumber, balance };
         }).filter(f => f.balance !== 0);
 
@@ -327,18 +346,21 @@ export const Reports: React.FC = () => {
                 item.pesticideName,
                 item.category,
                 `${item.quantity} ${item.unit}`,
-                formatCurrency(item.buyingPrice, userProfile?.currency || 'TRY'),
-                formatCurrency(buyingValue, userProfile?.currency || 'TRY')
+                hideCostAndProfit ? '***' : formatCurrency(item.buyingPrice, userProfile?.currency || 'TRY'),
+                hideCostAndProfit ? '***' : formatCurrency(buyingValue, userProfile?.currency || 'TRY')
             ];
         });
         htmlContent += generateTableHtml('4. DEPO / STOK DURUMU', ['Ürün Adı', 'Kategori', 'Miktar', 'Birim Maliyet', 'Toplam Maliyet'], inventoryData, [
-            ['', '', 'DEPO TOPLAM MALİYETİ', '', formatCurrency(totalInventoryBuyingValue, userProfile?.currency || 'TRY')]
+            ['', '', 'DEPO TOPLAM MALİYETİ', '', hideCostAndProfit ? '***' : formatCurrency(totalInventoryBuyingValue, userProfile?.currency || 'TRY')]
         ], '#8b5cf6'); // Violet
 
         // 5. Finansal Özet
-        const filteredPayments = [...payments, ...myPayments.filter(p => !p.deletedAt && p.status !== 'CANCELLED')];
-        const totalIncome = filteredPayments.reduce((acc, p) => acc + p.amount, 0);
-        const totalExpense = expenses.reduce((acc, e) => acc + e.amount, 0);
+        const bouncedRelIds = getBouncedRelatedPaymentIds(myPayments);
+        const indepMyPays = getIndependentFarmerMyPayments(myPayments);
+        const totalIncome =
+            payments.filter(p => !p.deletedAt && !bouncedRelIds.has(p.id)).reduce((acc, p) => acc + p.amount, 0) +
+            indepMyPays.reduce((acc, p) => acc + p.amount, 0);
+        const totalExpense = expenses.filter(e => !e.deletedAt).reduce((acc, e) => acc + e.amount, 0);
         const netProfit = totalIncome - totalExpense;
 
         const financialData = [
@@ -371,57 +393,52 @@ export const Reports: React.FC = () => {
         // 2. Müşteriler (Çiftçiler)
         htmlContent += `<h3 style="font-size: 16px; font-weight: 700; margin: 32px 0 12px 0; color: #1c1917; border-bottom: 2px solid #e7e5e4; padding-bottom: 8px;">2. ${farmerPluralLabel.toLocaleUpperCase('tr-TR')} DETAYLI HESAP DÖKÜMÜ</h3>`;
         
+        const bouncedRelIdsDetail = getBouncedRelatedPaymentIds(myPayments);
         farmers.forEach((farmer, index) => {
             const ledger: any[] = [];
             
-            prescriptions.filter(p => !p.deletedAt && p.farmerId === farmer.id).forEach(p => {
-                const isDebt = p.type !== 'RETURN';
+            prescriptions.filter(p => !p.deletedAt && p.farmerId === farmer.id && p.priceType !== 'CASH').forEach(p => {
+                const impact = getPrescriptionCreditImpact(p);
+                if (impact === 0) return;
+                const isDebt = impact > 0;
                 ledger.push({
                     date: new Date(p.date || Date.now()),
-                    type: isDebt ? 'Satış Faturası' : 'İade Faturası',
+                    type: isDebt ? 'Vadeli Satış / Reçete' : 'Satış İadesi',
                     docNo: p.prescriptionNo || '-',
-                    amount: p.totalAmount || 0,
-                    isDebt: isDebt
+                    amount: Math.abs(impact),
+                    isDebt
                 });
             });
 
-            payments.filter(p => !p.deletedAt && p.farmerId === farmer.id).forEach(p => {
+            payments.filter(p => !p.deletedAt && p.farmerId === farmer.id && !bouncedRelIdsDetail.has(p.id)).forEach(p => {
                 ledger.push({
                     date: new Date(p.date),
                     type: 'Tahsilat (Bize Ödenen)',
                     docNo: '-',
-                    amount: p.amount,
+                    amount: Math.abs(Number(p.amount) || 0),
                     isDebt: false
                 });
             });
 
-            myPayments.filter(p => !p.deletedAt && p.status !== 'CANCELLED' && p.farmerId === farmer.id).forEach(p => {
+            getIndependentFarmerMyPayments(myPayments, farmer.id).forEach(p => {
                 ledger.push({
-                    date: new Date(p.issueDate),
-                    type: 'Müşteri Ödemesi (Bizden Çıkan)',
+                    date: new Date(p.date),
+                    type: p.method === 'CHECK' ? 'Müşteri Çeki Tahsilatı' : 'Müşteri Senedi Tahsilatı',
                     docNo: '-',
-                    amount: p.amount,
-                    isDebt: true
+                    amount: Math.abs(Number(p.amount) || 0),
+                    isDebt: false
                 });
             });
 
-            manualDebts.filter(d => d.farmerId === farmer.id && !d.id.startsWith('turnover-')).forEach(d => {
+            manualDebts.filter(d => !d.deletedAt && d.farmerId === farmer.id && !isTurnoverDebtRecord(d.id)).forEach(d => {
+                const amt = Number(d.amount) || 0;
+                if (amt === 0) return;
                 ledger.push({
                     date: new Date(d.date),
-                    type: 'Bakiye Eklentisi (Borç)',
+                    type: amt > 0 ? 'Bakiye Eklentisi (Borç)' : 'Bakiye Düzeltmesi (Alacak)',
                     docNo: '-',
-                    amount: d.amount,
-                    isDebt: true
-                });
-            });
-
-            manualDebts.filter(d => d.farmerId === farmer.id && d.id.startsWith('turnover-')).forEach(d => {
-                ledger.push({
-                    date: new Date(d.date),
-                    type: 'Devir Bakiye',
-                    docNo: '-',
-                    amount: d.amount,
-                    isDebt: true
+                    amount: Math.abs(amt),
+                    isDebt: amt > 0
                 });
             });
 
@@ -488,7 +505,7 @@ export const Reports: React.FC = () => {
                     l.docNo,
                     l.isDebtToUs ? formatCurrency(l.amount, userProfile?.currency || 'TRY') : '', 
                     !l.isDebtToUs ? formatCurrency(l.amount, userProfile?.currency || 'TRY') : '', 
-                    formatCurrency(Math.abs(currentBalance), userProfile?.currency || 'TRY') + (currentBalance < 0 ? ' (Bize Borçlu)' : ' (Bize Alacaklı)')
+                    formatCurrency(Math.abs(currentBalance), userProfile?.currency || 'TRY') + (currentBalance < 0 ? ' (Tedarikçiye Borçluyuz)' : ' (Tedarikçiden Alacaklıyız)')
                 ];
             });
 
@@ -504,12 +521,12 @@ export const Reports: React.FC = () => {
                 item.pesticideName,
                 item.category,
                 `${item.quantity} ${item.unit}`,
-                formatCurrency(item.buyingPrice, userProfile?.currency || 'TRY'),
-                formatCurrency(buyingValue, userProfile?.currency || 'TRY')
+                hideCostAndProfit ? '***' : formatCurrency(item.buyingPrice, userProfile?.currency || 'TRY'),
+                hideCostAndProfit ? '***' : formatCurrency(buyingValue, userProfile?.currency || 'TRY')
             ];
         });
         htmlContent += generateTableHtml('4. TÜM DEPO / STOK DURUMU', ['Ürün Adı', 'Kategori', 'Miktar', 'Alış Birim Maliyet', 'Alış Toplam Maliyet'], inventoryData, [
-            ['', '', 'TOPLAM DEPO MALİYETİ', '', formatCurrency(totalInventoryBuyingValue, userProfile?.currency || 'TRY')]
+            ['', '', 'TOPLAM DEPO MALİYETİ', '', hideCostAndProfit ? '***' : formatCurrency(totalInventoryBuyingValue, userProfile?.currency || 'TRY')]
         ], '#8b5cf6'); // Violet
 
         // 5. Giderler
@@ -538,18 +555,17 @@ export const Reports: React.FC = () => {
     setTimeout(() => {
         const tableData = farmers.map(farmer => {
             const fPayments = payments.filter(p => p.farmerId === farmer.id && !p.deletedAt && isWithinRange(p.date));
-            const fMyPayments = myPayments.filter(p => p.farmerId === farmer.id && !p.deletedAt && p.status !== 'CANCELLED' && !p.relatedId && isWithinRange(p.issueDate));
+            const fMyPayments = myPayments.filter(p => p.farmerId === farmer.id && !p.deletedAt && isWithinRange(p.issueDate));
             const fPrescriptions = prescriptions.filter(p => p.farmerId === farmer.id && !p.deletedAt && isWithinRange(p.date));
             const fManualDebts = manualDebts.filter(d => d.farmerId === farmer.id && !d.deletedAt && isWithinRange(d.date));
-            
-            const totalPaid = fPayments.reduce((acc, p) => acc + p.amount, 0) + fMyPayments.reduce((acc, p) => acc + p.amount, 0);
-            const totalDebt = fPrescriptions.filter(p => p.priceType !== 'CASH').reduce((acc, p) => {
-                const amt = Number(p.totalAmount) || 0;
-                const isReturn = p.type === 'RETURN' || amt < 0;
-                return acc + (isReturn ? -Math.abs(amt) : Math.abs(amt));
-            }, 0) + fManualDebts.filter(d => !d.id.startsWith('turnover-')).reduce((acc, d) => acc + d.amount, 0);
-            
-            const balance = totalPaid - totalDebt;
+
+            const { signedBalance: balance } = computeFarmerLedgerTotals({
+                farmerId: farmer.id,
+                prescriptions: fPrescriptions,
+                manualDebts: fManualDebts,
+                payments: fPayments,
+                myPayments: fMyPayments
+            });
             const status = balance >= 0 ? 'ALACAK' : 'BORÇ';
 
             return [
@@ -579,7 +595,7 @@ export const Reports: React.FC = () => {
                 item.pesticideName,
                 item.category,
                 `${item.quantity} ${item.unit}`,
-                formatCurrency(item.buyingPrice, userProfile?.currency || 'TRY'),
+                hideCostAndProfit ? '***' : formatCurrency(item.buyingPrice, userProfile?.currency || 'TRY'),
                 formatCurrency(item.sellingPrice, userProfile?.currency || 'TRY')
             ];
         });
@@ -735,40 +751,40 @@ export const Reports: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 px-2">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-black text-stone-100 tracking-tight flex items-center">
+          <h1 className="text-xl font-bold text-stone-100 tracking-tight flex items-center">
             <Printer className="mr-2 text-emerald-500" size={20} />
-            Raporlar & Analiz
+            Raporlar ve Analiz
           </h1>
-          <p className="text-[10px] font-bold text-stone-500 uppercase tracking-widest mt-1">
-            İnteraktif grafik analizleri inceleyin ve PDF raporları indirin
+          <p className="text-xs font-medium text-stone-400 mt-0.5">
+            Grafik analizleri inceleyin ve PDF raporları indirin
           </p>
         </div>
 
         {/* View Mode Selector Tabs */}
-        <div className="flex items-center gap-1.5 bg-stone-900 border border-white/10 p-1.5 rounded-2xl">
+        <div className="grid grid-cols-2 sm:flex items-center gap-1.5 bg-stone-900 border border-white/10 p-1.5 rounded-2xl w-full sm:w-auto">
           <button
             onClick={() => setActiveViewMode('ANALYTICS')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${
+            className={`min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
               activeViewMode === 'ANALYTICS'
-                ? 'bg-emerald-500 text-stone-950 font-black shadow-lg shadow-emerald-950/30'
+                ? 'bg-emerald-500 text-stone-950 font-extrabold shadow-sm'
                 : 'text-stone-400 hover:text-stone-200'
             }`}
           >
-            <BarChart3 size={16} />
-            Gelir-Gider Grafik Analizi
+            <BarChart3 size={15} className="shrink-0" />
+            <span className="truncate">Grafik analizi</span>
           </button>
           <button
             onClick={() => setActiveViewMode('PDF_LIST')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${
+            className={`min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
               activeViewMode === 'PDF_LIST'
-                ? 'bg-emerald-500 text-stone-950 font-black shadow-lg shadow-emerald-950/30'
+                ? 'bg-emerald-500 text-stone-950 font-extrabold shadow-sm'
                 : 'text-stone-400 hover:text-stone-200'
             }`}
           >
-            <LayoutGrid size={16} />
-            PDF Rapor Listesi
+            <LayoutGrid size={15} className="shrink-0" />
+            <span className="truncate">PDF raporlar</span>
           </button>
         </div>
       </div>
@@ -849,22 +865,23 @@ export const Reports: React.FC = () => {
       )}
       
       {selectedReportId && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-stone-950/80 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-stone-900 border border-white/10 w-full max-w-sm rounded-[2rem] p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-stone-950/80 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={e => { if (e.target === e.currentTarget) setSelectedReportId(null); }}
+        >
+            <div className="bg-stone-900 border border-white/10 w-full max-w-sm rounded-[2rem] p-6 shadow-2xl animate-in zoom-in-95 duration-200 max-h-[90dvh] overflow-y-auto custom-scrollbar">
                 <div className="flex justify-between items-center mb-6">
                     <h2 className="text-lg font-black text-stone-100 flex items-center gap-2">
                         <Calendar className="text-emerald-500" size={20} />
                         Tarih Aralığı Seçin
                     </h2>
-                    <button onClick={() => setSelectedReportId(null)} className="p-2 bg-stone-800 rounded-full text-stone-500 hover:text-white transition-colors">
-                        <X size={16} />
-                    </button>
+                    <ModalCloseButton onClick={() => setSelectedReportId(null)} className="!rounded-full" />
                 </div>
 
                 <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-3">
                         <div>
-                            <label className="text-[10px] font-black text-stone-500 uppercase ml-1 mb-1 block">Başlangıç</label>
+                            <label className="text-[11px] font-black text-stone-500 uppercase ml-1 mb-1 block">Başlangıç</label>
                             <input 
                               type="date" 
                               value={startDate}
@@ -873,7 +890,7 @@ export const Reports: React.FC = () => {
                             />
                         </div>
                         <div>
-                            <label className="text-[10px] font-black text-stone-500 uppercase ml-1 mb-1 block">Bitiş</label>
+                            <label className="text-[11px] font-black text-stone-500 uppercase ml-1 mb-1 block">Bitiş</label>
                             <input 
                               type="date" 
                               value={endDate}
@@ -893,7 +910,7 @@ export const Reports: React.FC = () => {
                             <button 
                               key={idx}
                               onClick={() => { setStartDate(preset.start); setEndDate(preset.end); }}
-                              className="flex-1 py-2 bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-lg text-[10px] font-bold border border-white/5 whitespace-nowrap active:scale-95 transition-all"
+                              className="flex-1 py-2 bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-lg text-[11px] font-bold border border-white/5 whitespace-nowrap active:scale-95 transition-all"
                             >
                                 {preset.label}
                             </button>

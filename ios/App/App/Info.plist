@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>tr</string>
+	<key>CFBundleDisplayName</key>
+	<string>Mühendis Kayıt Sistemi</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>MKS; zirai ilaç/gübre 2D GS1 karekodlarını, barkodları, alış faturalarını ve bitki hastalık fotoğraflarını taramak için kameranıza erişir.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>MKS; fatura görsellerini, kantar fişlerini ve tarla gelişim fotoğraflarını yükleyebilmeniz için fotoğraf galerisine erişir.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>MKS; oluşturulan reçete, cari mutabakat ve PDF rapor çıktılarını cihazınıza kaydedebilmek için izin ister.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>MKS; sesli saha notu ve sesli komut ile hızlı satış/reçete kaydı oluşturabilmeniz için mikrofon erişimi kullanır.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>MKS; sesli saha ziyaret notlarınızı otomatik metne dönüştürebilmek için konuşma tanıma özelliğini kullanır.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>MKS; tarla parsel sınırlarınızı GPS ile çizmek, uygulama içi TKGM ada/parsel sorgulamak ve yerel ilaçlama hava durumunu göstermek için konum bilgisini kullanır.</string>
+	<key>NSUserTrackingUsageDescription</key>
+	<string>Ücretsiz paket sürümünde size uygun zirai içerik ve reklam gösterimi yapılabilmesi için izin verilir; ULTRA ve MAX kurumsal paketlerde reklam gösterilmez.</string>
+	<key>GADApplicationIdentifier</key>
+	<string>ca-app-pub-8216705362885050~9381651016</string>
+	<key>SKAdNetworkItems</key>
+	<array>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>cstr6suwn9.skadnetwork</string>
+		</dict>
+	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.nayiffirat.muhendiskayitsistemi</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>mks</string>
+				<string>com.nayiffirat.muhendiskayitsistemi</string>
+			</array>
+		</dict>
+	</array>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>whatsapp</string>
+		<string>tel</string>
+		<string>https</string>
+	</array>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
+	<key>UIMainStoryboardFile</key>
+	<string>Main</string>
+	<key>UIStatusBarStyle</key>
+	<string>UIStatusBarStyleLightContent</string>
+	<key>UIUserInterfaceStyle</key>
+	<string>Dark</string>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UIViewControllerBasedStatusBarAppearance</key>
+	<true/>
+</dict>
+</plist>

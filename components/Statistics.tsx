@@ -1,4 +1,4 @@
-import { createMultiPagePdf } from '../utils/pdfHelper';
+import { createMultiPagePdf, renderElementToCanvas } from '../utils/pdfHelper';
 
 import React, { useState, useRef } from 'react';
 import { 
@@ -11,8 +11,6 @@ import {
     AlertTriangle, TrendingUp, History, Scale, BookOpen, 
     ChevronRight, PieChart as PieIcon, BarChart3, LineChart as LineIcon, Truck, DollarSign, Package
 } from 'lucide-react';
-import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
 import { dbService } from '../services/db';
 import { useAppViewModel } from '../context/AppContext';
 import { Prescription } from '../types';
@@ -35,13 +33,20 @@ import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
         inventory, 
         suppliers, 
         userProfile,
+        activeTeamMember,
         farmerLabel,
         farmerPluralLabel,
         prescriptionLabel,
         plants,
         showToast
     } = useAppViewModel();
-    const [activeTab, setActiveTab] = useState<StatTab>(initialTab || 'OVERVIEW');
+    const hideCostAndProfit = Boolean(
+        userProfile?.hideCostAndProfit ||
+        (userProfile?.hideBuyingPricesForStaff && activeTeamMember?.role === 'SALES')
+    );
+    const [activeTab, setActiveTab] = useState<StatTab>(
+        initialTab === 'PROFIT_LOSS' && hideCostAndProfit ? 'OVERVIEW' : (initialTab || 'OVERVIEW')
+    );
     const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
     const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
     const [visitLogs, setVisitLogs] = useState<any[]>([]);
@@ -237,8 +242,8 @@ import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
             reportRef.current.style.opacity = '1';
             reportRef.current.style.zIndex = '-1';
 
-            const canvas = await html2canvas(reportRef.current, {
-                scale: 2,
+            const canvas = await renderElementToCanvas(reportRef.current, {
+                scale: 3,
                 backgroundColor: '#0c0a09',
                 logging: false,
                 useCORS: true,
@@ -249,7 +254,7 @@ import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
             // Restore original style
             reportRef.current.style.cssText = originalStyle;
 
-            const pdf = createMultiPagePdf(canvas);
+            const pdf = await createMultiPagePdf(canvas);
 
             pdf.save(`MKS_Detayli_Analiz_Raporu_${new Date().toISOString().split('T')[0]}.pdf`);
         } catch (e) {
@@ -367,7 +372,8 @@ import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
     }, [inventory, prescriptions, stats.totalExpenses]);
 
     const renderTabContent = () => {
-        switch (activeTab) {
+        const effectiveTab = hideCostAndProfit && activeTab === 'PROFIT_LOSS' ? 'OVERVIEW' : activeTab;
+        switch (effectiveTab) {
             case 'OVERVIEW':
                 return (
                     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
@@ -381,11 +387,11 @@ import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
                                 trend="+12%"
                             />
                             <QuickStatCard 
-                                title="Depo Kar/Zarar" 
-                                value={formatCurrency(profitLossData.totalProfit, userProfile?.currency || 'TRY')} 
-                                icon={TrendingUp} 
-                                color={profitLossData.totalProfit >= 0 ? "emerald" : "rose"} 
-                                trend={profitLossData.margin ? `%${profitLossData.margin.toFixed(1)} Marj` : undefined}
+                                title={hideCostAndProfit ? "Toplam Arazi" : "Depo Kar/Zarar"} 
+                                value={hideCostAndProfit ? `${stats.totalArea} da` : formatCurrency(profitLossData.totalProfit, userProfile?.currency || 'TRY')} 
+                                icon={hideCostAndProfit ? Ruler : TrendingUp} 
+                                color={hideCostAndProfit ? "emerald" : (profitLossData.totalProfit >= 0 ? "emerald" : "rose")} 
+                                trend={hideCostAndProfit ? "Gizli Mod" : (profitLossData.margin ? `%${profitLossData.margin.toFixed(1)} Marj` : undefined)}
                             />
                             <QuickStatCard 
                                 title="Aktif Görevler" 
@@ -702,7 +708,7 @@ import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
                                 <div className="absolute top-0 right-0 w-24 h-24 bg-red-500/10 rounded-full blur-2xl group-hover:bg-red-500/20 transition-all"></div>
                                 <h3 className="text-stone-400 text-[10px] font-bold uppercase tracking-widest">Toplam Maliyet</h3>
                                 <p className="text-xl font-black text-red-400 font-mono mt-1">
-                                    {formatCurrency(salesData.totalCost, userProfile?.currency || 'TRY')}
+                                    {hideCostAndProfit ? '••••••' : formatCurrency(salesData.totalCost, userProfile?.currency || 'TRY')}
                                 </p>
                             </div>
                             <div className="bg-stone-900 p-5 rounded-2xl border border-white/5 shadow-sm relative overflow-hidden group">
@@ -710,11 +716,13 @@ import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
                                 <h3 className="text-stone-400 text-[10px] font-bold uppercase tracking-widest">Net Kar / Zarar</h3>
                                 <div className="flex items-baseline gap-2">
                                     <p className={`text-xl font-black font-mono mt-1 ${salesData.totalProfit >= 0 ? 'text-blue-400' : 'text-rose-400'}`}>
-                                        {formatCurrency(salesData.totalProfit, userProfile?.currency || 'TRY')}
+                                        {hideCostAndProfit ? '••••••' : formatCurrency(salesData.totalProfit, userProfile?.currency || 'TRY')}
                                     </p>
-                                    <span className={`text-[10px] font-bold ${salesData.margin >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                                        %{salesData.margin.toFixed(1)}
-                                    </span>
+                                    {!hideCostAndProfit && (
+                                        <span className={`text-[10px] font-bold ${salesData.margin >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                                            %{salesData.margin.toFixed(1)}
+                                        </span>
+                                    )}
                                 </div>
                             </div>
                         </div>
@@ -951,13 +959,13 @@ import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
                                     <div className="flex justify-between items-end">
                                         <span className="text-[10px] text-stone-500 uppercase tracking-widest">Vadeli</span>
                                         <span className="text-xl font-black text-stone-200 font-mono">
-                                            {formatCurrency(stats.inventoryValue, userProfile?.currency || 'TRY')}
+                                            {hideCostAndProfit ? '••••••' : formatCurrency(stats.inventoryValue, userProfile?.currency || 'TRY')}
                                         </span>
                                     </div>
                                     <div className="flex justify-between items-end">
                                         <span className="text-[10px] text-stone-500 uppercase tracking-widest">Peşin</span>
                                         <span className="text-lg font-black text-stone-400 font-mono">
-                                            {formatCurrency(stats.cashInventoryValue, userProfile?.currency || 'TRY')}
+                                            {hideCostAndProfit ? '••••••' : formatCurrency(stats.cashInventoryValue, userProfile?.currency || 'TRY')}
                                         </span>
                                     </div>
                                 </div>
@@ -989,7 +997,13 @@ import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
                             <div className="h-[300px] w-full">
                                 <ResponsiveContainer width="100%" height="100%">
                                     <BarChart
-                                        data={[
+                                        data={hideCostAndProfit ? [
+                                            {
+                                                name: 'Potansiyel Ciro',
+                                                'Vadeli': stats.potentialRevenue,
+                                                'Peşin': stats.cashPotentialRevenue
+                                            }
+                                        ] : [
                                             {
                                                 name: 'Stok Maliyeti',
                                                 'Vadeli': stats.inventoryValue,
@@ -1040,35 +1054,37 @@ import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
         <div className="p-3 space-y-4 pb-32 animate-in fade-in duration-500 max-w-5xl mx-auto">
             <header className="flex items-center justify-between px-1">
                 <div>
-                    <h2 className="text-lg font-black text-stone-100 tracking-tight flex items-center gap-2">
+                    <h2 className="text-lg font-bold text-stone-100 tracking-tight flex items-center gap-2">
                         <TrendingUp className="text-emerald-500" size={20} />
-                        İSTATİSTİKLER
+                        İstatistikler
                     </h2>
-                    <p className="text-stone-500 text-[9px] font-bold uppercase tracking-widest">Veri Analizi & Raporlama</p>
+                    <p className="text-stone-400 text-xs font-medium">Veri analizi ve işletme performansı</p>
                 </div>
                 <button 
                     onClick={handleDownloadPDF}
                     disabled={isGeneratingPdf}
-                    className="p-2.5 bg-emerald-600 text-white rounded-2xl shadow-lg shadow-emerald-900/20 active:scale-95 transition-all disabled:opacity-50"
+                    className="p-2.5 min-h-[40px] min-w-[40px] flex items-center justify-center bg-emerald-600 text-white rounded-2xl shadow-sm active:scale-95 transition-all disabled:opacity-50"
                 >
                     {isGeneratingPdf ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
                 </button>
             </header>
 
             {/* Tab Navigation */}
-            <div className="flex gap-1 p-1 bg-stone-900/50 rounded-2xl border border-white/5 overflow-x-auto no-scrollbar">
+            <div className="mks-tab-rail p-1.5 bg-stone-900/50 rounded-2xl border border-white/5">
                 <TabButton 
-                    active={activeTab === 'OVERVIEW'} 
+                    active={activeTab === 'OVERVIEW' || (hideCostAndProfit && activeTab === 'PROFIT_LOSS')} 
                     onClick={() => setActiveTab('OVERVIEW')} 
                     icon={PieIcon} 
                     label="Genel" 
                 />
-                <TabButton 
-                    active={activeTab === 'PROFIT_LOSS'} 
-                    onClick={() => setActiveTab('PROFIT_LOSS')} 
-                    icon={TrendingUp} 
-                    label="Kar / Zarar" 
-                />
+                {!hideCostAndProfit && (
+                    <TabButton 
+                        active={activeTab === 'PROFIT_LOSS'} 
+                        onClick={() => setActiveTab('PROFIT_LOSS')} 
+                        icon={TrendingUp} 
+                        label="Kar / Zarar" 
+                    />
+                )}
                 <TabButton 
                     active={activeTab === 'CONSUMPTION'} 
                     onClick={() => setActiveTab('CONSUMPTION')} 
@@ -1208,17 +1224,17 @@ import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
                             </div>
                             <div className="p-4 bg-white/5 rounded-xl border border-white/5">
                                 <p className="text-stone-500 text-[10px] font-bold uppercase mb-1">Toplam Maliyet</p>
-                                <p className="text-red-400 font-mono text-lg font-black">{formatCurrency(salesData.totalCost, userProfile?.currency || 'TRY')}</p>
+                                <p className="text-red-400 font-mono text-lg font-black">{hideCostAndProfit ? '••••••' : formatCurrency(salesData.totalCost, userProfile?.currency || 'TRY')}</p>
                             </div>
                             <div className="p-4 bg-white/5 rounded-xl border border-white/5">
                                 <p className="text-stone-500 text-[10px] font-bold uppercase mb-1">Net Kar/Zarar</p>
                                 <p className={`font-mono text-lg font-black ${salesData.totalProfit >= 0 ? 'text-blue-400' : 'text-rose-400'}`}>
-                                    {formatCurrency(salesData.totalProfit, userProfile?.currency || 'TRY')}
+                                    {hideCostAndProfit ? '••••••' : formatCurrency(salesData.totalProfit, userProfile?.currency || 'TRY')}
                                 </p>
                             </div>
                             <div className="p-4 bg-white/5 rounded-xl border border-white/5">
                                 <p className="text-stone-500 text-[10px] font-bold uppercase mb-1">Kar Marjı</p>
-                                <p className="text-stone-100 font-mono text-lg font-black">%{salesData.margin.toFixed(1)}</p>
+                                <p className="text-stone-100 font-mono text-lg font-black">{hideCostAndProfit ? '••••' : `%${salesData.margin.toFixed(1)}`}</p>
                             </div>
                         </div>
                     </section>
@@ -1311,14 +1327,14 @@ import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
 const TabButton = ({ active, onClick, icon: Icon, label }: any) => (
     <button 
         onClick={onClick}
-        className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl transition-all duration-300 ${
+        className={`shrink-0 whitespace-nowrap min-h-[40px] px-3.5 py-2 flex items-center justify-center gap-1.5 rounded-xl transition-all duration-200 ${
             active 
-            ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/20' 
-            : 'text-stone-500 hover:text-stone-300'
+            ? 'bg-emerald-600 text-white shadow-sm' 
+            : 'text-stone-400 hover:text-stone-200'
         }`}
     >
         <Icon size={14} />
-        <span className="text-[10px] font-black uppercase tracking-wider">{label}</span>
+        <span className="text-xs font-bold">{label}</span>
     </button>
 );
 
@@ -1328,6 +1344,7 @@ const QuickStatCard = ({ title, value, icon: Icon, color, trend }: any) => {
         emerald: 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20',
         amber: 'text-amber-500 bg-amber-500/10 border-amber-500/20',
         red: 'text-red-500 bg-red-500/10 border-red-500/20',
+        rose: 'text-rose-500 bg-rose-500/10 border-rose-500/20',
     };
 
     return (

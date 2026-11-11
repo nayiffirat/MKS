@@ -1,13 +1,38 @@
-<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
-  <!-- Realistic Background Image -->
-  <image href="https://images.unsplash.com/photo-1592919016381-f07ecd5a244a?auto=format&fit=crop&w=512&h=512&q=80" width="512" height="512" />
-  
-  <!-- Subtle Gradient Overlay for Text Readability -->
-  <rect x="0" y="350" width="512" height="162" fill="black" fill-opacity="0.4" />
-  
-  <!-- MKS Text -->
-  <text x="50%" y="450" text-anchor="middle" fill="white" font-family="Arial, sans-serif" font-weight="900" font-size="100" style="text-shadow: 2px 2px 10px rgba(0,0,0,0.8);">MKS</text>
-  
-  <!-- Decorative Wheat Icon Overlay (Optional but adds to the spirit) -->
-  <path d="M450 50 L470 70 M460 40 L480 60" stroke="#F59E0B" stroke-width="4" opacity="0.8" />
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="MKS — Mühendis Kayıt Sistemi">
+  <title>MKS — Mühendis Kayıt Sistemi</title>
+  <!-- Saf vektör amblem (UI-21): gömülü raster yok, her boyutta keskin. -->
+  <rect width="512" height="512" rx="112" fill="#080D14"/>
+  <g fill="#d9a03a">
+    <path d="M150 262 C146 222 150 182 166 140" fill="none" stroke="#d9a03a" stroke-width="7" stroke-linecap="round"/>
+    <path d="M136 262 C128 236 120 214 104 196" fill="none" stroke="#d9a03a" stroke-width="6" stroke-linecap="round"/>
+    <ellipse cx="166" cy="134" rx="7" ry="15" transform="rotate(18 166 134)"/>
+    <ellipse cx="152" cy="156" rx="7" ry="14" transform="rotate(-28 152 156)"/>
+    <ellipse cx="174" cy="160" rx="7" ry="14" transform="rotate(32 174 160)"/>
+    <ellipse cx="148" cy="182" rx="7" ry="14" transform="rotate(-30 148 182)"/>
+    <ellipse cx="170" cy="186" rx="7" ry="14" transform="rotate(30 170 186)"/>
+    <path d="M144 230 C120 214 112 196 116 176 C132 190 142 208 144 230 Z"/>
+  </g>
+  <g fill="#22a565">
+    <path d="M192 98 H284 a6 6 0 0 1 6 5 L302 170 H186 V104 a6 6 0 0 1 6 -6 Z"/>
+    <rect x="240" y="164" width="150" height="44" rx="12"/>
+    <rect x="336" y="104" width="11" height="66" rx="5"/>
+    <path d="M68 270 Q256 232 444 270 V284 Q256 250 68 284 Z"/>
+  </g>
+  <g fill="#080D14">
+    <rect x="202" y="112" width="32" height="46" rx="5"/>
+    <rect x="244" y="112" width="34" height="46" rx="5"/>
+  </g>
+  <g stroke="#080D14" stroke-width="8">
+    <circle cx="206" cy="214" r="48" fill="#22a565"/>
+    <circle cx="346" cy="228" r="32" fill="#22a565"/>
+  </g>
+  <circle cx="206" cy="214" r="27" fill="#080D14"/>
+  <circle cx="206" cy="214" r="11" fill="#22a565"/>
+  <circle cx="346" cy="228" r="17" fill="#080D14"/>
+  <circle cx="346" cy="228" r="7" fill="#22a565"/>
+  <g fill="#f8fafc">
+    <circle cx="112" cy="246" r="9"/>
+    <circle cx="404" cy="246" r="9"/>
+  </g>
+  <text x="256" y="430" text-anchor="middle" font-family="Georgia, 'Times New Roman', 'DejaVu Serif', serif" font-weight="700" font-size="148" letter-spacing="6" fill="#ffffff">MKS</text>
 </svg>

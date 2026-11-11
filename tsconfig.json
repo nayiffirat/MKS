@@ -16,5 +16,5 @@
     "noEmit": true,
     "jsx": "react-jsx"
   },
-  "include": ["src", "App.tsx", "index.tsx", "constants.ts", "types.ts", "services", "components", "context", "helpers", "hooks", "vite-env.d.ts"]
+  "include": ["App.tsx", "index.tsx", "constants.ts", "types.ts", "constants", "services", "components", "context", "hooks", "utils", "vite-env.d.ts"]
 }

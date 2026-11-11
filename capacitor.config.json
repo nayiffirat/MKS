@@ -1,5 +1,5 @@
 {
-  "appId": "com.nayiffirat.mks",
+  "appId": "com.nayiffirat.muhendiskayitsistemi",
   "appName": "Mühendis Kayıt Sistemi",
   "webDir": "dist",
   "server": {
@@ -18,7 +18,13 @@
     ]
   },
   "android": {
-    "overrideUserAgent": "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
+    "overrideUserAgent": "Mozilla/5.0 (Linux; Android 16; SM-S938B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Mobile Safari/537.36"
+  },
+  "ios": {
+    "contentInset": "automatic",
+    "preferredContentMode": "mobile",
+    "scheme": "MKS",
+    "backgroundColor": "#080D14"
   },
   "plugins": {
     "AdMob": {

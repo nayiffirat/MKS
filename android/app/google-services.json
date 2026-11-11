@@ -1,0 +1,136 @@
+{
+  "project_info": {
+    "project_number": "92102884744",
+    "firebase_url": "https://muhendiskayitsistemi-default-rtdb.europe-west1.firebasedatabase.app",
+    "project_id": "muhendiskayitsistemi",
+    "storage_bucket": "muhendiskayitsistemi.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:92102884744:android:f8d569ae66dd639b6a4e3d",
+        "android_client_info": {
+          "package_name": "co.median.android.nmmoonk"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "92102884744-nluv352emtngctqp3cnkpgcfepecb856.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAvQQQmN-VpuhYKdz2fHFgGCpmDw58pnJg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "92102884744-nluv352emtngctqp3cnkpgcfepecb856.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "92102884744-pisr3oig2i3ss0qd52grhqrta7b9ef5u.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.nayiffirat.muhendiskayitsistemi"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:92102884744:android:99fb4a56d9b4a4576a4e3d",
+        "android_client_info": {
+          "package_name": "com.nayiffirat.mks"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "92102884744-nluv352emtngctqp3cnkpgcfepecb856.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAvQQQmN-VpuhYKdz2fHFgGCpmDw58pnJg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "92102884744-nluv352emtngctqp3cnkpgcfepecb856.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "92102884744-pisr3oig2i3ss0qd52grhqrta7b9ef5u.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.nayiffirat.muhendiskayitsistemi"
+              }
+            }
+          ]
+        }
+      },
+      "admob_app_id": "ca-app-pub-8216705362885050~9381651016"
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:92102884744:android:34ab2b7da11a94cb6a4e3d",
+        "android_client_info": {
+          "package_name": "com.nayiffirat.muhendiskayitsistemi"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "92102884744-dndtev1b1r1qop73thdraruhqjl2m662.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.nayiffirat.muhendiskayitsistemi",
+            "certificate_hash": "5ff237fb2aa2e6925bdc6486388234529f73158f"
+          }
+        },
+        {
+          "client_id": "92102884744-oscvajhfqf9fc8kcsu66smr1qf8ncfvr.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.nayiffirat.muhendiskayitsistemi",
+            "certificate_hash": "08cac791325d466e368407abbc1cc2aa0773701d"
+          }
+        },
+        {
+          "client_id": "92102884744-nluv352emtngctqp3cnkpgcfepecb856.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAvQQQmN-VpuhYKdz2fHFgGCpmDw58pnJg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "92102884744-nluv352emtngctqp3cnkpgcfepecb856.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "92102884744-pisr3oig2i3ss0qd52grhqrta7b9ef5u.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.nayiffirat.muhendiskayitsistemi"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

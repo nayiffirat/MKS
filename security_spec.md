@@ -1,35 +1,27 @@
-# Firestore Security Specification
+# MKS Firestore & API Security Specification (Faz 2 Sertleştirilmiş Mimari)
 
-## Data Invariants
-1. **User Ownership**: All data under `/MKS/{orgId}/users/{userId}/...` must be owned by `{userId}`.
-2. **Admin Access**: The user `nayiffirat@gmail.com` with `email_verified == true` is the Root Admin and has global access.
-3. **Role Lock**: Regular users cannot change their `role` or `subscriptionStatus` fields.
-4. **ID Integrity**: All document IDs must match `^[a-zA-Z0-9_\\-]+$` and be <= 128 characters.
-5. **Collection Specifics**:
-   - `farmers`: Must have `fullName` and `phoneNumber`.
-   - `prescriptions`: Must have `farmerId` and a valid list of `items`.
-   - `inventory`: Must have `pesticideId` and `quantity` >= 0.
+## 1. Veri Değişmezleri (Data Invariants)
+1. **Tam Kiracı İzolasyonu (Zero Cross-Tenant Leak)**: `/MKS/{orgId}/users/{userId}/...` altındaki tüm kullanıcı profilleri ve 22 alt koleksiyon (`farmers`, `prescriptions`, `visits`, `payments`, `myPayments`, `manualDebts`, `inventory`, `suppliers`, `teamMembers` vb.) **yalnızca** sahibi olan `{userId}` veya doğrulanmış Root Admin (`nayiffirat@gmail.com`, `email_verified == true`) tarafından okunabilir/yazılabilir. Herkese açık (`allow read: if true`) hiçbir kural bırakılmamıştır.
+2. **Düz Metin Parola Yasağı (Zero Plaintext Password)**: Kullanıcı belgelerinde `password` alanı saklanamaz; istemci veya API üzerinden yeni bir `password` alanı yazılması Firestore kuralları düzeyinde engellenmiştir (`!('password' in request.resource.data)`). Ekip üyeleri (`teamMembers`) ve yönetici kilit parolaları (`adminPassword`) yalnızca rastgele salt + SHA-256 (`sha256$<salt>$<hash>`) formatında saklanır.
+3. **Rol ve Abonelik Kilidi (Subscription & Privilege Lock)**:
+   - Yeni kayıt olan her kullanıcı yalnızca `role: 'user'`, `subscriptionStatus: 'trial'`, `subscriptionTier: 'PRO'` ve en fazla `request.time + 8 gün` (`subscriptionEndsAtMs`) ile oluşturulabilir.
+   - Normal kullanıcılar kendi profillerini güncellerken `role`, `subscriptionStatus`, `subscriptionTier`, `subscriptionEndsAt` ve `subscriptionEndsAtMs` alanlarını değiştiremez.
+4. **Capability-Token Tabanlı Üretici Portalı (`portal_shares/{portalToken}`)**:
+   - Çiftçilere WhatsApp üzerinden gönderilen ekstre linkleri artık mühendisin özel koleksiyonlarını açmaz.
+   - Bunun yerine kriptografik olarak üretilen en az 32 karakterlik `portalToken` ile `/MKS/{orgId}/portal_shares/{portalToken}` belgesine tekil okuma (`allow get`) yapılır; `allow list` tamamen kapalıdır.
+   - Bu özet belgede ilaç **alış fiyatları (`buyingPrice`)**, çiftçi **TC Kimlik No (`tcNo`)** ve tarla GPS koordinatları kesinlikle yer almaz (KVKK ve ticari sır koruması).
+5. **İzole Telefon Giriş Dizini (`phone_directory/{phoneKey}`)**:
+   - Telefon numarasıyla giriş için tüm `/users` koleksiyonunu sorgulamak yerine `/MKS/{orgId}/phone_directory/{10HaneliTelefon}` üzerinde yalnızca tekil `get` izni verilir (`allow list: if isRootAdmin()`).
+6. **Yapay Zeka Proxy Kimlik Doğrulaması (`/api/generate`)**:
+   - `server.ts` üzerindeki `/api/generate` uç noktası Firebase ID Token (`Authorization: Bearer <JWT>`) RS256 imza doğrulaması ve kullanıcı/IP bazlı hız sınırlaması (Rate Limit) ile korunur.
+   - API anahtarları (`OMNIROUTE_TOKEN`, `GEMINI_API_KEY`) kaynak koddan çıkarılarak `.env` dosyasına taşınmıştır.
 
-## The "Dirty Dozen" Payloads (Red Team Test Cases)
-
-1. **Identity Spoofing**: Attempt to create a farmer document under User A's path while signed in as User B.
-2. **Privilege Escalation**: Attempt to update own `UserProfile` to set `role: 'admin'`.
-3. **Ghost Field Injection**: Attempt to create a document with an un-whitelisted sensitive field (e.g., `isVerified: true`).
-4. **ID Poisoning**: Attempt to create a document with a 2KB binary string as an ID.
-5. **Type Confusion**: Attempt to set `totalDebt` in a `Farmer` doc to a boolean instead of a number.
-6. **Negative Inventory**: Attempt to set `quantity` to `-100` in `InventoryItem`.
-7. **Cross-Tenant Leak**: Attempt to list farmers of a different `userId`.
-8. **Unverified Admin**: Attempt to access as `nayiffirat@gmail.com` but with `email_verified: false`.
-9. **Large Payload Attack**: Attempt to write a string field exceeding 1MB (e.g., `fullName`).
-10. **Immutable Field Change**: Attempt to change `id` or `farmerId` inside an existing prescription.
-11. **Orphaned Prescription**: Attempt to create a prescription for a `farmerId` that doesn't exist.
-12. **Status Shortcut**: Attempt to change a status directly to 'COMPLETED' without meeting preconditions (if implemented).
-
-## Red Team Audit Report (Targeted)
-| Vulnerability | Status | Defense |
-| :--- | :--- | :--- |
-| Identity Spoofing | SECURED | `isOwner(userId)` check on every user path. |
-| Privilege Escalation | SECURED | `affectedKeys().hasOnly()` gates on updates for profiles. |
-| ID Poisoning | SECURED | `isValidId()` regex + size check. |
-| Denial of Wallet | SECURED | Mandatory `.size()` checks on strings and lists. |
-| Query Scraping | SECURED | `list` rules enforce `resource.data` ownership. |
+## 2. Güvenlik Denetim Özeti (Red Team Audit Matrisi)
+| Zafiyet Sınıfı | Önceki Durum | Faz 2 Sonrası Durum | Savunma Mekanizması |
+| :--- | :--- | :--- | :--- |
+| Cross-Tenant Veri Sızıntısı (`/users`, `farmers`, `prescriptions`) | AÇIK (`allow read: if true`) | **KAPATILDI** | `isOwner(userId) \|\| isRootAdmin()` zorunluluğu + `portal_shares` izolasyonu |
+| Bayi İlaç Alış Fiyatı (`buyingPrice`) İfşası | AÇIK | **KAPATILDI** | `publishFarmerPortalShare` sanitizasyonu + özel koleksiyon kilidi |
+| Firestore & LocalStorage Düz Metin Parola | AÇIK | **KAPATILDI** | `deleteField()` temizliği + Firestore `password` yazma yasağı + salted SHA-256 |
+| Kayıtta 365 Gün Ücretsiz `active` Abonelik | AÇIK (`Login.tsx`) | **KAPATILDI** | Tek merkezli 7 gün `trial` + Firestore `subscriptionEndsAtMs` üst sınır kontrolü |
+| Sabit Kodlu Admin Parolası (`636311` / `admin:admin`) | AÇIK | **KAPATILDI** | Sabit şifreler kaldırıldı; Firebase Re-Auth + salted SHA-256 doğrulaması eklendi |
+| Kimliksiz `/api/generate` Kota Sömürüsü | AÇIK | **KAPATILDI** | Firebase RS256 ID Token doğrulaması + CORS kısıtlaması + Rate Limiter |

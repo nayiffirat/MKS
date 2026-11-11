@@ -7,13 +7,14 @@ import {
   ChevronLeft, 
   Edit2, 
   Trash2, 
-  X, 
   Save, 
   Calendar,
   Layers
 } from 'lucide-react';
 import { useAppViewModel } from '../context/AppContext';
 import { Plant } from '../types';
+import { ModalCloseButton } from './ModalCloseButton';
+import { useBackHandler } from '../utils/navigationManager';
 
 const CATEGORIES = [
   { id: 'TALA', name: 'Tarla Bitkileri', icon: '🌾' },
@@ -31,6 +32,10 @@ export const Plants: React.FC<{ onNavigate: (view: any) => void }> = ({ onNaviga
   const [editingPlant, setEditingPlant] = useState<Plant | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
+
+  useBackHandler(isModalOpen, () => setIsModalOpen(false), 'Plants_form', 50);
+  // Nested date picker sits above the form modal, so it must win the back press.
+  useBackHandler(isModalOpen && isDatePickerOpen, () => setIsDatePickerOpen(false), 'Plants_datePicker', 60);
 
   const [formData, setFormData] = useState<Omit<Plant, 'id'>>({
     name: '',
@@ -99,7 +104,7 @@ export const Plants: React.FC<{ onNavigate: (view: any) => void }> = ({ onNaviga
   };
 
   return (
-    <div className="min-h-screen bg-stone-950 pb-24">
+    <div className="min-h-dvh bg-stone-950 pb-24">
       {/* Header */}
       <div className="bg-stone-900/50 border-b border-white/5 pt-12 pb-6 px-4 sticky top-0 z-40 backdrop-blur-xl">
         <div className="max-w-xl mx-auto flex items-center justify-between">
@@ -112,7 +117,7 @@ export const Plants: React.FC<{ onNavigate: (view: any) => void }> = ({ onNaviga
             </button>
             <div>
               <h1 className="text-xl font-black text-white tracking-tight uppercase">Bitki Yönetimi</h1>
-              <p className="text-[10px] font-bold text-stone-500 uppercase tracking-widest leading-none">Ürün ve Saha Kayıtları</p>
+              <p className="text-[11px] font-bold text-stone-500 uppercase tracking-widest leading-none">Ürün ve Saha Kayıtları</p>
             </div>
           </div>
           <motion.button
@@ -129,7 +134,7 @@ export const Plants: React.FC<{ onNavigate: (view: any) => void }> = ({ onNaviga
           <div className="flex items-center gap-2 overflow-x-auto pb-2 scroll-hide">
             <button
               onClick={() => setSelectedCategory('ALL')}
-              className={`whitespace-nowrap px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+              className={`whitespace-nowrap px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all ${
                 selectedCategory === 'ALL' 
                   ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/20' 
                   : 'bg-stone-900 text-stone-500 border border-white/5'
@@ -141,7 +146,7 @@ export const Plants: React.FC<{ onNavigate: (view: any) => void }> = ({ onNaviga
               <button
                 key={cat.id}
                 onClick={() => setSelectedCategory(cat.id)}
-                className={`whitespace-nowrap px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                className={`whitespace-nowrap px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all ${
                   selectedCategory === cat.id 
                     ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/20' 
                     : 'bg-stone-900 text-stone-500 border border-white/5'
@@ -188,7 +193,7 @@ export const Plants: React.FC<{ onNavigate: (view: any) => void }> = ({ onNaviga
                     <div>
                       <div className="flex items-center gap-2">
                         <h3 className="text-sm font-black text-white uppercase tracking-tight">{plant.name}</h3>
-                        <span className="text-[8px] font-black bg-stone-800 text-stone-400 px-1.5 py-0.5 rounded uppercase">
+                        <span className="text-[11px] font-black bg-stone-800 text-stone-400 px-1.5 py-0.5 rounded uppercase">
                           {CATEGORIES.find(c => c.id === plant.category)?.name}
                         </span>
                       </div>
@@ -206,15 +211,15 @@ export const Plants: React.FC<{ onNavigate: (view: any) => void }> = ({ onNaviga
                    <div className="bg-stone-950/50 rounded-xl p-2 border border-white/5 flex items-center gap-2">
                       <Calendar size={12} className="text-amber-500" />
                       <div className="min-w-0">
-                         <span className="block text-[7px] font-black text-stone-600 uppercase tracking-widest leading-none">Vade Tarihi</span>
-                         <span className="text-[10px] font-bold text-stone-300">{plant.maturityDate || '-'}</span>
+                         <span className="block text-[11px] font-black text-stone-600 uppercase tracking-widest leading-none">Vade Tarihi</span>
+                         <span className="text-[11px] font-bold text-stone-300">{plant.maturityDate || '-'}</span>
                       </div>
                    </div>
                    <div className="bg-stone-950/50 rounded-xl p-2 border border-white/5 flex items-center gap-2">
                       <Layers size={12} className="text-emerald-500" />
                       <div className="min-w-0">
-                         <span className="block text-[7px] font-black text-stone-600 uppercase tracking-widest leading-none">Dozaj</span>
-                         <span className="text-[10px] font-bold text-stone-300 truncate">{plant.defaultDosage || '-'}</span>
+                         <span className="block text-[11px] font-black text-stone-600 uppercase tracking-widest leading-none">Dozaj</span>
+                         <span className="text-[11px] font-bold text-stone-300 truncate">{plant.defaultDosage || '-'}</span>
                       </div>
                    </div>
                 </div>
@@ -228,7 +233,7 @@ export const Plants: React.FC<{ onNavigate: (view: any) => void }> = ({ onNaviga
                 <Sprout size={32} className="text-stone-700" />
               </div>
               <h3 className="text-stone-400 font-bold mb-1">Bitki bulunamadı</h3>
-              <p className="text-[10px] text-stone-600 uppercase font-black tracking-widest">Arama kritiğini değiştirin veya yeni ekleyin</p>
+              <p className="text-[11px] text-stone-600 uppercase font-black tracking-widest">Arama kritiğini değiştirin veya yeni ekleyin</p>
             </div>
           )}
         </div>
@@ -250,7 +255,7 @@ export const Plants: React.FC<{ onNavigate: (view: any) => void }> = ({ onNaviga
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
               transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-              className="relative w-full max-w-xl bg-stone-900 rounded-t-[2.5rem] md:rounded-[2.5rem] overflow-hidden flex flex-col max-h-[95vh] border-t border-white/10"
+              className="relative w-full max-w-xl bg-stone-900 rounded-t-[2.5rem] md:rounded-[2.5rem] overflow-hidden flex flex-col max-h-[95dvh] border-t border-white/10"
             >
               <div className="p-6 overflow-y-auto custom-scrollbar pt-12">
                  <div className="flex justify-between items-center mb-8">
@@ -258,19 +263,14 @@ export const Plants: React.FC<{ onNavigate: (view: any) => void }> = ({ onNaviga
                      <h2 className="text-xl font-black text-white uppercase tracking-tight">
                         {editingPlant ? 'Bitkiyi Düzenle' : 'Yeni Bitki Ekle'}
                      </h2>
-                     <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">Detaylı Bilgi Girişi</p>
+                     <p className="text-[11px] font-bold text-emerald-500 uppercase tracking-widest">Detaylı Bilgi Girişi</p>
                    </div>
-                   <button 
-                     onClick={() => setIsModalOpen(false)}
-                     className="p-2 bg-stone-800 rounded-full text-stone-500"
-                   >
-                     <X size={20} />
-                   </button>
+                   <ModalCloseButton onClick={() => setIsModalOpen(false)} className="!rounded-full" />
                  </div>
 
                  <form onSubmit={handleSubmit} className="space-y-6">
                     <div className="space-y-1">
-                      <label className="text-[8px] font-black text-stone-600 uppercase tracking-widest ml-1">Bitki Adı</label>
+                      <label className="text-[11px] font-black text-stone-600 uppercase tracking-widest ml-1">Bitki Adı</label>
                       <input
                         required
                         type="text"
@@ -283,7 +283,7 @@ export const Plants: React.FC<{ onNavigate: (view: any) => void }> = ({ onNaviga
 
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
-                        <label className="text-[8px] font-black text-stone-600 uppercase tracking-widest ml-1">Kategori</label>
+                        <label className="text-[11px] font-black text-stone-600 uppercase tracking-widest ml-1">Kategori</label>
                         <select
                           value={formData.category}
                           onChange={(e) => setFormData({...formData, category: e.target.value as any})}
@@ -297,7 +297,7 @@ export const Plants: React.FC<{ onNavigate: (view: any) => void }> = ({ onNaviga
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-[8px] font-black text-stone-600 uppercase tracking-widest ml-1">Vade Tarihi</label>
+                      <label className="text-[11px] font-black text-stone-600 uppercase tracking-widest ml-1">Vade Tarihi</label>
                       <button
                         type="button"
                         onClick={() => setIsDatePickerOpen(true)}
@@ -311,7 +311,7 @@ export const Plants: React.FC<{ onNavigate: (view: any) => void }> = ({ onNaviga
                             <p className="text-sm font-bold text-white uppercase tracking-tight">
                               {formData.maturityDate ? `${formData.maturityDate.split('-')[1]} ${new Date(2000, parseInt(formData.maturityDate.split('-')[0]) - 1).toLocaleString('tr-TR', { month: 'long' })}` : 'Tarih Seçin'}
                             </p>
-                            <p className="text-[8px] font-black text-stone-600 uppercase tracking-widest leading-none mt-1">Hasat / Ödeme Günü</p>
+                            <p className="text-[11px] font-black text-stone-600 uppercase tracking-widest leading-none mt-1">Hasat / Ödeme Günü</p>
                           </div>
                         </div>
                         <div className="w-8 h-8 rounded-full bg-stone-900 flex items-center justify-center text-stone-700 group-hover:text-amber-500 transition-colors">
@@ -334,11 +334,11 @@ export const Plants: React.FC<{ onNavigate: (view: any) => void }> = ({ onNaviga
                             initial={{ scale: 0.9, opacity: 0, y: 20 }}
                             animate={{ scale: 1, opacity: 1, y: 0 }}
                             exit={{ scale: 0.9, opacity: 0, y: 20 }}
-                            className="relative w-full max-w-sm bg-stone-900 rounded-[2rem] border border-white/10 p-6 overflow-hidden"
+                            className="relative w-full max-w-sm bg-stone-900 rounded-[2rem] border border-white/10 p-6 overflow-y-auto max-h-[90dvh] custom-scrollbar"
                           >
                             <div className="text-center mb-6">
                               <h3 className="text-lg font-black text-white uppercase tracking-tight">Vade Tarihi Seçin</h3>
-                              <p className="text-[10px] font-bold text-amber-500 uppercase tracking-widest mt-1">Hasat veya Ödeme Zamanı</p>
+                              <p className="text-[11px] font-bold text-amber-500 uppercase tracking-widest mt-1">Hasat veya Ödeme Zamanı</p>
                             </div>
 
                             <div className="space-y-6">
@@ -355,7 +355,7 @@ export const Plants: React.FC<{ onNavigate: (view: any) => void }> = ({ onNaviga
                                         const day = formData.maturityDate?.split('-')[1] || '01';
                                         setFormData({...formData, maturityDate: `${monthVal}-${day}`});
                                       }}
-                                      className={`whitespace-nowrap px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all border ${
+                                      className={`whitespace-nowrap px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all border ${
                                         isSelected 
                                           ? 'bg-amber-500 text-stone-950 border-amber-400 shadow-lg shadow-amber-900/20' 
                                           : 'bg-stone-800 text-stone-500 border-white/5'
@@ -380,7 +380,7 @@ export const Plants: React.FC<{ onNavigate: (view: any) => void }> = ({ onNaviga
                                         const month = formData.maturityDate?.split('-')[0] || '10';
                                         setFormData({...formData, maturityDate: `${month}-${dayVal}`});
                                       }}
-                                      className={`aspect-square flex items-center justify-center rounded-lg text-[10px] font-bold transition-all ${
+                                      className={`aspect-square flex items-center justify-center rounded-lg text-[11px] font-bold transition-all ${
                                         isSelected 
                                           ? 'bg-emerald-600 text-white shadow-lg' 
                                           : 'bg-stone-800 text-stone-600 hover:text-stone-400 border border-white/5'
@@ -406,7 +406,7 @@ export const Plants: React.FC<{ onNavigate: (view: any) => void }> = ({ onNaviga
                     </AnimatePresence>
 
                     <div className="space-y-1">
-                      <label className="text-[8px] font-black text-stone-600 uppercase tracking-widest ml-1">Önerilen Dozaj/Verim</label>
+                      <label className="text-[11px] font-black text-stone-600 uppercase tracking-widest ml-1">Önerilen Dozaj/Verim</label>
                       <input
                         type="text"
                         value={formData.defaultDosage || ''}
@@ -424,14 +424,14 @@ export const Plants: React.FC<{ onNavigate: (view: any) => void }> = ({ onNaviga
                               <button
                                 type="button"
                                 onClick={() => setIsDeleting(false)}
-                                className="flex-1 bg-stone-800 text-stone-400 py-4 rounded-2xl font-black uppercase tracking-widest text-[9px] active:scale-95 transition-all"
+                                className="flex-1 bg-stone-800 text-stone-400 py-4 rounded-2xl font-black uppercase tracking-widest text-[11px] active:scale-95 transition-all"
                               >
                                 İPTAL
                               </button>
                               <button
                                 type="button"
                                 onClick={handleDelete}
-                                className="flex-1 bg-rose-600 text-white py-4 rounded-2xl font-black uppercase tracking-widest text-[9px] active:scale-95 transition-all shadow-lg shadow-rose-900/40"
+                                className="flex-1 bg-rose-600 text-white py-4 rounded-2xl font-black uppercase tracking-widest text-[11px] active:scale-95 transition-all shadow-lg shadow-rose-900/40"
                               >
                                 EMİNİM, SİL
                               </button>
@@ -440,7 +440,7 @@ export const Plants: React.FC<{ onNavigate: (view: any) => void }> = ({ onNaviga
                             <button
                               type="button"
                               onClick={() => setIsDeleting(true)}
-                              className="flex-1 bg-stone-800/50 text-rose-500/50 border border-white/5 py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] active:scale-95 transition-all flex items-center justify-center gap-2"
+                              className="flex-1 bg-stone-800/50 text-rose-500/50 border border-white/5 py-4 rounded-2xl font-black uppercase tracking-widest text-[11px] active:scale-95 transition-all flex items-center justify-center gap-2"
                             >
                               <Trash2 size={14} />
                               SİL
@@ -451,7 +451,7 @@ export const Plants: React.FC<{ onNavigate: (view: any) => void }> = ({ onNaviga
                       {!isDeleting && (
                         <button
                           type="submit"
-                          className="flex-[2] bg-emerald-600 text-white py-4 rounded-2xl font-black uppercase tracking-[0.15em] text-[10px] shadow-lg shadow-emerald-900/40 border border-emerald-500/20 active:scale-95 transition-all flex items-center justify-center gap-2"
+                          className="flex-[2] bg-emerald-600 text-white py-4 rounded-2xl font-black uppercase tracking-[0.15em] text-[11px] shadow-lg shadow-emerald-900/40 border border-emerald-500/20 active:scale-95 transition-all flex items-center justify-center gap-2"
                         >
                           <Save size={14} />
                           {editingPlant ? 'Güncelle' : 'Bitkiyi Kaydet'}

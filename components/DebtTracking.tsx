@@ -180,22 +180,22 @@ export const DebtTracking: React.FC = () => {
           />
         </div>
 
-        <div className="flex gap-2 p-1 bg-stone-900/50 rounded-2xl border border-white/5 overflow-x-auto no-scrollbar">
+        <div className="mks-tab-rail flex gap-2 p-1 bg-stone-900/50 rounded-2xl border border-white/5">
           <button
             onClick={() => setFilterType('ALL')}
-            className={`flex-1 min-w-[80px] py-2 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all ${filterType === 'ALL' ? 'bg-emerald-600 text-white shadow-lg' : 'text-stone-500 hover:text-stone-300'}`}
+            className={`flex-1 min-w-[84px] min-h-[40px] py-2 px-3 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${filterType === 'ALL' ? 'bg-emerald-600 text-white shadow-sm' : 'text-stone-400 hover:text-stone-200'}`}
           >
             Hepsi
           </button>
           <button
             onClick={() => setFilterType('OVERDUE')}
-            className={`flex-1 min-w-[80px] py-2 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all ${filterType === 'OVERDUE' ? 'bg-amber-600 text-white shadow-lg' : 'text-stone-500 hover:text-stone-300'}`}
+            className={`flex-1 min-w-[84px] min-h-[40px] py-2 px-3 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${filterType === 'OVERDUE' ? 'bg-amber-600 text-white shadow-sm' : 'text-stone-400 hover:text-stone-200'}`}
           >
             Gecikenler
           </button>
           <button
             onClick={() => setFilterType('HIGH_DEBT')}
-            className={`flex-1 min-w-[80px] py-2 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all ${filterType === 'HIGH_DEBT' ? 'bg-rose-600 text-white shadow-lg' : 'text-stone-500 hover:text-stone-300'}`}
+            className={`flex-1 min-w-[84px] min-h-[40px] py-2 px-3 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${filterType === 'HIGH_DEBT' ? 'bg-rose-600 text-white shadow-sm' : 'text-stone-400 hover:text-stone-200'}`}
           >
             Yüksek Borç
           </button>

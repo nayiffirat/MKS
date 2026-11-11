@@ -1,506 +1,143 @@
-
 <!DOCTYPE html>
-<html lang="tr">
+<html lang="tr" data-theme="TECHNICAL">
   <head>
     <meta name="google-site-verification" content="NRTE041qYBntCrTDv58_8U6BkMA0ZN512QlfEv8JY1Y" />
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <meta name="theme-color" content="#216e48" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#030814" />
+    <!-- UI-13: Kayıtlı temayı ilk boyamadan ÖNCE uygula (açık temalarda koyu FOUC olmasın). Varsayılan: TECHNICAL (V8 Gece). -->
+    <script>
+      (function () {
+        var theme = 'TECHNICAL';
+        try {
+          var raw = localStorage.getItem('mks_user_profile');
+          var p = raw ? JSON.parse(raw) : null;
+          var t = p && p.theme;
+          if (t === 'GLASSY_V30' || t === 'APPLE' || t === 'LIGHT' || t === 'ORGANIC') theme = t;
+        } catch (e) { /* bozuk profil: varsayılan tema */ }
+        var root = document.documentElement;
+        root.setAttribute('data-theme', theme);
+        var bg = { APPLE: '#dfeae5', LIGHT: '#e3eeff', ORGANIC: '#eae4ff', GLASSY_V30: '#26272c', TECHNICAL: '#030814' }[theme] || '#030814';
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', bg);
+      })();
+    </script>
     
-    <title>Mühendis Kayıt Sistemi - Ziraat Mühendisleri İçin Tarla ve Çiftçi Yönetimi</title>
-    <meta name="description" content="Ziraat Mühendisleri için özel olarak tasarlanmış, çevrimdışı çalışabilen tarla, çiftçi, fatura ve ziyaret yönetim sistemi. Çiftçilerinizi ve tarlalarınızı dijital ortamda takip edin." />
-    <meta name="keywords" content="mühendis kayıt sistemi, ziraat mühendisi, tarla yönetimi, çiftçi takip, tarım uygulaması, fatura sistemi, zirai ilaç takip" />
-    <meta name="author" content="Mühendis Kayıt Sistemi" />
+    <title>Mühendis Kayıt Sistemi (MKS) — Çiftçi Cari Takibi, Depo Stok, BKTS/GTS ve e-Fatura Yönetim Sistemi</title>
+    <meta name="description" content="Mühendis Kayıt Sistemi (MKS); Zirai İlaç/Gübre Bayileri ve Ziraat Mühendisleri için Çiftçi Cari Takibi, Yıllık Sezon Devri, Barkodlu Depo ve Onaylı Stok Yönetimi, Tarım Bakanlığı BKTS/GTS 2D Karekod ve Resmi EDM e-Fatura/e-Arşiv Sistemi. Windows, iOS, Android ve Web'de 7/24 bulut ve çevrimdışı çalışır." />
+    <meta name="keywords" content="mühendis kayıt sistemi, mks, çiftçi cari takip programı, zirai ilaç bayi programı, depo stok takip programı, bitki koruma ürünleri takip sistemi bkts, gübre takip sistemi gts, zirai e-fatura programı, b-reçete programı, zirai barkod programı, ziraat mühendisi programı, nayif fırat" />
+    <meta name="author" content="Nayif Fırat - Mühendis Kayıt Sistemi (MKS)" />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://www.muhendiskayitsistemi.com.tr/" />
     
-    <!-- Open Graph / Facebook -->
+    <!-- Open Graph / Facebook / WhatsApp -->
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="Mühendis Kayıt Sistemi" />
-    <meta property="og:description" content="Ziraat Mühendisleri için dijital yönetim ve takip asistanı." />
-    <meta property="og:image" content="/icons/favicon.png" />
+    <meta property="og:site_name" content="Mühendis Kayıt Sistemi (MKS)" />
+    <meta property="og:url" content="https://www.muhendiskayitsistemi.com.tr/" />
+    <meta property="og:title" content="Mühendis Kayıt Sistemi (MKS) — Çiftçi Cari, Depo Stok, BKTS/GTS ve e-Fatura Sistemi" />
+    <meta property="og:description" content="Müstahsil cari ve vadeli tahsilat takibi, barkodlu depo stok sayımı, Tarım Bakanlığı BKTS/GTS 2D karekod ve EDM e-Fatura entegrasyonu tek kurumsal sistemde. Web, Windows, iOS ve Android uyumlu." />
+    <meta property="og:image" content="https://www.muhendiskayitsistemi.com.tr/icons/og-banner.jpg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:image" content="https://www.muhendiskayitsistemi.com.tr/icons/og-banner.jpg" />
     
     <!-- Twitter -->
     <meta property="twitter:card" content="summary_large_image" />
-    <meta property="twitter:title" content="Mühendis Kayıt Sistemi" />
-    <meta property="twitter:description" content="Ziraat Mühendisleri için dijital yönetim ve takip asistanı." />
+    <meta property="twitter:title" content="Mühendis Kayıt Sistemi (MKS) — Çiftçi Cari, Stok, BKTS/GTS & e-Fatura" />
+    <meta property="twitter:description" content="Zirai Bayiler ve Ziraat Mühendisleri için Çiftçi Cari Takibi, Barkodlu Depo Stok, BKTS/GTS Karekod ve Resmi e-Fatura Yönetim Sistemi." />
+    
+    <!-- Schema.org JSON-LD Rich Snippet for Google Search -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Mühendis Kayıt Sistemi (MKS)",
+      "alternateName": ["MKS", "MKS Zirai ERP", "Mühendisler Kimya MKS"],
+      "url": "https://www.muhendiskayitsistemi.com.tr",
+      "operatingSystem": "Windows, Android, iOS, Web",
+      "applicationCategory": "BusinessApplication",
+      "description": "Zirai İlaç/Gübre Bayileri ve Ziraat Mühendisleri için Çiftçi Cari Takibi, Yıllık Bakiye Devri, Barkodlu Depo Stok Yönetimi, Tarım Bakanlığı BKTS/GTS 2D Karekod ve EDM Resmi e-Fatura/e-Arşiv destekli kurumsal yönetim sistemi.",
+      "author": {
+        "@type": "Person",
+        "name": "Nayif Fırat"
+      },
+      "offers": [
+        {
+          "@type": "Offer",
+          "name": "MKS Ücretsiz (Mobil)",
+          "price": "0",
+          "priceCurrency": "TRY"
+        },
+        {
+          "@type": "Offer",
+          "name": "MKS PRO",
+          "price": "499",
+          "priceCurrency": "TRY"
+        },
+        {
+          "@type": "Offer",
+          "name": "MKS ULTRA (BKTS & GTS Entegreli)",
+          "price": "899",
+          "priceCurrency": "TRY"
+        },
+        {
+          "@type": "Offer",
+          "name": "MKS MAX AI Enterprise",
+          "price": "1499",
+          "priceCurrency": "TRY"
+        }
+      ]
+    }
+    </script>
     
     <!-- App Icons -->
-    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
-    <link rel="apple-touch-icon" href="/logo.svg" />
-    <link rel="apple-touch-icon" sizes="152x152" href="/logo.svg" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/logo.svg" />
-    <link rel="apple-touch-icon" sizes="167x167" href="/logo.svg" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico?v=8.2.1" />
+    <link rel="icon" type="image/png" sizes="64x64" href="/icons/favicon.png?v=8.2.1" />
+    <link rel="icon" type="image/svg+xml" href="/logo.svg?v=8.2.1" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png?v=8.2.1" />
+    <link rel="apple-touch-icon" sizes="152x152" href="/icons/apple-touch-icon.png?v=8.2.1" />
+    <link rel="apple-touch-icon" sizes="167x167" href="/icons/apple-touch-icon.png?v=8.2.1" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png?v=8.2.1" />
     
-    <!-- Google Fonts -->
+    <!-- Google Fonts (UI-39: tek kaynak; kullanılmayan Playfair Display kaldırıldı) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
     
     <!-- Apple PWA Meta Tags -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Mühendis Kayıt" />
+    <meta name="apple-mobile-web-app-title" content="MKS" />
     
     <!-- Manifest -->
     <link rel="manifest" href="/manifest.json" />
-    
-    <!-- Tailwind CSS (Hızlı kurulum için CDN bırakıldı, ancak production'da local önerilir) -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            colors: {
-              agri: {
-                50: '#f2fcf5',
-                100: '#e1f8e8',
-                200: '#c3efd2',
-                300: '#94e0b3',
-                400: '#5cc78e',
-                500: '#34ab6f',
-                600: '#268a57',
-                700: '#216e48',
-                800: '#1d573b',
-                900: '#194833',
-              },
-              earth: {
-                50: '#faf8f6',
-                100: '#f3efea',
-                200: '#e5ddd3',
-                300: '#d1c2b0',
-                400: '#bba28a',
-                500: '#a68568',
-                600: '#8d6d53',
-                700: '#725644',
-                800: '#5f483b',
-              }
-            }
-          }
+    <style>
+      /* Prevent background scrolling when any modal/overlay is open */
+      body.mks-modal-open-lock {
+        overflow: hidden !important;
+        overscroll-behavior: none !important;
+        touch-action: pan-y;
+      }
+      /* Outdoor High-Contrast Sun Mode (#60) - zero CSS filter on root so position:fixed never breaks */
+      body.mks-outdoor-sun-mode {
+        --mks-card-border: rgba(56, 189, 248, 0.45);
+        letter-spacing: 0.005em;
+      }
+      /* Hide redundant on-screen back buttons on touch mobile/tablet devices where Swipe-Back and Android 3-button nav exist */
+      @media (max-width: 1023px) and (pointer: coarse) {
+        .mks-desktop-only-back {
+          display: none !important;
         }
       }
-    </script>
-    <style>
-      body { 
-        font-family: system-ui, -apple-system, sans-serif; 
-        -webkit-tap-highlight-color: transparent;
-        background-color: #0c0a09;
-        color: #e7e5e4;
-      }
-      /* Kaydırma çubuğunu gizle */
-      ::-webkit-scrollbar { display: none; }
-      html, body { -ms-overflow-style: none; scrollbar-width: none; }
-
-      /* Markdown Stilleri */
-      .markdown-body { color: inherit; }
-      .markdown-body p { margin-bottom: 0.75em; }
-      .markdown-body p:last-child { margin-bottom: 0; }
-      .markdown-body strong { font-weight: 700; color: #fff; }
-      .markdown-body ul { list-style-type: disc; margin-left: 1.5em; margin-bottom: 0.75em; }
-      .markdown-body ol { list-style-type: decimal; margin-left: 1.5em; margin-bottom: 0.75em; }
-      .markdown-body li { margin-bottom: 0.25em; }
-      .markdown-body a { color: #34d399; text-decoration: underline; }
-      .markdown-body h1, .markdown-body h2, .markdown-body h3 { font-weight: 700; color: #fff; margin-top: 1em; margin-bottom: 0.5em; }
-      
-      @keyframes spin-slow {
-        from { transform: rotate(0deg); }
-        to { transform: rotate(360deg); }
-      }
-      .animate-spin-slow {
-        animation: spin-slow 8s linear infinite;
-      }
-      
-      /* ==================== THEMES ==================== */
-      /* 1. TECHNICAL (Mühendis Defteri) - Terminal Style */
-      [data-theme="TECHNICAL"] {
-        font-family: 'JetBrains Mono', monospace !important;
-        background-color: #030303 !important;
-        background-image: linear-gradient(#080808 1px, transparent 1px), linear-gradient(90deg, #080808 1px, transparent 1px) !important;
-        background-size: 20px 20px !important;
-      }
-      [data-theme="TECHNICAL"] .bg-stone-900\/60,
-      [data-theme="TECHNICAL"] .bg-stone-950\/40,
-      [data-theme="TECHNICAL"] .bg-stone-900 {
-        background-color: #000 !important;
-        border: 1px solid #00ff6633 !important;
-        border-radius: 2px !important;
-        box-shadow: 0 0 10px #00ff660a !important;
-      }
-      [data-theme="TECHNICAL"] .rounded-2xl,
-      [data-theme="TECHNICAL"] .rounded-3xl,
-      [data-theme="TECHNICAL"] .rounded-xl {
-        border-radius: 2px !important;
-      }
-      [data-theme="TECHNICAL"] .text-emerald-400,
-      [data-theme="TECHNICAL"] .text-emerald-500 {
-        color: #00ff66 !important;
-        text-shadow: 0 0 5px #00ff6666 !important;
-      }
-      [data-theme="TECHNICAL"] .bg-emerald-500,
-      [data-theme="TECHNICAL"] .bg-emerald-600 {
-        background-color: #00ff66 !important;
-        color: #000 !important;
-        font-weight: 900 !important;
-      }
-
-      /* 2. ORGANIC (Toprak ve Canlılık) - Light/Rustic Theme */
-      [data-theme="ORGANIC"] {
-        font-family: 'Inter', sans-serif !important;
-        background-color: #fcfaf7 !important;
-        color: #4a3728 !important;
-      }
-      [data-theme="ORGANIC"] h1, [data-theme="ORGANIC"] h2, [data-theme="ORGANIC"] h3, [data-theme="ORGANIC"] h4 {
-        font-family: 'Playfair Display', serif !important;
-        color: #2d1e14 !important;
-      }
-      [data-theme="ORGANIC"] .bg-stone-900,
-      [data-theme="ORGANIC"] .bg-stone-900\/60,
-      [data-theme="ORGANIC"] .bg-stone-950\/40 {
-        background-color: #ffffff !important;
-        border: 1px solid #e5ddd3 !important;
-        box-shadow: 0 4px 20px -5px rgba(0,0,0,0.05) !important;
-      }
-      [data-theme="ORGANIC"] .text-stone-100,
-       [data-theme="ORGANIC"] .text-stone-200,
-       [data-theme="ORGANIC"] .text-stone-300 {
-        color: #2d1e14 !important;
-      }
-      [data-theme="ORGANIC"] .text-stone-400,
-      [data-theme="ORGANIC"] .text-stone-500,
-      [data-theme="ORGANIC"] .text-stone-600 {
-        color: #8d6d53 !important;
-      }
-      [data-theme="ORGANIC"] .border-white\/5,
-      [data-theme="ORGANIC"] .border-stone-800 {
-        border-color: #e5ddd3 !important;
-      }
-      [data-theme="ORGANIC"] .text-emerald-400,
-      [data-theme="ORGANIC"] .text-emerald-500 {
-        color: #268a57 !important;
-      }
-      [data-theme="ORGANIC"] .bg-emerald-600,
-      [data-theme="ORGANIC"] .bg-emerald-500 {
-        background-color: #34ab6f !important;
-        color: #fff !important;
-      }
-
-      /* 3. MINIMAL (Stark Theme) */
-      [data-theme="MINIMAL"] {
-        font-family: 'Inter', sans-serif !important;
-        background-color: #000 !important;
-        color: #fff !important;
-      }
-      [data-theme="MINIMAL"] .bg-stone-900\/60,
-      [data-theme="MINIMAL"] .bg-stone-950\/40,
-      [data-theme="MINIMAL"] .bg-stone-900 {
-        background-color: #000 !important;
-        border: 1px solid #333 !important;
-        border-radius: 0px !important;
-      }
-      [data-theme="MINIMAL"] .rounded-2xl,
-      [data-theme="MINIMAL"] .rounded-3xl,
-      [data-theme="MINIMAL"] .rounded-xl {
-        border-radius: 0px !important;
-      }
-      [data-theme="MINIMAL"] .text-emerald-400,
-      [data-theme="MINIMAL"] .text-emerald-500 {
-        color: #fff !important;
-        text-decoration: underline !important;
-      }
-      [data-theme="MINIMAL"] .bg-emerald-500,
-      [data-theme="MINIMAL"] .bg-emerald-600 {
-        background-color: #fff !important;
-        color: #000 !important;
-      }
-
-      /* 4. BARBIE (Feminine & Playful) */
-      [data-theme="BARBIE"] {
-        font-family: 'Inter', sans-serif !important;
-        background-color: #ff85c0 !important;
-        background-image: radial-gradient(#ffadd2 1px, transparent 1px) !important;
-        background-size: 30px 30px !important;
-        color: #ffffff !important;
-      }
-      [data-theme="BARBIE"] .bg-stone-900,
-      [data-theme="BARBIE"] .bg-stone-900\/60,
-      [data-theme="BARBIE"] .bg-stone-950\/40,
-      [data-theme="BARBIE"] .bg-stone-800 {
-        background-color: #ffffff !important;
-        border: 2px solid #ffadd2 !important;
-        border-radius: 24px !important;
-        box-shadow: 0 8px 0px #eb2f961a !important;
-      }
-      [data-theme="BARBIE"] .rounded-2xl,
-      [data-theme="BARBIE"] .rounded-3xl,
-      [data-theme="BARBIE"] .rounded-xl {
-        border-radius: 24px !important;
-      }
-      [data-theme="BARBIE"] .text-stone-100,
-      [data-theme="BARBIE"] .text-stone-200,
-      [data-theme="BARBIE"] .text-stone-300 {
-        color: #c41271 !important;
-      }
-      [data-theme="BARBIE"] .text-stone-400,
-      [data-theme="BARBIE"] .text-stone-500,
-      [data-theme="BARBIE"] .text-stone-600 {
-        color: #eb2f96 !important;
-      }
-      [data-theme="BARBIE"] .border-white\/5,
-      [data-theme="BARBIE"] .border-stone-800 {
-        border-color: #ffadd2 !important;
-      }
-      [data-theme="BARBIE"] .text-emerald-400,
-      [data-theme="BARBIE"] .text-emerald-500 {
-        color: #ff4d9f !important;
-      }
-      [data-theme="BARBIE"] .bg-emerald-500,
-      [data-theme="BARBIE"] .bg-emerald-600,
-      [data-theme="BARBIE"] .bg-emerald-700,
-      [data-theme="BARBIE"] .bg-blue-600,
-      [data-theme="BARBIE"] .bg-indigo-600,
-      [data-theme="BARBIE"] .bg-rose-600 {
-        background-color: #ff4d9f !important;
-        background-image: linear-gradient(to bottom right, #ff85c0, #f759ab) !important;
-        color: #fff !important;
-        box-shadow: 0 4px 0 #c41271 !important;
-        border: none !important;
-      }
-      [data-theme="BARBIE"] .bg-stone-950\/40 {
-        background-color: #fff0f6 !important;
-      }
-      [data-theme="BARBIE"] button:active {
-        transform: translateY(2px) !important;
-        box-shadow: 0 2px 0 #c41271 !important;
-      }
-      
-      /* 5. APPLE (iOS/macOS Style) */
-      [data-theme="APPLE"] {
-        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif !important;
-        background-color: #000000 !important;
-        color: #FFFFFF !important;
-        -webkit-font-smoothing: antialiased;
-        -moz-osx-font-smoothing: grayscale;
-      }
-      [data-theme="APPLE"] .bg-stone-900,
-      [data-theme="APPLE"] .bg-stone-900\/60,
-      [data-theme="APPLE"] .bg-stone-950\/40,
-      [data-theme="APPLE"] .bg-stone-900\/50,
-      [data-theme="APPLE"] .bg-stone-800 {
-        background-color: rgba(28, 28, 30, 0.75) !important; /* iOS system gray 6 dark */
-        backdrop-filter: blur(25px) saturate(200%) !important;
-        -webkit-backdrop-filter: blur(25px) saturate(200%) !important;
-        border: 1px solid rgba(255, 255, 255, 0.1) !important;
-        box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4) !important;
-      }
-      [data-theme="APPLE"] .bg-stone-950 {
-        background-color: #000000 !important;
-      }
-      [data-theme="APPLE"] .rounded-2xl,
-      [data-theme="APPLE"] .rounded-3xl,
-      [data-theme="APPLE"] .rounded-[2.5rem],
-      [data-theme="APPLE"] .rounded-xl {
-        border-radius: 20px !important;
-      }
-      [data-theme="APPLE"] .text-stone-100,
-      [data-theme="APPLE"] .text-stone-200,
-      [data-theme="APPLE"] .text-stone-300 {
-        color: #FFFFFF !important;
-      }
-      [data-theme="APPLE"] .text-stone-400,
-      [data-theme="APPLE"] .text-stone-500,
-      [data-theme="APPLE"] .text-stone-600 {
-        color: rgba(235, 235, 245, 0.6) !important; /* iOS system gray dark */
-      }
-      [data-theme="APPLE"] .border-white\/5,
-      [data-theme="APPLE"] .border-stone-800,
-      [data-theme="APPLE"] .border-stone-700 {
-        border-color: rgba(255, 255, 255, 0.1) !important;
-      }
-      [data-theme="APPLE"] .text-emerald-400,
-      [data-theme="APPLE"] .text-emerald-500 {
-        color: #0A84FF !important; /* iOS Blue */
-      }
-      [data-theme="APPLE"] .bg-emerald-500,
-      [data-theme="APPLE"] .bg-emerald-600,
-      [data-theme="APPLE"] .bg-emerald-700,
-      [data-theme="APPLE"] .bg-blue-600,
-      [data-theme="APPLE"] .bg-indigo-600,
-      [data-theme="APPLE"] .bg-rose-600 {
-        background-color: #0A84FF !important;
-        color: #FFFFFF !important;
-        box-shadow: none !important;
-        border: none !important;
-      }
-      [data-theme="APPLE"] button:active {
-        transform: scale(0.96) !important;
-        opacity: 0.8 !important;
-        transition: transform 0.1s ease-out, opacity 0.1s ease-out !important;
-      }
-      [data-theme="APPLE"] nav, [data-theme="APPLE"] .fixed.bottom-0 {
-        background-color: rgba(0, 0, 0, 0.6) !important;
-        -webkit-backdrop-filter: blur(25px) saturate(200%) !important;
-        backdrop-filter: blur(25px) saturate(200%) !important;
-        border-top: 1px solid rgba(255,255,255,0.1) !important;
-      }
-
-      /* 6. LIGHT MODE (Aydınlık Mod - Flawless Light Theme) */
-      [data-theme="LIGHT"], html[data-theme="LIGHT"] body {
-        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, sans-serif !important;
-        background-color: #f1f5f9 !important;
-        color: #0f172a !important;
-        color-scheme: light !important;
-      }
-
-      [data-theme="LIGHT"] .bg-stone-950,
-      [data-theme="LIGHT"] .bg-stone-950\/90,
-      [data-theme="LIGHT"] .bg-stone-950\/80,
-      [data-theme="LIGHT"] .bg-[#0c0a09],
-      [data-theme="LIGHT"] .bg-black {
-        background-color: #f1f5f9 !important;
-      }
-
-      [data-theme="LIGHT"] .bg-stone-900,
-      [data-theme="LIGHT"] .bg-stone-900\/60,
-      [data-theme="LIGHT"] .bg-stone-900\/80,
-      [data-theme="LIGHT"] .bg-stone-900\/90,
-      [data-theme="LIGHT"] .bg-stone-900\/50,
-      [data-theme="LIGHT"] .bg-stone-800,
-      [data-theme="LIGHT"] .bg-stone-800\/80,
-      [data-theme="LIGHT"] .bg-stone-800\/60,
-      [data-theme="LIGHT"] .bg-[#121212] {
-        background-color: #ffffff !important;
-        border-color: #cbd5e1 !important;
-        box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05) !important;
-      }
-
-      [data-theme="LIGHT"] .bg-stone-950\/40,
-      [data-theme="LIGHT"] .bg-stone-950\/60,
-      [data-theme="LIGHT"] .bg-stone-950\/80 {
-        background-color: #f8fafc !important;
-        border-color: #e2e8f0 !important;
-      }
-
-      [data-theme="LIGHT"] .text-white,
-      [data-theme="LIGHT"] .text-stone-100,
-      [data-theme="LIGHT"] .text-stone-200,
-      [data-theme="LIGHT"] .text-stone-300 {
-        color: #0f172a !important;
-      }
-
-      [data-theme="LIGHT"] .text-stone-400,
-      [data-theme="LIGHT"] .text-stone-500 {
-        color: #475569 !important;
-      }
-
-      [data-theme="LIGHT"] .text-stone-600,
-      [data-theme="LIGHT"] .text-stone-700 {
-        color: #64748b !important;
-      }
-
-      [data-theme="LIGHT"] .border-white\/5,
-      [data-theme="LIGHT"] .border-white\/10,
-      [data-theme="LIGHT"] .border-white\/20,
-      [data-theme="LIGHT"] .border-stone-800,
-      [data-theme="LIGHT"] .border-stone-700,
-      [data-theme="LIGHT"] .border-stone-800\/50 {
-        border-color: #e2e8f0 !important;
-      }
-
-      [data-theme="LIGHT"] input,
-      [data-theme="LIGHT"] textarea,
-      [data-theme="LIGHT"] select {
-        background-color: #ffffff !important;
-        color: #0f172a !important;
-        border-color: #cbd5e1 !important;
-      }
-
-      [data-theme="LIGHT"] input::placeholder,
-      [data-theme="LIGHT"] textarea::placeholder {
-        color: #94a3b8 !important;
-      }
-
-      [data-theme="LIGHT"] nav,
-      [data-theme="LIGHT"] .fixed.bottom-0,
-      [data-theme="LIGHT"] header {
-        background-color: rgba(255, 255, 255, 0.92) !important;
-        backdrop-filter: blur(20px) !important;
-        -webkit-backdrop-filter: blur(20px) !important;
-        border-color: #e2e8f0 !important;
-        box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.04) !important;
-      }
-
-      [data-theme="LIGHT"] .bg-black\/80,
-      [data-theme="LIGHT"] .bg-black\/85,
-      [data-theme="LIGHT"] .bg-black\/70 {
-        background-color: rgba(15, 23, 42, 0.5) !important;
-      }
-
-      /* Yüksek Kontrast Modu */
-      .high-contrast {
-        background-color: #000000 !important;
-        color: #ffffff !important;
-      }
-      .high-contrast .bg-stone-900\/60,
-      .high-contrast .bg-stone-950\/40,
-      .high-contrast .bg-stone-900\/50,
-      .high-contrast .bg-stone-900\/95 {
-        background-color: #000000 !important;
-        border-color: #ffffff !important;
-      }
-      .high-contrast .text-stone-400,
-      .high-contrast .text-stone-500,
-      .high-contrast .text-stone-600 {
-        color: #ffffff !important;
-        opacity: 1 !important;
-      }
-      .high-contrast .border-white\/5,
-      .high-contrast .border-white\/10,
-      .high-contrast .border-stone-800 {
-        border-color: #ffffff !important;
-      }
-      .high-contrast .bg-emerald-500,
-      .high-contrast .bg-blue-600,
-      .high-contrast .bg-amber-600 {
-        background-color: #ffffff !important;
-        color: #000000 !important;
-      }
-      .high-contrast .text-emerald-400,
-      .high-contrast .text-blue-400,
-      .high-contrast .text-amber-400 {
-        color: #ffffff !important;
-        font-weight: 900 !important;
-      }
-      .high-contrast .opacity-40,
-      .high-contrast .opacity-30,
-      .high-contrast .opacity-80 {
-        opacity: 1 !important;
+      /* Safe area bottom padding for Android 3-button navigation bar & iPhone Home Indicator */
+      .mks-safe-bottom-nav {
+        padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px);
       }
     </style>
     <script>
       window.process = window.process || { env: {} };
     </script>
-<script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@^19.2.3",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "@google/genai": "https://esm.sh/@google/genai@^1.37.0",
-    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
-    "html2canvas": "https://esm.sh/html2canvas@^1.4.1",
-    "jspdf": "https://esm.sh/jspdf@^4.0.0",
-    "@capacitor/app": "https://esm.sh/@capacitor/app@^8.0.0",
-    "@capacitor-community/admob": "https://esm.sh/@capacitor-community/admob@^8.0.0",
-    "@capacitor/status-bar": "https://esm.sh/@capacitor/status-bar@^8.0.0",
-    "@capacitor/core": "https://esm.sh/@capacitor/core@^8.0.1",
-    "idb": "https://esm.sh/idb@^8.0.3",
-    "firebase/": "https://esm.sh/firebase@^12.8.0/",
-    "recharts": "https://esm.sh/recharts@^3.6.0",
-    "vite": "https://esm.sh/vite@^7.3.1",
-    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2",
-    "@capacitor/local-notifications": "https://esm.sh/@capacitor/local-notifications@^8.0.0"
-  }
-}
-</script>
-</head>
+  </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>

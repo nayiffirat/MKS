@@ -1,7 +1,13 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Farmer } from '../types';
+import { dbService } from '../services/db';
+import { generatePortalToken } from '../utils/crypto';
+import { buildPublicPortalUrl } from '../utils/api';
+import { useAppViewModel } from '../context/AppContext';
+import { normalizeWaPhone, buildWaUrl } from '../utils/whatsappTemplates';
+import { useBackHandler } from '../utils/navigationManager';
+import { ModalCloseButton } from './ModalCloseButton';
 import { 
-    X, 
     MessageCircle, 
     Send, 
     Search, 
@@ -11,14 +17,9 @@ import {
     Check, 
     Play, 
     SkipForward, 
-    RefreshCcw, 
-    User, 
     Sparkles, 
     CheckCircle2, 
-    AlertCircle, 
     FileText, 
-    ExternalLink,
-    ChevronRight,
     Users,
     DollarSign
 } from 'lucide-react';
@@ -79,6 +80,17 @@ export const DebtReminderModal: React.FC<DebtReminderModalProps> = ({
     const [isQueueMode, setIsQueueMode] = useState(false);
     const [queueIndex, setQueueIndex] = useState(0);
     const [sentStatus, setSentStatus] = useState<Record<string, 'PENDING' | 'SENT' | 'SKIPPED'>>({});
+    const tokenCacheRef = useRef<Record<string, string>>({});
+
+    const getOrAssignPortalToken = (farmer: Farmer): string => {
+        if (farmer.portalToken && farmer.portalToken.length >= 16) {
+            return farmer.portalToken;
+        }
+        if (!tokenCacheRef.current[farmer.id]) {
+            tokenCacheRef.current[farmer.id] = generatePortalToken();
+        }
+        return tokenCacheRef.current[farmer.id];
+    };
 
     // Filter candidate list
     const candidates = useMemo(() => {
@@ -144,13 +156,8 @@ export const DebtReminderModal: React.FC<DebtReminderModalProps> = ({
     const generateMessage = (farmer: Farmer & { overallBalance?: number }) => {
         const debtAmount = Math.abs(farmer.overallBalance || 0);
         const formattedDebt = formatCurrency(debtAmount, currency);
-        
-        const baseUrl = window.location.origin + window.location.pathname;
-        const portalPath = baseUrl.endsWith('/') ? baseUrl + 'portal.html' : baseUrl.replace(/\/[^\/]*$/, '/portal.html');
-        const url = new URL(portalPath);
-        url.searchParams.set('portalId', farmer.id);
-        url.searchParams.set('engineerId', engineerId);
-        const portalUrl = url.toString();
+        const token = getOrAssignPortalToken(farmer);
+        const portalUrl = buildPublicPortalUrl(token);
 
         let text = customText;
         text = text.replace(/\{ad_soyad\}/g, farmer.fullName);
@@ -165,6 +172,17 @@ export const DebtReminderModal: React.FC<DebtReminderModalProps> = ({
     const selectedFarmers = candidates.filter(c => selectedIds.includes(c.id));
 
     const handleSingleSend = (farmer: Farmer & { overallBalance?: number }) => {
+        const token = getOrAssignPortalToken(farmer);
+        if (!farmer.portalToken || farmer.portalToken.length < 16) {
+            farmer.portalToken = token;
+            const { overallBalance: _ignored, ...cleanFarmer } = farmer;
+            dbService.updateFarmer({ ...cleanFarmer, portalToken: token })
+                .then(() => dbService.publishFarmerPortalShare(farmer.id, true))
+                .catch(() => {});
+        } else {
+            dbService.publishFarmerPortalShare(farmer.id, true).catch(() => {});
+        }
+
         const msg = generateMessage(farmer);
         const cleanPhone = (farmer.phoneNumber || '').replace(/[^0-9]/g, '');
         const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`;
@@ -240,9 +258,7 @@ export const DebtReminderModal: React.FC<DebtReminderModalProps> = ({
                             <p className="text-[10px] text-stone-400">Tek tıkla özelleştirilmiş WhatsApp mesajları ve ekstre linkleri gönderin</p>
                         </div>
                     </div>
-                    <button onClick={onClose} className="text-stone-400 hover:text-white p-1.5 bg-stone-800/80 rounded-full transition-colors">
-                        <X size={18}/>
-                    </button>
+                    <ModalCloseButton onClick={onClose} />
                 </div>
 
                 {/* Main Content Area */}

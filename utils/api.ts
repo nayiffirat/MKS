@@ -1,22 +1,62 @@
+import { Capacitor } from '@capacitor/core';
 
-export const getApiBase = () => {
-  const isCapacitor = window.location.origin.includes('localhost') || 
-                      window.location.origin.includes('capacitor://') ||
-                      window.location.origin.includes('http://localhost');
-  
-  // Replace this with your actual production URL
-  const PROD_URL = 'https://ais-pre-zmy7cyrul53kimjptv7wnk-324283545149.europe-west2.run.app';
-  const ALT_PROD_URL = 'https://m-hendis-kay-t-sistemi-65385039239.europe-west3.run.app';
-  
-  // Use the origin if it looks like a production URL, otherwise fallback
-  const currentOrigin = window.location.origin;
-  const isProdOrigin = currentOrigin.includes('run.app');
-  
-  if (isCapacitor) {
-     return PROD_URL; // Or ALT_PROD_URL depending on where the server is
+/**
+ * Çiftçiye WhatsApp ile gönderilecek Üretici Portalı ve bulut API kök adresi.
+ * Mühendis Android APK (Capacitor) veya masaüstü uygulamasından işlem yapıyor olsa bile
+ * çiftçinin kendi telefonundan uygulama indirmeden ve giriş yapmadan açabileceği canlı HTTPS adresini seçer.
+ */
+export const PUBLIC_PORTAL_ORIGIN = (
+  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PUBLIC_APP_URL) ||
+  'https://m-hendis-kay-t-sistemi-65385039239.europe-west3.run.app'
+).replace(/\/$/, '');
+
+export const getApiBase = (): string => {
+  if (typeof window === 'undefined') return '';
+  try {
+    if (Capacitor.isNativePlatform()) {
+      return PUBLIC_PORTAL_ORIGIN;
+    }
+  } catch {
+    // Web ortamında devam et
   }
-  
-  return isProdOrigin ? '' : PROD_URL; 
+
+  const origin = window.location.origin || '';
+  if (
+    origin.startsWith('capacitor://') ||
+    origin.startsWith('ionic://') ||
+    origin.startsWith('file://') ||
+    origin === 'http://localhost' ||
+    origin === 'https://localhost'
+  ) {
+    return PUBLIC_PORTAL_ORIGIN;
+  }
+
+  // Web tarayıcı (:3000, :5173, Cloud Run, Firebase Hosting veya özel alan adı) aynı origin'i kullanır
+  return '';
 };
 
 export const API_BASE = getApiBase();
+
+export const buildPublicPortalUrl = (token: string): string => {
+  const cleanToken = encodeURIComponent(token.trim());
+  if (typeof window === 'undefined') {
+    return `${PUBLIC_PORTAL_ORIGIN}/?token=${cleanToken}`;
+  }
+
+  const origin = window.location.origin || '';
+  const isLocalOrNative =
+    !origin.startsWith('http') ||
+    origin.includes('localhost') ||
+    origin.includes('127.0.0.1') ||
+    /^http:\/\/(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(origin);
+
+  if (isLocalOrNative) {
+    return `${PUBLIC_PORTAL_ORIGIN}/?token=${cleanToken}`;
+  }
+
+  const basePath = window.location.pathname.replace(/\/portal\.html$/i, '/');
+  const normalizedPath = basePath.endsWith('/') ? basePath : basePath.replace(/\/[^/]*$/, '/');
+  const url = new URL(`${origin}${normalizedPath}`);
+  url.searchParams.set('token', token.trim());
+  return url.toString();
+};
