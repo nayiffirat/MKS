@@ -589,7 +589,7 @@ export const IncomeExpenseChartReport: React.FC = () => {
           
           {/* Custom Date Pickers */}
           <div className="md:col-span-5 flex items-center gap-2">
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <label className="text-[11px] font-black text-stone-400 uppercase tracking-wider mb-1 block">
                 Başlangıç Tarihi
               </label>
@@ -598,14 +598,14 @@ export const IncomeExpenseChartReport: React.FC = () => {
                   type="date"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full bg-stone-950 border border-white/10 rounded-xl px-3 py-2 text-xs font-bold text-stone-100 outline-none focus:border-emerald-500/50 transition-all"
+                  className="w-full min-w-0 bg-stone-950 border border-white/10 rounded-xl px-3 py-2 text-xs font-bold text-stone-100 outline-none focus:border-emerald-500/50 transition-all"
                 />
               </div>
             </div>
 
             <span className="text-stone-500 font-bold pt-4">-</span>
 
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <label className="text-[11px] font-black text-stone-400 uppercase tracking-wider mb-1 block">
                 Bitiş Tarihi
               </label>
@@ -614,7 +614,7 @@ export const IncomeExpenseChartReport: React.FC = () => {
                   type="date"
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
-                  className="w-full bg-stone-950 border border-white/10 rounded-xl px-3 py-2 text-xs font-bold text-stone-100 outline-none focus:border-emerald-500/50 transition-all"
+                  className="w-full min-w-0 bg-stone-950 border border-white/10 rounded-xl px-3 py-2 text-xs font-bold text-stone-100 outline-none focus:border-emerald-500/50 transition-all"
                 />
               </div>
             </div>

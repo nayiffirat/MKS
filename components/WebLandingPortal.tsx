@@ -14,6 +14,7 @@ import {
   ScanBarcode,
   Database,
   Crown,
+  CreditCard,
   ArrowRight,
   Copy,
   Check,
@@ -38,6 +39,7 @@ import {
   syncSubscriptionConfigFromCloud
 } from '../utils/subscriptionManager';
 import { useBackHandler, useScrollLock } from '../utils/navigationManager';
+import { Capacitor } from '@capacitor/core';
 
 export const WebLandingPortal: React.FC<{
   mode?: 'modal' | 'fullscreen_gate';
@@ -118,15 +120,23 @@ export const WebLandingPortal: React.FC<{
 
   const handleSubscribeClick = async (tier: SubscriptionTierId) => {
     setPurchasingTier(tier);
-    setStatusMessage(null);
+    const isNativeApp = Capacitor.isNativePlatform();
+    setStatusMessage(isNativeApp ? 'Mağaza ödeme ekranı açılıyor...' : 'Shopier güvenli ödeme sayfası açılıyor...');
 
     const period: BillingPeriod = billingCycle === 'yearly' ? 'YEARLY' : 'MONTHLY';
     const purchasedInStore = await purchaseSubscriptionPlan(tier, period, (plan, per) => {
       const price = per === 'YEARLY' ? plan.yearlyPriceTRY : plan.monthlyPriceTRY;
       const periodLabel = per === 'YEARLY' ? 'Yıllık' : 'Aylık';
+      setStatusMessage(
+        isNativeApp
+          ? `${plan.name} (${periodLabel} - ${price.toLocaleString('tr-TR')} TL) mağaza üzerinden tamamlanamadı. Canlı Destek ile paketinizi hemen aktif edebiliriz.`
+          : `Shopier güvenli ödeme sayfası açıldı. ${plan.name} (${periodLabel} - ${price.toLocaleString('tr-TR')} TL) ödemenizi tamamlayabilirsiniz.`
+      );
       onOpenSupport?.(
         'subscription',
-        `Merhaba Fırat Bey, ${plan.name} (${periodLabel} - ${price.toLocaleString('tr-TR')} TL) paketini aktif etmek istiyorum.`
+        isNativeApp
+          ? `Merhaba Fırat Bey, ${plan.name} (${periodLabel} - ${price.toLocaleString('tr-TR')} TL) paketini aktif etmek istiyorum.`
+          : `Merhaba Fırat Bey, ${plan.name} (${periodLabel} - ${price.toLocaleString('tr-TR')} TL) paketini Shopier üzerinden ödedim/aktif etmek istiyorum.`
       );
     });
 
@@ -555,6 +565,27 @@ export const WebLandingPortal: React.FC<{
                     </span>
                   </button>
                 </div>
+
+                {/* Shopier Trust & Payment Badges */}
+                <div className="flex flex-wrap items-center justify-center gap-2 pt-2 text-[11px]">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/25 text-emerald-300 font-semibold shadow-sm">
+                    <ShieldCheck size={14} className="text-emerald-400 shrink-0" />
+                    <span>Shopier 256-Bit SSL Güvenli Kart Ödemesi</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/25 text-blue-300 font-semibold shadow-sm">
+                    <CreditCard size={14} className="text-blue-400 shrink-0" />
+                    <span>Tüm Kredi & Banka Kartlarına Taksit / Tek Çekim</span>
+                  </span>
+                  <a
+                    href="https://www.shopier.com/firattarim"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-stone-900 hover:bg-stone-800 border border-white/15 text-stone-300 font-medium transition-colors"
+                  >
+                    <span>Fırat Tarım Shopier Mağazası</span>
+                    <ExternalLink size={12} className="text-stone-400" />
+                  </a>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -638,26 +669,30 @@ export const WebLandingPortal: React.FC<{
                         </ul>
                       </div>
 
-                      <div className="pt-6">
+                      <div className="pt-6 space-y-2">
                         <button
                           type="button"
                           disabled={purchasingTier === tierKey}
                           onClick={() => handleSubscribeClick(tierKey)}
                           className={`w-full py-3.5 px-4 rounded-2xl font-black text-xs transition-all shadow-lg flex items-center justify-center gap-2 ${
                             tierKey === 'MAX'
-                              ? 'bg-amber-500 hover:bg-amber-400 text-stone-950'
+                              ? 'bg-amber-500 hover:bg-amber-400 text-stone-950 shadow-amber-950/40'
                               : tierKey === 'ULTRA'
-                              ? 'bg-blue-600 hover:bg-blue-500 text-white'
-                              : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                              ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-950/40'
+                              : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-950/40'
                           }`}
                         >
-                          <Crown size={15} />
+                          <CreditCard size={15} />
                           <span>
                             {purchasingTier === tierKey
-                              ? 'İşleniyor...'
-                              : `${plan.name} Satın Al (${billingCycle === 'yearly' ? 'Yıllık' : 'Aylık'})`}
+                              ? 'Ödeme Sayfası Açılıyor...'
+                              : `${plan.name} Satın Al (Shopier Güvenli Kart)`}
                           </span>
                         </button>
+                        <div className="flex items-center justify-center gap-1.5 text-[10px] text-stone-400">
+                          <ShieldCheck size={12} className="text-emerald-400 shrink-0" />
+                          <span>Shopier ile 256-Bit SSL Korumalı Kart / Taksit</span>
+                        </div>
                       </div>
                     </div>
                   );

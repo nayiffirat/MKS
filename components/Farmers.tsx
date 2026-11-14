@@ -1,3 +1,4 @@
+import { archivePdf } from '../utils/pdfArchive';
 import { createMultiPagePdf, renderElementToCanvas } from '../utils/pdfHelper';
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
@@ -767,6 +768,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
         } else {
             const pdfBlob = pdf.output('blob');
             const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
+            void archivePdf(fileName, pdfBlob);
             const shareData = {
                 files: [file],
                 title: `Zirai ${prescriptionLabel}`
@@ -1245,6 +1247,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           };
 
           const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
+            void archivePdf(fileName, pdfBlob);
           const message = renderWhatsAppTemplate(
               userProfile?.whatsappTemplates?.collectionReceipt,
               'collectionReceipt',
@@ -1399,6 +1402,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           } else {
               const pdfBlob = pdf.output('blob');
               const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
+            void archivePdf(fileName, pdfBlob);
               const shareData = {
                   files: [file],
                   title: 'Cari Hesap Raporu'
@@ -2900,22 +2904,22 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
     <div className="pb-24 relative min-h-[80vh]">
       <input type="file" accept=".vcf" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
 
-      <div className="flex items-center justify-between mb-3 mt-2 px-1">
-          <div className="flex items-center gap-3">
-              <button onClick={onBack} className="flex items-center text-stone-400 hover:text-stone-200 font-medium py-1 rounded-lg transition-colors text-xs"><ArrowLeft size={16} className="mr-1"/> Geri</button>
+      <div className="flex items-center justify-between gap-2 mb-3 mt-2 px-1">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0 overflow-x-auto no-scrollbar">
+              <button onClick={onBack} className="hidden sm:flex items-center shrink-0 text-stone-400 hover:text-stone-200 font-medium py-1 rounded-lg transition-colors text-xs"><ArrowLeft size={16} className="mr-1"/> Geri</button>
               <button 
                   onClick={() => {
                       setIsRepairModalOpen(true);
                       handleAnalyzeFarmers();
                   }}
-                  className="py-1.5 px-3 bg-red-600/20 border border-red-500/30 rounded-lg text-red-500 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 hover:bg-red-600/30 transition-colors shadow-lg shadow-red-900/20"
+                  className="shrink-0 whitespace-nowrap min-h-[36px] py-1.5 px-3 bg-red-600/20 border border-red-500/30 rounded-lg text-red-500 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 hover:bg-red-600/30 transition-colors shadow-lg shadow-red-900/20"
               >
                   <RefreshCw size={14} />
                   Cari Onar
               </button>
               <button 
                   onClick={downloadFarmersPdf}
-                  className="py-1.5 px-3 bg-amber-600 rounded-lg text-white text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 hover:bg-amber-500 transition-colors shadow-lg shadow-amber-900/20"
+                  className="shrink-0 whitespace-nowrap min-h-[36px] py-1.5 px-3 bg-amber-600 rounded-lg text-white text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 hover:bg-amber-500 transition-colors shadow-lg shadow-amber-900/20"
               >
                   <FileText size={14} />
                   Raporla
@@ -2926,14 +2930,14 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                       setSentAnnouncementFarmerIds(new Set());
                       setIsAnnouncementModalOpen(true);
                   }}
-                  className="py-1.5 px-3 bg-emerald-600/20 border border-emerald-500/30 rounded-lg text-emerald-400 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 hover:bg-emerald-600/30 transition-colors"
+                  className="shrink-0 whitespace-nowrap min-h-[36px] py-1.5 px-3 bg-emerald-600/20 border border-emerald-500/30 rounded-lg text-emerald-400 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 hover:bg-emerald-600/30 transition-colors"
                   title="Köy ve Mahsul Bazlı Toplu WhatsApp Zirai Duyuru"
               >
                   <Megaphone size={13} />
                   Toplu Duyuru
               </button>
           </div>
-          <div className="text-right">
+          <div className="hidden sm:block text-right shrink-0">
               <span className="text-[9px] font-bold text-stone-500 uppercase tracking-widest block">{farmers.length} {farmerLabel}</span>
               {userProfile.lastSyncTime && (
                   <span className="text-[8px] text-emerald-500/80 flex items-center justify-end mt-0.5">
@@ -2947,7 +2951,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       <div className="sticky top-0 z-10 bg-stone-950/80 backdrop-blur-md pb-2 pt-0">
          <div className="bg-stone-900 rounded-xl shadow-sm border border-white/5 flex items-center p-0.5">
              <Search className="text-stone-500 ml-2" size={14} />
-             <input type="text" placeholder={`${farmerLabel} adı veya köy ara...`} className="w-full p-2 bg-transparent outline-none font-medium text-stone-200 placeholder-stone-600 text-[11px]" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+             <input type="text" placeholder={`${farmers.length} ${farmerLabel.toLocaleLowerCase('tr-TR')} içinde ad veya köy ara...`} className="w-full p-2.5 bg-transparent outline-none font-medium text-stone-200 placeholder-stone-600 text-[13px]" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
          </div>
       </div>
 

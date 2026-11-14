@@ -8,8 +8,29 @@ import {
   RefreshCw,
   ExternalLink,
   Clock,
-  HardDrive
+  Share2,
+  Trash2
 } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
+import {
+  listArchivedPdfs,
+  deleteArchivedPdf,
+  openPdfBlob,
+  PDF_ARCHIVE_EVENT
+} from '../utils/pdfArchive';
+
+type PdfRow = DesktopPdfFileItem & { archiveId?: string; blob?: Blob };
+
+const formatStamp = (ts: number) =>
+  new Date(ts).toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' }) +
+  ' ' +
+  new Date(ts).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+
+// "12.11.2026 14:05" biçimindeki tarihleri sıralama için zamana çevirir
+const parseStamp = (s?: string): number => {
+  const m = (s || '').match(/(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})/);
+  return m ? new Date(+m[3], +m[2] - 1, +m[1], +m[4], +m[5]).getTime() : 0;
+};
 import {
   listDesktopPdfs,
   openDesktopPdfFolder,
@@ -28,15 +49,35 @@ export const PdfQuickAccessModal: React.FC<PdfQuickAccessModalProps> = ({
   isOpen,
   onClose
 }) => {
-  const [pdfFiles, setPdfFiles] = useState<DesktopPdfFileItem[]>([]);
+  const [pdfFiles, setPdfFiles] = useState<PdfRow[]>([]);
+  const isMobileApp = Capacitor.isNativePlatform();
   const [loading, setLoading] = useState<boolean>(false);
 
   const loadFiles = async () => {
     setLoading(true);
     try {
-      const files = await listDesktopPdfs();
+      const [archived, diskFiles] = await Promise.all([
+        listArchivedPdfs(),
+        isMobileApp ? Promise.resolve([] as DesktopPdfFileItem[]) : listDesktopPdfs()
+      ]);
+      const rows: PdfRow[] = archived.map(a => ({
+        name: a.name,
+        path: a.name,
+        size: a.size,
+        date: formatStamp(a.timestamp),
+        timestamp: a.timestamp,
+        archiveId: a.id,
+        blob: a.blob
+      }));
+      const seen = new Set(rows.map(r => r.name.toLowerCase()));
+      for (const f of diskFiles) {
+        // Yalnızca gerçekten diskte duran dosyalar (masaüstü köprüsü); eski ad-yalnız geçmiş kayıtları açılamadığı için gösterilmez
+        if (seen.has(f.name.toLowerCase()) || !/[\\/]/.test(f.path || '')) continue;
+        rows.push({ ...f, timestamp: f.timestamp || parseStamp(f.date) });
+      }
       // Tarih sırasına göre (en yeni en üstte)
-      setPdfFiles(files);
+      rows.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      setPdfFiles(rows);
     } catch {
       setPdfFiles([]);
     } finally {
@@ -45,10 +86,27 @@ export const PdfQuickAccessModal: React.FC<PdfQuickAccessModalProps> = ({
   };
 
   useEffect(() => {
-    if (isOpen) {
-      void loadFiles();
-    }
+    if (!isOpen) return;
+    void loadFiles();
+    const onArchived = () => void loadFiles();
+    window.addEventListener(PDF_ARCHIVE_EVENT, onArchived);
+    return () => window.removeEventListener(PDF_ARCHIVE_EVENT, onArchived);
   }, [isOpen]);
+
+  const openRow = (file: PdfRow, mode: 'open' | 'share' = 'open') => {
+    if (file.blob) {
+      void openPdfBlob(file.name, file.blob, mode);
+    } else {
+      void openDesktopPdf(file.path);
+      onClose();
+    }
+  };
+
+  const removeRow = async (file: PdfRow) => {
+    if (!file.archiveId) return;
+    await deleteArchivedPdf(file.archiveId);
+    setPdfFiles(prev => prev.filter(f => f.archiveId !== file.archiveId));
+  };
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -80,19 +138,19 @@ export const PdfQuickAccessModal: React.FC<PdfQuickAccessModalProps> = ({
               </div>
               <div className="min-w-0">
                 <h3 className="font-bold text-sm sm:text-base text-white truncate flex items-center gap-2">
-                  <span>İndirilen PDF Belgeleri</span>
-                  <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                  <span className="truncate">PDF Belgeleri</span>
+                  <span className="shrink-0 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30">
                     Tarih Sırasıyla
                   </span>
                 </h3>
                 <p className="text-[11px] text-slate-400 truncate">
-                  Fatura, defter, reçete ve rapor çıktıları
+                  Hazırlanan tüm fatura, reçete, ekstre ve raporlar
                 </p>
               </div>
             </div>
 
             <div className="flex items-center gap-1.5 shrink-0">
-              <button
+              {!isMobileApp && <button
                 type="button"
                 onClick={() => void openDesktopPdfFolder()}
                 title="Bilgisayardaki PDF Klasörünü Aç (İndirilenler)"
@@ -100,14 +158,15 @@ export const PdfQuickAccessModal: React.FC<PdfQuickAccessModalProps> = ({
               >
                 <FolderOpen size={14} className="text-amber-400" />
                 <span className="hidden sm:inline">Klasör</span>
-              </button>
+              </button>}
 
               <button
                 type="button"
                 onClick={() => void loadFiles()}
                 title="Listeyi Yenile"
                 disabled={loading}
-                className="p-1.5 rounded-lg hover:bg-slate-700 active:scale-95 text-slate-400 hover:text-white transition-colors"
+                aria-label="Listeyi yenile"
+                className="w-10 h-10 flex items-center justify-center rounded-lg hover:bg-slate-700 active:scale-95 text-slate-400 hover:text-white transition-colors"
               >
                 <RefreshCw size={15} className={loading ? 'animate-spin text-emerald-400' : ''} />
               </button>
@@ -116,7 +175,7 @@ export const PdfQuickAccessModal: React.FC<PdfQuickAccessModalProps> = ({
                 type="button"
                 onClick={onClose}
                 aria-label="Kapat"
-                className="p-1.5 rounded-lg hover:bg-slate-700 active:scale-95 text-slate-400 hover:text-white transition-colors"
+                className="w-10 h-10 flex items-center justify-center rounded-lg hover:bg-slate-700 active:scale-95 text-slate-400 hover:text-white transition-colors"
               >
                 <X size={17} />
               </button>
@@ -135,43 +194,40 @@ export const PdfQuickAccessModal: React.FC<PdfQuickAccessModalProps> = ({
                 <div className="w-12 h-12 mx-auto rounded-2xl bg-slate-800 flex items-center justify-center text-slate-500 mb-3 border border-slate-700">
                   <FileText size={24} />
                 </div>
-                <p className="text-sm font-semibold text-slate-200">Henüz indirilmiş PDF bulunamadı</p>
+                <p className="text-sm font-semibold text-slate-200">Henüz hazırlanmış PDF yok</p>
                 <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
-                  İndirdiğiniz tüm faturalar, defterler ve reçeteler otomatik olarak bu listede tarih sırasıyla görünür.
+                  Uygulamanın herhangi bir yerinde hazırladığınız, indirdiğiniz veya paylaştığınız her PDF otomatik olarak buraya düşer; en yenisi en üstte durur.
                 </p>
-                <button
+                {!isMobileApp && <button
                   type="button"
                   onClick={() => void openDesktopPdfFolder()}
                   className="mt-4 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 inline-flex items-center gap-2 transition-all border border-slate-700 shadow-sm"
                 >
                   <FolderOpen size={14} className="text-amber-400" />
                   <span>İndirilenler Klasörünü Aç</span>
-                </button>
+                </button>}
               </div>
             ) : (
               pdfFiles.map((file, idx) => (
                 <div
-                  key={file.path || `${file.name}-${idx}`}
+                  key={file.archiveId || file.path || `${file.name}-${idx}`}
                   className="p-3 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 hover:border-slate-600 flex items-center justify-between gap-3 transition-colors shadow-xs"
                 >
                   {/* File Info */}
                   <div
                     className="min-w-0 flex-1 cursor-pointer"
-                    onClick={() => {
-                      void openDesktopPdf(file.path);
-                      onClose();
-                    }}
-                    title={`${file.name}\n${file.path}`}
+                    onClick={() => openRow(file)}
+                    title={file.name}
                   >
                     <div className="flex items-center gap-2">
                       <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-rose-600 text-white shrink-0 shadow-xs">
                         PDF
                       </span>
-                      <span className="text-xs sm:text-sm font-semibold text-white truncate hover:underline hover:text-rose-200">
+                      <span className="text-xs sm:text-sm font-semibold text-white truncate">
                         {file.name}
                       </span>
                     </div>
-                    <div className="flex items-center gap-3 text-[11px] text-slate-400 mt-1 ml-8">
+                    <div className="flex items-center gap-2 text-[11px] text-slate-400 mt-1">
                       <span className="inline-flex items-center gap-1 text-slate-300">
                         <Clock size={11} className="text-slate-400" />
                         {file.date}
@@ -185,37 +241,58 @@ export const PdfQuickAccessModal: React.FC<PdfQuickAccessModalProps> = ({
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
                       type="button"
-                      onClick={() => {
-                        void openDesktopPdf(file.path);
-                        onClose();
-                      }}
+                      onClick={() => openRow(file)}
                       title="Belgeyi Aç"
-                      className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 active:scale-95 text-white text-xs font-semibold inline-flex items-center gap-1 transition-all shadow-xs"
+                      className="min-h-[36px] px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 active:scale-95 text-white text-xs font-semibold inline-flex items-center gap-1 transition-all shadow-xs"
                     >
                       <ExternalLink size={12} />
                       <span>Aç</span>
                     </button>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void printDesktopPdf(file.path);
-                        onClose();
-                      }}
-                      title="Varsayılan Yazıcıya Gönder"
-                      className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white text-xs font-semibold inline-flex items-center gap-1 transition-all shadow-xs"
-                    >
-                      <Printer size={13} />
-                      <span className="hidden sm:inline">Yazdır</span>
-                    </button>
+                    {file.blob ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => openRow(file, 'share')}
+                          title="Paylaş / Gönder"
+                          aria-label="Paylaş"
+                          className="min-h-[36px] px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white text-xs font-semibold inline-flex items-center gap-1 transition-all shadow-xs"
+                        >
+                          <Share2 size={13} />
+                          <span className="hidden sm:inline">Paylaş</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void removeRow(file)}
+                          title="Listeden kaldır"
+                          aria-label="Listeden kaldır"
+                          className="min-h-[36px] w-9 rounded-lg bg-slate-700 hover:bg-rose-600 active:scale-95 text-slate-300 hover:text-white inline-flex items-center justify-center transition-all"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void printDesktopPdf(file.path);
+                          onClose();
+                        }}
+                        title="Varsayılan Yazıcıya Gönder"
+                        className="min-h-[36px] px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white text-xs font-semibold inline-flex items-center gap-1 transition-all shadow-xs"
+                      >
+                        <Printer size={13} />
+                        <span className="hidden sm:inline">Yazdır</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               ))
             )}
           </div>
 
-          {/* Footer Actions */}
-          <div className="p-3 sm:p-4 bg-slate-800/80 border-t border-slate-700/80 flex flex-col sm:flex-row items-center justify-between gap-2.5">
+          {/* Footer Actions (yalnızca web / masaüstü) */}
+          {!isMobileApp && <div className="p-3 sm:p-4 bg-slate-800/80 border-t border-slate-700/80 flex flex-col sm:flex-row items-center justify-between gap-2.5">
             <button
               type="button"
               onClick={() => {
@@ -236,7 +313,7 @@ export const PdfQuickAccessModal: React.FC<PdfQuickAccessModalProps> = ({
               <FolderOpen size={14} className="text-amber-400" />
               <span>Bilgisayardaki PDF Klasörü</span>
             </button>
-          </div>
+          </div>}
         </motion.div>
       </div>
     </AnimatePresence>

@@ -1,0 +1,47 @@
+# Cloud Run kaynak yuklemesi (gcloud run deploy --source .) icin haric tutulanlar.
+# Dockerfile, package*.json, kaynak kod, public/, server/, tsconfig, vite/tailwind/postcss
+# ayarlari ve firebase-applet-config.json (services/firebase.ts kullaniyor) YUKLENIR.
+# Not: public/downloads/ BILEREK yuklenir: /api/version androidDownloadUrl
+# (/downloads/MKS_Android.apk) ve masaustu indirme adresleri buradan sunulur.
+
+.gcloudignore
+.git
+.gitignore
+.github/
+node_modules/
+dist/
+android/
+ios/
+desktop/
+docs/
+tests/
+scripts/
+store_assets/
+Claude outputs/
+.claude-flow/
+.swarm/
+.firebase/
+.firebaserc
+firebase.json
+firestore.rules
+firebase-blueprint.json
+
+# Kok dizindeki derleme ciktilari ve paketler (public/downloads haric)
+/*.apk
+/*.aab
+*.ipa
+*.zip
+!public/downloads/*.zip
+*.jks
+*.keystore
+*.pem
+
+# Gizli dosyalar
+.env
+.env.*
+
+# Gunlukler ve yerel betikler
+*.log
+*.ps1
+*.bat
+/*.md

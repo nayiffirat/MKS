@@ -24,6 +24,8 @@ import { safeStringify } from './json';
 export const MKS_CLIENT_VERSION = '8.2.1';
 export const MKS_CLIENT_BUILD = 28;
 export const MKS_ALERT_CHANNEL_ID = 'mks_smart_alerts';
+/** Android bildirim simgeleri: durum çubuğu için tek renk silüet, bildirim gövdesi için renkli logo (android/app/src/main/res/drawable-*) */
+export const MKS_NOTIF_ICONS = { smallIcon: 'ic_stat_mks', largeIcon: 'mks_notif_logo', iconColor: '#10B981' } as const;
 
 const SENT_LOG_STORAGE_KEY = 'mks_smart_notif_sent_v2';
 const PREFS_FALLBACK_KEY = 'mks_notif_prefs_v1';
@@ -221,6 +223,7 @@ export async function dispatchOsNotification(params: {
             channelId: MKS_ALERT_CHANNEL_ID,
             schedule: { at: new Date(Date.now() + 600), allowWhileIdle: true },
             sound: 'default',
+            ...MKS_NOTIF_ICONS,
             extra: { targetView }
           }
         ]
@@ -319,11 +322,15 @@ function writeSentLog(log: Record<string, string>): void {
 const formatTry = (amount: number): string =>
   `${Math.round(Math.abs(amount)).toLocaleString('tr-TR')} ₺`;
 
+const LEGACY_DUE_ALARMS_DISABLED = true as boolean;
+
 export async function scheduleNativeDueAlarms(
   myPayments: MyPayment[],
   dailyCallCount: number
 ): Promise<void> {
-  if (!Capacitor.isNativePlatform()) return;
+  // Zamanlı bildirimler artık tek yerden kurulur: utils/scheduledNotifications.ts (vade 20:00 ×3 + 10:00, plan 09:00, rapor 21:00).
+  // Çift bildirim olmaması için buradaki eski 09:00 özeti ve "1 gün önce 09:30" alarmı devre dışıdır.
+  if (!Capacitor.isNativePlatform() || LEGACY_DUE_ALARMS_DISABLED) return;
   const perm = await getNotificationPermissionStatus();
   if (perm !== 'granted') return;
 

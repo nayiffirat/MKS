@@ -1,6 +1,15 @@
 package com.nayiffirat.muhendiskayitsistemi;
 
 import android.app.Dialog;
+import android.content.ClipData;
+import android.content.Intent;
+import android.net.Uri;
+import android.util.Base64;
+import android.webkit.JavascriptInterface;
+import androidx.core.content.FileProvider;
+import com.getcapacitor.BridgeWebChromeClient;
+import java.io.File;
+import java.io.FileOutputStream;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Message;
@@ -19,6 +28,81 @@ import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
     private Dialog authPopupDialog;
+    private boolean pdfBridgeAttached = false;
+
+    /** Web tarafında üretilen PDF'leri önbelleğe yazar ve PDF görüntüleyici / paylaş menüsünü açar. */
+    private class PdfBridge {
+        private File currentFile;
+        private FileOutputStream out;
+
+        @JavascriptInterface
+        public synchronized boolean begin(String name) {
+            try {
+                closeQuietly();
+                String safe = (name == null ? "MKS_Belge.pdf" : name).replaceAll("[\\\\/:*?\"<>|]", "_");
+                if (!safe.toLowerCase().endsWith(".pdf")) safe = safe + ".pdf";
+                File dir = new File(getCacheDir(), "pdf");
+                if (!dir.exists() && !dir.mkdirs()) return false;
+                currentFile = new File(dir, safe);
+                out = new FileOutputStream(currentFile, false);
+                return true;
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        @JavascriptInterface
+        public synchronized boolean append(String chunkBase64) {
+            try {
+                if (out == null) return false;
+                out.write(Base64.decode(chunkBase64, Base64.DEFAULT));
+                return true;
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        @JavascriptInterface
+        public synchronized boolean finish(String mode) {
+            try {
+                if (out == null || currentFile == null) return false;
+                out.flush();
+                closeQuietly();
+                final File file = currentFile;
+                final Uri uri = FileProvider.getUriForFile(MainActivity.this, getPackageName() + ".fileprovider", file);
+                final Intent intent;
+                if ("share".equals(mode)) {
+                    intent = new Intent(Intent.ACTION_SEND);
+                    intent.setType("application/pdf");
+                    intent.putExtra(Intent.EXTRA_STREAM, uri);
+                } else {
+                    intent = new Intent(Intent.ACTION_VIEW);
+                    intent.setDataAndType(uri, "application/pdf");
+                }
+                intent.setClipData(ClipData.newRawUri(file.getName(), uri));
+                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                final Intent chooser = Intent.createChooser(intent, file.getName());
+                chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                runOnUiThread(() -> {
+                    try {
+                        startActivity(chooser);
+                    } catch (Exception ignored) {
+                    }
+                });
+                return true;
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        private void closeQuietly() {
+            try {
+                if (out != null) out.close();
+            } catch (Exception ignored) {
+            }
+            out = null;
+        }
+    }
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -29,28 +113,36 @@ public class MainActivity extends BridgeActivity {
         getWindow().setStatusBarColor(Color.parseColor("#080D14"));
         getWindow().setNavigationBarColor(Color.parseColor("#080D14"));
 
+        // Not: onResume'da değil burada çağrılmalı (aksi halde açılışta IllegalStateException ile çöker)
+        configureWebView();
+
         final View contentView = findViewById(android.R.id.content);
         if (contentView != null) {
+            contentView.setBackgroundColor(Color.parseColor("#080D14"));
             ViewCompat.setOnApplyWindowInsetsListener(contentView, (view, windowInsets) -> {
                 Insets bars = windowInsets.getInsets(
-                    WindowInsetsCompat.Type.displayCutout()
+                    WindowInsetsCompat.Type.systemBars()
+                    | WindowInsetsCompat.Type.displayCutout()
                     | WindowInsetsCompat.Type.ime()
                 );
-                view.setPadding(bars.left, 0, bars.right, bars.bottom);
+                view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
                 return WindowInsetsCompat.CONSUMED;
             });
         }
     }
 
-    @Override
-    public void onResume() {
-        super.onResume();
-        configureWebView();
-    }
+    private boolean webViewConfigured = false;
 
     private void configureWebView() {
+        if (webViewConfigured) return;
         if (getBridge() == null || getBridge().getWebView() == null) return;
         final WebView webView = getBridge().getWebView();
+        webViewConfigured = true;
+
+        if (!pdfBridgeAttached) {
+            webView.addJavascriptInterface(new PdfBridge(), "MksNative");
+            pdfBridgeAttached = true;
+        }
 
         // 1. Remove overscroll stretch / bounce
         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
@@ -61,7 +153,8 @@ public class MainActivity extends BridgeActivity {
         settings.setJavaScriptCanOpenWindowsAutomatically(true);
         settings.setDomStorageEnabled(true);
 
-        webView.setWebChromeClient(new WebChromeClient() {
+        // Not: düz WebChromeClient kullanmak Capacitor'ın konum, kamera ve dosya seçici izin akışını devre dışı bırakıyordu.
+        webView.setWebChromeClient(new BridgeWebChromeClient(getBridge()) {
             @Override
             public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
                 WebView popupWebView = new WebView(MainActivity.this);

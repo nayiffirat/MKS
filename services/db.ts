@@ -2,6 +2,7 @@
 import { safeStringify } from '../utils/json';
 import { openDB, DBSchema } from 'idb';
 import { Farmer, Pesticide, VisitLog, Prescription, PrescriptionItem, AppNotification, UserProfile, Reminder, InventoryItem, InventoryBatch, PesticideCategory, Payment, ManualDebt, Supplier, SupplierPurchase, SupplierPayment, MyPayment, TurnoverLog, Expense, Account, Transaction, TeamMember, Message, News, CollectionLog, Plant, SystemError, PortalShareSnapshot, SavedMapFeature, SatelliteCacheRecord, SyncOutboxEntry, PrescriptionTemplate, PortalInquiry, MinistryShipmentRecord, MinistryRecord } from '../types';
+import { supplierDocKind } from '../utils/tradeCore';
 import { MOCK_PESTICIDES } from '../constants';
 import { db as firestore, auth, storage } from './firebase';
 import { doc, setDoc, deleteDoc, deleteField, collection, getDocs, getDocsFromServer, writeBatch, query, where, getDoc, onSnapshot, getDocFromServer } from 'firebase/firestore';
@@ -3147,8 +3148,17 @@ const dbServiceObj = {
   async updateInventoryFromPurchase(purchase: SupplierPurchase, isRevert: boolean = false) {
     const db = await initDB();
     const tx = db.transaction('inventory', 'readwrite');
-    const store = tx.objectStore('inventory');
-    const allStoreItems = await store.getAll();
+    const updates = await this._applyPurchaseToInventory(tx.objectStore('inventory'), purchase, isRevert);
+    await tx.done;
+    updates.forEach(item => void backgroundSync('inventory', item));
+  },
+
+  /**
+   * Alım / iade / tedarikçiye satış belgesini verilen (açık bir işlemin içindeki) stok deposuna uygular.
+   * Yalnızca IndexedDB isteklerini bekler; böylece çağıranın işlemi (transaction) açık kalır ve hata olursa tümü geri alınır.
+   */
+  async _applyPurchaseToInventory(store: any, purchase: SupplierPurchase, isRevert: boolean): Promise<InventoryItem[]> {
+    const allStoreItems: InventoryItem[] = await store.getAll();
     const updates: InventoryItem[] = [];
     const nowIso = new Date().toISOString();
 
@@ -3173,7 +3183,8 @@ const dbServiceObj = {
       }
 
       // AK-20: Determine direction strictly from purchase.type (NEVER from free-text purchase.note!)
-      const isReturnOrSale = purchase.type === 'SALE' || purchase.type === 'RETURN' || quantityChange < 0;
+      // Yön yalnızca belge türünden gelir. (Eksi satır kontrolü yalnız eski kayıtların geri alınabilmesi için durur; yeni belgeler normalizeSupplierDoc ile tek işarete getirilir.)
+      const isReturnOrSale = supplierDocKind(purchase) !== 'PURCHASE' || quantityChange < 0;
       const effectiveQtyChange = isReturnOrSale ? -Math.abs(quantityChange) : Math.abs(quantityChange);
       const delta = round2(isRevert ? -effectiveQtyChange : effectiveQtyChange);
       const { barcode: cleanBarcode, gtin: cleanGtin } = sanitizeCanonicalBarcode(item.barcode, item.gtin);
@@ -3218,10 +3229,11 @@ const dbServiceObj = {
           {
             ...existing,
             quantity: newQuantity,
-            buyingPrice: isRevert
+            // İade ve satış ürünün alış/satış fiyat kartını DEĞİŞTİRMEZ (satış fiyatı maliyetin üzerine yazılmasın)
+            buyingPrice: isRevert || isReturnOrSale
               ? (existing.buyingPrice || 0)
               : (Number.isFinite(parsedBuying) && parsedBuying > 0 ? parsedBuying : (existing.buyingPrice || 0)),
-            sellingPrice: isRevert || !Number.isFinite(parsedSelling) || parsedSelling <= 0
+            sellingPrice: isRevert || isReturnOrSale || !Number.isFinite(parsedSelling) || parsedSelling <= 0
               ? (existing.sellingPrice || 0)
               : parsedSelling,
             gtin: existing.gtin || cleanGtin,
@@ -3279,10 +3291,7 @@ const dbServiceObj = {
         allStoreItems.push(newItem);
       }
     }
-    await tx.done;
-    if (updates.length > 0) {
-      updates.forEach(item => void backgroundSync('inventory', item));
-    }
+    return updates;
   },
 
   /**
@@ -3294,50 +3303,63 @@ const dbServiceObj = {
     purchase: SupplierPurchase,
     oldPurchaseToRevert?: SupplierPurchase | null
   ): Promise<string> {
+    // TEK ATOMİK İŞLEM: eski stok etkisinin geri alınması + yeni stok etkisi + belge kaydı.
+    // Herhangi bir adım hata verirse işlem iptal olur; ne stokta ne belgede iz kalır.
     const db = await initDB();
-    const nowIso = new Date().toISOString();
-
-    if (oldPurchaseToRevert && oldPurchaseToRevert.isInventoryProcessed !== false) {
-      await this.updateInventoryFromPurchase(oldPurchaseToRevert, true);
+    const tx = db.transaction(['inventory', 'supplierPurchases'], 'readwrite');
+    const invStore = tx.objectStore('inventory');
+    const docStore = tx.objectStore('supplierPurchases');
+    const touched: InventoryItem[] = [];
+    let finalRecord: SupplierPurchase & { lastUpdated?: string };
+    try {
+      const stored = await docStore.get(purchase.id);
+      // Çift tıklama / tekrar gönderim kalkanı: aynı belge zaten işlendiyse ikinci kez stoğa yansıtılmaz
+      if (!oldPurchaseToRevert && stored && !stored.deletedAt && stored.isInventoryProcessed === true) {
+        await tx.done;
+        return stored.id;
+      }
+      if (oldPurchaseToRevert && oldPurchaseToRevert.isInventoryProcessed !== false) {
+        touched.push(...(await this._applyPurchaseToInventory(invStore, oldPurchaseToRevert, true)));
+      }
+      const record: SupplierPurchase = { ...purchase, items: (purchase.items || []).map(it => ({ ...it })), isInventoryProcessed: false };
+      touched.push(...(await this._applyPurchaseToInventory(invStore, record, false)));
+      finalRecord = { ...record, isInventoryProcessed: true, lastUpdated: new Date().toISOString() };
+      await docStore.put(finalRecord);
+      await tx.done;
+    } catch (err) {
+      try { tx.abort(); } catch { /* işlem zaten iptal edilmiş */ }
+      await tx.done.catch(() => undefined);
+      throw err;
     }
-
-    const pendingRecord: SupplierPurchase & { lastUpdated?: string } = {
-      ...purchase,
-      items: (purchase.items || []).map(it => ({ ...it })),
-      isInventoryProcessed: false,
-      lastUpdated: nowIso
-    };
-    await db.put('supplierPurchases', pendingRecord);
-
-    await this.updateInventoryFromPurchase(pendingRecord, false);
-
-    const finalRecord: SupplierPurchase & { lastUpdated?: string } = {
-      ...pendingRecord,
-      isInventoryProcessed: true,
-      lastUpdated: new Date().toISOString()
-    };
-    await db.put('supplierPurchases', finalRecord);
+    const latest = new Map(touched.map(i => [i.id, i]));
+    latest.forEach(item => void backgroundSync('inventory', item));
     void backgroundSync('supplierPurchases', finalRecord);
     return finalRecord.id;
   },
 
   async softDeleteSupplierPurchaseWithInventory(id: string): Promise<void> {
+    // Tek atomik işlem: stok etkisinin geri alınması + belgenin silindi işaretlenmesi
     const db = await initDB();
-    const existing = await db.get('supplierPurchases', id);
-    if (!existing || existing.deletedAt) return;
-
-    if (existing.isInventoryProcessed !== false) {
-      await this.updateInventoryFromPurchase(existing, true);
+    const tx = db.transaction(['inventory', 'supplierPurchases'], 'readwrite');
+    const docStore = tx.objectStore('supplierPurchases');
+    let touched: InventoryItem[] = [];
+    let deleted: SupplierPurchase & { lastUpdated?: string };
+    try {
+      const existing = await docStore.get(id);
+      if (!existing || existing.deletedAt) { await tx.done; return; }
+      if (existing.isInventoryProcessed !== false) {
+        touched = await this._applyPurchaseToInventory(tx.objectStore('inventory'), existing, true);
+      }
+      const nowIso = new Date().toISOString();
+      deleted = { ...existing, isInventoryProcessed: false, deletedAt: nowIso, lastUpdated: nowIso };
+      await docStore.put(deleted);
+      await tx.done;
+    } catch (err) {
+      try { tx.abort(); } catch { /* işlem zaten iptal edilmiş */ }
+      await tx.done.catch(() => undefined);
+      throw err;
     }
-
-    const nowIso = new Date().toISOString();
-    const deleted: SupplierPurchase & { lastUpdated?: string } = {
-      ...existing,
-      isInventoryProcessed: false,
-      deletedAt: nowIso,
-      lastUpdated: nowIso
-    };
-    await db.put('supplierPurchases', deleted);
+    touched.forEach(item => void backgroundSync('inventory', item));
     void backgroundSync('supplierPurchases', deleted, { preserveLastUpdated: true });
   },
 

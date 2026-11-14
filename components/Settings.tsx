@@ -10,7 +10,9 @@ import { UIScale, Language, InventoryItem } from '../types';
 import { ConfirmationModal } from './ConfirmationModal';
 import PermissionsPanel from './PermissionsPanel';
 import { dbService } from '../services/db';
+import { runIntegrityCheck, IntegrityReport } from '../services/integrity';
 import { verifySecret } from '../utils/crypto';
+import { translateFirebaseError } from '../utils/firebaseErrors';
 import { DEFAULT_WHATSAPP_TEMPLATES } from '../utils/whatsappTemplates';
 import {
     encryptMksBackup,
@@ -84,6 +86,8 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
   } = useAppViewModel();
   const [isTurnoverModalOpen, setIsTurnoverModalOpen] = useState(false);
   const [isRebuildModalOpen, setIsRebuildModalOpen] = useState(false);
+  const [integrityReport, setIntegrityReport] = useState<IntegrityReport | null>(null);
+  const [integrityBusy, setIntegrityBusy] = useState(false);
   const [turnoverCompletedYear, setTurnoverCompletedYear] = useState<number | null>(null);
   const [isGeneratingTurnoverPdf, setIsGeneratingTurnoverPdf] = useState(false);
   const [isYearEndDocsModalOpen, setIsYearEndDocsModalOpen] = useState(false);
@@ -1719,6 +1723,29 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
               </div>
           </button>
 
+          {/* Veri Sağlığı Denetimi */}
+          <button
+            disabled={integrityBusy}
+            onClick={async () => {
+              setIntegrityBusy(true);
+              try { setIntegrityReport(await runIntegrityCheck(true)); }
+              catch { showToast('Denetim çalıştırılamadı.', 'error'); }
+              finally { setIntegrityBusy(false); }
+            }}
+            className="w-full flex flex-col justify-between p-4 bg-sky-950/20 rounded-2xl border border-sky-900/40 hover:border-sky-500/50 hover:bg-sky-950/40 transition-all group text-left disabled:opacity-60"
+          >
+              <div className="flex items-center justify-between w-full mb-2">
+                  <div className="p-2.5 bg-sky-500/20 text-sky-400 rounded-xl group-hover:bg-sky-500 group-hover:text-white transition-colors">
+                      <RefreshCw size={20} className={integrityBusy ? 'animate-spin' : ''} />
+                  </div>
+                  <ChevronRight size={18} className="text-sky-500/60 group-hover:text-sky-300 transition-colors" />
+              </div>
+              <div>
+                  <h4 className="text-xs sm:text-sm font-black text-sky-200 group-hover:text-white transition-colors">Veri Sağlığı Denetimi</h4>
+                  <p className="text-[11px] text-sky-300/70 font-semibold leading-tight mt-1">{integrityBusy ? 'Denetleniyor…' : 'Kasa, stok ve yarım kayıtları kontrol et'}</p>
+              </div>
+          </button>
+
           {/* Stokları / Depoyu Onar Button */}
           <button 
             onClick={() => setIsRebuildModalOpen(true)}
@@ -2146,6 +2173,24 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
                 Kapat
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {integrityReport && (
+        <div className="fixed inset-0 z-[130] bg-black/75 flex items-end sm:items-center justify-center sm:p-4" onClick={() => setIntegrityReport(null)}>
+          <div className="w-full sm:max-w-lg max-h-[85dvh] overflow-y-auto bg-stone-900 border border-white/10 rounded-t-3xl sm:rounded-3xl p-5 space-y-3" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-black text-stone-100">Veri Sağlığı Denetimi</h3>
+            {integrityReport.issues.length === 0 ? (
+              <p className="text-sm font-bold text-emerald-400">Her şey tutarlı: kasa, stok ve kayıtlar birbiriyle uyuşuyor.</p>
+            ) : integrityReport.issues.map(i => (
+              <div key={i.code} className={`rounded-2xl border p-3 ${i.repaired ? 'border-emerald-500/30 bg-emerald-500/10' : 'border-amber-500/40 bg-amber-500/10'}`}>
+                <p className="text-sm font-black text-stone-100">{i.title} <span className="font-mono">({i.count})</span></p>
+                <p className="text-xs text-stone-300 mt-1 leading-snug">{i.detail}</p>
+                <p className={`text-[11px] font-black mt-1.5 ${i.repaired ? 'text-emerald-400' : 'text-amber-400'}`}>{i.repaired ? 'Otomatik düzeltildi' : 'Sizin kararınız gerekiyor'}</p>
+              </div>
+            ))}
+            <button type="button" onClick={() => setIntegrityReport(null)} className="w-full min-h-[46px] rounded-xl bg-stone-800 text-stone-100 text-sm font-bold">Kapat</button>
           </div>
         </div>
       )}

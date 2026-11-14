@@ -147,6 +147,12 @@ export interface EdmConfig {
   companyTitle: string;
   defaultInvoicePrefix: string;
   environment: 'LIVE' | 'TEST';
+  /** Gerçek EDM bağlantısının ortamı (EFaturaPanel). Varsayılan TEST; kullanıcı açıkça seçmeden canlıya gönderim yapılmaz. */
+  edmEnv?: 'LIVE' | 'TEST';
+  companyAddress?: string;
+  companyDistrict?: string;
+  companyCity?: string;
+  companyTaxOffice?: string;
   autoCheckMukellef: boolean;
 }
 

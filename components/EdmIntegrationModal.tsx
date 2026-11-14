@@ -1,3 +1,5 @@
+import { auth } from '../services/firebase';
+import { API_BASE } from '../utils/api';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   X,
@@ -177,6 +179,30 @@ export const EdmIntegrationModal: React.FC<EdmIntegrationModalProps> = ({
 
   const [activeTab, setActiveTab] = useState<'incoming' | 'issue' | 'warehouses' | 'settings'>(initialTab);
   const [config, setConfig] = useState<EdmConfig>(getEdmConfig);
+  const [connTest, setConnTest] = useState<{ state: 'idle' | 'busy' | 'ok' | 'fail'; message?: string }>({ state: 'idle' });
+
+  /** EDM TEST ortamında gerçek Login çağrısı yapar (sunucu üzerinden). Şifre saklanmaz. */
+  const runEdmConnectionTest = async () => {
+    if (connTest.state === 'busy') return;
+    if (!config.username.trim() || !(config.password || '').trim()) {
+      setConnTest({ state: 'fail', message: 'Önce EDM test kullanıcı adı ve şifresini girin.' });
+      return;
+    }
+    setConnTest({ state: 'busy' });
+    try {
+      const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : '';
+      const resp = await fetch(`${API_BASE}/api/edm/test-connection`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
+        body: JSON.stringify({ username: config.username.trim(), password: config.password })
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (data?.ok) setConnTest({ state: 'ok', message: data.message || 'Bağlantı başarılı.' });
+      else setConnTest({ state: 'fail', message: data?.error || 'Bağlantı kurulamadı.' });
+    } catch {
+      setConnTest({ state: 'fail', message: 'Sunucuya ulaşılamadı. İnternet bağlantınızı kontrol edin.' });
+    }
+  };
   const [incomingInvoices, setIncomingInvoices] = useState<IncomingEdmInvoice[]>(getIncomingEdmInvoices);
   const [officialWarehouse, setOfficialWarehouse] = useState<OfficialWarehouseItem[]>(getOfficialWarehouseItems);
   const [outgoingInvoices, setOutgoingInvoices] = useState<OutgoingEdmInvoiceRecord[]>(getOutgoingEdmInvoices);
@@ -200,6 +226,44 @@ export const EdmIntegrationModal: React.FC<EdmIntegrationModalProps> = ({
   const [selectedDocType, setSelectedDocType] = useState<'EFATURA' | 'EARSIV' | 'EMUSTAHSIL'>('EARSIV');
   const [customerName, setCustomerName] = useState('');
   const [customerTaxNo, setCustomerTaxNo] = useState('');
+  const [taxCheck, setTaxCheck] = useState<{ state: 'idle' | 'busy' | 'done' | 'fail'; message?: string; isEInvoiceUser?: boolean }>({ state: 'idle' });
+
+  /** Alıcı VKN/TCKN e-Fatura mükellefi mi? EDM (TEST) CheckUser ile sorgular ve belge türünü buna göre seçer. */
+  const runTaxpayerCheck = async () => {
+    if (taxCheck.state === 'busy') return;
+    if (!checkRequiredTaxId(customerTaxNo).ok) {
+      setTaxCheck({ state: 'fail', message: 'Önce geçerli bir VKN veya TCKN girin.' });
+      return;
+    }
+    if (!config.username.trim() || !(config.password || '').trim()) {
+      setTaxCheck({ state: 'fail', message: 'Önce Ayarlar sekmesinden EDM kullanıcı adı ve şifresini girin.' });
+      return;
+    }
+    setTaxCheck({ state: 'busy' });
+    try {
+      const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : '';
+      const resp = await fetch(`${API_BASE}/api/edm/check-user`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
+        body: JSON.stringify({ username: config.username.trim(), password: config.password, identifier: customerTaxNo.replace(/\D/g, '') })
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!data?.ok) {
+        setTaxCheck({ state: 'fail', message: data?.error || 'Sorgu yapılamadı.' });
+        return;
+      }
+      if (data.isEInvoiceUser) {
+        setSelectedDocType('EFATURA');
+        if (!customerName.trim() && data.title) setCustomerName(data.title);
+        setTaxCheck({ state: 'done', isEInvoiceUser: true, message: `e-Fatura mükellefi: ${data.title || 'kayıtlı'} — belge türü e-Fatura seçildi.` });
+      } else {
+        setSelectedDocType(prev => (prev === 'EFATURA' ? 'EARSIV' : prev));
+        setTaxCheck({ state: 'done', isEInvoiceUser: false, message: 'e-Fatura mükellefi değil — e-Arşiv kesilmeli.' });
+      }
+    } catch {
+      setTaxCheck({ state: 'fail', message: 'Sunucuya ulaşılamadı.' });
+    }
+  };
   const [alsoDeductFromSystemStock, setAlsoDeductFromSystemStock] = useState(false);
   const [draftLines, setDraftLines] = useState<DraftLine[]>([]);
 
@@ -1610,6 +1674,22 @@ export const EdmIntegrationModal: React.FC<EdmIntegrationModalProps> = ({
                       )}
                     </div>
                   </div>
+                  {(config.provider || 'EDM') === 'EDM' && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void runTaxpayerCheck()}
+                        disabled={taxCheck.state === 'busy'}
+                        className="shrink-0 min-h-[40px] px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold disabled:opacity-60"
+                      >
+                        {taxCheck.state === 'busy' ? 'Sorgulanıyor…' : 'Mükellef Sorgula (EDM Test)'}
+                      </button>
+                      {taxCheck.state === 'done' && (
+                        <p className={`text-xs font-bold min-w-0 flex-1 ${taxCheck.isEInvoiceUser ? 'text-emerald-300' : 'text-amber-300'}`}>{taxCheck.message}</p>
+                      )}
+                      {taxCheck.state === 'fail' && <p className="text-xs font-bold text-rose-300 min-w-0 flex-1">{taxCheck.message}</p>}
+                    </div>
+                  )}
 
                   {/* Option to deduct from only e-Fatura warehouse vs both */}
                   <label className="flex items-center gap-2.5 p-3 min-h-[44px] rounded-xl bg-stone-950 border border-white/10 cursor-pointer">
@@ -1879,6 +1959,26 @@ export const EdmIntegrationModal: React.FC<EdmIntegrationModalProps> = ({
                   ))}
                 </select>
               </div>
+
+              {(config.provider || 'EDM') === 'EDM' && (
+                <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 p-3 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs text-stone-300 min-w-0 flex-1">
+                      <b className="text-indigo-200">EDM test ortamı bağlantı testi.</b> Aşağıdaki kullanıcı adı ve şifreyle EDM&apos;nin <b>test</b> sunucusunda gerçek bir oturum açma denemesi yapılır. Fatura gönderilmez.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void runEdmConnectionTest()}
+                      disabled={connTest.state === 'busy'}
+                      className="shrink-0 min-h-[40px] px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold disabled:opacity-60"
+                    >
+                      {connTest.state === 'busy' ? 'Deneniyor…' : 'Bağlantıyı Test Et'}
+                    </button>
+                  </div>
+                  {connTest.state === 'ok' && <p className="text-xs font-bold text-emerald-300">✓ {connTest.message}</p>}
+                  {connTest.state === 'fail' && <p className="text-xs font-bold text-rose-300">✕ {connTest.message}</p>}
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
                 <div>

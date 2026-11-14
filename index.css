@@ -116,7 +116,7 @@
 }
 
 /* THEME 4 (DEFAULT INSTALL — V8 GECE / TECHNICAL): V8 GECE 3D SAFİR (Topmate V8 Dark Obsidian Sapphire) */
-:root,
+/* Not: ':root' burada OLMAMALI — html her zaman :root olduğu için açık temaları (APPLE/LIGHT/ORGANIC) koyu tokenlarla eziyordu. */
 html:not([data-theme]),
 [data-theme="TECHNICAL"],
 [data-theme="MINIMAL"] {
@@ -410,6 +410,25 @@ main .overflow-scroll .sticky.top-0 {
 .v22-pro-subcard {
   background: linear-gradient(160deg, var(--mks-accent-soft) 0%, var(--mks-subcard) 65%, rgba(243, 146, 100, 0.22) 100%);
   border: 1px solid var(--mks-card-border);
+}
+
+[data-theme="TECHNICAL"] .v22-pro-subcard,
+[data-theme="MINIMAL"] .v22-pro-subcard,
+[data-theme="GLASSY_V30"] .v22-pro-subcard {
+  background: linear-gradient(160deg, rgba(14, 165, 233, 0.18) 0%, rgba(15, 35, 72, 0.90) 65%, rgba(16, 185, 129, 0.20) 100%) !important;
+  border-color: rgba(56, 189, 248, 0.30) !important;
+}
+
+[data-theme="TECHNICAL"] .v22-pro-subcard .text-\[\#0b211d\],
+[data-theme="MINIMAL"] .v22-pro-subcard .text-\[\#0b211d\],
+[data-theme="GLASSY_V30"] .v22-pro-subcard .text-\[\#0b211d\] {
+  color: #ffffff !important;
+}
+
+[data-theme="TECHNICAL"] .v22-pro-subcard .text-\[\#116a4e\],
+[data-theme="MINIMAL"] .v22-pro-subcard .text-\[\#116a4e\],
+[data-theme="GLASSY_V30"] .v22-pro-subcard .text-\[\#116a4e\] {
+  color: #6ee7b7 !important;
 }
 
 /* Hero Banner & Capsule Card */
@@ -832,14 +851,29 @@ main .overflow-scroll .sticky.top-0 {
   color: var(--mks-muted) !important;
 }
 
-/* Semantic Status Text Contrast in Light Themes */
-[data-theme="APPLE"] .text-emerald-400,
+/* Açık temalar (APPLE/DEFAULT/LIGHT/ORGANIC): beyaz/pastel zeminde zümrüt yazı okunur koyu yeşile çekilir */
 [data-theme="APPLE"] .text-emerald-300,
-[data-theme="LIGHT"] .text-emerald-400,
+[data-theme="APPLE"] .text-emerald-400,
+[data-theme="DEFAULT"] .text-emerald-300,
+[data-theme="DEFAULT"] .text-emerald-400,
 [data-theme="LIGHT"] .text-emerald-300,
-[data-theme="ORGANIC"] .text-emerald-400,
-[data-theme="ORGANIC"] .text-emerald-300 {
+[data-theme="LIGHT"] .text-emerald-400,
+[data-theme="ORGANIC"] .text-emerald-300,
+[data-theme="ORGANIC"] .text-emerald-400 {
   color: #0f7652 !important;
+}
+
+/* Koyu yüzeyler (hero, sol ray, koyu haplar) içinde parlak zümrüt korunur — her temada */
+[data-theme] .v22-forest-card .text-emerald-300,
+[data-theme] .v22-forest-card .text-emerald-400,
+[data-theme] .v22-pill-rail .text-emerald-300,
+[data-theme] .v22-pill-rail .text-emerald-400,
+[data-theme] .v22-dark-pill .text-emerald-300,
+[data-theme] .v22-dark-pill .text-emerald-400,
+[data-theme] .bg-\[\#0b211d\] .text-emerald-300,
+[data-theme] .bg-\[\#0b211d\] .text-emerald-400,
+[data-theme] .v22-keep-emerald {
+  color: #6ee7b7 !important;
 }
 
 [data-theme="APPLE"] .text-blue-400,
@@ -1386,3 +1420,146 @@ main > div > div.animate-in:not(.fixed),
 
 
 
+
+/* ==================== AÇIK TEMALARDA KOYU YÜZEY KORUMASI ====================
+   Hero (.v22-forest-card) ve .mks-on-dark ile işaretli koyu kartlar açık temalarda da koyu kalır.
+   İçlerindeki yazılar/haplar açık tema eşlemelerinden (koyu yazı, pastel zemin) korunur. */
+[data-theme] :is(.v22-forest-card, .mks-on-dark) .bg-white\/5:not(.v22-keep-white),
+[data-theme] :is(.v22-forest-card, .mks-on-dark) .bg-white\/10:not(.v22-keep-white),
+[data-theme] :is(.v22-forest-card, .mks-on-dark) .bg-white\/15:not(.v22-keep-white),
+[data-theme] :is(.v22-forest-card, .mks-on-dark) .bg-white\/20:not(.v22-keep-white) {
+  background-color: rgba(255, 255, 255, 0.14) !important;
+}
+[data-theme] .mks-on-dark .text-white:not(.v22-x),
+[data-theme] .mks-on-dark .text-stone-100:not(.v22-x) { color: #ffffff !important; }
+[data-theme] .mks-on-dark .text-stone-200:not(.v22-x),
+[data-theme] .mks-on-dark .text-stone-300:not(.v22-x) { color: #d6d3d1 !important; }
+[data-theme] .mks-on-dark .text-stone-400:not(.v22-x),
+[data-theme] .mks-on-dark .text-stone-500:not(.v22-x) { color: #a8a29e !important; }
+[data-theme] :is(.v22-forest-card, .mks-on-dark) .text-sky-400:not(.v22-x),
+[data-theme] :is(.v22-forest-card, .mks-on-dark) .text-blue-400:not(.v22-x) { color: #7dd3fc !important; }
+[data-theme] :is(.v22-forest-card, .mks-on-dark) .text-amber-300:not(.v22-x),
+[data-theme] :is(.v22-forest-card, .mks-on-dark) .text-amber-400:not(.v22-x) { color: #fcd34d !important; }
+[data-theme] .mks-on-dark .text-emerald-300,
+[data-theme] .mks-on-dark .text-emerald-400 { color: #6ee7b7 !important; }
+
+[data-theme] .mks-on-dark {
+  background: #10201c !important;
+  color: #ffffff !important;
+}
+[data-theme="LIGHT"] .mks-on-dark { background: #0a1f4d !important; }
+[data-theme="ORGANIC"] .mks-on-dark { background: #2a1458 !important; }
+[data-theme="TECHNICAL"] .mks-on-dark,
+[data-theme="MINIMAL"] .mks-on-dark,
+[data-theme="GLASSY_V30"] .mks-on-dark { background: rgba(2, 6, 17, 0.6) !important; }
+
+/* Koyu yüzey içindeki yarı saydam siyah haplar açık temalarda pastel zemine dönmesin */
+[data-theme] :is(.v22-forest-card, .mks-on-dark) :is(.bg-black\/20, .bg-black\/30, .bg-black\/40) {
+  background-color: rgba(0, 0, 0, 0.30) !important;
+}
+[data-theme] :is(.v22-forest-card, .mks-on-dark) :not(.fixed):not(.absolute):is(.bg-black\/20, .bg-black\/30, .bg-black\/40) {
+  background-color: rgba(0, 0, 0, 0.30) !important;
+}
+
+/* Sabit renkli (hex) gradyan rozet/avatarlarda beyaz yazı her temada beyaz kalır */
+[data-theme] [class*="bg-gradient-to-"][class*="from-[#"].text-white,
+[data-theme] [class*="bg-gradient-to-"][class*="from-[#"].text-white > span {
+  color: #ffffff !important;
+}
+[data-theme] :is(.v22-forest-card, .mks-on-dark) :is(.text-sky-300, .text-sky-200, .text-cyan-300, .text-blue-300) { color: #7dd3fc !important; }
+[data-theme] :is(.v22-forest-card, .mks-on-dark) :is(.text-indigo-300, .text-indigo-200, .text-indigo-400, .text-violet-300, .text-purple-300) { color: #c7d2fe !important; }
+[data-theme] :is(.v22-forest-card, .mks-on-dark) :is(.text-rose-300, .text-rose-400, .text-red-300, .text-red-400) { color: #fda4af !important; }
+
+/* ==================== AÇIK TEMALARDA OKUNABİLİRLİK (500 tonları beyaz zeminde soluk kalıyordu) ==================== */
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) [class*="text-emerald-500"]:not(.v22-x) { color: #0f7652 !important; }
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) :is([class*="text-amber-500"], [class*="text-yellow-500"], [class*="text-orange-400"]):not(.v22-x) { color: #a85a05 !important; }
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) :is([class*="text-red-500"], [class*="text-rose-500"]):not(.v22-x) { color: #c81e3a !important; }
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) :is([class*="text-sky-500"], [class*="text-blue-500"], [class*="text-cyan-500"]):not(.v22-x) { color: #0b5fc4 !important; }
+/* Dolu zümrüt rozet/butonlarda beyaz yazı için yeterli koyuluk */
+[data-theme] .bg-emerald-500:not(.v22-x):not(.rounded-full.w-1\.5):not(.animate-pulse):not(.animate-ping) { background-color: #0d8a5f !important; }
+/* Koyu yüzey içindekiler parlak kalır */
+[data-theme] :is(.v22-forest-card, .mks-on-dark, .v22-pill-rail, .v22-dark-pill) [class*="text-emerald-500"] { color: #6ee7b7 !important; }
+[data-theme] :is(.v22-forest-card, .mks-on-dark, .v22-pill-rail, .v22-dark-pill) [class*="text-amber-500"] { color: #fcd34d !important; }
+
+/* Okunamayacak kadar küçük etiketler (6–8px) en az 9.5px */
+[class*="text-[6px]"], [class*="text-[6.5px]"], [class*="text-[7px]"], [class*="text-[7.5px]"], [class*="text-[8px]"], [class*="text-[8.5px]"] {
+  font-size: 9.5px !important;
+  letter-spacing: 0.01em !important;
+}
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) .bg-amber-500:not(.v22-x) { background-color: #b86a04 !important; }
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) .text-\[\#25D366\]:not(.v22-x) { color: #0e7a3e !important; }
+
+/* Açık temalar: opaklık ekli (text-stone-300/90 gibi) ve pastel (100–300) yazı tonları beyaz zeminde kayboluyordu */
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) :is([class*="text-stone-100/"], [class*="text-stone-200/"], [class*="text-stone-300/"], [class*="text-gray-200"], [class*="text-gray-300"], [class*="text-slate-200"], [class*="text-slate-300"], [class*="text-zinc-200"], [class*="text-zinc-300"]):not(:is(.v22-forest-card, .mks-on-dark, .v22-pill-rail, .v22-dark-pill, .v22-keep-white, [class*="bg-gradient-to-"]:not([class*="/"]), .bg-yellow-500, .bg-yellow-600, .bg-yellow-700, .bg-yellow-800, .bg-yellow-900, .bg-orange-500, .bg-orange-600, .bg-orange-700, .bg-orange-800, .bg-orange-900, .bg-lime-500, .bg-lime-600, .bg-lime-700, .bg-lime-800, .bg-lime-900, .bg-green-500, .bg-green-600, .bg-green-700, .bg-green-800, .bg-green-900, .bg-emerald-500, .bg-emerald-600, .bg-emerald-700, .bg-emerald-800, .bg-emerald-900, .bg-teal-500, .bg-teal-600, .bg-teal-700, .bg-teal-800, .bg-teal-900, .bg-fuchsia-500, .bg-fuchsia-600, .bg-fuchsia-700, .bg-fuchsia-800, .bg-fuchsia-900, .bg-pink-500, .bg-pink-600, .bg-pink-700, .bg-pink-800, .bg-pink-900, .bg-purple-500, .bg-purple-600, .bg-purple-700, .bg-purple-800, .bg-purple-900, .bg-violet-500, .bg-violet-600, .bg-violet-700, .bg-violet-800, .bg-violet-900, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700, .bg-indigo-800, .bg-indigo-900, .bg-sky-500, .bg-sky-600, .bg-sky-700, .bg-sky-800, .bg-sky-900, .bg-blue-500, .bg-blue-600, .bg-blue-700, .bg-blue-800, .bg-blue-900, .bg-cyan-500, .bg-cyan-600, .bg-cyan-700, .bg-cyan-800, .bg-cyan-900, .bg-rose-500, .bg-rose-600, .bg-rose-700, .bg-rose-800, .bg-rose-900, .bg-red-500, .bg-red-600, .bg-red-700, .bg-red-800, .bg-red-900, .bg-amber-500, .bg-amber-600, .bg-amber-700, .bg-amber-800, .bg-amber-900) *):not(.v22-keep-white) { color: var(--mks-text) !important; }
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) :is([class*="text-stone-400/"], [class*="text-stone-500/"], [class*="text-gray-400"], [class*="text-slate-400"], [class*="text-zinc-400"]):not(:is(.v22-forest-card, .mks-on-dark, .v22-pill-rail, .v22-dark-pill, .v22-keep-white, [class*="bg-gradient-to-"]:not([class*="/"]), .bg-yellow-500, .bg-yellow-600, .bg-yellow-700, .bg-yellow-800, .bg-yellow-900, .bg-orange-500, .bg-orange-600, .bg-orange-700, .bg-orange-800, .bg-orange-900, .bg-lime-500, .bg-lime-600, .bg-lime-700, .bg-lime-800, .bg-lime-900, .bg-green-500, .bg-green-600, .bg-green-700, .bg-green-800, .bg-green-900, .bg-emerald-500, .bg-emerald-600, .bg-emerald-700, .bg-emerald-800, .bg-emerald-900, .bg-teal-500, .bg-teal-600, .bg-teal-700, .bg-teal-800, .bg-teal-900, .bg-fuchsia-500, .bg-fuchsia-600, .bg-fuchsia-700, .bg-fuchsia-800, .bg-fuchsia-900, .bg-pink-500, .bg-pink-600, .bg-pink-700, .bg-pink-800, .bg-pink-900, .bg-purple-500, .bg-purple-600, .bg-purple-700, .bg-purple-800, .bg-purple-900, .bg-violet-500, .bg-violet-600, .bg-violet-700, .bg-violet-800, .bg-violet-900, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700, .bg-indigo-800, .bg-indigo-900, .bg-sky-500, .bg-sky-600, .bg-sky-700, .bg-sky-800, .bg-sky-900, .bg-blue-500, .bg-blue-600, .bg-blue-700, .bg-blue-800, .bg-blue-900, .bg-cyan-500, .bg-cyan-600, .bg-cyan-700, .bg-cyan-800, .bg-cyan-900, .bg-rose-500, .bg-rose-600, .bg-rose-700, .bg-rose-800, .bg-rose-900, .bg-red-500, .bg-red-600, .bg-red-700, .bg-red-800, .bg-red-900, .bg-amber-500, .bg-amber-600, .bg-amber-700, .bg-amber-800, .bg-amber-900) *):not(.v22-keep-white) { color: var(--mks-muted) !important; }
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) :is([class*="text-yellow-100"], [class*="text-yellow-200"], [class*="text-yellow-300"], [class*="text-yellow-400"]):not(:is(.v22-forest-card, .mks-on-dark, .v22-pill-rail, .v22-dark-pill, .v22-keep-white, [class*="bg-gradient-to-"]:not([class*="/"]), .bg-yellow-500, .bg-yellow-600, .bg-yellow-700, .bg-yellow-800, .bg-yellow-900, .bg-orange-500, .bg-orange-600, .bg-orange-700, .bg-orange-800, .bg-orange-900, .bg-lime-500, .bg-lime-600, .bg-lime-700, .bg-lime-800, .bg-lime-900, .bg-green-500, .bg-green-600, .bg-green-700, .bg-green-800, .bg-green-900, .bg-emerald-500, .bg-emerald-600, .bg-emerald-700, .bg-emerald-800, .bg-emerald-900, .bg-teal-500, .bg-teal-600, .bg-teal-700, .bg-teal-800, .bg-teal-900, .bg-fuchsia-500, .bg-fuchsia-600, .bg-fuchsia-700, .bg-fuchsia-800, .bg-fuchsia-900, .bg-pink-500, .bg-pink-600, .bg-pink-700, .bg-pink-800, .bg-pink-900, .bg-purple-500, .bg-purple-600, .bg-purple-700, .bg-purple-800, .bg-purple-900, .bg-violet-500, .bg-violet-600, .bg-violet-700, .bg-violet-800, .bg-violet-900, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700, .bg-indigo-800, .bg-indigo-900, .bg-sky-500, .bg-sky-600, .bg-sky-700, .bg-sky-800, .bg-sky-900, .bg-blue-500, .bg-blue-600, .bg-blue-700, .bg-blue-800, .bg-blue-900, .bg-cyan-500, .bg-cyan-600, .bg-cyan-700, .bg-cyan-800, .bg-cyan-900, .bg-rose-500, .bg-rose-600, .bg-rose-700, .bg-rose-800, .bg-rose-900, .bg-red-500, .bg-red-600, .bg-red-700, .bg-red-800, .bg-red-900, .bg-amber-500, .bg-amber-600, .bg-amber-700, .bg-amber-800, .bg-amber-900) *):not(.v22-keep-white) { color: #8a5a00 !important; }
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) :is([class*="text-orange-100"], [class*="text-orange-200"], [class*="text-orange-300"], [class*="text-orange-400"]):not(:is(.v22-forest-card, .mks-on-dark, .v22-pill-rail, .v22-dark-pill, .v22-keep-white, [class*="bg-gradient-to-"]:not([class*="/"]), .bg-yellow-500, .bg-yellow-600, .bg-yellow-700, .bg-yellow-800, .bg-yellow-900, .bg-orange-500, .bg-orange-600, .bg-orange-700, .bg-orange-800, .bg-orange-900, .bg-lime-500, .bg-lime-600, .bg-lime-700, .bg-lime-800, .bg-lime-900, .bg-green-500, .bg-green-600, .bg-green-700, .bg-green-800, .bg-green-900, .bg-emerald-500, .bg-emerald-600, .bg-emerald-700, .bg-emerald-800, .bg-emerald-900, .bg-teal-500, .bg-teal-600, .bg-teal-700, .bg-teal-800, .bg-teal-900, .bg-fuchsia-500, .bg-fuchsia-600, .bg-fuchsia-700, .bg-fuchsia-800, .bg-fuchsia-900, .bg-pink-500, .bg-pink-600, .bg-pink-700, .bg-pink-800, .bg-pink-900, .bg-purple-500, .bg-purple-600, .bg-purple-700, .bg-purple-800, .bg-purple-900, .bg-violet-500, .bg-violet-600, .bg-violet-700, .bg-violet-800, .bg-violet-900, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700, .bg-indigo-800, .bg-indigo-900, .bg-sky-500, .bg-sky-600, .bg-sky-700, .bg-sky-800, .bg-sky-900, .bg-blue-500, .bg-blue-600, .bg-blue-700, .bg-blue-800, .bg-blue-900, .bg-cyan-500, .bg-cyan-600, .bg-cyan-700, .bg-cyan-800, .bg-cyan-900, .bg-rose-500, .bg-rose-600, .bg-rose-700, .bg-rose-800, .bg-rose-900, .bg-red-500, .bg-red-600, .bg-red-700, .bg-red-800, .bg-red-900, .bg-amber-500, .bg-amber-600, .bg-amber-700, .bg-amber-800, .bg-amber-900) *):not(.v22-keep-white) { color: #b4530a !important; }
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) :is([class*="text-lime-100"], [class*="text-lime-200"], [class*="text-lime-300"], [class*="text-lime-400"]):not(:is(.v22-forest-card, .mks-on-dark, .v22-pill-rail, .v22-dark-pill, .v22-keep-white, [class*="bg-gradient-to-"]:not([class*="/"]), .bg-yellow-500, .bg-yellow-600, .bg-yellow-700, .bg-yellow-800, .bg-yellow-900, .bg-orange-500, .bg-orange-600, .bg-orange-700, .bg-orange-800, .bg-orange-900, .bg-lime-500, .bg-lime-600, .bg-lime-700, .bg-lime-800, .bg-lime-900, .bg-green-500, .bg-green-600, .bg-green-700, .bg-green-800, .bg-green-900, .bg-emerald-500, .bg-emerald-600, .bg-emerald-700, .bg-emerald-800, .bg-emerald-900, .bg-teal-500, .bg-teal-600, .bg-teal-700, .bg-teal-800, .bg-teal-900, .bg-fuchsia-500, .bg-fuchsia-600, .bg-fuchsia-700, .bg-fuchsia-800, .bg-fuchsia-900, .bg-pink-500, .bg-pink-600, .bg-pink-700, .bg-pink-800, .bg-pink-900, .bg-purple-500, .bg-purple-600, .bg-purple-700, .bg-purple-800, .bg-purple-900, .bg-violet-500, .bg-violet-600, .bg-violet-700, .bg-violet-800, .bg-violet-900, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700, .bg-indigo-800, .bg-indigo-900, .bg-sky-500, .bg-sky-600, .bg-sky-700, .bg-sky-800, .bg-sky-900, .bg-blue-500, .bg-blue-600, .bg-blue-700, .bg-blue-800, .bg-blue-900, .bg-cyan-500, .bg-cyan-600, .bg-cyan-700, .bg-cyan-800, .bg-cyan-900, .bg-rose-500, .bg-rose-600, .bg-rose-700, .bg-rose-800, .bg-rose-900, .bg-red-500, .bg-red-600, .bg-red-700, .bg-red-800, .bg-red-900, .bg-amber-500, .bg-amber-600, .bg-amber-700, .bg-amber-800, .bg-amber-900) *):not(.v22-keep-white) { color: #3f6212 !important; }
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) :is([class*="text-green-100"], [class*="text-green-200"], [class*="text-green-300"], [class*="text-green-400"]):not(:is(.v22-forest-card, .mks-on-dark, .v22-pill-rail, .v22-dark-pill, .v22-keep-white, [class*="bg-gradient-to-"]:not([class*="/"]), .bg-yellow-500, .bg-yellow-600, .bg-yellow-700, .bg-yellow-800, .bg-yellow-900, .bg-orange-500, .bg-orange-600, .bg-orange-700, .bg-orange-800, .bg-orange-900, .bg-lime-500, .bg-lime-600, .bg-lime-700, .bg-lime-800, .bg-lime-900, .bg-green-500, .bg-green-600, .bg-green-700, .bg-green-800, .bg-green-900, .bg-emerald-500, .bg-emerald-600, .bg-emerald-700, .bg-emerald-800, .bg-emerald-900, .bg-teal-500, .bg-teal-600, .bg-teal-700, .bg-teal-800, .bg-teal-900, .bg-fuchsia-500, .bg-fuchsia-600, .bg-fuchsia-700, .bg-fuchsia-800, .bg-fuchsia-900, .bg-pink-500, .bg-pink-600, .bg-pink-700, .bg-pink-800, .bg-pink-900, .bg-purple-500, .bg-purple-600, .bg-purple-700, .bg-purple-800, .bg-purple-900, .bg-violet-500, .bg-violet-600, .bg-violet-700, .bg-violet-800, .bg-violet-900, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700, .bg-indigo-800, .bg-indigo-900, .bg-sky-500, .bg-sky-600, .bg-sky-700, .bg-sky-800, .bg-sky-900, .bg-blue-500, .bg-blue-600, .bg-blue-700, .bg-blue-800, .bg-blue-900, .bg-cyan-500, .bg-cyan-600, .bg-cyan-700, .bg-cyan-800, .bg-cyan-900, .bg-rose-500, .bg-rose-600, .bg-rose-700, .bg-rose-800, .bg-rose-900, .bg-red-500, .bg-red-600, .bg-red-700, .bg-red-800, .bg-red-900, .bg-amber-500, .bg-amber-600, .bg-amber-700, .bg-amber-800, .bg-amber-900) *):not(.v22-keep-white) { color: #0f7652 !important; }
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) :is([class*="text-emerald-100"], [class*="text-emerald-200"], [class*="text-emerald-300"], [class*="text-emerald-400"]):not(:is(.v22-forest-card, .mks-on-dark, .v22-pill-rail, .v22-dark-pill, .v22-keep-white, [class*="bg-gradient-to-"]:not([class*="/"]), .bg-yellow-500, .bg-yellow-600, .bg-yellow-700, .bg-yellow-800, .bg-yellow-900, .bg-orange-500, .bg-orange-600, .bg-orange-700, .bg-orange-800, .bg-orange-900, .bg-lime-500, .bg-lime-600, .bg-lime-700, .bg-lime-800, .bg-lime-900, .bg-green-500, .bg-green-600, .bg-green-700, .bg-green-800, .bg-green-900, .bg-emerald-500, .bg-emerald-600, .bg-emerald-700, .bg-emerald-800, .bg-emerald-900, .bg-teal-500, .bg-teal-600, .bg-teal-700, .bg-teal-800, .bg-teal-900, .bg-fuchsia-500, .bg-fuchsia-600, .bg-fuchsia-700, .bg-fuchsia-800, .bg-fuchsia-900, .bg-pink-500, .bg-pink-600, .bg-pink-700, .bg-pink-800, .bg-pink-900, .bg-purple-500, .bg-purple-600, .bg-purple-700, .bg-purple-800, .bg-purple-900, .bg-violet-500, .bg-violet-600, .bg-violet-700, .bg-violet-800, .bg-violet-900, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700, .bg-indigo-800, .bg-indigo-900, .bg-sky-500, .bg-sky-600, .bg-sky-700, .bg-sky-800, .bg-sky-900, .bg-blue-500, .bg-blue-600, .bg-blue-700, .bg-blue-800, .bg-blue-900, .bg-cyan-500, .bg-cyan-600, .bg-cyan-700, .bg-cyan-800, .bg-cyan-900, .bg-rose-500, .bg-rose-600, .bg-rose-700, .bg-rose-800, .bg-rose-900, .bg-red-500, .bg-red-600, .bg-red-700, .bg-red-800, .bg-red-900, .bg-amber-500, .bg-amber-600, .bg-amber-700, .bg-amber-800, .bg-amber-900) *):not(.v22-keep-white) { color: #0f7652 !important; }
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) :is([class*="text-teal-100"], [class*="text-teal-200"], [class*="text-teal-300"], [class*="text-teal-400"]):not(:is(.v22-forest-card, .mks-on-dark, .v22-pill-rail, .v22-dark-pill, .v22-keep-white, [class*="bg-gradient-to-"]:not([class*="/"]), .bg-yellow-500, .bg-yellow-600, .bg-yellow-700, .bg-yellow-800, .bg-yellow-900, .bg-orange-500, .bg-orange-600, .bg-orange-700, .bg-orange-800, .bg-orange-900, .bg-lime-500, .bg-lime-600, .bg-lime-700, .bg-lime-800, .bg-lime-900, .bg-green-500, .bg-green-600, .bg-green-700, .bg-green-800, .bg-green-900, .bg-emerald-500, .bg-emerald-600, .bg-emerald-700, .bg-emerald-800, .bg-emerald-900, .bg-teal-500, .bg-teal-600, .bg-teal-700, .bg-teal-800, .bg-teal-900, .bg-fuchsia-500, .bg-fuchsia-600, .bg-fuchsia-700, .bg-fuchsia-800, .bg-fuchsia-900, .bg-pink-500, .bg-pink-600, .bg-pink-700, .bg-pink-800, .bg-pink-900, .bg-purple-500, .bg-purple-600, .bg-purple-700, .bg-purple-800, .bg-purple-900, .bg-violet-500, .bg-violet-600, .bg-violet-700, .bg-violet-800, .bg-violet-900, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700, .bg-indigo-800, .bg-indigo-900, .bg-sky-500, .bg-sky-600, .bg-sky-700, .bg-sky-800, .bg-sky-900, .bg-blue-500, .bg-blue-600, .bg-blue-700, .bg-blue-800, .bg-blue-900, .bg-cyan-500, .bg-cyan-600, .bg-cyan-700, .bg-cyan-800, .bg-cyan-900, .bg-rose-500, .bg-rose-600, .bg-rose-700, .bg-rose-800, .bg-rose-900, .bg-red-500, .bg-red-600, .bg-red-700, .bg-red-800, .bg-red-900, .bg-amber-500, .bg-amber-600, .bg-amber-700, .bg-amber-800, .bg-amber-900) *):not(.v22-keep-white) { color: #0f766e !important; }
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) :is([class*="text-fuchsia-100"], [class*="text-fuchsia-200"], [class*="text-fuchsia-300"], [class*="text-fuchsia-400"]):not(:is(.v22-forest-card, .mks-on-dark, .v22-pill-rail, .v22-dark-pill, .v22-keep-white, [class*="bg-gradient-to-"]:not([class*="/"]), .bg-yellow-500, .bg-yellow-600, .bg-yellow-700, .bg-yellow-800, .bg-yellow-900, .bg-orange-500, .bg-orange-600, .bg-orange-700, .bg-orange-800, .bg-orange-900, .bg-lime-500, .bg-lime-600, .bg-lime-700, .bg-lime-800, .bg-lime-900, .bg-green-500, .bg-green-600, .bg-green-700, .bg-green-800, .bg-green-900, .bg-emerald-500, .bg-emerald-600, .bg-emerald-700, .bg-emerald-800, .bg-emerald-900, .bg-teal-500, .bg-teal-600, .bg-teal-700, .bg-teal-800, .bg-teal-900, .bg-fuchsia-500, .bg-fuchsia-600, .bg-fuchsia-700, .bg-fuchsia-800, .bg-fuchsia-900, .bg-pink-500, .bg-pink-600, .bg-pink-700, .bg-pink-800, .bg-pink-900, .bg-purple-500, .bg-purple-600, .bg-purple-700, .bg-purple-800, .bg-purple-900, .bg-violet-500, .bg-violet-600, .bg-violet-700, .bg-violet-800, .bg-violet-900, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700, .bg-indigo-800, .bg-indigo-900, .bg-sky-500, .bg-sky-600, .bg-sky-700, .bg-sky-800, .bg-sky-900, .bg-blue-500, .bg-blue-600, .bg-blue-700, .bg-blue-800, .bg-blue-900, .bg-cyan-500, .bg-cyan-600, .bg-cyan-700, .bg-cyan-800, .bg-cyan-900, .bg-rose-500, .bg-rose-600, .bg-rose-700, .bg-rose-800, .bg-rose-900, .bg-red-500, .bg-red-600, .bg-red-700, .bg-red-800, .bg-red-900, .bg-amber-500, .bg-amber-600, .bg-amber-700, .bg-amber-800, .bg-amber-900) *):not(.v22-keep-white) { color: #a21caf !important; }
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) :is([class*="text-pink-100"], [class*="text-pink-200"], [class*="text-pink-300"], [class*="text-pink-400"]):not(:is(.v22-forest-card, .mks-on-dark, .v22-pill-rail, .v22-dark-pill, .v22-keep-white, [class*="bg-gradient-to-"]:not([class*="/"]), .bg-yellow-500, .bg-yellow-600, .bg-yellow-700, .bg-yellow-800, .bg-yellow-900, .bg-orange-500, .bg-orange-600, .bg-orange-700, .bg-orange-800, .bg-orange-900, .bg-lime-500, .bg-lime-600, .bg-lime-700, .bg-lime-800, .bg-lime-900, .bg-green-500, .bg-green-600, .bg-green-700, .bg-green-800, .bg-green-900, .bg-emerald-500, .bg-emerald-600, .bg-emerald-700, .bg-emerald-800, .bg-emerald-900, .bg-teal-500, .bg-teal-600, .bg-teal-700, .bg-teal-800, .bg-teal-900, .bg-fuchsia-500, .bg-fuchsia-600, .bg-fuchsia-700, .bg-fuchsia-800, .bg-fuchsia-900, .bg-pink-500, .bg-pink-600, .bg-pink-700, .bg-pink-800, .bg-pink-900, .bg-purple-500, .bg-purple-600, .bg-purple-700, .bg-purple-800, .bg-purple-900, .bg-violet-500, .bg-violet-600, .bg-violet-700, .bg-violet-800, .bg-violet-900, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700, .bg-indigo-800, .bg-indigo-900, .bg-sky-500, .bg-sky-600, .bg-sky-700, .bg-sky-800, .bg-sky-900, .bg-blue-500, .bg-blue-600, .bg-blue-700, .bg-blue-800, .bg-blue-900, .bg-cyan-500, .bg-cyan-600, .bg-cyan-700, .bg-cyan-800, .bg-cyan-900, .bg-rose-500, .bg-rose-600, .bg-rose-700, .bg-rose-800, .bg-rose-900, .bg-red-500, .bg-red-600, .bg-red-700, .bg-red-800, .bg-red-900, .bg-amber-500, .bg-amber-600, .bg-amber-700, .bg-amber-800, .bg-amber-900) *):not(.v22-keep-white) { color: #be185d !important; }
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) :is([class*="text-purple-100"], [class*="text-purple-200"], [class*="text-purple-300"], [class*="text-purple-400"]):not(:is(.v22-forest-card, .mks-on-dark, .v22-pill-rail, .v22-dark-pill, .v22-keep-white, [class*="bg-gradient-to-"]:not([class*="/"]), .bg-yellow-500, .bg-yellow-600, .bg-yellow-700, .bg-yellow-800, .bg-yellow-900, .bg-orange-500, .bg-orange-600, .bg-orange-700, .bg-orange-800, .bg-orange-900, .bg-lime-500, .bg-lime-600, .bg-lime-700, .bg-lime-800, .bg-lime-900, .bg-green-500, .bg-green-600, .bg-green-700, .bg-green-800, .bg-green-900, .bg-emerald-500, .bg-emerald-600, .bg-emerald-700, .bg-emerald-800, .bg-emerald-900, .bg-teal-500, .bg-teal-600, .bg-teal-700, .bg-teal-800, .bg-teal-900, .bg-fuchsia-500, .bg-fuchsia-600, .bg-fuchsia-700, .bg-fuchsia-800, .bg-fuchsia-900, .bg-pink-500, .bg-pink-600, .bg-pink-700, .bg-pink-800, .bg-pink-900, .bg-purple-500, .bg-purple-600, .bg-purple-700, .bg-purple-800, .bg-purple-900, .bg-violet-500, .bg-violet-600, .bg-violet-700, .bg-violet-800, .bg-violet-900, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700, .bg-indigo-800, .bg-indigo-900, .bg-sky-500, .bg-sky-600, .bg-sky-700, .bg-sky-800, .bg-sky-900, .bg-blue-500, .bg-blue-600, .bg-blue-700, .bg-blue-800, .bg-blue-900, .bg-cyan-500, .bg-cyan-600, .bg-cyan-700, .bg-cyan-800, .bg-cyan-900, .bg-rose-500, .bg-rose-600, .bg-rose-700, .bg-rose-800, .bg-rose-900, .bg-red-500, .bg-red-600, .bg-red-700, .bg-red-800, .bg-red-900, .bg-amber-500, .bg-amber-600, .bg-amber-700, .bg-amber-800, .bg-amber-900) *):not(.v22-keep-white) { color: #6d28d9 !important; }
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) :is([class*="text-violet-100"], [class*="text-violet-200"], [class*="text-violet-300"], [class*="text-violet-400"]):not(:is(.v22-forest-card, .mks-on-dark, .v22-pill-rail, .v22-dark-pill, .v22-keep-white, [class*="bg-gradient-to-"]:not([class*="/"]), .bg-yellow-500, .bg-yellow-600, .bg-yellow-700, .bg-yellow-800, .bg-yellow-900, .bg-orange-500, .bg-orange-600, .bg-orange-700, .bg-orange-800, .bg-orange-900, .bg-lime-500, .bg-lime-600, .bg-lime-700, .bg-lime-800, .bg-lime-900, .bg-green-500, .bg-green-600, .bg-green-700, .bg-green-800, .bg-green-900, .bg-emerald-500, .bg-emerald-600, .bg-emerald-700, .bg-emerald-800, .bg-emerald-900, .bg-teal-500, .bg-teal-600, .bg-teal-700, .bg-teal-800, .bg-teal-900, .bg-fuchsia-500, .bg-fuchsia-600, .bg-fuchsia-700, .bg-fuchsia-800, .bg-fuchsia-900, .bg-pink-500, .bg-pink-600, .bg-pink-700, .bg-pink-800, .bg-pink-900, .bg-purple-500, .bg-purple-600, .bg-purple-700, .bg-purple-800, .bg-purple-900, .bg-violet-500, .bg-violet-600, .bg-violet-700, .bg-violet-800, .bg-violet-900, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700, .bg-indigo-800, .bg-indigo-900, .bg-sky-500, .bg-sky-600, .bg-sky-700, .bg-sky-800, .bg-sky-900, .bg-blue-500, .bg-blue-600, .bg-blue-700, .bg-blue-800, .bg-blue-900, .bg-cyan-500, .bg-cyan-600, .bg-cyan-700, .bg-cyan-800, .bg-cyan-900, .bg-rose-500, .bg-rose-600, .bg-rose-700, .bg-rose-800, .bg-rose-900, .bg-red-500, .bg-red-600, .bg-red-700, .bg-red-800, .bg-red-900, .bg-amber-500, .bg-amber-600, .bg-amber-700, .bg-amber-800, .bg-amber-900) *):not(.v22-keep-white) { color: #6d28d9 !important; }
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) :is([class*="text-indigo-100"], [class*="text-indigo-200"], [class*="text-indigo-300"], [class*="text-indigo-400"]):not(:is(.v22-forest-card, .mks-on-dark, .v22-pill-rail, .v22-dark-pill, .v22-keep-white, [class*="bg-gradient-to-"]:not([class*="/"]), .bg-yellow-500, .bg-yellow-600, .bg-yellow-700, .bg-yellow-800, .bg-yellow-900, .bg-orange-500, .bg-orange-600, .bg-orange-700, .bg-orange-800, .bg-orange-900, .bg-lime-500, .bg-lime-600, .bg-lime-700, .bg-lime-800, .bg-lime-900, .bg-green-500, .bg-green-600, .bg-green-700, .bg-green-800, .bg-green-900, .bg-emerald-500, .bg-emerald-600, .bg-emerald-700, .bg-emerald-800, .bg-emerald-900, .bg-teal-500, .bg-teal-600, .bg-teal-700, .bg-teal-800, .bg-teal-900, .bg-fuchsia-500, .bg-fuchsia-600, .bg-fuchsia-700, .bg-fuchsia-800, .bg-fuchsia-900, .bg-pink-500, .bg-pink-600, .bg-pink-700, .bg-pink-800, .bg-pink-900, .bg-purple-500, .bg-purple-600, .bg-purple-700, .bg-purple-800, .bg-purple-900, .bg-violet-500, .bg-violet-600, .bg-violet-700, .bg-violet-800, .bg-violet-900, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700, .bg-indigo-800, .bg-indigo-900, .bg-sky-500, .bg-sky-600, .bg-sky-700, .bg-sky-800, .bg-sky-900, .bg-blue-500, .bg-blue-600, .bg-blue-700, .bg-blue-800, .bg-blue-900, .bg-cyan-500, .bg-cyan-600, .bg-cyan-700, .bg-cyan-800, .bg-cyan-900, .bg-rose-500, .bg-rose-600, .bg-rose-700, .bg-rose-800, .bg-rose-900, .bg-red-500, .bg-red-600, .bg-red-700, .bg-red-800, .bg-red-900, .bg-amber-500, .bg-amber-600, .bg-amber-700, .bg-amber-800, .bg-amber-900) *):not(.v22-keep-white) { color: #4338ca !important; }
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) :is([class*="text-sky-100"], [class*="text-sky-200"], [class*="text-sky-300"], [class*="text-sky-400"]):not(:is(.v22-forest-card, .mks-on-dark, .v22-pill-rail, .v22-dark-pill, .v22-keep-white, [class*="bg-gradient-to-"]:not([class*="/"]), .bg-yellow-500, .bg-yellow-600, .bg-yellow-700, .bg-yellow-800, .bg-yellow-900, .bg-orange-500, .bg-orange-600, .bg-orange-700, .bg-orange-800, .bg-orange-900, .bg-lime-500, .bg-lime-600, .bg-lime-700, .bg-lime-800, .bg-lime-900, .bg-green-500, .bg-green-600, .bg-green-700, .bg-green-800, .bg-green-900, .bg-emerald-500, .bg-emerald-600, .bg-emerald-700, .bg-emerald-800, .bg-emerald-900, .bg-teal-500, .bg-teal-600, .bg-teal-700, .bg-teal-800, .bg-teal-900, .bg-fuchsia-500, .bg-fuchsia-600, .bg-fuchsia-700, .bg-fuchsia-800, .bg-fuchsia-900, .bg-pink-500, .bg-pink-600, .bg-pink-700, .bg-pink-800, .bg-pink-900, .bg-purple-500, .bg-purple-600, .bg-purple-700, .bg-purple-800, .bg-purple-900, .bg-violet-500, .bg-violet-600, .bg-violet-700, .bg-violet-800, .bg-violet-900, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700, .bg-indigo-800, .bg-indigo-900, .bg-sky-500, .bg-sky-600, .bg-sky-700, .bg-sky-800, .bg-sky-900, .bg-blue-500, .bg-blue-600, .bg-blue-700, .bg-blue-800, .bg-blue-900, .bg-cyan-500, .bg-cyan-600, .bg-cyan-700, .bg-cyan-800, .bg-cyan-900, .bg-rose-500, .bg-rose-600, .bg-rose-700, .bg-rose-800, .bg-rose-900, .bg-red-500, .bg-red-600, .bg-red-700, .bg-red-800, .bg-red-900, .bg-amber-500, .bg-amber-600, .bg-amber-700, .bg-amber-800, .bg-amber-900) *):not(.v22-keep-white) { color: #0b5fc4 !important; }
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) :is([class*="text-blue-100"], [class*="text-blue-200"], [class*="text-blue-300"], [class*="text-blue-400"]):not(:is(.v22-forest-card, .mks-on-dark, .v22-pill-rail, .v22-dark-pill, .v22-keep-white, [class*="bg-gradient-to-"]:not([class*="/"]), .bg-yellow-500, .bg-yellow-600, .bg-yellow-700, .bg-yellow-800, .bg-yellow-900, .bg-orange-500, .bg-orange-600, .bg-orange-700, .bg-orange-800, .bg-orange-900, .bg-lime-500, .bg-lime-600, .bg-lime-700, .bg-lime-800, .bg-lime-900, .bg-green-500, .bg-green-600, .bg-green-700, .bg-green-800, .bg-green-900, .bg-emerald-500, .bg-emerald-600, .bg-emerald-700, .bg-emerald-800, .bg-emerald-900, .bg-teal-500, .bg-teal-600, .bg-teal-700, .bg-teal-800, .bg-teal-900, .bg-fuchsia-500, .bg-fuchsia-600, .bg-fuchsia-700, .bg-fuchsia-800, .bg-fuchsia-900, .bg-pink-500, .bg-pink-600, .bg-pink-700, .bg-pink-800, .bg-pink-900, .bg-purple-500, .bg-purple-600, .bg-purple-700, .bg-purple-800, .bg-purple-900, .bg-violet-500, .bg-violet-600, .bg-violet-700, .bg-violet-800, .bg-violet-900, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700, .bg-indigo-800, .bg-indigo-900, .bg-sky-500, .bg-sky-600, .bg-sky-700, .bg-sky-800, .bg-sky-900, .bg-blue-500, .bg-blue-600, .bg-blue-700, .bg-blue-800, .bg-blue-900, .bg-cyan-500, .bg-cyan-600, .bg-cyan-700, .bg-cyan-800, .bg-cyan-900, .bg-rose-500, .bg-rose-600, .bg-rose-700, .bg-rose-800, .bg-rose-900, .bg-red-500, .bg-red-600, .bg-red-700, .bg-red-800, .bg-red-900, .bg-amber-500, .bg-amber-600, .bg-amber-700, .bg-amber-800, .bg-amber-900) *):not(.v22-keep-white) { color: #0b5fc4 !important; }
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) :is([class*="text-cyan-100"], [class*="text-cyan-200"], [class*="text-cyan-300"], [class*="text-cyan-400"]):not(:is(.v22-forest-card, .mks-on-dark, .v22-pill-rail, .v22-dark-pill, .v22-keep-white, [class*="bg-gradient-to-"]:not([class*="/"]), .bg-yellow-500, .bg-yellow-600, .bg-yellow-700, .bg-yellow-800, .bg-yellow-900, .bg-orange-500, .bg-orange-600, .bg-orange-700, .bg-orange-800, .bg-orange-900, .bg-lime-500, .bg-lime-600, .bg-lime-700, .bg-lime-800, .bg-lime-900, .bg-green-500, .bg-green-600, .bg-green-700, .bg-green-800, .bg-green-900, .bg-emerald-500, .bg-emerald-600, .bg-emerald-700, .bg-emerald-800, .bg-emerald-900, .bg-teal-500, .bg-teal-600, .bg-teal-700, .bg-teal-800, .bg-teal-900, .bg-fuchsia-500, .bg-fuchsia-600, .bg-fuchsia-700, .bg-fuchsia-800, .bg-fuchsia-900, .bg-pink-500, .bg-pink-600, .bg-pink-700, .bg-pink-800, .bg-pink-900, .bg-purple-500, .bg-purple-600, .bg-purple-700, .bg-purple-800, .bg-purple-900, .bg-violet-500, .bg-violet-600, .bg-violet-700, .bg-violet-800, .bg-violet-900, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700, .bg-indigo-800, .bg-indigo-900, .bg-sky-500, .bg-sky-600, .bg-sky-700, .bg-sky-800, .bg-sky-900, .bg-blue-500, .bg-blue-600, .bg-blue-700, .bg-blue-800, .bg-blue-900, .bg-cyan-500, .bg-cyan-600, .bg-cyan-700, .bg-cyan-800, .bg-cyan-900, .bg-rose-500, .bg-rose-600, .bg-rose-700, .bg-rose-800, .bg-rose-900, .bg-red-500, .bg-red-600, .bg-red-700, .bg-red-800, .bg-red-900, .bg-amber-500, .bg-amber-600, .bg-amber-700, .bg-amber-800, .bg-amber-900) *):not(.v22-keep-white) { color: #0e7490 !important; }
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) :is([class*="text-rose-100"], [class*="text-rose-200"], [class*="text-rose-300"], [class*="text-rose-400"]):not(:is(.v22-forest-card, .mks-on-dark, .v22-pill-rail, .v22-dark-pill, .v22-keep-white, [class*="bg-gradient-to-"]:not([class*="/"]), .bg-yellow-500, .bg-yellow-600, .bg-yellow-700, .bg-yellow-800, .bg-yellow-900, .bg-orange-500, .bg-orange-600, .bg-orange-700, .bg-orange-800, .bg-orange-900, .bg-lime-500, .bg-lime-600, .bg-lime-700, .bg-lime-800, .bg-lime-900, .bg-green-500, .bg-green-600, .bg-green-700, .bg-green-800, .bg-green-900, .bg-emerald-500, .bg-emerald-600, .bg-emerald-700, .bg-emerald-800, .bg-emerald-900, .bg-teal-500, .bg-teal-600, .bg-teal-700, .bg-teal-800, .bg-teal-900, .bg-fuchsia-500, .bg-fuchsia-600, .bg-fuchsia-700, .bg-fuchsia-800, .bg-fuchsia-900, .bg-pink-500, .bg-pink-600, .bg-pink-700, .bg-pink-800, .bg-pink-900, .bg-purple-500, .bg-purple-600, .bg-purple-700, .bg-purple-800, .bg-purple-900, .bg-violet-500, .bg-violet-600, .bg-violet-700, .bg-violet-800, .bg-violet-900, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700, .bg-indigo-800, .bg-indigo-900, .bg-sky-500, .bg-sky-600, .bg-sky-700, .bg-sky-800, .bg-sky-900, .bg-blue-500, .bg-blue-600, .bg-blue-700, .bg-blue-800, .bg-blue-900, .bg-cyan-500, .bg-cyan-600, .bg-cyan-700, .bg-cyan-800, .bg-cyan-900, .bg-rose-500, .bg-rose-600, .bg-rose-700, .bg-rose-800, .bg-rose-900, .bg-red-500, .bg-red-600, .bg-red-700, .bg-red-800, .bg-red-900, .bg-amber-500, .bg-amber-600, .bg-amber-700, .bg-amber-800, .bg-amber-900) *):not(.v22-keep-white) { color: #be123c !important; }
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) :is([class*="text-red-100"], [class*="text-red-200"], [class*="text-red-300"], [class*="text-red-400"]):not(:is(.v22-forest-card, .mks-on-dark, .v22-pill-rail, .v22-dark-pill, .v22-keep-white, [class*="bg-gradient-to-"]:not([class*="/"]), .bg-yellow-500, .bg-yellow-600, .bg-yellow-700, .bg-yellow-800, .bg-yellow-900, .bg-orange-500, .bg-orange-600, .bg-orange-700, .bg-orange-800, .bg-orange-900, .bg-lime-500, .bg-lime-600, .bg-lime-700, .bg-lime-800, .bg-lime-900, .bg-green-500, .bg-green-600, .bg-green-700, .bg-green-800, .bg-green-900, .bg-emerald-500, .bg-emerald-600, .bg-emerald-700, .bg-emerald-800, .bg-emerald-900, .bg-teal-500, .bg-teal-600, .bg-teal-700, .bg-teal-800, .bg-teal-900, .bg-fuchsia-500, .bg-fuchsia-600, .bg-fuchsia-700, .bg-fuchsia-800, .bg-fuchsia-900, .bg-pink-500, .bg-pink-600, .bg-pink-700, .bg-pink-800, .bg-pink-900, .bg-purple-500, .bg-purple-600, .bg-purple-700, .bg-purple-800, .bg-purple-900, .bg-violet-500, .bg-violet-600, .bg-violet-700, .bg-violet-800, .bg-violet-900, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700, .bg-indigo-800, .bg-indigo-900, .bg-sky-500, .bg-sky-600, .bg-sky-700, .bg-sky-800, .bg-sky-900, .bg-blue-500, .bg-blue-600, .bg-blue-700, .bg-blue-800, .bg-blue-900, .bg-cyan-500, .bg-cyan-600, .bg-cyan-700, .bg-cyan-800, .bg-cyan-900, .bg-rose-500, .bg-rose-600, .bg-rose-700, .bg-rose-800, .bg-rose-900, .bg-red-500, .bg-red-600, .bg-red-700, .bg-red-800, .bg-red-900, .bg-amber-500, .bg-amber-600, .bg-amber-700, .bg-amber-800, .bg-amber-900) *):not(.v22-keep-white) { color: #b91c1c !important; }
+:is([data-theme="APPLE"], [data-theme="DEFAULT"], [data-theme="LIGHT"], [data-theme="ORGANIC"]) :is([class*="text-amber-100"], [class*="text-amber-200"], [class*="text-amber-300"], [class*="text-amber-400"]):not(:is(.v22-forest-card, .mks-on-dark, .v22-pill-rail, .v22-dark-pill, .v22-keep-white, [class*="bg-gradient-to-"]:not([class*="/"]), .bg-yellow-500, .bg-yellow-600, .bg-yellow-700, .bg-yellow-800, .bg-yellow-900, .bg-orange-500, .bg-orange-600, .bg-orange-700, .bg-orange-800, .bg-orange-900, .bg-lime-500, .bg-lime-600, .bg-lime-700, .bg-lime-800, .bg-lime-900, .bg-green-500, .bg-green-600, .bg-green-700, .bg-green-800, .bg-green-900, .bg-emerald-500, .bg-emerald-600, .bg-emerald-700, .bg-emerald-800, .bg-emerald-900, .bg-teal-500, .bg-teal-600, .bg-teal-700, .bg-teal-800, .bg-teal-900, .bg-fuchsia-500, .bg-fuchsia-600, .bg-fuchsia-700, .bg-fuchsia-800, .bg-fuchsia-900, .bg-pink-500, .bg-pink-600, .bg-pink-700, .bg-pink-800, .bg-pink-900, .bg-purple-500, .bg-purple-600, .bg-purple-700, .bg-purple-800, .bg-purple-900, .bg-violet-500, .bg-violet-600, .bg-violet-700, .bg-violet-800, .bg-violet-900, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700, .bg-indigo-800, .bg-indigo-900, .bg-sky-500, .bg-sky-600, .bg-sky-700, .bg-sky-800, .bg-sky-900, .bg-blue-500, .bg-blue-600, .bg-blue-700, .bg-blue-800, .bg-blue-900, .bg-cyan-500, .bg-cyan-600, .bg-cyan-700, .bg-cyan-800, .bg-cyan-900, .bg-rose-500, .bg-rose-600, .bg-rose-700, .bg-rose-800, .bg-rose-900, .bg-red-500, .bg-red-600, .bg-red-700, .bg-red-800, .bg-red-900, .bg-amber-500, .bg-amber-600, .bg-amber-700, .bg-amber-800, .bg-amber-900) *):not(.v22-keep-white) { color: #a85a05 !important; }
+
+/* Mercan (turuncu) gradyan butonlarda koyu yazı her temada korunur */
+[data-theme] [class*="from-[#f39264]"],
+[data-theme] [class*="from-[#f39264]"] .text-\[\#0b211d\] {
+  color: #0b211d !important;
+}
+
+/* ==================== TELEFON KOMPAKT DÜZENİ (<640px) ====================
+   Telefonda alan dar: iç boşluklar, başlıklar ve kart köşeleri küçülür; daha çok içerik sığar.
+   Tablet, web ve masaüstü bu bloktan etkilenmez. */
+@media (max-width: 639px) {
+  main .p-8, .fixed.inset-0 .p-8 { padding: 1rem !important; }
+  main .p-6, .fixed.inset-0 .p-6 { padding: 0.875rem !important; }
+  main .p-5, .fixed.inset-0 .p-5 { padding: 0.75rem !important; }
+  main .px-8 { padding-left: 1rem !important; padding-right: 1rem !important; }
+  main .px-6 { padding-left: 0.875rem !important; padding-right: 0.875rem !important; }
+  main .py-8 { padding-top: 1rem !important; padding-bottom: 1rem !important; }
+  main .py-6 { padding-top: 0.875rem !important; padding-bottom: 0.875rem !important; }
+  main .py-12 { padding-top: 1.75rem !important; padding-bottom: 1.75rem !important; }
+  main .py-16 { padding-top: 2.25rem !important; padding-bottom: 2.25rem !important; }
+
+  main .gap-8 { gap: 1rem !important; }
+  main .gap-6 { gap: 0.875rem !important; }
+  main .space-y-8 > :not([hidden]) ~ :not([hidden]) { margin-top: 1rem !important; }
+  main .space-y-6 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.875rem !important; }
+  main .mb-8 { margin-bottom: 1rem !important; }
+  main .mb-6 { margin-bottom: 0.75rem !important; }
+  main .mt-8 { margin-top: 1rem !important; }
+  main .mt-6 { margin-top: 0.75rem !important; }
+
+  main .text-4xl { font-size: 1.6rem !important; line-height: 2rem !important; }
+  main .text-3xl { font-size: 1.4rem !important; line-height: 1.8rem !important; }
+  main .text-2xl { font-size: 1.2rem !important; line-height: 1.6rem !important; }
+  main .text-xl { font-size: 1.08rem !important; line-height: 1.5rem !important; }
+  main .text-lg { font-size: 1rem !important; line-height: 1.4rem !important; }
+
+  main .rounded-3xl, main .rounded-\[2rem\], main .rounded-\[28px\], main .rounded-\[32px\] { border-radius: 1.15rem !important; }
+
+  main .w-16.h-16 { width: 3rem !important; height: 3rem !important; }
+  main .w-14.h-14 { width: 2.75rem !important; height: 2.75rem !important; }
+  main .w-12.h-12 { width: 2.5rem !important; height: 2.5rem !important; }
+}
+
+/* Listelenmemiş opaklıklar (bg-stone-950/45, /75 vb.) da tema yüzeylerine eşlensin — açık temada koyu gri kutu kalıyordu */
+[class*="bg-stone-950/"]:not(.fixed):not(.sticky):not(.absolute):not(.min-h-screen),
+[class*="bg-stone-800/"]:not(.fixed):not(.absolute),
+[class*="bg-stone-700/"]:not(.fixed):not(.absolute) {
+  background: var(--mks-subcard) !important;
+  border-color: var(--mks-card-border) !important;
+}
+[class*="bg-stone-900/"]:not(.fixed):not(.sticky):not(.absolute) {
+  background: var(--mks-card) !important;
+  border-color: var(--mks-card-border) !important;
+}

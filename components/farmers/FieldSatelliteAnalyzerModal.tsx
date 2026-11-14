@@ -349,7 +349,22 @@ export const FieldSatelliteAnalyzerModal: React.FC<FieldSatelliteAnalyzerModalPr
           body: JSON.stringify({ polygonGeoJson: parsedGeo }),
         });
 
-        const data = await resp.json();
+        // Sunucu JSON yerine HTML (ör. eski sunucu sürümünde olmayan yol / index.html) dönerse
+        // ham "Unexpected token '<'" hatası yerine anlaşılır Türkçe mesaj göster.
+        const SATELLITE_UNREACHABLE_MSG =
+          'Uydu servisine şu an ulaşılamıyor. İnternet bağlantınızı kontrol edin; sorun sürerse uygulamayı güncelleyin.';
+        const contentType = resp.headers.get('content-type') || '';
+        if (!contentType.toLowerCase().includes('application/json')) {
+          setErrorCode('SATELLITE_NON_JSON_RESPONSE');
+          throw new Error(SATELLITE_UNREACHABLE_MSG);
+        }
+        let data: any;
+        try {
+          data = await resp.json();
+        } catch {
+          setErrorCode('SATELLITE_INVALID_JSON');
+          throw new Error(SATELLITE_UNREACHABLE_MSG);
+        }
         if (!resp.ok) {
           setErrorCode(data?.code || null);
           throw new Error(data?.error || 'Uydu analizi alınamadı.');

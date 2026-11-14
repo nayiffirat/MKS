@@ -31,6 +31,9 @@ import {
 } from './utils/subscriptionManager';
 import { MinistryIntegrationModal, type FactoryShipment, type MinistryConfig } from './components/MinistryIntegrationModal';
 import { EdmIntegrationModal } from './components/EdmIntegrationModal';
+import { EFaturaPanel, EFaturaPrefill } from './components/EFaturaPanel';
+import { scheduleIntegrityCheck } from './services/integrity';
+import { syncScheduledNotifications, requestEssentialPermissionsOnce } from './utils/scheduledNotifications';
 import { WebLandingPortal } from './components/WebLandingPortal';
 import { LiveSupportWidget } from './components/LiveSupportWidget';
 import { MksBrandLogo } from './components/MksBrandLogo';
@@ -111,6 +114,9 @@ function MainApp() {
   const [ministryPendingShipments, setMinistryPendingShipments] = useState<FactoryShipment[]>([]);
   const [ministryTransactions, setMinistryTransactions] = useState<MinistryRecord[]>([]);
   const [isEdmModalOpen, setIsEdmModalOpen] = useState(false);
+  const [isEfaturaOpen, setIsEfaturaOpen] = useState(false);
+  const [efaturaPrefill, setEfaturaPrefill] = useState<EFaturaPrefill | null>(null);
+  const [efaturaTab, setEfaturaTab] = useState<'issue' | 'out' | 'in' | 'settings'>('issue');
   const [edmModalTab, setEdmModalTab] = useState<'incoming' | 'issue' | 'warehouses' | 'settings'>('incoming');
   const [isWebPortalOpen, setIsWebPortalOpen] = useState(false);
   const [webPortalTab, setWebPortalTab] = useState<'showcase' | 'download' | 'pricing'>('download');
@@ -149,6 +155,33 @@ function MainApp() {
       console.warn('Ministry bridge load warning:', err);
     }
   }, []);
+
+  // Zamanlı bildirimler: vade hatırlatması (3 gün kala her akşam 20:00 + vade günü 10:00), günün planı 09:00, günün raporu 21:00.
+  // Veri değiştikçe ve saat başı yeniden kurulur; ilk açılışta gerekli izinler bir kez istenir.
+  const schedCtx = useAppViewModel();
+  useEffect(() => {
+    if (!currentUser || !initialDataLoaded) return;
+    const run = () => {
+      void requestEssentialPermissionsOnce()
+        .then(() => syncScheduledNotifications({ myPayments: schedCtx.myPayments, prescriptions: schedCtx.prescriptions, payments: schedCtx.payments, reminders: schedCtx.reminders }))
+        .catch(() => undefined);
+    };
+    const first = window.setTimeout(run, 4000);
+    const hourly = window.setInterval(run, 60 * 60 * 1000);
+    return () => { window.clearTimeout(first); window.clearInterval(hourly); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [(currentUser as any)?.uid, initialDataLoaded, schedCtx.myPayments, schedCtx.prescriptions, schedCtx.payments, schedCtx.reminders]);
+
+  // Veri sağlığı: açılıştan sonra arka planda kasa / stok / yarım kayıt denetimi
+  useEffect(() => {
+    if (!currentUser || !initialDataLoaded) return;
+    return scheduleIntegrityCheck(String((currentUser as any)?.uid || 'local'), report => {
+      if (report.open > 0) showToast(`Veri sağlığı: ${report.open} konu dikkat istiyor. Ayarlar → Veri Sağlığı Denetimi`, 'error');
+      void refreshInventory();
+      void refreshStats();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [(currentUser as any)?.uid, initialDataLoaded]);
 
   useEffect(() => {
     if (currentUser && (initialDataLoaded || isMinistryModalOpen)) {
@@ -318,7 +351,7 @@ function MainApp() {
     }
 
     if (Capacitor.isNativePlatform()) {
-      StatusBar.setStyle({ style: isLight ? Style.Light : Style.Dark }).catch(() => {});
+      StatusBar.setStyle({ style: isLight && Capacitor.getPlatform() !== 'android' ? Style.Light : Style.Dark }).catch(() => {});
       StatusBar.setBackgroundColor({ color: themeColor }).catch(() => {});
     }
   }, [userProfile.theme, userProfile.colorMode]);
@@ -555,6 +588,7 @@ function MainApp() {
   useBackHandler(!!selectedSupplierId && currentView === 'SUPPLIERS', () => setSelectedSupplierId(null), 'selected_supplier', 20);
   useBackHandler(isMinistryModalOpen, () => setIsMinistryModalOpen(false), 'ministry_modal', 75);
   useBackHandler(isEdmModalOpen, () => setIsEdmModalOpen(false), 'edm_modal', 75);
+  useBackHandler(isEfaturaOpen, () => setIsEfaturaOpen(false), 'efatura_panel', 76);
   useBackHandler(isWebPortalOpen, () => setIsWebPortalOpen(false), 'web_portal_modal', 75);
   useBackHandler(showWelcomeModal, () => setShowWelcomeModal(false), 'welcome_modal', 80);
 
@@ -747,6 +781,18 @@ function MainApp() {
       }
       if (tab) setEdmModalTab(tab);
       setIsEdmModalOpen(true);
+    };
+    // Sade e-Fatura ekranı (EDM'ye gerçek gönderim, giden/gelen kutusu)
+    (window as any).mks_open_efatura = (tab?: 'issue' | 'out' | 'in' | 'settings', prefill?: EFaturaPrefill) => {
+      if (!isFeatureEnabledForUser('EDM_EFATURA', userProfile, isAdmin)) {
+        if (showToast) showToast('e-Fatura modülü seçili paketinizde kapalıdır. Paket yükseltiniz.', 'info');
+        setWebPortalTab('pricing');
+        setIsWebPortalOpen(true);
+        return;
+      }
+      setEfaturaPrefill(prefill || null);
+      setEfaturaTab(tab || 'issue');
+      setIsEfaturaOpen(true);
     };
     (window as any).mks_open_live_support = (cat?: 'general' | 'subscription' | 'password_reset' | 'bkst_gts') => {
       if (cat) setLiveSupportCategory(cat);
@@ -994,6 +1040,7 @@ function MainApp() {
         onAcceptShipment={handleAcceptMinistryShipment}
         showToast={showToast}
       />
+      <EFaturaPanel isOpen={isEfaturaOpen} initialTab={efaturaTab} prefill={efaturaPrefill} onClose={() => setIsEfaturaOpen(false)} />
       <EdmIntegrationModal
         isOpen={isEdmModalOpen}
         onClose={() => setIsEdmModalOpen(false)}

@@ -2,6 +2,7 @@
 import { safeStringify } from '../utils/json';
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { dbService, setActionBlocked, setActionBlockedCallback } from '../services/db';
+import { normalizeSupplierDoc } from '../utils/tradeCore';
 import { Farmer, UIScale, AppNotification, UserProfile, Reminder, VisitLog, InventoryItem, Prescription, Payment, ManualDebt, Supplier, SupplierPurchase, SupplierPayment, MyPayment, Expense, Account, Transaction, TeamMember, Message, Language, News, CollectionLog, Plant, PesticideCategory } from '../types';
 import { DEFAULT_PLANTS } from '../constants/plants';
 import { getTranslation } from '../utils/translations';
@@ -1471,15 +1472,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
 
-    purchase.totalAmount = round2(
-      purchase.items.reduce(
-        (acc, item) => acc + (Number(item.buyingPrice) || 0) * (Number(item.quantity) || 0),
-        0
-      )
-    );
+    // Tür, işaret, toplam, maliyet ve kâr tek kuraldan (utils/tradeCore) üretilir
+    const liveInventory = await dbService.getInventory();
+    const normalized = normalizeSupplierDoc(purchase, id => liveInventory.find(i => i.pesticideId === id)?.buyingPrice);
 
-    // 2. AK-19: Save purchase + update inventory atomically in one IDB transaction
-    await dbService.saveSupplierPurchaseWithInventory(purchase, null);
+    // 2. Alım + stok tek veritabanı işleminde (hata olursa ikisi de geri alınır)
+    await dbService.saveSupplierPurchaseWithInventory(normalized, null);
 
     await refreshInventory();
     await refreshStats();
@@ -1522,16 +1520,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       }
 
-      const updatedPurchase: SupplierPurchase = {
-        ...purchaseInput,
-        items: clonedItems,
-        totalAmount: round2(
-          clonedItems.reduce(
-            (acc, item) => acc + (Number(item.buyingPrice) || 0) * (Number(item.quantity) || 0),
-            0
-          )
-        )
-      };
+      const liveInventory = await dbService.getInventory();
+      const updatedPurchase: SupplierPurchase = normalizeSupplierDoc(
+        { ...purchaseInput, items: clonedItems },
+        id => liveInventory.find(i => i.pesticideId === id)?.buyingPrice
+      );
 
       // AK-19: Revert old inventory (if processed) + apply new inventory + save purchase in one IDB transaction
       await dbService.saveSupplierPurchaseWithInventory(updatedPurchase, oldPurchase);
@@ -2234,12 +2227,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   useEffect(() => {
+    // Telefon (Android/iOS, <640px) kompakt; tablet/masaüstü/web daha büyük yazı ölçeği
     const root = document.documentElement;
-    switch (uiScale) {
-      case 'SMALL': root.style.fontSize = '14px'; break;
-      case 'MEDIUM': root.style.fontSize = '16px'; break;
-      case 'LARGE': root.style.fontSize = '18.5px'; break;
-    }
+    const SIZES: Record<string, [number, number]> = {
+      SMALL: [12.5, 15],
+      MEDIUM: [14, 17],
+      LARGE: [16, 19]
+    };
+    const apply = () => {
+      const isPhone = window.innerWidth < 640;
+      const [phone, wide] = SIZES[uiScale] || SIZES.MEDIUM;
+      root.style.fontSize = `${isPhone ? phone : wide}px`;
+    };
+    apply();
+    window.addEventListener('resize', apply);
+    return () => window.removeEventListener('resize', apply);
   }, [uiScale]);
 
   const syncLegacyData = async () => {

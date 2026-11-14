@@ -24,6 +24,7 @@ import { parseGS1Barcode, findItemByScan, itemMatchesScan, canonicalBarcodeFromP
 import { playScanBeep, playErrorBeep } from '../utils/hardwareBarcodeScanner';
 import { toTelHref } from '../utils/whatsappTemplates';
 import { round2 } from '../utils/dateUtils';
+import { supplierDocKind, checkPurchaseReturn, ReturnViolation } from '../utils/tradeCore';
 
 const trToEn = (str: string) => {
     return str.replace(/Ğ/g, 'G')
@@ -283,9 +284,9 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
                         if (pDate < start || pDate > end) return;
 
                         let txType = 'Alış Faturası';
-                        if (p.type === 'SALE' || p.note?.includes('SATIŞ')) {
+                        if (supplierDocKind(p) === 'SALE') {
                             txType = 'Tedarikçiye Satış';
-                        } else if (p.type === 'RETURN' || p.note?.includes('İADE')) {
+                        } else if (supplierDocKind(p) === 'RETURN') {
                             txType = 'Alış İadesi';
                         }
 
@@ -294,7 +295,7 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
                             type: txType,
                             docNo: p.receiptNo || '-',
                             amount: Math.abs(p.totalAmount || p.items.reduce((acc, i) => acc + (i.quantity * (i.buyingPrice || 0)), 0) || 0),
-                            isDebtToUs: !(p.type === 'RETURN' || p.type === 'SALE' || (p.totalAmount && p.totalAmount < 0))
+                            isDebtToUs: (supplierDocKind(p) === 'PURCHASE')
                         });
                     });
 
@@ -407,9 +408,13 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
         }, 100);
     };
 
-    const handleAddReturn = async (manualSupplierId?: string) => {
+    const handleAddReturn = async (manualSupplierId?: string): Promise<ReturnViolation[] | void> => {
         const targetSupplierId = manualSupplierId || selectedSupplier?.id;
         if (!targetSupplierId || newReturn.items.length === 0) return;
+
+        // Kaynak kilidi: bu tedarikçiden alınmamış / alınandan fazla ürün 'Alış İadesi' olarak çıkılamaz
+        const violations = checkPurchaseReturn(supplierPurchases, targetSupplierId, newReturn.items);
+        if (violations.length > 0) return violations;
         
         const totalAmount = round2(newReturn.items.reduce((acc, item) => acc + (item.buyingPrice * item.quantity), 0));
         
@@ -1088,6 +1093,16 @@ const SupplierDetailView = ({
     onEdit, accounts, softDeleteSupplier, myPayments
 }: any) => {
     const { userProfile, teamMembers, hapticFeedback } = useAppViewModel();
+    const { suppliers: guardSuppliers } = useAppViewModel();
+    const [returnGuard, setReturnGuard] = useState<ReturnViolation[] | null>(null);
+    const returnGuardMessage = (list: ReturnViolation[]) => {
+        const v = list[0];
+        const other = v.otherSupplierIds.length > 0 ? (guardSuppliers.find(s => s.id === v.otherSupplierIds[0])?.name || 'başka bir tedarikçi') : '';
+        const head = v.returnable <= 0
+            ? (other ? `"${v.pesticideName}" ${other} firmasından satın alınmıştır; bu tedarikçiye 'Alış İadesi' olarak çıkılamaz.` : `"${v.pesticideName}" bu tedarikçiden hiç alınmamış; 'Alış İadesi' olarak çıkılamaz.`)
+            : `"${v.pesticideName}" için bu tedarikçiye iade edilebilir miktar ${v.returnable}; girilen miktar ${v.requested}.`;
+        return `${head}${list.length > 1 ? ` (+${list.length - 1} ürün daha)` : ''} Bu işlemi 'Tedarikçiye / Bayiye Toptan Satış' olarak kaydetmek ister misiniz?`;
+    };
     const [activeTab, setActiveTab] = useState<'PURCHASES' | 'PAYMENTS'>('PURCHASES');
     const [purchases, setPurchases] = useState<SupplierPurchase[]>([]);
     const [payments, setPayments] = useState<SupplierPayment[]>([]);
@@ -1112,15 +1127,15 @@ const SupplierDetailView = ({
     });
 
     const totalAlinan = purchases.reduce((acc, p) => {
-        const isSale = p.type === 'SALE' || p.note?.includes('SATIŞ');
-        const isReturn = p.type === 'RETURN' || (p.note?.includes('İADE') && !isSale);
+        const isSale = supplierDocKind(p) === 'SALE';
+        const isReturn = supplierDocKind(p) === 'RETURN';
         if (isSale || isReturn) return acc;
         return acc + (p.totalAmount > 0 ? p.totalAmount : 0);
     }, 0);
 
     const totalOdenen = purchases.reduce((acc, p) => {
-        const isSale = p.type === 'SALE' || p.note?.includes('SATIŞ');
-        const isReturn = p.type === 'RETURN' || (p.note?.includes('İADE') && !isSale);
+        const isSale = supplierDocKind(p) === 'SALE';
+        const isReturn = supplierDocKind(p) === 'RETURN';
         if (isSale || isReturn || (p.totalAmount && p.totalAmount < 0)) {
             return acc + Math.abs(p.totalAmount || 0);
         }
@@ -1195,7 +1210,7 @@ const SupplierDetailView = ({
 
                         return {
                             date: new Date(p.date),
-                            type: (p.type === 'SALE' || p.note?.includes('SATIŞ')) ? 'Tedarikçiye Satış' : ((p.type === 'RETURN' || p.note?.includes('İADE')) ? 'Ürün İadesi' : 'Ürün Alımı'),
+                            type: (supplierDocKind(p) === 'SALE') ? 'Tedarikçiye Satış' : ((supplierDocKind(p) === 'RETURN') ? 'Ürün İadesi' : 'Ürün Alımı'),
                             desc: descHtml,
                             debt: p.totalAmount > 0 ? p.totalAmount : 0,
                             credit: p.totalAmount < 0 ? Math.abs(p.totalAmount) : 0
@@ -1419,8 +1434,8 @@ const SupplierDetailView = ({
     const purchasedProducts = useMemo(() => {
         const productMap = new Map<string, { id: string, name: string, totalQty: number, returnedQty: number, soldQty: number, unit: string }>();
         purchases.forEach(p => {
-            const isSale = p.type === 'SALE' || p.note?.includes('SATIŞ');
-            const isReturn = p.type === 'RETURN' || (p.note?.includes('İADE') && !isSale);
+            const isSale = supplierDocKind(p) === 'SALE';
+            const isReturn = supplierDocKind(p) === 'RETURN';
 
             (p.items || []).forEach(item => {
                 const qty = Math.abs(item.quantity || 0);
@@ -1811,15 +1826,15 @@ const SupplierDetailView = ({
                                     <div key={purchase.id} className="bg-stone-900/40 border border-white/5 rounded-2xl p-4">
                                         <div className="flex justify-between items-start mb-2">
                                             <div className="flex items-center gap-2">
-                                                <div className={`p-1.5 rounded-lg ${purchase.type === 'SALE' || purchase.note?.includes('SATIŞ') ? 'bg-indigo-500/10 text-indigo-400' : ((purchase.type === 'RETURN' || purchase.note?.includes('İADE')) ? 'bg-rose-500/10 text-rose-400' : 'bg-emerald-500/10 text-emerald-400')}`}>
-                                                    {(purchase.type === 'SALE' || purchase.note?.includes('SATIŞ')) ? <ArrowUpRight size={14} /> : ((purchase.type === 'RETURN' || purchase.note?.includes('İADE')) ? <ArrowLeft size={14} /> : <ArrowDownRight size={14} />)}
+                                                <div className={`p-1.5 rounded-lg ${supplierDocKind(purchase) === 'SALE' ? 'bg-indigo-500/10 text-indigo-400' : ((supplierDocKind(purchase) === 'RETURN') ? 'bg-rose-500/10 text-rose-400' : 'bg-emerald-500/10 text-emerald-400')}`}>
+                                                    {(supplierDocKind(purchase) === 'SALE') ? <ArrowUpRight size={14} /> : ((supplierDocKind(purchase) === 'RETURN') ? <ArrowLeft size={14} /> : <ArrowDownRight size={14} />)}
                                                 </div>
                                                 <div className="flex flex-col">
                                                     <span className="text-[10px] font-black text-stone-300 uppercase tracking-wider">
-                                                        {(purchase.type === 'SALE' || purchase.note?.includes('SATIŞ')) ? 'Tedarikçiye Satış' : ((purchase.type === 'RETURN' || purchase.note?.includes('İADE')) ? 'Ürün İadesi' : 'Ürün Alımı')}
+                                                        {(supplierDocKind(purchase) === 'SALE') ? 'Tedarikçiye Satış' : ((supplierDocKind(purchase) === 'RETURN') ? 'Ürün İadesi' : 'Ürün Alımı')}
                                                     </span>
                                                     {purchase.receiptNo && (
-                                                        <span className={`text-[8px] font-bold uppercase tracking-widest ${(purchase.type === 'SALE' || purchase.note?.includes('SATIŞ')) ? 'text-indigo-400' : ((purchase.type === 'RETURN' || purchase.note?.includes('İADE')) ? 'text-rose-400' : 'text-emerald-400')}`}>Fiş No: {purchase.receiptNo}</span>
+                                                        <span className={`text-[8px] font-bold uppercase tracking-widest ${(supplierDocKind(purchase) === 'SALE') ? 'text-indigo-400' : ((supplierDocKind(purchase) === 'RETURN') ? 'text-rose-400' : 'text-emerald-400')}`}>Fiş No: {purchase.receiptNo}</span>
                                                     )}
                                                 </div>
                                             </div>
@@ -1856,10 +1871,16 @@ const SupplierDetailView = ({
                                         </div>
                                         <div className="pt-2 border-t border-white/5 flex justify-between items-center">
                                             <span className="text-[10px] font-black text-stone-500 uppercase tracking-widest">Toplam</span>
-                                            <span className={`text-sm font-black font-mono ${(purchase.type === 'SALE' || purchase.note?.includes('SATIŞ')) ? 'text-indigo-400' : ((purchase.type === 'RETURN' || purchase.note?.includes('İADE')) ? 'text-rose-400' : 'text-emerald-400')}`}>
-                                                {(purchase.type === 'SALE' || purchase.type === 'RETURN' || purchase.note?.includes('SATIŞ') || purchase.note?.includes('İADE') || purchase.totalAmount < 0) ? '+' : ''}{formatCurrency(Math.abs(purchase.totalAmount), userProfile?.currency || 'TRY')}
+                                            <span className={`text-sm font-black font-mono ${(supplierDocKind(purchase) === 'SALE') ? 'text-indigo-400' : ((supplierDocKind(purchase) === 'RETURN') ? 'text-rose-400' : 'text-emerald-400')}`}>
+                                                {(supplierDocKind(purchase) !== 'PURCHASE') ? '+' : ''}{formatCurrency(Math.abs(purchase.totalAmount), userProfile?.currency || 'TRY')}
                                             </span>
                                         </div>
+                                        {supplierDocKind(purchase) === 'SALE' && typeof purchase.profit === 'number' && (
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-[10px] font-black text-stone-500 uppercase tracking-widest">Brüt Kâr</span>
+                                                <span className={`text-xs font-black font-mono ${purchase.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(purchase.profit, userProfile?.currency || 'TRY')}</span>
+                                            </div>
+                                        )}
                                     </div>
                                 ))}
                             </div>
@@ -1994,7 +2015,8 @@ const SupplierDetailView = ({
                     supplier={supplier}
                     onClose={() => setIsReturnModalOpen(false)}
                     onSave={async (id: string) => {
-                        await handleAddReturn(id);
+                        const blocked = await handleAddReturn(id);
+                        if (blocked && blocked.length > 0) { setReturnGuard(blocked); return; }
                         loadData();
                     }}
                     newPurchase={newReturn}
@@ -2009,6 +2031,24 @@ const SupplierDetailView = ({
                     showToast={showToast}
                 />
             )}
+
+            <ConfirmationModal
+                isOpen={!!returnGuard}
+                onClose={() => setReturnGuard(null)}
+                onConfirm={() => {
+                    // Aynı ürünlerle belgeyi 'Tedarikçiye / Bayiye Toptan Satış' olarak aç: fiyatı satış fiyatı olarak girilir
+                    setNewSale({ items: newReturn.items, note: newReturn.note, receiptNo: newReturn.receiptNo });
+                    setNewReturn({ items: [], note: '', receiptNo: '' });
+                    setReturnGuard(null);
+                    setIsReturnModalOpen(false);
+                    setIsSaleModalOpen(true);
+                }}
+                title="Alış İadesi Olarak Çıkılamaz"
+                message={returnGuard ? returnGuardMessage(returnGuard) : ''}
+                confirmText="Toptan Satış Olarak Kaydet"
+                cancelText="Vazgeç"
+                variant="warning"
+            />
 
             {isSaleModalOpen && (
                 <PurchaseModal 
@@ -2603,7 +2643,7 @@ const PurchaseModal = ({
 
                                     <div className="grid grid-cols-3 gap-3">
                                         <div className="space-y-1.5">
-                                            <label className="text-[9px] font-black text-stone-600 uppercase tracking-widest block text-center">Alış ({getCurrencySuffix(userProfile?.currency)})</label>
+                                            <label className="text-[9px] font-black text-stone-600 uppercase tracking-widest block text-center">{isSale ? 'Satış Fiyatı' : isReturn ? 'İade Fiyatı' : 'Alış'} ({getCurrencySuffix(userProfile?.currency)})</label>
                                             <input 
                                                 type="number" 
                                                 className="w-full bg-stone-900 border border-white/5 rounded-xl p-3 text-[13px] font-black text-stone-100 outline-none focus:border-emerald-500/50 transition-all font-mono text-center"
@@ -2698,11 +2738,16 @@ const PurchaseModal = ({
                                 </button>
                             )}
                             <button 
-                                onClick={async () => {
+                                onClick={async (e) => {
+                                    // Çift tıklama kalkanı: durum güncellemesini beklemeden, aynı anda ikinci kaydı engeller
+                                    const btn = e.currentTarget;
+                                    if (btn.dataset.busy === '1') return;
+                                    btn.dataset.busy = '1';
                                     setIsSaving(true);
                                     try {
                                         await onSave(localSupplierId);
                                     } finally {
+                                        btn.dataset.busy = '';
                                         setIsSaving(false);
                                     }
                                 }}

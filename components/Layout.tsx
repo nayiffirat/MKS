@@ -171,6 +171,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
         { id: 'DASHBOARD', icon: Home, label: t('nav.dashboard') || 'Ana Panel' },
         { id: 'FARMERS', icon: Users, label: t('nav.farmers') || 'Müstahsiller' },
         { id: 'PRESCRIPTIONS', icon: FileText, label: t('nav.prescriptions') || 'Satış ve Reçeteler' },
+        { id: 'EDM_EFATURA', icon: Receipt, label: 'e-Fatura İşlemleri' },
         { id: 'DEBT_TRACKING', icon: TrendingDown, label: 'Alacak ve Risk Takibi' },
         { id: 'KASA', icon: Wallet, label: t('nav.kasa') || 'Kasa ve Banka' },
         { id: 'PAYMENTS', icon: CreditCard, label: t('nav.payments') || 'Tahsilat ve Çekler' },
@@ -239,6 +240,12 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
       ((currentView as string) === 'PRESCRIPTION_NEW' || (currentView as string) === 'PRESCRIPTION_LIST'));
 
   const handleNavClick = (view: ViewState) => {
+    // e-Fatura bir sayfa değil pencere: menüden doğrudan fatura kesme sekmesiyle açılır
+    if ((view as string) === 'EDM_EFATURA') {
+      setIsMobileMenuOpen(false);
+      (window as any).mks_open_efatura?.('issue');
+      return;
+    }
     onNavigate(view);
     setIsMobileMenuOpen(false);
   };
@@ -505,12 +512,10 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
                 onClick={() => setIsPdfModalOpen(true)}
                 title="İndirilen PDF Belgeleri, Faturalar ve Raporlar (Tarih Sırasıyla)"
                 aria-label="İndirilen PDF Belgeleri"
-                className="v22-surface-pill min-h-[44px] px-3 sm:px-3.5 py-2 rounded-xl sm:rounded-full shadow-md flex items-center justify-center gap-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 active:scale-95 transition-all cursor-pointer border border-rose-400/50"
+                className="min-h-[44px] min-w-[44px] px-3 sm:px-3.5 py-2 rounded-xl sm:rounded-full shadow-md flex items-center justify-center gap-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 active:scale-95 transition-all cursor-pointer border border-rose-400/50"
               >
-                <div className="w-5 h-5 rounded-md bg-white text-rose-600 flex items-center justify-center text-[10px] font-black shrink-0 shadow-xs">
-                  PDF
-                </div>
-                <span className="font-extrabold text-white text-xs">PDF</span>
+                <FileText size={16} className="text-white shrink-0" />
+                <span className="hidden min-[420px]:inline font-extrabold text-white text-xs">PDF</span>
                 <span className="hidden md:inline text-[11px] text-rose-100 font-semibold">İndirilenler</span>
               </button>
 

@@ -1,15 +1,21 @@
 import type { jsPDF as JsPDFInstance } from 'jspdf';
 import type { Options as Html2CanvasOptions } from 'html2canvas';
-import { recordDownloadedPdf } from './desktopUpdateManager';
+import { archivePdf, hasNativePdfBridge, openPdfBlob } from './pdfArchive';
 
 function patchJsPdfSave(cls: any) {
   if (!cls || (cls.prototype as any)._mksSaveIntercepted) return;
   (cls.prototype as any)._mksSaveIntercepted = true;
   const originalSave = cls.prototype.save;
   cls.prototype.save = function (this: any, filename: string, ...args: any[]) {
+    const name = filename || `MKS_Belge_${new Date().toISOString().slice(0, 10)}.pdf`;
     try {
-      const name = filename || `MKS_Belge_${new Date().toISOString().slice(0, 10)}.pdf`;
-      recordDownloadedPdf(name);
+      const blob: Blob = this.output('blob');
+      void archivePdf(name, blob);
+      // Android WebView blob indirmeyi desteklemez: PDF'i yerel görüntüleyicide aç
+      if (hasNativePdfBridge()) {
+        void openPdfBlob(name, blob, 'open');
+        return this;
+      }
     } catch {}
     return originalSave.call(this, filename, ...args);
   };

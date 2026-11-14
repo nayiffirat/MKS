@@ -21,6 +21,7 @@ import {
 import { generateUUID } from '../utils/uuid';
 import { daysUntilExpiry, normalizeGtin, round2 } from '../utils/dateUtils';
 import { loadJsPdfWithAutoTable } from '../utils/pdfHelper';
+import { archivePdf } from '../utils/pdfArchive';
 import {
   PesticideCategory,
   type InventoryBatch, type InventoryItem, type MinistryRecord as MinistryLedgerRecord,
@@ -924,7 +925,9 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
       doc.text(pdfSafe('Bayi Kaşe / İmza'), 14, sigY);
       doc.text(pdfSafe('Denetim Elemanı'), doc.internal.pageSize.getWidth() - 60, sigY);
       const fileName = `bkts_gts_denetim_defteri_${todayISO()}.pdf`;
-      const result = await shareOrDownload(fileName, doc.output('blob'), 'MKS Denetim Defteri (PDF)');
+      const auditPdfBlob = doc.output('blob');
+      void archivePdf(fileName, auditPdfBlob);
+      const result = await shareOrDownload(fileName, auditPdfBlob, 'MKS Denetim Defteri (PDF)');
       reportShare(result, fileName);
     } catch (e: any) {
       console.error('[Ministry] PDF failed', e);

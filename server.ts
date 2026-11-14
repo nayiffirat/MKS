@@ -2,6 +2,7 @@ import express from "express";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+import { registerEdmRoutes } from "./server/edm";
 import cors from "cors";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
@@ -395,6 +396,9 @@ async function startServer() {
       env: process.env.NODE_ENV || "development"
     });
   });
+
+  // --- EDM Bilişim e-Fatura / e-Arşiv köprüsü (bağlantı testi, mükellef sorgusu, fatura gönder/listele) ---
+  registerEdmRoutes(app, { isDev, isLoopbackAddress, verifyFirebaseIdToken, checkRateLimit });
 
   // --- TKGM Ada/Parsel ve Koordinat Sorgulama Uç Noktası (Uygulama İçi, Yönlendirmesiz) ---
   app.post("/api/tkgm/parcel", async (req, res) => {

@@ -362,6 +362,8 @@ export interface Prescription {
   discountAmount?: number;
   dueDate?: string; // ISO String for term payment due date
   status?: 'PENDING' | 'APPROVED' | 'DELIVERED' | 'INVOICED';
+  eInvoiceNo?: string; // EDM üzerinden kesilen e-Fatura / e-Arşiv numarası
+  eInvoiceUuid?: string;
   createdById?: string;
   deliveredById?: string;
   lastUpdated?: string;
@@ -578,8 +580,13 @@ export interface SupplierPurchase {
     expiryDate?: string;
     serialNumber?: string;
     serialNumbers?: string[];
+    /** Yalnız SATIŞ: satış anındaki birim stok maliyeti (buyingPrice alanı satış fiyatıdır) */
+    unitCost?: number;
   }[];
   totalAmount: number;
+  /** Yalnız SATIŞ: satılan malın maliyeti ve brüt kâr */
+  costTotal?: number;
+  profit?: number;
   note?: string;
   isInventoryProcessed?: boolean;
   createdById?: string;

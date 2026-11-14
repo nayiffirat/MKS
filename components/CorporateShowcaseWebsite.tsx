@@ -182,9 +182,9 @@ export const CorporateShowcaseWebsite: React.FC<CorporateShowcaseProps> = ({
                 { label: 'Portföy Çek ve POS Bloke', val: '₺615.000', sub: '4 çek • 3 POS bloke', tone: 'text-emerald-400' },
                 { label: '2025 → 2026 Sezon Devri', val: 'Tam Mutabık', sub: 'Önceki yıl arşivi açık', tone: 'text-amber-300' }
               ].map(card => (
-                <div key={card.label} className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.07]">
-                  <div className="text-[11px] text-stone-400 truncate">{card.label}</div>
-                  <div className={`text-xs sm:text-base font-semibold mt-1 truncate ${card.tone}`}>{card.val}</div>
+                <div key={card.label} className="p-2 sm:p-3 rounded-xl bg-white/[0.03] border border-white/[0.07] min-w-0">
+                  <div className="text-[10px] sm:text-[11px] leading-tight text-stone-400 line-clamp-2 min-h-[2.5em] sm:min-h-0">{card.label}</div>
+                  <div className={`text-[11px] sm:text-base font-semibold mt-1 tabular-nums whitespace-nowrap ${card.tone}`}>{card.val}</div>
                   <div className="text-[10px] text-stone-500 mt-0.5 truncate">{card.sub}</div>
                 </div>
               ))}
@@ -661,8 +661,9 @@ export const CorporateShowcaseWebsite: React.FC<CorporateShowcaseProps> = ({
             <MksBrandLogo size="lg" rounded="xl" className="border-emerald-500/25 shadow-md" />
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <span className="font-semibold text-white text-sm sm:text-[15px] tracking-tight truncate">
-                  Mühendis Kayıt Sistemi
+                <span className="hidden min-[400px]:inline font-semibold text-white text-sm sm:text-[15px] tracking-tight truncate">
+                  <span className="sm:hidden">Mühendis Kayıt</span>
+                  <span className="hidden sm:inline">Mühendis Kayıt Sistemi</span>
                 </span>
                 <span className="hidden sm:inline-flex px-2 py-0.5 rounded-md text-[11px] font-medium text-stone-400 border border-white/10">
                   Kurumsal v8.2
@@ -907,7 +908,7 @@ export const CorporateShowcaseWebsite: React.FC<CorporateShowcaseProps> = ({
                   {currentSpec.metrics.map(m => (
                     <div key={m.label} className="p-2.5 rounded-xl bg-white/[0.025] border border-white/[0.06]">
                       <div className="text-[10px] text-stone-400 truncate">{m.label}</div>
-                      <div className="text-[11px] font-semibold text-white mt-0.5 truncate">{m.value}</div>
+                      <div className="text-[11px] leading-snug font-semibold text-white mt-0.5 line-clamp-2">{m.value}</div>
                     </div>
                   ))}
                 </div>
@@ -1272,17 +1273,17 @@ export const CorporateShowcaseWebsite: React.FC<CorporateShowcaseProps> = ({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="p-4 rounded-2xl bg-[#0D1219] border border-white/[0.07]">
-                    <div className="text-lg sm:text-2xl font-semibold text-white">4 Platform</div>
+                <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                  <div className="p-3 sm:p-4 rounded-2xl bg-[#0D1219] border border-white/[0.07]">
+                    <div className="text-sm sm:text-2xl leading-tight font-semibold text-white">4 Platform</div>
                     <div className="text-[11px] text-stone-400 mt-1">Windows, Android, iOS, Web</div>
                   </div>
-                  <div className="p-4 rounded-2xl bg-[#0D1219] border border-white/[0.07]">
-                    <div className="text-lg sm:text-2xl font-semibold text-emerald-400">7/24 Aktif</div>
+                  <div className="p-3 sm:p-4 rounded-2xl bg-[#0D1219] border border-white/[0.07]">
+                    <div className="text-sm sm:text-2xl leading-tight font-semibold text-emerald-400">7/24 Aktif</div>
                     <div className="text-[11px] text-stone-400 mt-1">Bulut + Çevrimdışı Senkron</div>
                   </div>
-                  <div className="p-4 rounded-2xl bg-[#0D1219] border border-white/[0.07]">
-                    <div className="text-lg sm:text-2xl font-semibold text-white">Tam Uyum</div>
+                  <div className="p-3 sm:p-4 rounded-2xl bg-[#0D1219] border border-white/[0.07]">
+                    <div className="text-sm sm:text-2xl leading-tight font-semibold text-white">Tam Uyum</div>
                     <div className="text-[11px] text-stone-400 mt-1">Cari • Stok • BKTS/GTS • Fatura</div>
                   </div>
                 </div>
@@ -1398,6 +1399,17 @@ export const CorporateShowcaseWebsite: React.FC<CorporateShowcaseProps> = ({
             <button type="button" onClick={() => onOpenAuthModal('LOGIN')} className="hover:text-white transition-colors">
               Giriş yap
             </button>
+            <button type="button" onClick={() => onOpenPortalTab('pricing')} className="hover:text-white transition-colors">
+              Paketler & Fiyatlar
+            </button>
+            <a 
+              href="https://www.shopier.com/firattarim" 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="hover:text-emerald-400 text-stone-300 transition-colors inline-flex items-center gap-1 font-medium"
+            >
+              <ShieldCheck size={13} className="text-emerald-400" /> Shopier Güvenli Mağaza
+            </a>
             <button type="button" onClick={() => onOpenPortalTab('download')} className="hover:text-white transition-colors">
               İndirme merkezi
             </button>

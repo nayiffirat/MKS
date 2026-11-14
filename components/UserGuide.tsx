@@ -794,7 +794,7 @@ export const UserGuide: React.FC<UserGuideProps> = ({ onBack, onNavigate }) => {
                 className={`text-left p-4 rounded-2xl bg-gradient-to-br ${cat.accentClass} border hover:scale-[1.01] transition-all flex flex-col justify-between gap-3`}
               >
                 <div className="flex items-center justify-between w-full">
-                  <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-black/40">
+                  <span className="mks-on-dark text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md">
                     ÖNEM #{cat.priorityOrder}
                   </span>
                   <Icon size={18} />

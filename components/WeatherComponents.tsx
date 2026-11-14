@@ -11,6 +11,9 @@ import { dbService } from '../services/db';
 import { PortalInquiry } from '../types';
 import { ModalCloseButton } from './ModalCloseButton';
 import { useBackHandler } from '../utils/navigationManager';
+
+// Parsel bazlı canlı hava ekranı: yalnızca açıldığında yüklenir
+const AgroWeatherScreen = React.lazy(() => import('./weather/AgroWeatherScreen'));
 import {
   Sun,
   Wind,
@@ -169,12 +172,14 @@ export const WeatherWidget: React.FC = () => {
   const { t } = useAppViewModel();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCitySelectorOpen, setIsCitySelectorOpen] = useState(false);
+  const [isAgroOpen, setIsAgroOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useBackHandler(isDialogOpen, () => setIsDialogOpen(false), 'WeatherComponents_detail', 50);
   // City selector can open on top of the detail dialog, so it gets a higher priority.
   useBackHandler(isCitySelectorOpen, () => setIsCitySelectorOpen(false), 'WeatherComponents_citySelector', 60);
+  useBackHandler(isAgroOpen, () => setIsAgroOpen(false), 'WeatherComponents_agro', 55);
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
@@ -224,7 +229,7 @@ export const WeatherWidget: React.FC = () => {
             </div>
           </div>
 
-          <div onClick={() => setIsDialogOpen(true)} className="flex justify-between items-center cursor-pointer pt-0.5">
+          <div onClick={() => setIsAgroOpen(true)} role="button" aria-label="Detaylı hava durumunu aç" className="flex justify-between items-center cursor-pointer pt-0.5">
             <div className="flex items-center space-x-2.5">
               <span className="text-3xl font-black text-white tracking-tight tabular-nums">
                 {Math.round(current.temperature_2m)}°C
@@ -252,6 +257,12 @@ export const WeatherWidget: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {isAgroOpen && (
+        <React.Suspense fallback={null}>
+          <AgroWeatherScreen isOpen onClose={() => setIsAgroOpen(false)} />
+        </React.Suspense>
+      )}
 
       {/* City Selector Modal */}
       {isCitySelectorOpen && (
@@ -557,7 +568,7 @@ export const DashboardWeatherAndBriefingBanner: React.FC<{
   const deltaT = current ? calculateDeltaT(current.temperature_2m, current.relative_humidity_2m) : 4.5;
   const advice = current
     ? getSprayingAdvice(current.wind_speed_10m, current.temperature_2m, current.weather_code)
-    : { status: 'Yükleniyor', color: 'text-emerald-400', bg: 'bg-emerald-500/15', isSuitable: true };
+    : { status: 'Yükleniyor', color: 'text-emerald-300 font-extrabold', bg: 'bg-emerald-500/20', isSuitable: true };
   const theme = current ? getWeatherUITheme(current.weather_code) : { label: 'Açık' };
   const hourlySlots = useMemo(() => computeHourlySprayingWindow(weather), [weather]);
   const idealHoursLabel = useMemo(() => {
@@ -589,7 +600,7 @@ export const DashboardWeatherAndBriefingBanner: React.FC<{
       <div className="v22-bento-card p-3.5 sm:p-4 border border-emerald-500/20 shadow-lg">
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-3.5 items-center">
           {/* Left 5 Cols: Live Weather + Delta-T Spraying Radar */}
-          <div className="xl:col-span-5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 rounded-2xl bg-stone-950/85 border border-white/10 text-white">
+          <div className="xl:col-span-5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 rounded-2xl mks-on-dark border border-white/10 text-white">
             <div className="flex items-center gap-3 min-w-0">
               <div className="w-11 h-11 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
                 <WeatherIcon code={current?.weather_code ?? 0} size={26} />
@@ -630,14 +641,14 @@ export const DashboardWeatherAndBriefingBanner: React.FC<{
               <button
                 type="button"
                 onClick={() => setIsDetailOpen(true)}
-                className={`px-3 py-1.5 min-h-[36px] rounded-xl text-xs font-bold border border-white/10 ${advice.bg} ${advice.color} hover:opacity-90 transition-opacity`}
+                className={`px-3 py-1.5 min-h-[36px] rounded-xl text-xs font-bold border border-emerald-400/40 shadow-sm ${advice.bg} ${advice.color} hover:opacity-95 transition-opacity`}
               >
                 {advice.status}
               </button>
               <button
                 type="button"
                 onClick={() => setIsDetailOpen(true)}
-                className="text-[11px] text-stone-300 hover:text-emerald-300 font-semibold underline-offset-2 hover:underline py-1"
+                className="text-[11px] text-emerald-300/90 hover:text-emerald-200 font-bold underline-offset-2 hover:underline py-1 transition-colors"
               >
                 {idealHoursLabel} →
               </button>
@@ -741,69 +752,9 @@ export const DashboardWeatherAndBriefingBanner: React.FC<{
 
       {/* Hidden WeatherWidget modal trigger when user clicks "idealHoursLabel" or "GDD Zararlı Riski" */}
       {isDetailOpen && (
-        <div
-          className="fixed inset-0 z-[120] bg-stone-950/95 backdrop-blur-xl flex flex-col p-4 sm:p-6 overflow-y-auto custom-scrollbar"
-          onClick={() => setIsDetailOpen(false)}
-        >
-          <div className="max-w-3xl w-full mx-auto space-y-4" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-black text-white flex items-center gap-2">
-                <Sparkles size={18} className="text-emerald-400" />
-                <span>{selectedCity.name} • Zirai Hava, Delta-T İlaçlama Penceresi & GDD Radarı</span>
-              </h3>
-              <ModalCloseButton onClick={() => setIsDetailOpen(false)} />
-            </div>
-            <WeatherWidget />
-            {hourlySlots.length > 0 && (
-              <div className="bg-stone-900 border border-white/10 rounded-2xl p-4 space-y-2.5">
-                <div className="text-xs font-black text-emerald-400 uppercase">
-                  Önümüzdeki 12 Saat İlaçlama Uygunluğu (Delta-T + Rüzgar)
-                </div>
-                <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-                  {hourlySlots.map((slot, i) => (
-                    <div
-                      key={i}
-                      className={`p-2 rounded-xl border text-center ${
-                        slot.suitability === 'IDEAL'
-                          ? 'bg-emerald-500/15 border-emerald-500/35 text-emerald-300'
-                          : slot.suitability === 'DIKKAT'
-                          ? 'bg-amber-500/15 border-amber-500/35 text-amber-300'
-                          : 'bg-rose-500/15 border-rose-500/35 text-rose-300'
-                      }`}
-                    >
-                      <div className="text-xs font-black text-white font-mono">{slot.hourLabel}</div>
-                      <div className="text-[11px] font-bold">{slot.tempC}°C</div>
-                      <div className="text-[11px]">ΔT {slot.deltaT} • {slot.windKmh}km/s</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {weather?.daily && (
-              <div className="bg-stone-900 border border-white/10 rounded-2xl p-4 space-y-2.5">
-                <div className="text-xs font-black text-amber-400 uppercase">
-                  GDD (Etkili Sıcaklık Toplamı) Zararlı & Hastalık Tahmini
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
-                  {computeGddPestAlerts(
-                    (weather.daily as any)._fullMax || weather.daily.temperature_2m_max || [],
-                    (weather.daily as any)._fullMin || weather.daily.temperature_2m_min || [],
-                    current?.relative_humidity_2m || 50
-                  ).map(a => (
-                    <div key={a.id} className="bg-stone-950 border border-white/10 rounded-xl p-3 space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-black text-white">{a.pestName}</span>
-                        <span className="text-[11px] font-black text-amber-300">{a.accumulatedGdd} GDD</span>
-                      </div>
-                      <div className="text-[11px] text-stone-400">{a.crop}</div>
-                      <p className="text-[11px] text-stone-300">{a.advice}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+        <React.Suspense fallback={null}>
+          <AgroWeatherScreen isOpen onClose={() => setIsDetailOpen(false)} />
+        </React.Suspense>
       )}
 
       {/* Producer Portal Inquiries & Payment Notifications Modal (#35 & #38) */}

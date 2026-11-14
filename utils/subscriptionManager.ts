@@ -227,10 +227,27 @@ export interface SubscriptionPlanDefinition {
   googlePlayProductIdYearly: string;
   appleAppStoreProductIdMonthly: string;
   appleAppStoreProductIdYearly: string;
+  shopierUrlMonthly?: string;
+  shopierUrlYearly?: string;
   features: string[];
   highlightColor: string;
   popular?: boolean;
 }
+
+export const SHOPIER_STORE_CONFIG = {
+  storeUrl: 'https://www.shopier.com/firattarim',
+  storeName: 'Mühendis Kayıt Sistemi (MKS) — Fırat Tarım',
+  proMonthlyUrl: 'https://www.shopier.com/firattarim/52837181',
+  proYearlyUrl: 'https://www.shopier.com/firattarim/52837239',
+  ultraMonthlyUrl: 'https://www.shopier.com/firattarim/52837600',
+  ultraYearlyUrl: 'https://www.shopier.com/firattarim/52837843',
+  maxMonthlyUrl: 'https://www.shopier.com/firattarim/52837907',
+  maxYearlyUrl: 'https://www.shopier.com/firattarim/52837923',
+  monthlyPlanUrl: 'https://www.shopier.com/firattarim/52837181',
+  yearlyPlanUrl: 'https://www.shopier.com/firattarim/52837239',
+  supportPhone: '+90 543 853 43 00',
+  supportEmail: 'nayiffirat@gmail.com'
+};
 
 export const DEFAULT_SUBSCRIPTION_PLANS: SubscriptionPlanDefinition[] = [
   {
@@ -247,6 +264,8 @@ export const DEFAULT_SUBSCRIPTION_PLANS: SubscriptionPlanDefinition[] = [
     googlePlayProductIdYearly: 'mks_pro_yearly',
     appleAppStoreProductIdMonthly: 'com.mks.ziraat.pro.monthly',
     appleAppStoreProductIdYearly: 'com.mks.ziraat.pro.yearly',
+    shopierUrlMonthly: 'https://www.shopier.com/firattarim/52837181',
+    shopierUrlYearly: 'https://www.shopier.com/firattarim/52837239',
     features: [
       'Müstahsil (Çiftçi) Cari, Alacak & Risk Takibi',
       'Satış, Reçete & Zirai Fatura Kesimi',
@@ -271,6 +290,8 @@ export const DEFAULT_SUBSCRIPTION_PLANS: SubscriptionPlanDefinition[] = [
     googlePlayProductIdYearly: 'mks_ultra_yearly',
     appleAppStoreProductIdMonthly: 'com.mks.ziraat.ultra.monthly',
     appleAppStoreProductIdYearly: 'com.mks.ziraat.ultra.yearly',
+    shopierUrlMonthly: 'https://www.shopier.com/firattarim/52837600',
+    shopierUrlYearly: 'https://www.shopier.com/firattarim/52837843',
     popular: true,
     features: [
       '%100 Reklamsız Kesintisiz Kullanım',
@@ -297,6 +318,8 @@ export const DEFAULT_SUBSCRIPTION_PLANS: SubscriptionPlanDefinition[] = [
     googlePlayProductIdYearly: 'mks_max_yearly',
     appleAppStoreProductIdMonthly: 'com.mks.ziraat.max.monthly',
     appleAppStoreProductIdYearly: 'com.mks.ziraat.max.yearly',
+    shopierUrlMonthly: 'https://www.shopier.com/firattarim/52837907',
+    shopierUrlYearly: 'https://www.shopier.com/firattarim/52837923',
     features: [
       'ULTRA Paketteki Tüm Özellikler (%100 Reklamsız)',
       'Sınırsız Zirai Yapay Zeka Asistanı & Fotoğraftan Hastalık Teşhisi',
@@ -544,8 +567,22 @@ export async function maybeShowFreeTierAd(userProfile: any, isAdmin = false) {
 }
 
 /**
+ * Returns direct Shopier checkout URL for the selected subscription plan and billing period.
+ */
+export function getShopierCheckoutUrl(planId: SubscriptionTierId, period: BillingPeriod = 'MONTHLY'): string {
+  const plans = getSubscriptionPlans();
+  const plan = plans.find(p => p.id === planId);
+  if (!plan) return SHOPIER_STORE_CONFIG.storeUrl;
+
+  if (period === 'YEARLY') {
+    return plan.shopierUrlYearly || SHOPIER_STORE_CONFIG.yearlyPlanUrl;
+  }
+  return plan.shopierUrlMonthly || SHOPIER_STORE_CONFIG.monthlyPlanUrl;
+}
+
+/**
  * Initiates a native Google Play Billing / Apple App Store StoreKit subscription purchase
- * via @revenuecat/purchases-capacitor when running on Android or iOS, or opens Web/WhatsApp/Support checkout.
+ * via @revenuecat/purchases-capacitor when running on Android or iOS, or opens Shopier / Web checkout.
  */
 export async function purchaseSubscriptionPlan(
   planId: SubscriptionTierId,
@@ -579,9 +616,22 @@ export async function purchaseSubscriptionPlan(
         localStorage.setItem('mks_active_tier', planId);
         return true;
       }
-    } catch (err) {
+    } catch (err: any) {
+      // Kullanıcı mağaza ekranını kendisi kapattıysa hiçbir şey açma
+      if (err?.userCancelled || err?.code === '1' || /cancel/i.test(String(err?.message || ''))) {
+        return false;
+      }
       console.warn('Native store billing fallback to direct activation:', err);
     }
+    // Mobil uygulama içinde harici ödeme sayfasına yönlendirme yapılmaz (Google Play / App Store kuralları)
+    onFallbackCheckout(plan, period);
+    return false;
+  }
+
+  // Web / masaüstü: Shopier güvenli ödeme sayfası
+  const shopierUrl = getShopierCheckoutUrl(planId, period);
+  if (typeof window !== 'undefined' && shopierUrl) {
+    window.open(shopierUrl, '_blank', 'noopener,noreferrer');
   }
 
   onFallbackCheckout(plan, period);

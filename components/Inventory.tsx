@@ -1,11 +1,13 @@
 import { createMultiPagePdf, renderElementToCanvas } from '../utils/pdfHelper';
+import { createPortal as invPortal } from 'react-dom';
+import { SlidersHorizontal as InvFilterIcon, MoreHorizontal as InvMoreIcon, X as InvCloseIcon, ChevronRight as InvChevIcon } from 'lucide-react';
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
     Search, Plus, Package, DollarSign, TrendingUp, 
     Trash2, Edit2, Save, X, AlertCircle, Filter,
     ArrowUpRight, ArrowDownRight, BarChart3, PieChart, FlaskConical,
     History, User, Calendar, List, Download, Eye, EyeOff, Camera, Barcode, Truck, RefreshCw, ChevronRight, ClipboardCheck, ArrowRight, ShoppingCart, Share2, Sparkles, Loader2, Upload, ShieldCheck, Layers
-} from 'lucide-react';
+, Receipt , FileText } from 'lucide-react';
 import LazyBarcodeScanner from './LazyBarcodeScanner';
 import { 
     ResponsiveContainer, BarChart, Bar, XAxis, YAxis, 
@@ -252,6 +254,8 @@ export const InventoryScreen: React.FC<{
     const [editingAdjustmentAmount, setEditingAdjustmentAmount] = useState('');
     const [showProfitability, setShowProfitability] = useState(false);
     const [isListMenuOpen, setIsListMenuOpen] = useState(false);
+    const [isActionsOpen, setIsActionsOpen] = useState(false);
+    const [isFilterOpen, setIsFilterOpen] = useState(false);
     const [stockFilter, setStockFilter] = useState<'ALL' | 'OUT_OF_STOCK' | 'IN_STOCK'>('ALL');
     const [isStockMenuOpen, setIsStockMenuOpen] = useState(false);
     const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
@@ -2286,272 +2290,212 @@ export const InventoryScreen: React.FC<{
         };
     }, [inventory, prescriptions, stats.totalExpenses, accounts, selectedYear]);
 
+    const activeFilterCount = (categoryFilter !== 'ALL' ? 1 : 0) + (stockFilter !== 'ALL' ? 1 : 0) + (expiryFilter !== 'ALL' ? 1 : 0) + (selectedYear !== currentYear ? 1 : 0);
+
     return (
-        <div className="p-4 pb-32 max-w-5xl mx-auto animate-in fade-in duration-500">
-            {/* Quick action bar: ministry stock-in, equivalent finder, AI invoice OCR */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-5">
-                <button
-                    onClick={() => (window as any).mks_open_ministry?.('malkabul')}
-                    className="flex items-center justify-center gap-2 min-h-[42px] px-3 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold hover:bg-emerald-500/20 active:scale-95 transition-all"
-                ><ShieldCheck size={15} className="shrink-0" /><span className="truncate">Fabrikadan Mal Kabul (BKTS/GTS)</span></button>
-                <button
-                    onClick={() => (window as any).mks_open_ministry?.('esdeger')}
-                    className="flex items-center justify-center gap-2 min-h-[42px] px-3 py-2.5 rounded-xl bg-sky-500/10 border border-sky-500/20 text-sky-400 text-xs font-bold hover:bg-sky-500/20 active:scale-95 transition-all"
-                ><Layers size={15} className="shrink-0" /><span className="truncate">Eşdeğer / Muadil İlaç Bul</span></button>
-                <button
-                    onClick={() => { setOcrRows([]); setIsOcrInvoiceOpen(true); }}
-                    className="flex items-center justify-center gap-2 min-h-[42px] px-3 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-bold hover:bg-amber-500/20 active:scale-95 transition-all"
-                ><Sparkles size={15} className="shrink-0" /><span className="truncate">AI Alış Faturası Tara</span></button>
+        <div className="p-1 sm:p-4 pb-32 max-w-5xl mx-auto animate-in fade-in duration-500">
+            {/* Başlık (yalnız geniş ekran) */}
+            <div className="hidden md:flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center border border-emerald-500/20 shrink-0">
+                    <Package className="text-emerald-500" size={22} />
+                </div>
+                <div>
+                    <h1 className="text-xl font-black text-stone-100 tracking-tight leading-tight">Depo ve Stok</h1>
+                    <span className="text-[11px] font-medium text-stone-400">Stok, maliyet ve sayım yönetimi</span>
+                </div>
             </div>
 
-            {/* Header */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-                <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center border border-emerald-500/20 shrink-0">
-                        <Package className="text-emerald-500" size={22} />
-                    </div>
-                    <div>
-                        <h1 className="text-xl font-black text-stone-100 tracking-tight leading-tight">Depo ve Stok</h1>
-                        <div className="flex items-center gap-1.5 mt-0.5">
-                            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full shrink-0"></span>
-                            <span className="text-[11px] font-medium text-stone-400">Stok, maliyet ve sayım yönetimi</span>
+            {/* 1. satır: sekmeler + İşlemler */}
+            <div className="flex items-stretch gap-2 mb-2.5 sm:mb-4">
+                <div className={`flex-1 min-w-0 grid gap-1 bg-stone-900/80 p-1 rounded-2xl border border-white/10 ${!isSales && !hideCost ? 'grid-cols-3' : 'grid-cols-1'}`}>
+                    {([['LIST', 'Depo', 'Depo', Package], ...(!isSales && !hideCost ? [['ANALYSIS', 'Analiz', 'Finansal Analiz', BarChart3], ['PROFIT_LOSS', 'Kâr', 'Kâr / Zarar', TrendingUp]] : [])] as Array<[typeof activeTab, string, string, React.ElementType]>).map(([id, short, full, Icon]) => (
+                        <button
+                            key={id}
+                            onClick={() => setActiveTab(id)}
+                            aria-pressed={activeTab === id}
+                            className={`min-w-0 min-h-[40px] px-2 rounded-xl text-xs font-extrabold transition-all flex items-center justify-center gap-1.5 ${activeTab === id ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/40' : 'text-stone-400 hover:text-stone-200 hover:bg-stone-800/50'}`}
+                        >
+                            <Icon size={14} className="shrink-0" />
+                            <span className="truncate sm:hidden">{short}</span>
+                            <span className="truncate hidden sm:inline">{full}</span>
+                        </button>
+                    ))}
+                </div>
+                <button
+                    onClick={() => setIsActionsOpen(true)}
+                    aria-label="Depo işlemleri"
+                    className="shrink-0 px-3.5 rounded-2xl bg-stone-900/80 border border-white/10 text-stone-200 text-xs font-extrabold flex items-center justify-center gap-1.5 active:scale-95 transition-all"
+                >
+                    <InvMoreIcon size={18} />
+                    <span className="hidden sm:inline">İşlemler</span>
+                </button>
+            </div>
+
+            {/* İşlemler: seyrek kullanılan her şey tek menüde */}
+            {isActionsOpen && invPortal(
+                <div className="fixed inset-0 z-[120] bg-black/70 flex items-end sm:items-center justify-center sm:p-4" onClick={() => setIsActionsOpen(false)}>
+                    <div className="w-full sm:max-w-md max-h-[85dvh] overflow-y-auto bg-stone-900 border border-white/10 rounded-t-3xl sm:rounded-3xl p-3 pb-[max(1rem,env(safe-area-inset-bottom))]" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center justify-between px-1.5 pb-2">
+                            <h3 className="text-sm font-black text-stone-100">Depo İşlemleri</h3>
+                            <button onClick={() => setIsActionsOpen(false)} aria-label="Kapat" className="w-10 h-10 rounded-xl bg-stone-800 text-stone-300 flex items-center justify-center"><InvCloseIcon size={18} /></button>
                         </div>
+                        {([
+                            { group: 'Stok girişi' },
+                            { icon: ShieldCheck, color: 'text-emerald-400', label: 'Mal Kabul (BKTS/GTS)', hint: 'Karekodla resmî mal kabul', run: () => (window as any).mks_open_ministry?.('malkabul') },
+                            { icon: Sparkles, color: 'text-amber-400', label: 'Alış Faturası Tara', hint: 'Fatura fotoğrafından ürünleri ekle', run: () => { setOcrRows([]); setIsOcrInvoiceOpen(true); } },
+                            { icon: ShoppingCart, color: 'text-emerald-400', label: 'Akıllı Sipariş Listesi', hint: 'Azalan ürünler için sipariş önerisi', run: () => setIsSmartOrderModalOpen(true) },
+                            { group: 'Fiyat ve ürün' },
+                            ...(canEditInventory ? [{ icon: DollarSign, color: 'text-amber-400', label: 'Fiyatları Güncelle', hint: 'Toplu alış / satış fiyatı', run: openPriceUpdateModal }] : []),
+                            { icon: Layers, color: 'text-sky-400', label: 'Muadil İlaç Bul', hint: 'Aynı etken maddeli ürünler', run: () => (window as any).mks_open_ministry?.('esdeger') },
+                            { group: 'e-Fatura' },
+                            { icon: Receipt, color: 'text-indigo-400', label: 'Gelen e-Faturalar', hint: 'Tedarikçi faturalarını stoğa al', run: () => (window as any).mks_open_edm?.('incoming') },
+                            { icon: FileText, color: 'text-emerald-400', label: 'e-Faturalı Stoktan Fatura Kes', hint: '', run: () => (window as any).mks_open_edm?.('issue') },
+                            { group: 'PDF rapor' },
+                            { icon: User, color: 'text-blue-400', label: 'Müşteri Fiyat Listesi', hint: '', run: () => generateInventoryPDF('CUSTOMER') },
+                            { icon: Package, color: 'text-amber-400', label: 'İç Stok ve Maliyet Listesi', hint: '', run: () => generateInventoryPDF('INTERNAL') },
+                            { icon: TrendingUp, color: 'text-emerald-400', label: 'Tam Finansal Rapor', hint: '', run: () => generateInventoryPDF('FULL') }
+                        ] as Array<{ group?: string; icon?: React.ElementType; color?: string; label?: string; hint?: string; run?: () => void }>).map((a, i) => a.group ? (
+                            <p key={`g${i}`} className="px-2 pt-3 pb-1 text-[10px] font-black uppercase tracking-widest text-stone-500">{a.group}</p>
+                        ) : (
+                            <button key={a.label} onClick={() => { setIsActionsOpen(false); a.run?.(); }} className="w-full min-h-[48px] px-2 rounded-xl flex items-center gap-3 text-left hover:bg-white/5 active:bg-white/10 transition-colors">
+                                {a.icon && <a.icon size={18} className={`shrink-0 ${a.color}`} />}
+                                <span className="min-w-0 flex-1">
+                                    <span className="block text-sm font-bold text-stone-100 truncate">{a.label}</span>
+                                    {a.hint && <span className="block text-[11px] text-stone-400 truncate">{a.hint}</span>}
+                                </span>
+                                <InvChevIcon size={16} className="shrink-0 text-stone-600" />
+                            </button>
+                        ))}
                     </div>
-                </div>
-                
-                <div className="flex items-center gap-1 w-full flex-nowrap overflow-hidden">
-                    <div className="relative flex-1 min-w-0">
-                        <button 
-                            onClick={() => setIsListMenuOpen(!isListMenuOpen)}
-                            className="w-full bg-stone-900/80 hover:bg-stone-800 text-stone-300 px-1 py-1.5 rounded-xl font-black text-[9px] border border-white/10 active:scale-95 transition-all flex flex-col items-center justify-center gap-1 group shadow-sm uppercase tracking-tighter h-11 min-w-0"
-                        >
-                            <List size={14} className="text-stone-500 group-hover:text-emerald-400 transition-colors shrink-0" />
-                            <span className="truncate w-full text-center px-0.5">Depo Raporu</span>
-                        </button>
-                        
-                        {isListMenuOpen && (
-                            <>
-                                <div className="fixed inset-0 z-30" onClick={() => setIsListMenuOpen(false)}></div>
-                                <div className="absolute top-full left-0 mt-2 w-52 bg-stone-900 border border-white/10 rounded-2xl shadow-2xl z-40 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
-                                    <div className="p-2 border-b border-white/5 bg-stone-950/50">
-                                        <span className="text-[9px] font-black text-stone-500 uppercase tracking-widest px-2">PDF Rapor Seçenekleri</span>
-                                    </div>
-                                    <button 
-                                        onClick={() => { generateInventoryPDF('CUSTOMER'); setIsListMenuOpen(false); }}
-                                        className="w-full text-left px-4 py-2.5 text-[10px] font-bold text-stone-300 hover:bg-stone-800 hover:text-emerald-400 flex items-center gap-3 transition-colors"
-                                    >
-                                        <User size={12} className="text-blue-400" />
-                                        Müşteri Fiyat Listesi
-                                    </button>
-                                    <button 
-                                        onClick={() => { generateInventoryPDF('INTERNAL'); setIsListMenuOpen(false); }}
-                                        className="w-full text-left px-4 py-2.5 text-[10px] font-bold text-stone-300 hover:bg-stone-800 hover:text-emerald-400 flex items-center gap-3 transition-colors"
-                                    >
-                                        <Package size={12} className="text-amber-400" />
-                                        İç Stok & Maliyet Listesi
-                                    </button>
-                                    <button 
-                                        onClick={() => { generateInventoryPDF('FULL'); setIsListMenuOpen(false); }}
-                                        className="w-full text-left px-4 py-2.5 text-[10px] font-bold text-stone-300 hover:bg-stone-800 hover:text-emerald-400 flex items-center gap-3 transition-colors"
-                                    >
-                                        <TrendingUp size={12} className="text-emerald-400" />
-                                        Tam Finansal Rapor
-                                    </button>
-                                </div>
-                            </>
-                        )}
-                    </div>
-
-                    <div className="relative flex-1 min-w-0">
-                        <button 
-                            onClick={() => setIsStockMenuOpen(!isStockMenuOpen)}
-                            className={`w-full px-1 py-1.5 rounded-xl border transition-all flex flex-col items-center justify-center gap-1 font-black text-[9px] uppercase tracking-tighter shadow-sm active:scale-95 h-11 min-w-0 ${stockFilter !== 'ALL' ? 'bg-amber-500/20 border-amber-500/50 text-amber-400' : 'bg-stone-900/80 border-white/10 text-stone-500 hover:text-stone-300'}`}
-                        >
-                            {stockFilter === 'ALL' ? <Eye size={14} className="shrink-0" /> : stockFilter === 'OUT_OF_STOCK' ? <EyeOff size={14} className="shrink-0" /> : <Eye size={14} className="shrink-0" />}
-                            <span className="truncate w-full text-center px-0.5">{stockFilter === 'ALL' ? "Tümünü Göster" : "Filtreli"}</span>
-                        </button>
-
-                        {isStockMenuOpen && (
-                            <>
-                                <div className="fixed inset-0 z-30" onClick={() => setIsStockMenuOpen(false)}></div>
-                                <div className="absolute top-full right-0 mt-2 w-40 bg-stone-900 border border-white/10 rounded-2xl shadow-2xl z-40 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
-                                    <button 
-                                        onClick={() => { setStockFilter('ALL'); setIsStockMenuOpen(false); }}
-                                        className={`w-full text-left px-4 py-2.5 text-[10px] font-bold flex items-center gap-3 transition-colors ${stockFilter === 'ALL' ? 'bg-stone-800 text-emerald-400' : 'text-stone-400 hover:bg-stone-800 hover:text-stone-200'}`}
-                                    >
-                                        <List size={12} /> Tümünü Göster
-                                    </button>
-                                    <button 
-                                        onClick={() => { setStockFilter('OUT_OF_STOCK'); setIsStockMenuOpen(false); }}
-                                        className={`w-full text-left px-4 py-2.5 text-[10px] font-bold flex items-center gap-3 transition-colors ${stockFilter === 'OUT_OF_STOCK' ? 'bg-stone-800 text-amber-400' : 'text-stone-400 hover:bg-stone-800 hover:text-stone-200'}`}
-                                    >
-                                        <EyeOff size={12} /> Bitenleri Göster
-                                    </button>
-                                    <button 
-                                        onClick={() => { setStockFilter('IN_STOCK'); setIsStockMenuOpen(false); }}
-                                        className={`w-full text-left px-4 py-2.5 text-[10px] font-bold flex items-center gap-3 transition-colors ${stockFilter === 'IN_STOCK' ? 'bg-stone-800 text-emerald-400' : 'text-stone-400 hover:bg-stone-800 hover:text-stone-200'}`}
-                                    >
-                                        <Eye size={12} /> Kalanları Göster
-                                    </button>
-                                </div>
-                            </>
-                        )}
-                    </div>
-
-                    {canEditInventory && (
-                        <button 
-                            onClick={openPriceUpdateModal}
-                            className="flex-1 bg-amber-600/20 hover:bg-amber-600/30 text-amber-500 border border-amber-500/30 px-1 py-1.5 rounded-xl font-black text-[9px] shadow-sm active:scale-95 transition-all flex flex-col items-center justify-center gap-1 uppercase tracking-tighter h-11 min-w-0"
-                        >
-                            <DollarSign size={14} className="shrink-0" />
-                            <span className="truncate w-full text-center px-0.5">Fiyat Güncelle</span>
-                        </button>
-                    )}
-
-                    {canEditInventory && (
-                        <button 
-                            onClick={() => openAddModal()}
-                            className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white px-1 py-1.5 rounded-xl font-black text-[9px] shadow-lg shadow-emerald-900/20 active:scale-95 transition-all flex flex-col items-center justify-center gap-1 uppercase tracking-tighter h-11 min-w-0"
-                        >
-                            <Plus size={16} className="shrink-0" />
-                            <span className="truncate w-full text-center px-0.5">Ürün Ekle</span>
-                        </button>
-                    )}
-                </div>
-            </div>
-
-            {/* Tabs */}
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
-              <div className="flex gap-1.5 bg-stone-900/80 p-1 rounded-2xl border border-white/10 w-fit shadow-inner">
-                <button 
-                    onClick={() => setActiveTab('LIST')}
-                    className={`px-3 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${activeTab === 'LIST' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/40' : 'text-stone-500 hover:text-stone-300 hover:bg-stone-800/50'}`}
-                >
-                    <Package size={14} /> 🏠 Sistem Deposu
-                </button>
-                {!isSales && !hideCost && (
-                    <>
-                        <button 
-                            onClick={() => setActiveTab('ANALYSIS')}
-                            className={`px-3 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${activeTab === 'ANALYSIS' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/40' : 'text-stone-500 hover:text-stone-300 hover:bg-stone-800/50'}`}
-                        >
-                            <BarChart3 size={14} /> Finansal Analiz
-                        </button>
-                        <button 
-                            onClick={() => setActiveTab('PROFIT_LOSS')}
-                            className={`px-3 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${activeTab === 'PROFIT_LOSS' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/40' : 'text-stone-500 hover:text-stone-300 hover:bg-stone-800/50'}`}
-                        >
-                            <TrendingUp size={14} /> Kar / Zarar
-                        </button>
-                    </>
-                )}
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  onClick={() => (window as any).mks_open_edm?.('incoming')}
-                  className="px-3.5 py-2 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/40 text-[11px] font-black flex items-center gap-1.5 shadow-sm"
-                >
-                  <span>🧾 e-Fatura Deposu &amp; Gelen e-Faturalar</span>
-                </button>
-                <button
-                  onClick={() => (window as any).mks_open_edm?.('issue')}
-                  className="px-3.5 py-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-[11px] font-black flex items-center gap-1.5 shadow-sm"
-                >
-                  <span>📤 Sadece e-Faturalı Stoğa Fatura Kes</span>
-                </button>
-              </div>
-            </div>
+                </div>,
+                document.body
+            )}
 
             {activeTab === 'LIST' && (
                 <div className="space-y-4 animate-in slide-in-from-bottom-2 duration-300">
-                    {/* Search & Filter */}
-                    <div className="flex flex-col gap-2 mb-4">
-                        <div className="flex flex-wrap sm:flex-nowrap gap-2">
-                            <select 
-                                className="flex-1 bg-stone-900/80 border border-white/10 rounded-xl px-3 py-2 text-stone-400 text-xs font-bold outline-none cursor-pointer hover:text-stone-200 transition-colors min-w-0"
-                                value={categoryFilter}
-                                onChange={(e) => setCategoryFilter(e.target.value)}
-                            >
-                                <option value="ALL">Tüm Kategoriler</option>
-                                {Object.values(PesticideCategory).map(cat => (
-                                    <option key={cat} value={cat}>{cat}</option>
-                                ))}
-                            </select>
-
-                            <div className="flex items-center gap-1.5 bg-stone-900/80 border border-white/10 rounded-xl px-2.5 py-2 text-stone-300 text-xs font-bold shadow-sm">
-                                <Calendar size={14} className="text-emerald-400 shrink-0" />
-                                <select 
-                                    value={selectedYear}
-                                    onChange={(e) => setSelectedYear(Number(e.target.value))}
-                                    className="bg-transparent text-stone-200 text-xs font-bold outline-none cursor-pointer pr-1"
-                                >
-                                    {yearsList.map(y => (
-                                        <option key={y} value={y} className="bg-stone-900 text-stone-200">
-                                            {y} Yılı {y < currentYear ? '(Devir)' : '(Güncel)'}
-                                        </option>
-                                    ))}
-                                </select>
+                    {/* 2. satır: arama + filtre + ürün ekle */}
+                    <div className="flex flex-col gap-2 mb-3">
+                        <div className="flex items-stretch gap-2">
+                            <div className="flex-1 min-w-0 bg-stone-900/80 border border-white/10 rounded-xl flex items-center px-3 shadow-sm focus-within:border-emerald-500/50 transition-all">
+                                <Search className="text-stone-500 shrink-0" size={17} />
+                                <input
+                                    type="text"
+                                    placeholder="Ürün, barkod veya lot ara"
+                                    className="w-full min-w-0 bg-transparent px-2 py-2.5 text-stone-200 outline-none text-sm font-medium placeholder-stone-600"
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                />
+                                {searchTerm && <button onClick={() => setSearchTerm('')} aria-label="Aramayı temizle" className="shrink-0 p-1 text-stone-500"><InvCloseIcon size={15} /></button>}
                             </div>
+                            <button
+                                onClick={() => setIsFilterOpen(v => !v)}
+                                aria-pressed={isFilterOpen}
+                                aria-label="Filtreler"
+                                className={`relative shrink-0 w-11 sm:w-auto sm:px-3 rounded-xl border text-xs font-extrabold flex items-center justify-center gap-1.5 active:scale-95 transition-all ${isFilterOpen || activeFilterCount > 0 ? 'bg-amber-500/20 border-amber-500/50 text-amber-400' : 'bg-stone-900/80 border-white/10 text-stone-300'}`}
+                            >
+                                <InvFilterIcon size={17} />
+                                <span className="hidden sm:inline">Filtre</span>
+                                {activeFilterCount > 0 && <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-amber-500 text-stone-950 text-[10px] font-black flex items-center justify-center">{activeFilterCount}</span>}
+                            </button>
+                            {canEditInventory && (
+                                <button
+                                    onClick={() => openAddModal()}
+                                    aria-label="Ürün ekle"
+                                    className="shrink-0 w-11 sm:w-auto sm:px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold shadow-lg shadow-emerald-900/20 flex items-center justify-center gap-1.5 active:scale-95 transition-all"
+                                >
+                                    <Plus size={19} />
+                                    <span className="hidden sm:inline">Ürün Ekle</span>
+                                </button>
+                            )}
+                        </div>
 
+                        {/* SKT uyarısı: yalnız risk varken, tek satır */}
+                        {!isFilterOpen && expiryFilter === 'ALL' && (sktRadarCounts.expired + sktRadarCounts.d30) > 0 && (
                             <button
-                                onClick={() => setIsSmartOrderModalOpen(true)}
-                                className="flex-1 bg-emerald-950/30 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-900/50 hover:text-emerald-300 transition-all rounded-xl px-2 py-2 flex items-center justify-center gap-1.5 min-w-0 group"
-                                title="Akıllı Sipariş Listesi"
+                                onClick={() => { setExpiryFilter(sktRadarCounts.expired > 0 ? 'EXPIRED' : 'SKT_30'); }}
+                                className="w-full min-h-[36px] px-3 rounded-xl bg-rose-500/10 border border-rose-500/25 text-rose-300 text-[11px] font-bold flex items-center justify-between gap-2"
                             >
-                                <ShoppingCart size={14} className="group-hover:scale-110 transition-transform duration-500 shrink-0" />
-                                <span className="text-xs font-bold truncate">Sipariş Listesi</span>
+                                <span className="truncate">Son kullanma: {sktRadarCounts.expired > 0 ? `${sktRadarCounts.expired} ürünün tarihi geçmiş` : ''}{sktRadarCounts.expired > 0 && sktRadarCounts.d30 > 0 ? ', ' : ''}{sktRadarCounts.d30 > 0 ? `${sktRadarCounts.d30} ürün 30 gün içinde` : ''}</span>
+                                <span className="shrink-0 underline">Göster</span>
                             </button>
-                        </div>
-                        <div className="w-full bg-stone-900/80 border border-white/10 rounded-xl flex items-center px-3 py-0.5 shadow-sm focus-within:border-emerald-500/50 transition-all">
-                            <Search className="text-stone-500 shrink-0" size={18} />
-                            <input 
-                                type="text"
-                                placeholder="Ürün adı, barkod, GTIN veya Lot ara..."
-                                className="w-full bg-transparent p-2.5 text-stone-200 outline-none text-sm font-medium placeholder-stone-600"
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                            />
-                        </div>
+                        )}
 
-                        {/* SKT Radarı (30 / 60 / 90 Gün) (#17) */}
-                        <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                            <button
-                                type="button"
-                                onClick={() => setExpiryFilter('ALL')}
-                                className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border transition-all ${expiryFilter === 'ALL' ? 'bg-emerald-600 text-white border-emerald-500' : 'bg-stone-900/80 text-stone-400 border-white/10 hover:text-stone-200'}`}
-                            >
-                                Tüm SKT'ler
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setExpiryFilter('EXPIRED')}
-                                className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border transition-all ${expiryFilter === 'EXPIRED' ? 'bg-red-600 text-white border-red-500' : 'bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/20'}`}
-                            >
-                                ⛔ SKT Geçmiş ({sktRadarCounts.expired})
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setExpiryFilter('SKT_30')}
-                                className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border transition-all ${expiryFilter === 'SKT_30' ? 'bg-rose-600 text-white border-rose-500' : 'bg-rose-500/10 text-rose-300 border-rose-500/20 hover:bg-rose-500/20'}`}
-                            >
-                                🚨 ≤30 Gün ({sktRadarCounts.d30})
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setExpiryFilter('SKT_60')}
-                                className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border transition-all ${expiryFilter === 'SKT_60' ? 'bg-amber-600 text-stone-950 border-amber-500' : 'bg-amber-500/10 text-amber-300 border-amber-500/20 hover:bg-amber-500/20'}`}
-                            >
-                                ⏳ ≤60 Gün ({sktRadarCounts.d30 + sktRadarCounts.d60})
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setExpiryFilter('SKT_90')}
-                                className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border transition-all ${expiryFilter === 'SKT_90' ? 'bg-sky-600 text-white border-sky-500' : 'bg-sky-500/10 text-sky-300 border-sky-500/20 hover:bg-sky-500/20'}`}
-                            >
-                                📅 ≤90 Gün FEFO ({sktRadarCounts.totalRisk - sktRadarCounts.expired})
-                            </button>
-                        </div>
+                        {/* Filtre paneli */}
+                        {isFilterOpen && (
+                            <div className="rounded-2xl border border-white/10 bg-stone-900/70 p-2.5 space-y-3 animate-in fade-in duration-200">
+                                <div className="grid grid-cols-2 gap-2">
+                                    <label className="block min-w-0">
+                                        <span className="block text-[10px] font-black uppercase tracking-widest text-stone-500 mb-1">Kategori</span>
+                                        <select
+                                            className="w-full min-h-[40px] bg-stone-950 border border-white/10 rounded-xl px-2.5 text-stone-200 text-xs font-bold outline-none min-w-0"
+                                            value={categoryFilter}
+                                            onChange={(e) => setCategoryFilter(e.target.value)}
+                                        >
+                                            <option value="ALL">Tüm Kategoriler</option>
+                                            {Object.values(PesticideCategory).map(cat => (
+                                                <option key={cat} value={cat}>{cat}</option>
+                                            ))}
+                                        </select>
+                                    </label>
+                                    <label className="block min-w-0">
+                                        <span className="block text-[10px] font-black uppercase tracking-widest text-stone-500 mb-1">Yıl</span>
+                                        <select
+                                            value={selectedYear}
+                                            onChange={(e) => setSelectedYear(Number(e.target.value))}
+                                            className="w-full min-h-[40px] bg-stone-950 border border-white/10 rounded-xl px-2.5 text-stone-200 text-xs font-bold outline-none min-w-0"
+                                        >
+                                            {yearsList.map(y => (
+                                                <option key={y} value={y} className="bg-stone-900 text-stone-200">
+                                                    {y} {y < currentYear ? '(Devir)' : '(Güncel)'}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </label>
+                                </div>
+                                <div>
+                                    <span className="block text-[10px] font-black uppercase tracking-widest text-stone-500 mb-1">Stok durumu</span>
+                                    <div className="grid grid-cols-3 gap-1.5">
+                                        {([['ALL', 'Tümü'], ['IN_STOCK', 'Kalanlar'], ['OUT_OF_STOCK', 'Bitenler']] as const).map(([val, label]) => (
+                                            <button key={val} type="button" onClick={() => setStockFilter(val)} aria-pressed={stockFilter === val}
+                                                className={`min-h-[36px] rounded-lg text-[11px] font-bold border transition-all ${stockFilter === val ? 'bg-emerald-600 text-white border-emerald-500' : 'bg-stone-950 text-stone-400 border-white/10'}`}>
+                                                {label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div>
+                                    <span className="block text-[10px] font-black uppercase tracking-widest text-stone-500 mb-1">Son kullanma tarihi</span>
+                                    <div className="flex flex-wrap gap-1.5">
+                                    <button type="button" onClick={() => setExpiryFilter('ALL')} aria-pressed={expiryFilter === 'ALL'}
+                                        className={`min-h-[36px] px-2.5 rounded-lg text-[11px] font-bold border transition-all ${expiryFilter === 'ALL' ? 'bg-emerald-600 text-white border-emerald-500' : 'bg-stone-950 text-stone-400 border-white/10'}`}>
+                                        Tümü
+                                    </button>
+                                    <button type="button" onClick={() => setExpiryFilter('EXPIRED')} aria-pressed={expiryFilter === 'EXPIRED'}
+                                        className={`min-h-[36px] px-2.5 rounded-lg text-[11px] font-bold border transition-all ${expiryFilter === 'EXPIRED' ? 'bg-red-600 text-white border-red-500' : 'bg-red-500/10 text-red-400 border-red-500/20'}`}>
+                                        Geçmiş ({sktRadarCounts.expired})
+                                    </button>
+                                    <button type="button" onClick={() => setExpiryFilter('SKT_30')} aria-pressed={expiryFilter === 'SKT_30'}
+                                        className={`min-h-[36px] px-2.5 rounded-lg text-[11px] font-bold border transition-all ${expiryFilter === 'SKT_30' ? 'bg-rose-600 text-white border-rose-500' : 'bg-rose-500/10 text-rose-300 border-rose-500/20'}`}>
+                                        ≤30 gün ({sktRadarCounts.d30})
+                                    </button>
+                                    <button type="button" onClick={() => setExpiryFilter('SKT_60')} aria-pressed={expiryFilter === 'SKT_60'}
+                                        className={`min-h-[36px] px-2.5 rounded-lg text-[11px] font-bold border transition-all ${expiryFilter === 'SKT_60' ? 'bg-amber-600 text-stone-950 border-amber-500' : 'bg-amber-500/10 text-amber-300 border-amber-500/20'}`}>
+                                        ≤60 gün ({sktRadarCounts.d30 + sktRadarCounts.d60})
+                                    </button>
+                                    <button type="button" onClick={() => setExpiryFilter('SKT_90')} aria-pressed={expiryFilter === 'SKT_90'}
+                                        className={`min-h-[36px] px-2.5 rounded-lg text-[11px] font-bold border transition-all ${expiryFilter === 'SKT_90' ? 'bg-sky-600 text-white border-sky-500' : 'bg-sky-500/10 text-sky-300 border-sky-500/20'}`}>
+                                        ≤90 gün ({sktRadarCounts.totalRisk - sktRadarCounts.expired})
+                                    </button>
+                                    </div>
+                                </div>
+                                {activeFilterCount > 0 && (
+                                    <button type="button" onClick={() => { setCategoryFilter('ALL'); setStockFilter('ALL'); setExpiryFilter('ALL'); setSelectedYear(currentYear); }}
+                                        className="w-full min-h-[38px] rounded-xl bg-stone-800 text-stone-200 text-xs font-bold">
+                                        Filtreleri temizle ({activeFilterCount})
+                                    </button>
+                                )}
+                            </div>
+                        )}
                     </div>
 
                     {selectedYear < currentYear && (
@@ -2615,9 +2559,9 @@ export const InventoryScreen: React.FC<{
                                                 {item.expiryDate && (() => {
                                                     const d = getDaysUntilExpiry(item.expiryDate);
                                                     if (d === null) return null;
-                                                    if (d < 0) return <span className="text-[7.5px] sm:text-[8px] font-black px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30">⛔ SKT GEÇTİ</span>;
-                                                    if (d <= 30) return <span className="text-[7.5px] sm:text-[8px] font-black px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">🚨 SKT {d}G</span>;
-                                                    if (d <= 90) return <span className="text-[7.5px] sm:text-[8px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">⏳ FEFO {d}G</span>;
+                                                    if (d < 0) return <span className="text-[7.5px] sm:text-[8px] font-black px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30">SKT GEÇTİ</span>;
+                                                    if (d <= 30) return <span className="text-[7.5px] sm:text-[8px] font-black px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">SKT {d}G</span>;
+                                                    if (d <= 90) return <span className="text-[7.5px] sm:text-[8px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">FEFO {d}G</span>;
                                                     return <span className="text-[7.5px] sm:text-[8px] font-mono text-stone-500">SKT: {item.expiryDate}</span>;
                                                 })()}
                                                 {item.lotNumber && (
@@ -2667,20 +2611,6 @@ export const InventoryScreen: React.FC<{
                                         )}
                                     </div>
 
-                                    {/* Action row at bottom */}
-                                    <div className="mt-2 sm:mt-3 flex justify-end">
-                                        <button 
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                generateItemReport(item);
-                                            }}
-                                            className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 p-1.5 rounded-lg border border-emerald-500/20 transition-colors flex items-center justify-center gap-1.5"
-                                            title="PDF Raporu İndir"
-                                        >
-                                            <Download size={12} />
-                                            <span className="text-[9px] font-bold uppercase">Rapor PDF</span>
-                                        </button>
-                                    </div>
                                 </div>
                                 );
                             })
@@ -2985,68 +2915,79 @@ export const InventoryScreen: React.FC<{
             {/* Detail Modal — Wide & Organized 2-Column Bento Layout on Desktop & Web */}
             {isDetailModalOpen && selectedDetailItem && (
                 <div
-                    className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-5"
+                    className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 pb-[calc(5.75rem+env(safe-area-inset-bottom))] md:pb-5 sm:p-5"
                     onClick={closeModal}
                 >
                     <div
                         className="bg-stone-900 w-full max-w-lg md:max-w-3xl lg:max-w-5xl rounded-3xl border border-white/10 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[90dvh]"
                         onClick={(e) => e.stopPropagation()}
                     >
-                        <div className="px-5 sm:px-6 py-4 border-b border-white/10 flex flex-wrap justify-between items-center gap-3 bg-stone-950/60 shrink-0">
-                            <div className="min-w-0">
-                                <div className="flex items-center gap-2.5 flex-wrap">
-                                    <h3 className="text-lg sm:text-xl font-black text-stone-100 tracking-tight truncate">{selectedDetailItem.pesticideName}</h3>
-                                    <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-[11px] font-bold text-emerald-300 uppercase tracking-wider">
-                                        {selectedDetailItem.category}
-                                    </span>
+                        <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-white/10 bg-stone-950/60 shrink-0 space-y-2.5">
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                    <h3 className="text-base sm:text-xl font-black text-stone-100 tracking-tight leading-snug break-words">{selectedDetailItem.pesticideName}</h3>
+                                    <div className="flex items-center gap-2 flex-wrap mt-1">
+                                        <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-[10px] font-bold text-emerald-300 uppercase tracking-wide">
+                                            {selectedDetailItem.category}
+                                        </span>
+                                        {(selectedDetailItem.gtin || selectedDetailItem.barcode) && (
+                                            <span className="text-[11px] font-mono text-stone-400 truncate">
+                                                {selectedDetailItem.gtin || selectedDetailItem.barcode}
+                                            </span>
+                                        )}
+                                    </div>
                                 </div>
-                                {(selectedDetailItem.gtin || selectedDetailItem.barcode) && (
-                                    <p className="text-[11px] font-mono text-stone-400 mt-0.5">
-                                        GTIN / Barkod: {selectedDetailItem.gtin || selectedDetailItem.barcode}
-                                    </p>
-                                )}
+                                <button
+                                    onClick={closeModal}
+                                    aria-label="Kapat"
+                                    data-mks-modal-close="true"
+                                    className="shrink-0 w-10 h-10 bg-stone-800 text-stone-300 rounded-xl hover:text-white transition-colors flex items-center justify-center"
+                                >
+                                    <X size={20} />
+                                </button>
                             </div>
                             <div className="flex items-center gap-2">
-                                {canEditInventory && (
-                                    <div className="flex items-center gap-1.5 mr-1 pr-2 border-r border-white/10">
-                                        <button 
-                                            onClick={() => {
-                                                closeModal();
-                                                openEditModal(selectedDetailItem);
-                                            }} 
-                                            className="min-w-[40px] min-h-[40px] px-3 py-2 bg-stone-800 text-stone-300 rounded-xl hover:text-emerald-400 transition-colors flex items-center gap-1.5 text-xs font-bold"
-                                            title="Düzenle"
-                                        >
-                                            <Edit2 size={15} />
-                                            <span className="hidden sm:inline">Düzenle</span>
-                                        </button>
-                                        <button 
-                                            onClick={() => {
-                                                handleDeleteItem(selectedDetailItem.id);
-                                            }} 
-                                            className="min-w-[40px] min-h-[40px] p-2 bg-stone-800 text-stone-400 rounded-xl hover:text-red-400 transition-colors flex items-center justify-center"
-                                            title="Sil"
-                                        >
-                                            <Trash2 size={16} />
-                                        </button>
-                                    </div>
-                                )}
                                 {!hideCost && (
-                                    <button 
-                                        onClick={() => setShowProfitability(!showProfitability)} 
-                                        className={`min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${showProfitability ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-stone-800 text-stone-300 hover:text-white border border-transparent'}`}
+                                    <button
+                                        onClick={() => setShowProfitability(!showProfitability)}
+                                        className={`flex-1 min-h-[40px] px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 border ${showProfitability ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-stone-800 text-stone-300 hover:text-white border-transparent'}`}
                                     >
                                         <TrendingUp size={15} /> Kâr Oranı
                                     </button>
                                 )}
                                 <button
-                                    onClick={closeModal}
-                                    aria-label="Kapat"
-                                    data-mks-modal-close="true"
-                                    className="w-10 h-10 min-w-[40px] min-h-[40px] bg-stone-800 text-stone-300 rounded-xl hover:text-white transition-colors flex items-center justify-center"
+                                    onClick={() => generateItemReport(selectedDetailItem)}
+                                    className="flex-1 min-h-[40px] px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 bg-stone-800 text-stone-300 hover:text-emerald-400 border border-transparent"
+                                    title="Ürün raporunu PDF olarak al"
                                 >
-                                    <X size={20} />
+                                    <Download size={15} /> Rapor PDF
                                 </button>
+                                {canEditInventory && (
+                                    <>
+                                        <button
+                                            onClick={() => {
+                                                closeModal();
+                                                openEditModal(selectedDetailItem);
+                                            }}
+                                            className="shrink-0 min-w-[40px] min-h-[40px] px-3 py-2 bg-stone-800 text-stone-300 rounded-xl hover:text-emerald-400 transition-colors flex items-center justify-center gap-1.5 text-xs font-bold"
+                                            title="Düzenle"
+                                            aria-label="Düzenle"
+                                        >
+                                            <Edit2 size={15} />
+                                            <span className="hidden sm:inline">Düzenle</span>
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                handleDeleteItem(selectedDetailItem.id);
+                                            }}
+                                            className="shrink-0 min-w-[40px] min-h-[40px] p-2 bg-stone-800 text-stone-400 rounded-xl hover:text-red-400 transition-colors flex items-center justify-center"
+                                            title="Sil"
+                                            aria-label="Sil"
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
+                                    </>
+                                )}
                             </div>
                         </div>
                         

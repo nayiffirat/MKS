@@ -12,6 +12,7 @@ import {
   Tooltip,
 } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
+import { MapRadarControl } from './weather/LiveRadarMap';
 import L from "leaflet";
 import {
   ArrowLeft,
@@ -85,7 +86,7 @@ const LocateButton = () => {
         type="button"
         onClick={() => map.locate({ setView: true, maxZoom: 16 })}
         title="Konumuma Git (GPS)"
-        className="absolute bottom-8 right-4 z-[1000] p-3.5 bg-stone-900 hover:bg-stone-800 rounded-2xl shadow-xl border border-white/15 text-sky-400 active:scale-95 transition-all"
+        aria-label="Konumuma git" className="absolute bottom-[calc(6rem+env(safe-area-inset-bottom))] md:bottom-8 right-4 z-[1000] p-3.5 bg-stone-900 hover:bg-stone-800 rounded-2xl shadow-xl border border-white/15 text-sky-400 active:scale-95 transition-all"
       >
         <Navigation size={22} />
       </button>
@@ -1212,7 +1213,7 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
       )}
 
       {/* Altlık Değiştirici (Esri Uydu <-> Sokak) */}
-      <div className="absolute bottom-24 right-4 z-[1000] flex flex-col items-end gap-2">
+      <div className="absolute bottom-[calc(10.5rem+env(safe-area-inset-bottom))] md:bottom-24 right-4 z-[1000] flex flex-col items-end gap-2">
         <button
           type="button"
           onClick={() =>
@@ -1392,6 +1393,7 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
             }}
           />
         )}
+        <MapRadarControl />
       </MapContainer>
 
       {/* Çok Katmanlı Uydu Analizi Modalı */}

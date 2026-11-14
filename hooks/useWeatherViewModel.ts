@@ -181,10 +181,10 @@ export const useWeatherViewModel = () => {
     return { 
         status: 'İlaçlamaya uygun', 
         message: 'Hava koşulları (rüzgar, sıcaklık ve yağış durumu) ilaçlama için mükemmel.', 
-        color: 'text-emerald-400', 
-        bg: 'bg-emerald-500/10',
-        border: 'border-emerald-500/20',
-        iconColor: 'text-emerald-500',
+        color: 'text-emerald-300 font-extrabold', 
+        bg: 'bg-emerald-500/20',
+        border: 'border-emerald-400/40',
+        iconColor: 'text-emerald-300',
         isSuitable: true
     };
   };

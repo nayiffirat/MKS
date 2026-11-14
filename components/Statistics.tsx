@@ -14,6 +14,7 @@ import {
 import { dbService } from '../services/db';
 import { useAppViewModel } from '../context/AppContext';
 import { Prescription } from '../types';
+import { supplierDocKind } from '../utils/tradeCore';
 import { formatCurrency } from '../utils/currency';
 import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
 
@@ -328,6 +329,7 @@ import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
     }, [prescriptions]);
 
     // Calculate Profit/Loss Data (Realized)
+    const { supplierPurchases: supplierDocsForProfit } = useAppViewModel();
     const profitLossData = React.useMemo(() => {
         const processed = prescriptions.filter(p => p.isInventoryProcessed);
         
@@ -358,6 +360,15 @@ import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
             });
         });
 
+        // Tedarikçiye / bayiye toptan satış da gerçek satıştır: cirosu ve satılan malın maliyeti kâr hesabına girer
+        (supplierDocsForProfit || []).forEach(d => {
+            if (d.deletedAt || d.isInventoryProcessed === false || supplierDocKind(d) !== 'SALE') return;
+            totalSoldRevenue += Math.abs(Number(d.totalAmount) || 0);
+            totalSoldCost += typeof d.costTotal === 'number'
+                ? d.costTotal
+                : (d.items || []).reduce((a, it) => a + Math.abs(Number(it.quantity) || 0) * (buyingPriceMap[it.pesticideId] || Number(it.buyingPrice) || 0), 0);
+        });
+
         const totalProfit = totalSoldRevenue - totalSoldCost - stats.totalExpenses;
         const margin = totalSoldCost > 0 ? (totalProfit / (totalSoldCost + stats.totalExpenses)) * 100 : 0;
 
@@ -369,7 +380,7 @@ import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
             processedCount: processed.length,
             totalExpenses: stats.totalExpenses
         };
-    }, [inventory, prescriptions, stats.totalExpenses]);
+    }, [inventory, prescriptions, stats.totalExpenses, supplierDocsForProfit]);
 
     const renderTabContent = () => {
         const effectiveTab = hideCostAndProfit && activeTab === 'PROFIT_LOSS' ? 'OVERVIEW' : activeTab;

@@ -1,3 +1,4 @@
+import { archivePdf } from '../utils/pdfArchive';
 import { createMultiPagePdf, renderElementToCanvas } from '../utils/pdfHelper';
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
@@ -320,6 +321,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
             };
 
             const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
+            void archivePdf(fileName, pdfBlob);
             const message = renderWhatsAppTemplate(
                 userProfile?.whatsappTemplates?.collectionReceipt,
                 'collectionReceipt',
@@ -540,6 +542,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     };
 
     const [isSavingPrescription, setIsSavingPrescription] = useState(false);
+    const [cutEInvoice, setCutEInvoice] = useState(false); // kaydedince e-Fatura / e-Arşiv kes
     const isSavingPrescriptionRef = useRef(false);
 
     const changeStep = (newStep: number) => {
@@ -1505,6 +1508,24 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         }));
     };
 
+    // Satış / iade kaydından e-Fatura ekranını hazır bilgilerle açar (stok ve cari bu kayıtta zaten işlenmiştir)
+    const openEfaturaForSale = (p: Prescription) => {
+        const f = farmerMap[p.farmerId];
+        (window as any).mks_open_efatura?.('issue', {
+            kind: p.type === 'RETURN' ? 'IADE' : 'SATIS',
+            saleId: p.id,
+            farmerId: p.farmerId,
+            name: f?.fullName || '',
+            taxNo: p.farmerTcNo || f?.tcNo || '',
+            district: f?.village || '',
+            note: p.prescriptionNo,
+            lines: p.items.map(it => {
+                const qty = Math.abs(parseFloat(String(it.quantity || '1').replace(',', '.'))) || 1;
+                return { name: it.pesticideName, quantity: qty, price: it.unitPrice || (it.totalPrice ? Math.abs(it.totalPrice) / qty : 0) };
+            })
+        });
+    };
+
     const handleSave = async () => {
         if (isSavingPrescription || isSavingPrescriptionRef.current) return;
         if (!selectedFarmer) {
@@ -1944,6 +1965,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                 draftPrescriptionNoRef.current = null;
                 setDetailPrescription(finalNew);
                 changeViewMode('DETAIL', finalNew.id, true);
+                if (cutEInvoice) { setCutEInvoice(false); setTimeout(() => openEfaturaForSale(finalNew), 500); }
             }
 
             saveProgressRef.current = emptySaveProgress();
@@ -2082,6 +2104,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                 pdf.save(fileName);
             } else {
                 const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
+            void archivePdf(fileName, pdfBlob);
                 const shareData = {
                     files: [file],
                     title: currentPrescription.type === 'RETURN' ? 'İade Faturası' : 'Zirai Satış Faturası',
@@ -2365,8 +2388,8 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     if (viewMode === 'LIST') {
         return (
             <div className="relative h-full min-h-[80vh]">
-                <div className="p-4 max-w-3xl mx-auto pb-24">
-                    <header className="mb-4 flex justify-between items-center sticky top-0 bg-stone-950/80 backdrop-blur z-20 py-2">
+                <div className="p-1 sm:p-4 max-w-3xl mx-auto pb-28">
+                    <header className="hidden sm:flex mb-4 justify-between items-center py-2">
                         <div>
                             <h2 className="text-2xl font-bold text-stone-100">{t('prescription.title', { label: prescriptionLabel })}</h2>
                             <p className="text-sm text-stone-500">{t('prescription.subtitle', { label: prescriptionLabel.toLowerCase() })}</p>
@@ -2387,7 +2410,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                         </button>
                     </header>
 
-                    <div className="bg-stone-900 rounded-2xl shadow-sm border border-white/5 flex items-center p-1 mb-6 sticky top-20 z-10 backdrop-blur-md">
+                    <div className="bg-stone-900 rounded-2xl shadow-sm border border-white/5 flex items-center p-1 mb-2.5 sm:mb-4">
                         <Search className="text-stone-500 ml-3" size={18} />
                         <input 
                             type="text" 
@@ -2401,13 +2424,22 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                 <X size={16} />
                             </button>
                         )}
+                        <button
+                            type="button"
+                            onClick={() => setIsReportModalOpen(true)}
+                            className="sm:hidden shrink-0 min-h-[40px] px-3 mr-0.5 rounded-xl bg-stone-800 text-stone-300 border border-white/5 flex items-center gap-1.5 text-[11px] font-bold active:scale-95"
+                            aria-label="Rapor oluştur"
+                        >
+                            <FileText size={14} />
+                            Rapor
+                        </button>
                     </div>
 
                     {/* Filter Buttons */}
-                    <div className="flex p-1 bg-stone-900/80 backdrop-blur-xl rounded-2xl border border-white/5 mb-8 w-fit shadow-inner">
+                    <div className="flex gap-0.5 p-1 bg-stone-900/80 rounded-2xl border border-white/5 mb-3 sm:mb-5 max-w-full w-fit overflow-x-auto no-scrollbar">
                         <button 
                             onClick={() => setFilterMode('ALL')}
-                            className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                            className={`shrink-0 whitespace-nowrap min-h-[36px] px-3 py-1.5 rounded-xl text-[11px] font-extrabold transition-all ${
                                 filterMode === 'ALL' 
                                 ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/20 scale-[1.02]' 
                                 : 'text-stone-500 hover:text-stone-300'
@@ -2417,7 +2449,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                         </button>
                         <button 
                             onClick={() => setFilterMode('UNPROCESSED')}
-                            className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${
+                            className={`shrink-0 whitespace-nowrap min-h-[36px] px-3 py-1.5 rounded-xl text-[11px] font-extrabold transition-all flex items-center gap-2 ${
                                 filterMode === 'UNPROCESSED' 
                                 ? 'bg-rose-600 text-white shadow-lg shadow-rose-900/20 scale-[1.02]' 
                                 : 'text-stone-500 hover:text-stone-300'
@@ -2428,7 +2460,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                         </button>
                         <button 
                             onClick={() => setFilterMode('PROCESSED')}
-                            className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${
+                            className={`shrink-0 whitespace-nowrap min-h-[36px] px-3 py-1.5 rounded-xl text-[11px] font-extrabold transition-all flex items-center gap-2 ${
                                 filterMode === 'PROCESSED' 
                                 ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20 scale-[1.02]' 
                                 : 'text-stone-500 hover:text-stone-300'
@@ -2439,7 +2471,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                         </button>
                         <button 
                             onClick={() => setFilterMode('PAYMENTS')}
-                            className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${
+                            className={`shrink-0 whitespace-nowrap min-h-[36px] px-3 py-1.5 rounded-xl text-[11px] font-extrabold transition-all flex items-center gap-2 ${
                                 filterMode === 'PAYMENTS' 
                                 ? 'bg-amber-600 text-white shadow-lg shadow-amber-900/20 scale-[1.02]' 
                                 : 'text-stone-500 hover:text-stone-300'
@@ -2450,7 +2482,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                         </button>
                     </div>
 
-                    <div className="space-y-3">
+                    <div className="space-y-2">
                         {isLoading ? (
                             <ListSkeleton count={5} />
                         ) : filteredPrescriptions.length === 0 ? (
@@ -2532,79 +2564,95 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                     <div 
                                         key={p.id} 
                                         onClick={() => handleViewDetail(p)}
-                                        className="bg-stone-900/80 backdrop-blur-xl p-2 sm:p-2.5 rounded-xl sm:rounded-2xl shadow-sm sm:shadow-xl border border-white/10 hover:border-emerald-500/30 transition-all relative overflow-hidden group cursor-pointer active:scale-[0.98]"
+                                        className="bg-stone-900/80 p-2.5 sm:p-3 rounded-2xl shadow-sm border border-white/10 hover:border-emerald-500/30 transition-all relative overflow-hidden group cursor-pointer active:scale-[0.99]"
                                     >
-                                        <div className="flex justify-between items-start mb-1.5 sm:mb-2">
-                                            <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
-                                                <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center font-bold border shadow-inner shrink-0 ${p.type === 'RETURN' ? 'bg-amber-900/20 text-amber-500 border-amber-500/20' : 'bg-blue-900/20 text-blue-400 border-blue-500/20'}`}>
-                                                    {p.type === 'RETURN' ? <ArrowLeft size={14} /> : <FileText size={14} />}
-                                                </div>
-                                                <div className="min-w-0 flex-1">
-                                                    <div className="flex items-center gap-1 sm:gap-1.5 flex-wrap">
-                                                        <h3 className="font-black text-stone-100 text-xs sm:text-sm leading-tight truncate tracking-tight">{farmer?.fullName || t('prescription.unknown_farmer', { farmer: farmerLabel })}</h3>
-                                                        {p.type === 'RETURN' && (
-                                                            <span className="text-[6.5px] sm:text-[7px] font-black uppercase tracking-widest bg-amber-500/20 text-amber-500 px-1.5 py-0.5 rounded border border-amber-500/30">İADE</span>
-                                                        )}
-                                                        {p.priceType === 'CASH' && (
-                                                            <span className="text-[6.5px] sm:text-[7px] font-black uppercase tracking-widest bg-emerald-500/20 text-emerald-500 px-1.5 py-0.5 rounded border border-emerald-500/30">PEŞİN</span>
-                                                        )}
-                                                    </div>
-                                                    <div className="flex items-center gap-1.5 sm:gap-2 mt-0.5">
-                                                        <p className="text-[7.5px] sm:text-[8px] text-stone-500 font-black uppercase tracking-widest">{p.prescriptionNo}</p>
-                                                        <span className="text-[7.5px] sm:text-[8px] text-stone-400 font-bold flex items-center bg-stone-800/50 px-1.5 py-0.5 rounded">
-                                                            <User size={8} className="mr-1" />
-                                                            {p.createdById ? (teamMembers.find(m => m.id === p.createdById)?.fullName || t('prescription.manager')) : t('prescription.manager')}
-                                                        </span>
-                                                    </div>
-                                                </div>
+                                        <div className="flex items-center gap-2.5">
+                                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center border shrink-0 ${p.type === 'RETURN' ? 'bg-amber-900/20 text-amber-500 border-amber-500/20' : 'bg-blue-900/20 text-blue-400 border-blue-500/20'}`}>
+                                                {p.type === 'RETURN' ? <ArrowLeft size={16} /> : <FileText size={16} />}
                                             </div>
-                                            <div className="flex flex-col items-end gap-1 shrink-0 ml-2">
-                                                <div className="flex items-center gap-1 sm:gap-1.5">
-                                                    {!hideCostAndProfit && (
-                                                        <button 
-                                                            onClick={(e) => { e.stopPropagation(); setShowProfitId(p.id); }}
-                                                            className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center bg-emerald-600/10 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-600/20 transition-all active:scale-90"
-                                                            title="Kar/Zarar Analizi"
-                                                        >
-                                                            <TrendingUp size={12} />
-                                                        </button>
+                                            <div className="min-w-0 flex-1">
+                                                <div className="flex items-center gap-1.5 min-w-0">
+                                                    <h3 className="font-extrabold text-stone-100 text-sm leading-tight truncate">{farmer?.fullName || t('prescription.unknown_farmer', { farmer: farmerLabel })}</h3>
+                                                    {p.type === 'RETURN' && (
+                                                        <span className="shrink-0 text-[10px] font-extrabold bg-amber-500/20 text-amber-500 px-1.5 py-0.5 rounded-md border border-amber-500/30 leading-none">İADE</span>
                                                     )}
-                                                    {p.totalAmount !== undefined && p.totalAmount !== null && Math.abs(p.totalAmount) > 0 && (
-                                                        <span className={`text-[8.5px] sm:text-[9px] font-black font-mono px-1.5 py-0.5 rounded border shadow-sm ${p.type === 'RETURN' ? 'bg-amber-950/50 text-amber-400 border-amber-500/20' : 'bg-emerald-950/50 text-emerald-400 border-emerald-500/20'}`}>
-                                                            {p.type === 'RETURN' ? '-' : ''}{formatCurrency(Math.abs(p.totalAmount), userProfile?.currency || 'TRY')}
-                                                        </span>
+                                                    {p.priceType === 'CASH' && (
+                                                        <span className="shrink-0 text-[10px] font-extrabold bg-emerald-500/20 text-emerald-500 px-1.5 py-0.5 rounded-md border border-emerald-500/30 leading-none">PEŞİN</span>
                                                     )}
-                                                    <span className="text-[7.5px] sm:text-[8px] font-black text-stone-400 flex items-center bg-stone-950/50 px-1.5 py-0.5 rounded border border-white/5 shadow-sm uppercase tracking-widest">
-                                                        <Calendar size={8} className="mr-1" />
-                                                        {dateObj.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })}
-                                                    </span>
                                                 </div>
-                                                <button 
-                                                        type="button"
-                                                        onClick={(e) => toggleProcessed(e, p)}
-                                                        className={`w-6 h-6 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center transition-all border-2 active:scale-90 relative z-30 shadow-lg ${
-                                                            p.isProcessed 
-                                                            ? 'bg-blue-600/10 border-blue-500/30 text-blue-400' 
-                                                            : 'bg-rose-600/10 border-rose-500/30 text-rose-400'
-                                                        }`}
-                                                    >
-                                                        {p.isProcessed ? <Check size={12} strokeWidth={3} /> : <X size={12} strokeWidth={3} />}
-                                                    </button>
+                                                <p className="mt-1 text-[11px] text-stone-400 font-semibold truncate flex items-center gap-1.5">
+                                                    <Calendar size={11} className="shrink-0" />
+                                                    <span className="shrink-0">{dateObj.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: '2-digit' })}</span>
+                                                    <span className="text-stone-600">·</span>
+                                                    <span className="truncate">{p.prescriptionNo}</span>
+                                                </p>
+                                            </div>
+                                            <div className="shrink-0 flex flex-col items-end gap-1">
+                                                {p.totalAmount !== undefined && p.totalAmount !== null && Math.abs(p.totalAmount) > 0 && (
+                                                    <span className={`text-sm font-black tabular-nums leading-tight ${p.type === 'RETURN' ? 'text-amber-400' : 'text-emerald-400'}`}>
+                                                        {p.type === 'RETURN' ? '-' : ''}{formatCurrency(Math.abs(p.totalAmount), userProfile?.currency || 'TRY')}
+                                                    </span>
+                                                )}
+                                                <span className="text-[10px] text-stone-500 font-semibold flex items-center gap-1 max-w-[110px] truncate">
+                                                    <User size={10} className="shrink-0" />
+                                                    <span className="truncate">{p.createdById ? (teamMembers.find(m => m.id === p.createdById)?.fullName || t('prescription.manager')) : t('prescription.manager')}</span>
+                                                </span>
                                             </div>
                                         </div>
-                                        <div className="pl-9 sm:pl-11 mt-0.5">
-                                            <div className="flex flex-wrap gap-1">
-                                                {p.items.slice(0, 3).map((item, idx) => (
-                                                    <span key={idx} className="text-[6.5px] sm:text-[7px] font-black uppercase tracking-wider bg-stone-950/50 text-stone-500 px-1.5 py-0.5 rounded border border-white/5">
-                                                        {item.pesticideName} {item.quantity && `(x${item.quantity.toString().replace(/^-/, '')})`}
+                                        <div className="mt-2 pt-2 border-t border-white/5 flex items-center gap-2">
+                                            <div className="min-w-0 flex-1 flex items-center gap-1 overflow-hidden">
+                                                {p.items.slice(0, 2).map((item, idx) => (
+                                                    <span key={idx} className="min-w-0 truncate text-[10px] font-bold bg-stone-950/50 text-stone-400 px-1.5 py-1 rounded-md border border-white/5 leading-none">
+                                                        {item.pesticideName}{item.quantity ? ` ×${item.quantity.toString().replace(/^-/, '')}` : ''}
                                                     </span>
                                                 ))}
-                                                {p.items.length > 3 && (
-                                                    <span className="text-[6.5px] sm:text-[7px] font-black uppercase tracking-wider bg-stone-950/50 text-stone-600 px-1.5 py-0.5 rounded border border-white/5">
-                                                        +{p.items.length - 3}
+                                                {p.items.length > 2 && (
+                                                    <span className="shrink-0 text-[10px] font-bold bg-stone-950/50 text-stone-500 px-1.5 py-1 rounded-md border border-white/5 leading-none">
+                                                        +{p.items.length - 2}
                                                     </span>
                                                 )}
                                             </div>
+                                            {p.eInvoiceNo ? (
+                                                <span className="shrink-0 h-8 px-2 rounded-lg flex items-center gap-1 bg-emerald-600/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold" title={`e-Fatura no: ${p.eInvoiceNo}`}>
+                                                    <FileText size={13} />
+                                                    <span>Kesildi</span>
+                                                </span>
+                                            ) : (
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => { e.stopPropagation(); openEfaturaForSale(p); }}
+                                                    className="shrink-0 h-8 px-2 rounded-lg flex items-center gap-1 bg-indigo-600/10 border border-indigo-500/30 text-indigo-400 text-[10px] font-bold hover:bg-indigo-600/20 transition-all active:scale-95"
+                                                    title="Bu kayıt için e-Fatura / e-Arşiv kes"
+                                                >
+                                                    <FileText size={13} />
+                                                    <span>{p.type === 'RETURN' ? 'İade e-Fatura' : 'e-Fatura'}</span>
+                                                </button>
+                                            )}
+                                            {!hideCostAndProfit && (
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => { e.stopPropagation(); setShowProfitId(p.id); }}
+                                                    className="shrink-0 h-8 px-2 rounded-lg flex items-center gap-1 bg-emerald-600/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold hover:bg-emerald-600/20 transition-all active:scale-95"
+                                                    title="Kâr/Zarar Analizi"
+                                                    aria-label="Kâr/zarar analizi"
+                                                >
+                                                    <TrendingUp size={13} />
+                                                    <span>Kâr</span>
+                                                </button>
+                                            )}
+                                            <button
+                                                type="button"
+                                                onClick={(e) => toggleProcessed(e, p)}
+                                                title={p.isProcessed ? 'İşlendi — geri almak için dokun' : 'İşlenmedi — işlendi yapmak için dokun'}
+                                                className={`shrink-0 h-8 px-2 rounded-lg flex items-center gap-1 text-[10px] font-bold transition-all border active:scale-95 relative z-30 ${
+                                                    p.isProcessed
+                                                    ? 'bg-blue-600/10 border-blue-500/30 text-blue-400'
+                                                    : 'bg-rose-600/10 border-rose-500/30 text-rose-400'
+                                                }`}
+                                            >
+                                                {p.isProcessed ? <Check size={13} strokeWidth={3} /> : <X size={13} strokeWidth={3} />}
+                                                <span>{p.isProcessed ? 'İşlendi' : 'İşlenmedi'}</span>
+                                            </button>
                                         </div>
                                     </div>
                                 );
@@ -3267,6 +3315,19 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                 />
                             </div>
 
+                            {/* Kaydedince e-Fatura kes (isteğe bağlı) */}
+                            {!editingId && (
+                                <button
+                                    type="button"
+                                    onClick={() => setCutEInvoice(v => !v)}
+                                    aria-pressed={cutEInvoice}
+                                    title="Kaydedince e-Fatura / e-Arşiv fatura kes"
+                                    className={`shrink-0 px-2 rounded-xl border text-[8px] sm:text-[9px] font-black flex items-center gap-1 transition-all ${cutEInvoice ? 'bg-indigo-600 text-white border-indigo-500 shadow-lg' : 'bg-stone-900 text-stone-500 border-white/5'}`}
+                                >
+                                    <FileText size={12} />
+                                    <span>e-FATURA{cutEInvoice ? ' ✓' : ''}</span>
+                                </button>
+                            )}
                             {/* Payment Type Toggle */}
                             <div className="flex-1 flex items-center bg-stone-900 rounded-xl border border-white/5 p-0.5">
                                 <button

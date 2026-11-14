@@ -878,32 +878,32 @@ export const Kasa: React.FC<KasaProps> = ({ onBack }) => {
   return (
     <div className="flex flex-col h-full bg-stone-950">
       {/* Header */}
-      <div className="bg-stone-900 px-6 py-8 border-b border-white/5">
-        <div className="flex items-center gap-4 mb-6">
+      <div className="bg-stone-900 px-4 py-5 sm:px-6 sm:py-8 border-b border-white/5">
+        <div className="flex flex-wrap items-center gap-3 sm:gap-4 mb-4 sm:mb-6">
           <button 
             onClick={onBack}
-            className="p-2 hover:bg-white/5 rounded-xl transition-colors text-stone-400"
+            aria-label="Geri" className="hidden sm:block p-2 hover:bg-white/5 rounded-xl transition-colors text-stone-400"
           >
             <ChevronLeft size={24} />
           </button>
-          <div className="flex-1">
-            <h1 className="text-3xl font-bold text-stone-100 tracking-tight">Kasa & Banka</h1>
-            <p className="text-stone-500 mt-1 font-medium">Finansal durumunuzu ve işlem detaylarınızı yönetin</p>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-xl sm:text-3xl font-bold text-stone-100 tracking-tight">Kasa & Banka</h1>
+            <p className="text-stone-500 mt-1 font-medium text-xs sm:text-base">Finansal durumunuzu ve işlem detaylarınızı yönetin</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 w-full sm:w-auto">
             <button 
               onClick={() => {
                 setMoneyType('INCOME');
                 setShowAddMoney(true);
               }}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-2xl shadow-lg shadow-blue-900/20 transition-all active:scale-95 flex items-center gap-2 text-xs font-black uppercase tracking-widest"
+              className="flex-1 sm:flex-none justify-center whitespace-nowrap min-h-[44px] bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-2xl shadow-lg shadow-blue-900/20 transition-all active:scale-95 flex items-center gap-2 text-xs font-extrabold"
             >
               <Plus size={18} />
               İşlem Ekle
             </button>
             <button 
               onClick={() => setShowAddAccount(true)}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-2xl shadow-lg shadow-emerald-900/20 transition-all active:scale-95 flex items-center gap-2 text-xs font-black uppercase tracking-widest"
+              className="flex-1 sm:flex-none justify-center whitespace-nowrap min-h-[44px] bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-2xl shadow-lg shadow-emerald-900/20 transition-all active:scale-95 flex items-center gap-2 text-xs font-extrabold"
             >
               <Plus size={18} />
               Hesap Ekle

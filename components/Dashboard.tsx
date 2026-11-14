@@ -371,9 +371,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
               {/* Top Row: Headline & Subtitle on Left, Live Sync & Kasa Status on Right */}
               <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
                 <div className="space-y-1.5 max-w-xl">
-                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-400/25 text-emerald-300 text-[11px] font-bold">
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-[11px] font-extrabold shadow-sm">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span>Yerel Hafıza + Bulut Canlı Senkron</span>
+                    <span className="text-emerald-300 font-extrabold">Yerel Hafıza + Bulut Canlı Senkron</span>
                   </div>
                   <h2 className="v22-keep-white text-2xl sm:text-[26px] font-extrabold tracking-tight text-white leading-tight">
                     Bereket her zaman{' '}
@@ -398,7 +398,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                         type="button"
                         key={f.id}
                         onClick={() => onNavigate('FARMERS')}
-                        className={`w-8 h-8 rounded-full bg-gradient-to-br ${avatarGradients[i % avatarGradients.length]} border-2 border-[#0d2822] text-white text-[11px] font-extrabold flex items-center justify-center cursor-pointer hover:scale-110 transition-transform`}
+                        className={`v22-keep-white w-8 h-8 rounded-full bg-gradient-to-br ${avatarGradients[i % avatarGradients.length]} border-2 border-[#0d2822] text-white text-[11px] font-extrabold flex items-center justify-center cursor-pointer hover:scale-110 transition-transform`}
                         title={f.fullName}
                         aria-label={f.fullName}
                       >
@@ -445,17 +445,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                       new CustomEvent('mks-open-quick-modal', { detail: { modal: 'RECEIVE_PAYMENT' } })
                     );
                   }}
-                  className="v22-keep-white group p-3.5 rounded-2xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/35 text-white text-left flex items-center gap-3 shadow-md active:scale-[0.98] transition-all"
+                  className="v22-keep-white group p-3.5 rounded-2xl bg-emerald-500/25 hover:bg-emerald-500/35 border border-emerald-400/40 text-white text-left flex items-center gap-3 shadow-md active:scale-[0.98] transition-all"
                 >
-                  <div className="w-11 h-11 rounded-xl bg-emerald-400/20 text-emerald-300 flex items-center justify-center shrink-0">
-                    <Wallet size={20} strokeWidth={2.2} />
+                  <div className="w-11 h-11 rounded-xl bg-emerald-400/25 text-emerald-300 flex items-center justify-center shrink-0">
+                    <Wallet size={20} strokeWidth={2.2} className="text-emerald-300" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="v22-keep-white text-xs sm:text-sm font-extrabold leading-tight text-white flex items-center justify-between gap-1">
                       <span>Tahsilat Yap</span>
                       <ChevronRight size={15} className="shrink-0 text-emerald-300 group-hover:translate-x-0.5 transition-transform" />
                     </div>
-                    <p className="v22-keep-white text-[11px] font-medium text-emerald-100/80 mt-0.5 truncate">
+                    <p className="v22-keep-white text-[11px] font-semibold text-emerald-200 mt-0.5 truncate">
                       Nakit, POS, Çek &amp; Senet al
                     </p>
                   </div>
@@ -660,7 +660,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 <button
                   onClick={() => setImpactTab('IMPACT')}
                   className={`text-[11px] font-extrabold transition-colors ${
-                    impactTab === 'IMPACT' ? 'text-[#0b211d]' : 'text-[#5c726b]/60'
+                    impactTab === 'IMPACT' ? 'text-[#0b211d]' : 'text-[#5c726b]'
                   }`}
                 >
                   Tahsilat
@@ -668,7 +668,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 <button
                   onClick={() => setImpactTab('ENGAGEMENT')}
                   className={`text-[11px] font-extrabold transition-colors ${
-                    impactTab === 'ENGAGEMENT' ? 'text-[#0b211d]' : 'text-[#5c726b]/60'
+                    impactTab === 'ENGAGEMENT' ? 'text-[#0b211d]' : 'text-[#5c726b]'
                   }`}
                 >
                   Büyüme
@@ -845,17 +845,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                   aria-label="MKS Pro - Zirai AI"
                   onClick={() => onNavigate('AI_ASSISTANT')}
                   onKeyDown={activateOnKey(() => onNavigate('AI_ASSISTANT'))}
-                  className="v22-pro-subcard col-span-5 h-full rounded-2xl p-3.5 flex flex-col justify-between cursor-pointer"
+                  className="v22-pro-subcard col-span-5 h-full rounded-2xl p-3.5 flex flex-col justify-between cursor-pointer border border-emerald-400/30"
                 >
-                  <div className="v22-dark-pill w-7 h-7 rounded-xl bg-[#0b211d] text-white flex items-center justify-center">
-                    <Zap size={14} className="fill-white" />
+                  <div className="w-7 h-7 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 flex items-center justify-center">
+                    <Zap size={14} className="fill-emerald-400 text-emerald-300" />
                   </div>
                   <div className="mt-2">
-                    <div className="text-sm font-extrabold text-[#0b211d]">MKS Pro</div>
-                    <ul className="mt-1.5 space-y-1 text-[11px] font-bold text-[#116a4e]">
-                      <li>✓ Zirai AI Teşhis</li>
-                      <li>✓ TKGM Parsel</li>
-                      <li>✓ Silo & Dozaj</li>
+                    <div className="text-sm font-extrabold text-white">MKS Pro</div>
+                    <ul className="mt-1.5 space-y-1 text-[11px] font-bold text-emerald-300">
+                      <li className="flex items-center gap-1.5"><span className="text-emerald-400 font-black">✓</span> Zirai AI Teşhis</li>
+                      <li className="flex items-center gap-1.5"><span className="text-emerald-400 font-black">✓</span> TKGM Parsel</li>
+                      <li className="flex items-center gap-1.5"><span className="text-emerald-400 font-black">✓</span> Silo &amp; Dozaj</li>
                     </ul>
                   </div>
                 </div>
@@ -863,10 +863,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 {/* Right Text + Mint Pill CTA */}
                 <div className="col-span-7 flex flex-col justify-between h-full py-1">
                   <div>
-                    <h4 className="text-sm font-extrabold text-[#0b211d] leading-snug">
-                      Zirai Zeka & Saha Gücünü Keşfet
+                    <h4 className="text-sm font-extrabold text-white leading-snug">
+                      Zirai Zeka &amp; Saha Gücünü Keşfet
                     </h4>
-                    <p className="text-[11px] font-medium text-[#5c726b] mt-1 leading-relaxed">
+                    <p className="text-[11px] font-medium text-stone-300 mt-1 leading-relaxed">
                       Yapay zeka destekli reçete, TKGM parsel sorgu ve akıllı stok tahmini.
                     </p>
                   </div>
@@ -875,14 +875,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                   <div className="flex flex-wrap gap-1.5 mt-3">
                     <button
                       onClick={() => onNavigate('AI_ASSISTANT')}
-                      className="px-3 py-1.5 rounded-full bg-[#9be4c8] hover:bg-[#7ddbbd] text-[#0b211d] text-[11px] font-extrabold flex items-center gap-1 transition-all"
+                      className="px-3 py-1.5 rounded-full bg-emerald-700 hover:bg-emerald-600 text-white text-[11px] font-extrabold flex items-center gap-1 transition-all shadow-sm"
                     >
                       <Sparkles size={12} />
                       <span>Zirai AI</span>
                     </button>
                     <button
                       onClick={() => onNavigate('MAP')}
-                      className="px-2.5 py-1.5 rounded-full bg-[#f3f6f4] hover:bg-[#e2ece7] text-[#0b211d] text-[11px] font-bold transition-all"
+                      className="px-2.5 py-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white border border-white/15 text-[11px] font-bold transition-all"
                     >
                       TKGM Harita
                     </button>
@@ -1056,8 +1056,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 onClick={() => setFeedTab('OVERVIEW')}
                 className={`pb-1 transition-all ${
                   feedTab === 'OVERVIEW'
-                    ? 'text-[#0b211d] border-b-2 border-[#0b211d]'
-                    : 'text-[#5c726b]'
+                    ? 'text-white border-b-2 border-emerald-400 font-extrabold'
+                    : 'text-stone-400 hover:text-stone-200'
                 }`}
               >
                 Son İşlemler
@@ -1066,8 +1066,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 onClick={() => setFeedTab('FOCUS')}
                 className={`pb-1 transition-all ${
                   feedTab === 'FOCUS'
-                    ? 'text-[#0b211d] border-b-2 border-[#0b211d]'
-                    : 'text-[#5c726b]'
+                    ? 'text-white border-b-2 border-emerald-400 font-extrabold'
+                    : 'text-stone-400 hover:text-stone-200'
                 }`}
               >
                 7 Günlük Ciro
@@ -1076,8 +1076,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 onClick={() => setFeedTab('WEATHER')}
                 className={`pb-1 transition-all ${
                   feedTab === 'WEATHER'
-                    ? 'text-[#0b211d] border-b-2 border-[#0b211d]'
-                    : 'text-[#5c726b]'
+                    ? 'text-white border-b-2 border-emerald-400 font-extrabold'
+                    : 'text-stone-400 hover:text-stone-200'
                 }`}
               >
                 Saha Hava
@@ -1113,26 +1113,26 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                     type="button"
                     key={idx}
                     onClick={() => onNavigate(row.action)}
-                    className="w-full text-left p-2.5 rounded-2xl bg-[#f3f6f4] hover:bg-[#e6efeb] flex items-center justify-between gap-2.5 cursor-pointer transition-colors"
+                    className="w-full text-left p-2.5 rounded-2xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 flex items-center justify-between gap-2.5 cursor-pointer transition-colors"
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div
                         className={`w-9 h-9 rounded-full bg-gradient-to-br ${
                           avatarGradients[idx % avatarGradients.length]
-                        } text-white font-extrabold text-xs flex items-center justify-center shrink-0`}
+                        } text-white font-extrabold text-xs flex items-center justify-center shrink-0 shadow-sm`}
                       >
                         {idx + 1}
                       </div>
                       <div className="min-w-0">
-                        <p className="text-xs font-extrabold text-[#0b211d] truncate">{row.title}</p>
-                        <p className="text-[11px] font-semibold text-[#5c726b] truncate">{row.sub}</p>
+                        <p className="text-xs font-extrabold text-white truncate">{row.title}</p>
+                        <p className="text-[11px] font-semibold text-stone-300 truncate">{row.sub}</p>
                       </div>
                     </div>
                     <div className="flex flex-col items-end shrink-0">
-                      <span className="v22-dark-pill px-2.5 py-1 rounded-full bg-[#0b211d] text-white text-[11px] font-extrabold">
+                      <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 text-[11px] font-extrabold shadow-sm">
                         {row.btn}
                       </span>
-                      <span className="text-[11px] font-semibold text-[#5c726b] mt-1">{row.time}</span>
+                      <span className="text-[11px] font-semibold text-stone-400 mt-1">{row.time}</span>
                     </div>
                   </button>
                 ))}
@@ -1143,8 +1143,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
             {feedTab === 'FOCUS' && (
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-bold text-[#5c726b]">Haftalık Toplam Hacim</span>
-                  <span className="text-sm font-extrabold text-[#0b211d] font-mono">
+                  <span className="text-xs font-bold text-stone-300">Haftalık Toplam Hacim</span>
+                  <span className="text-sm font-extrabold text-white font-mono">
                     {formatCurrency(Math.round(sevenDayTotalSales), currency)}
                   </span>
                 </div>
