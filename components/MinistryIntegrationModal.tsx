@@ -1,14 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Landmark, Factory, ScrollText, FlaskConical, ChevronDown, CheckCircle2, AlertTriangle,
-  ScanLine, Plus, Minus, FileCode2, FileText, Search, Trash2, ShieldCheck, ShieldAlert, PackageCheck,
-  Camera, Share2, FileDown, Info, Boxes, Loader2, Sheet, Package,
+  Factory, ScrollText, ChevronDown, CheckCircle2, AlertTriangle, Sprout, QrCode, ExternalLink, LogOut, Lock, User,
+  ScanLine, Plus, Minus, FileCode2, FileText, Search, Trash2, ShieldCheck, PackageCheck,
+  Camera, Share2, FileDown, Boxes, Loader2, Sheet, Package, Eye, EyeOff,
+  Globe, KeyRound, Copy,
 } from 'lucide-react';
 import {
-  validateGLN, findEquivalentProducts, checkTankMixCompatibility, generateMinistryExportFile,
+  generateMinistryExportFile,
   filterOfficialMinistryRecords, parseGS1Barcode, isValidGS1Number, findItemByScan, canonicalBarcodeFromParsed,
-  EXAMPLE_GLN, FREE_SALE_STATUS,
-  type MinistryExportRecord, type TankMixInput, type GS1ParseResult,
+  FREE_SALE_STATUS,
+  type MinistryExportRecord, type GS1ParseResult,
 } from '../utils/gs1Parser';
 import { useHardwareBarcodeScanner, playScanBeep, playErrorBeep } from '../utils/hardwareBarcodeScanner';
 import { dbService } from '../services/db';
@@ -24,9 +25,12 @@ import { loadJsPdfWithAutoTable } from '../utils/pdfHelper';
 import { archivePdf } from '../utils/pdfArchive';
 import {
   PesticideCategory,
+  type Farmer,
   type InventoryBatch, type InventoryItem, type MinistryRecord as MinistryLedgerRecord,
   type MinistryShipmentLine, type MinistryShipmentRecord,
+  type Prescription,
 } from '../types';
+import { validateTcOrVkn } from '../utils/tcNoValidator';
 
 // ---------------------------------------------------------------------------
 // Types (legacy prop shapes are still accepted from App.tsx)
@@ -37,6 +41,13 @@ export interface MinistryConfig {
   gts: boolean;
   bRecete: boolean;
   gln: string;
+  bktsUsername?: string;
+  gtsUsername?: string;
+  bReceteUsername?: string;
+  environment?: 'LIVE' | 'TEST';
+  bktsEndpoint?: string;
+  gtsEndpoint?: string;
+  bReceteEndpoint?: string;
 }
 
 export interface FactoryShipmentLine {
@@ -70,7 +81,7 @@ export interface MinistryTransaction extends MinistryExportRecord {
 interface MinistryIntegrationModalProps {
   isOpen: boolean;
   onClose: () => void;
-  initialTab?: 'malkabul' | 'satis' | 'esdeger' | 'receive' | 'ledger' | 'engine';
+  initialTab?: 'malkabul' | 'satis' | 'esdeger' | 'gts' | 'bkts' | 'brecete' | 'receive' | 'ledger' | 'engine' | 'sandbox' | 'webservice';
   inventory?: any[];
   /** Optional extra ledger rows (merged with the persistent IndexedDB ledger). */
   transactions?: (MinistryTransaction | MinistryLedgerRecord)[];
@@ -84,7 +95,84 @@ interface MinistryIntegrationModalProps {
   showToast?: (msg: string, type: 'success' | 'error' | 'info') => void;
 }
 
-type TabId = 'receive' | 'ledger' | 'engine';
+type ActiveMinistryService = 'BKTS' | 'GTS' | 'BRECETE';
+type TabId = 'receive' | 'brecete' | 'ledger' | 'webservice';
+
+interface SavedServiceAuth {
+  gln: string;
+  username: string;
+  password: string;
+  serviceKey?: string;
+  remember: boolean;
+  environment: 'LIVE' | 'TEST';
+  loggedInAt: string;
+}
+
+interface ServiceMeta {
+  id: ActiveMinistryService;
+  shortLabel: string;
+  title: string;
+  subtitle: string;
+  portalUrl: string;
+  portalLabel: string;
+  accentHex: string;
+  loginTitle: string;
+  loginDesc: string;
+  idLabel: string;
+  idPlaceholder: string;
+  passwordLabel: string;
+}
+
+const SERVICE_META: Record<ActiveMinistryService, ServiceMeta> = {
+  GTS: {
+    id: 'GTS',
+    shortLabel: 'GTS',
+    title: 'GTS — Gübre Takip Sistemi',
+    subtitle: 'Gübre mal kabul, Karekod/Barkod stok & satış bildirimi, GTS denetim defteri',
+    portalUrl: 'https://gtsapp.tarimorman.gov.tr/Login/Default',
+    portalLabel: 'gtsapp.tarimorman.gov.tr Resmî Portalı',
+    accentHex: '#10b981',
+    loginTitle: 'GTS — Gübre Takip Sistemi Girişi',
+    loginDesc: 'T.C. Kimlik Numaranız veya Vergi Numaranız ve GTS şifrenizle MKS çalışma alanına doğrudan giriş yapın. Bakanlığın görsel güvenlik kodu ve Mobil Onay (SMS) doğrulaması yalnızca resmî gtsapp.tarimorman.gov.tr portalını açtığınızda çalışır.',
+    idLabel: 'T.C. Kimlik No veya Vergi No',
+    idPlaceholder: '11 haneli T.C. Kimlik No veya 10 haneli Vergi No',
+    passwordLabel: 'GTS Şifresi (Parola)',
+  },
+  BKTS: {
+    id: 'BKTS',
+    shortLabel: 'BKTS',
+    title: 'BKTS — Bitki Koruma Ürünleri Takip',
+    subtitle: 'Zirai ilaç mal kabul (SSCC / Karekod), BKTS satış bildirimi ve denetim defteri',
+    portalUrl: 'https://bkst.tarbil.gov.tr',
+    portalLabel: 'bkst.tarbil.gov.tr Resmî Portalı',
+    accentHex: '#06b6d4',
+    loginTitle: 'BKTS — Bitki Koruma Takip Sistemi Girişi',
+    loginDesc: 'Bakanlık BKST giriş ekranındaki Kullanıcı Adı (T.C. Kimlik / Vergi No) ve şifrenizle giriş yapın. Beni Hatırla açıkken sonraki açılışlarda otomatik bağlanır.',
+    idLabel: 'Kullanıcı Adı (T.C. Kimlik / Vergi No)',
+    idPlaceholder: 'T.C. Kimlik No veya Vergi No',
+    passwordLabel: 'BKTS Şifresi',
+  },
+  BRECETE: {
+    id: 'BRECETE',
+    shortLabel: 'B-Reçete',
+    title: 'B-Reçete — Elektronik Reçete & Bildirim',
+    subtitle: 'B-Reçete kodu canlı sorgu, çiftçi TCKN eşleştirme ve resmi bildirim',
+    portalUrl: 'https://ukds.tarimorman.gov.tr',
+    portalLabel: 'ukds.tarimorman.gov.tr (B-Reçete / e-Devlet)',
+    accentHex: '#6366f1',
+    loginTitle: 'B-Reçete — Elektronik Reçete Sistemi Girişi',
+    loginDesc: 'Bakanlık B-Reçete (UKDS / e-Devlet) giriş ekranındaki T.C. Kimlik Numaranız ve şifrenizle giriş yapın. Beni Hatırla açıkken sonraki açılışlarda otomatik bağlanır.',
+    idLabel: 'T.C. Kimlik Numarası',
+    idPlaceholder: '11 haneli T.C. Kimlik Numarası',
+    passwordLabel: 'e-Devlet / Sistem Şifresi',
+  },
+};
+
+function resolveServiceFromInitialTab(initialTab?: MinistryIntegrationModalProps['initialTab']): ActiveMinistryService {
+  if (initialTab === 'gts') return 'GTS';
+  if (initialTab === 'brecete') return 'BRECETE';
+  return 'BKTS';
+}
 type ScanSource = 'hardware' | 'camera' | 'manual';
 
 // ---------------------------------------------------------------------------
@@ -92,16 +180,29 @@ type ScanSource = 'hardware' | 'camera' | 'manual';
 // ---------------------------------------------------------------------------
 
 const LEGACY_CONFIG_KEY = () => `mks_ministry_config_${dbService.getCurrentUserId() || 'guest'}`;
-const DEFAULT_CONFIG: MinistryConfig = { bkts: false, gts: false, bRecete: false, gln: '' };
+const DEFAULT_CONFIG: MinistryConfig = {
+  bkts: false,
+  gts: false,
+  bRecete: false,
+  gln: '',
+  bktsUsername: '',
+  gtsUsername: '',
+  bReceteUsername: '',
+  environment: 'LIVE',
+  bktsEndpoint: '',
+  gtsEndpoint: '',
+  bReceteEndpoint: '',
+};
 
-/** Legacy device-only config (pre profile sync). The plain-text service key is purged (B-18). */
+/** Legacy device-only config (pre profile sync). Plain-text passwords/service keys are purged (B-18). */
 function loadLegacyConfig(): MinistryConfig | null {
   try {
     const raw = localStorage.getItem(LEGACY_CONFIG_KEY());
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<MinistryConfig> & { bkst?: boolean; serviceKey?: string };
-    if (parsed.serviceKey) {
+    const parsed = JSON.parse(raw) as Partial<MinistryConfig> & { bkst?: boolean; serviceKey?: string; password?: string };
+    if (parsed.serviceKey || parsed.password) {
       delete parsed.serviceKey;
+      delete parsed.password;
       localStorage.setItem(LEGACY_CONFIG_KEY(), JSON.stringify(parsed));
     }
     return {
@@ -109,10 +210,87 @@ function loadLegacyConfig(): MinistryConfig | null {
       gts: Boolean(parsed.gts),
       bRecete: Boolean(parsed.bRecete),
       gln: String(parsed.gln ?? ''),
+      bktsUsername: String(parsed.bktsUsername ?? ''),
+      gtsUsername: String(parsed.gtsUsername ?? ''),
+      bReceteUsername: String(parsed.bReceteUsername ?? ''),
+      environment: parsed.environment === 'TEST' ? 'TEST' : 'LIVE',
+      bktsEndpoint: String(parsed.bktsEndpoint ?? ''),
+      gtsEndpoint: String(parsed.gtsEndpoint ?? ''),
+      bReceteEndpoint: String(parsed.bReceteEndpoint ?? ''),
     };
   } catch (e) {
     console.warn('[Ministry] legacy config read failed', e);
     return null;
+  }
+}
+
+const SAVED_SERVICE_AUTH_KEY = 'mks_ministry_saved_auth_v1';
+
+function savedAuthOwnerKey(): string {
+  return dbService.getCurrentUserId() || 'guest';
+}
+
+function loadSavedServiceAuthMap(): Partial<Record<ActiveMinistryService, SavedServiceAuth>> {
+  try {
+    const raw = localStorage.getItem(SAVED_SERVICE_AUTH_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, Partial<Record<ActiveMinistryService, SavedServiceAuth>>>;
+    const owner = savedAuthOwnerKey();
+    const bucket = parsed?.[owner];
+    if (!bucket || typeof bucket !== 'object') return {};
+    const result: Partial<Record<ActiveMinistryService, SavedServiceAuth>> = {};
+    (['BKTS', 'GTS', 'BRECETE'] as ActiveMinistryService[]).forEach(svc => {
+      const entry = bucket[svc];
+      if (entry && entry.remember && entry.username && entry.password) {
+        result[svc] = {
+          gln: String(entry.gln || ''),
+          username: String(entry.username || ''),
+          password: String(entry.password || ''),
+          serviceKey: entry.serviceKey ? String(entry.serviceKey) : undefined,
+          remember: true,
+          environment: entry.environment === 'TEST' ? 'TEST' : 'LIVE',
+          loggedInAt: String(entry.loggedInAt || ''),
+        };
+      }
+    });
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+function loadSavedServiceAuth(service: ActiveMinistryService): SavedServiceAuth | null {
+  return loadSavedServiceAuthMap()[service] || null;
+}
+
+function saveSavedServiceAuth(service: ActiveMinistryService, auth: SavedServiceAuth): void {
+  try {
+    const raw = localStorage.getItem(SAVED_SERVICE_AUTH_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Record<string, Partial<Record<ActiveMinistryService, SavedServiceAuth>>>) : {};
+    const owner = savedAuthOwnerKey();
+    const current = parsed[owner] || {};
+    parsed[owner] = { ...current, [service]: auth };
+    localStorage.setItem(SAVED_SERVICE_AUTH_KEY, JSON.stringify(parsed));
+  } catch (e) {
+    console.warn('[Ministry] saved auth write failed', e);
+  }
+}
+
+function clearSavedServiceAuth(service?: ActiveMinistryService): void {
+  try {
+    const raw = localStorage.getItem(SAVED_SERVICE_AUTH_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as Record<string, Partial<Record<ActiveMinistryService, SavedServiceAuth>>>;
+    const owner = savedAuthOwnerKey();
+    if (!parsed[owner]) return;
+    if (!service) {
+      delete parsed[owner];
+    } else {
+      delete parsed[owner][service];
+    }
+    localStorage.setItem(SAVED_SERVICE_AUTH_KEY, JSON.stringify(parsed));
+  } catch (e) {
+    console.warn('[Ministry] saved auth clear failed', e);
   }
 }
 
@@ -230,11 +408,13 @@ const RECORD_TYPE_LABEL: Record<MinistryLedgerRecord['recordType'], string> = {
 };
 
 const statusClass = (s: string) =>
-  s === 'Dışa Aktarıma Hazır'
-    ? 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30'
-    : s === 'Kuyrukta'
-      ? 'bg-amber-500/15 text-amber-500 border-amber-500/30'
-      : 'bg-stone-500/15 border-stone-500/30';
+  s === 'Bakanlığa Bildirildi'
+    ? 'bg-emerald-600/20 text-emerald-400 border-emerald-500/50 font-bold'
+    : s === 'Dışa Aktarıma Hazır'
+      ? 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30'
+      : s === 'Kuyrukta'
+        ? 'bg-amber-500/15 text-amber-500 border-amber-500/30'
+        : 'bg-stone-500/15 border-stone-500/30';
 
 const isFertilizer = (c?: string) => c === PesticideCategory.FERTILIZER || c === PesticideCategory.GRANULAR_FERTILIZER;
 
@@ -282,26 +462,6 @@ const inputStyle: React.CSSProperties = { background: 'var(--mks-input-bg)', bor
 const mutedStyle: React.CSSProperties = { color: 'var(--mks-muted)' };
 const accentStyle: React.CSSProperties = { background: 'var(--mks-accent-primary)', color: '#fff' };
 
-const Switch: React.FC<{ label: string; on: boolean; onText: string; offText: string; onChange: (v: boolean) => void }> = ({ label, on, onText, offText, onChange }) => (
-  <button
-    type="button"
-    role="switch"
-    aria-checked={on}
-    aria-label={label}
-    onClick={() => onChange(!on)}
-    className="flex items-center gap-3 rounded-2xl border px-3 min-h-[48px] transition-colors text-left"
-    style={subSurface}
-  >
-    <span className={`relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors ${on ? 'bg-emerald-500' : 'bg-stone-500/50'}`}>
-      <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${on ? 'translate-x-5' : 'translate-x-0.5'}`} />
-    </span>
-    <span className="flex flex-col leading-tight">
-      <span className="text-[11px]" style={mutedStyle}>{label}</span>
-      <span className={`text-xs font-bold ${on ? 'text-emerald-500' : ''}`} style={on ? undefined : mutedStyle}>{on ? onText : offText}</span>
-    </span>
-  </button>
-);
-
 const StatCard: React.FC<{ label: string; value: React.ReactNode; tone?: 'ok' | 'warn' | 'muted'; icon: React.ReactNode }> = ({ label, value, tone = 'muted', icon }) => (
   <div className="rounded-2xl border p-3 flex items-center gap-3" style={subSurface}>
     <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${tone === 'ok' ? 'bg-emerald-500/15 text-emerald-500' : tone === 'warn' ? 'bg-amber-500/15 text-amber-500' : 'bg-stone-500/15'}`}>
@@ -329,7 +489,7 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
     else vm.showToast?.(msg, type);
   }, [showToastProp, vm]);
 
-  // ---- Config (synced with userProfile.ministryConfig) ---------------------
+  // ---- Config (synced with userProfile.ministryConfig; şifre ve KeyNo buluta kaydedilmez) ----
   const profileConfig = userProfile?.ministryConfig;
   const buildConfig = useCallback((): MinistryConfig => {
     const legacy = loadLegacyConfig();
@@ -338,13 +498,43 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
       gts: profileConfig?.gtsEnabled ?? legacy?.gts ?? DEFAULT_CONFIG.gts,
       bRecete: profileConfig?.bReceteEnabled ?? legacy?.bRecete ?? DEFAULT_CONFIG.bRecete,
       gln: profileConfig?.gln ?? legacy?.gln ?? DEFAULT_CONFIG.gln,
+      bktsUsername: profileConfig?.bktsUsername ?? legacy?.bktsUsername ?? DEFAULT_CONFIG.bktsUsername,
+      gtsUsername: profileConfig?.gtsUsername ?? legacy?.gtsUsername ?? DEFAULT_CONFIG.gtsUsername,
+      bReceteUsername: profileConfig?.bReceteUsername ?? legacy?.bReceteUsername ?? DEFAULT_CONFIG.bReceteUsername,
+      environment: profileConfig?.environment ?? legacy?.environment ?? 'LIVE',
+      bktsEndpoint: profileConfig?.bktsEndpoint ?? legacy?.bktsEndpoint ?? '',
+      gtsEndpoint: profileConfig?.gtsEndpoint ?? legacy?.gtsEndpoint ?? '',
+      bReceteEndpoint: profileConfig?.bReceteEndpoint ?? legacy?.bReceteEndpoint ?? '',
     };
-  }, [profileConfig?.bktsEnabled, profileConfig?.gtsEnabled, profileConfig?.bReceteEnabled, profileConfig?.gln]);
+  }, [
+    profileConfig?.bktsEnabled, profileConfig?.gtsEnabled, profileConfig?.bReceteEnabled, profileConfig?.gln,
+    profileConfig?.bktsUsername, profileConfig?.gtsUsername, profileConfig?.bReceteUsername,
+    profileConfig?.environment, profileConfig?.bktsEndpoint, profileConfig?.gtsEndpoint, profileConfig?.bReceteEndpoint,
+  ]);
 
   const [config, setConfig] = useState<MinistryConfig>(buildConfig);
-  const [showCredentials, setShowCredentials] = useState(false);
   const [tab, setTab] = useState<TabId>('receive');
+  const [ledgerQuery, setLedgerQuery] = useState('');
+  const [ledgerType, setLedgerType] = useState<'ALL' | MinistryLedgerRecord['recordType']>('ALL');
   const [localOnly, setLocalOnly] = useState(() => { const c = buildConfig(); return !c.bkts && !c.gts; });
+
+  // ---- B-Reçete & Resmi Satış Bildirimi state ----------------------------
+  const farmers: Farmer[] = (vm.farmers || []) as Farmer[];
+  const prescriptions: Prescription[] = (vm.prescriptions || []) as Prescription[];
+  const [breceteMode, setBreceteMode] = useState<'invoice' | 'manual'>('invoice');
+  const [breceteSearch, setBreceteSearch] = useState('');
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string>('');
+  const [breceteSystem, setBreceteSystem] = useState<'BKTS' | 'GTS'>('BKTS');
+  const [breceteCodeInput, setBreceteCodeInput] = useState('');
+  const [breceteDocNo, setBreceteDocNo] = useState('');
+  const [breceteFarmerId, setBreceteFarmerId] = useState('');
+  const [breceteTcInput, setBreceteTcInput] = useState('');
+  const [breceteProductInput, setBreceteProductInput] = useState('');
+  const [breceteGtinInput, setBreceteGtinInput] = useState('');
+  const [breceteLotInput, setBreceteLotInput] = useState('');
+  const [breceteSktInput, setBreceteSktInput] = useState('');
+  const [breceteQtyInput, setBreceteQtyInput] = useState('1');
+  const [savingBrecete, setSavingBrecete] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -353,11 +543,68 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
     setLocalOnly(!fresh.bkts && !fresh.gts);
   }, [isOpen, buildConfig]);
 
+  const [activeService, setActiveService] = useState<ActiveMinistryService>(() => resolveServiceFromInitialTab(initialTab));
+  const [authByService, setAuthByService] = useState<Partial<Record<ActiveMinistryService, SavedServiceAuth>>>(() => loadSavedServiceAuthMap());
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginShowPassword, setLoginShowPassword] = useState(false);
+  const [loginRemember, setLoginRemember] = useState(true);
+  const [loginAutoEntered, setLoginAutoEntered] = useState(false);
+  const [loginError, setLoginError] = useState('');
+  const [accountUsername, setAccountUsername] = useState('');
+  const [accountPassword, setAccountPassword] = useState('');
+  const [accountShowPassword, setAccountShowPassword] = useState(false);
+
   useEffect(() => {
-    if (!initialTab || !isOpen) return;
-    if (initialTab === 'malkabul' || initialTab === 'receive') setTab('receive');
-    else if (initialTab === 'satis' || initialTab === 'ledger') setTab('ledger');
-    else if (initialTab === 'esdeger' || initialTab === 'engine') setTab('engine');
+    if (!isOpen) return;
+    const nextService = resolveServiceFromInitialTab(initialTab);
+    setActiveService(nextService);
+    setBreceteSystem(nextService === 'GTS' ? 'GTS' : 'BKTS');
+
+    if (initialTab === 'brecete' || nextService === 'BRECETE') {
+      setTab(initialTab === 'ledger' || initialTab === 'satis' ? 'ledger' : initialTab === 'webservice' ? 'webservice' : 'brecete');
+    } else if (initialTab === 'satis' || initialTab === 'ledger') {
+      setTab('ledger');
+    } else if (initialTab === 'webservice') {
+      setTab('webservice');
+    } else {
+      setTab('receive');
+    }
+
+    const saved = loadSavedServiceAuth(nextService);
+    const hasValidSaved = Boolean(saved && saved.remember && saved.username && saved.password);
+    if (hasValidSaved && saved) {
+      setAuthByService(prev => ({ ...prev, [nextService]: saved }));
+      setLoginAutoEntered(true);
+      setLoginError('');
+      setAccountUsername(saved.username);
+      setAccountPassword(saved.password);
+      setConfig(prev => ({
+        ...prev,
+        bkts: nextService === 'BKTS' ? true : prev.bkts,
+        gts: nextService === 'GTS' ? true : prev.gts,
+        bRecete: nextService === 'BRECETE' ? true : prev.bRecete,
+        bktsUsername: nextService === 'BKTS' ? saved.username : prev.bktsUsername,
+        gtsUsername: nextService === 'GTS' ? saved.username : prev.gtsUsername,
+        bReceteUsername: nextService === 'BRECETE' ? saved.username : prev.bReceteUsername,
+      }));
+      setLocalOnly(false);
+    } else {
+      setLoginAutoEntered(false);
+      setLoginError('');
+      const fallbackUser =
+        nextService === 'GTS'
+          ? (config.gtsUsername || '')
+          : nextService === 'BRECETE'
+            ? (config.bReceteUsername || '')
+            : (config.bktsUsername || '');
+      setLoginUsername(fallbackUser);
+      setLoginPassword('');
+      setAccountUsername(fallbackUser);
+      setAccountPassword('');
+      setLoginRemember(true);
+    }
+    setAccountShowPassword(false);
   }, [initialTab, isOpen]);
 
   const persistConfig = useCallback(async (next: MinistryConfig) => {
@@ -371,7 +618,19 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
     try {
       await updateUserProfile({
         ...userProfile,
-        ministryConfig: { gln: next.gln, bktsEnabled: next.bkts, gtsEnabled: next.gts, bReceteEnabled: next.bRecete },
+        ministryConfig: {
+          gln: next.gln,
+          bktsEnabled: next.bkts,
+          gtsEnabled: next.gts,
+          bReceteEnabled: next.bRecete,
+          bktsUsername: next.bktsUsername || '',
+          gtsUsername: next.gtsUsername || '',
+          bReceteUsername: next.bReceteUsername || '',
+          environment: next.environment === 'TEST' ? 'TEST' : 'LIVE',
+          bktsEndpoint: next.bktsEndpoint || '',
+          gtsEndpoint: next.gtsEndpoint || '',
+          bReceteEndpoint: next.bReceteEndpoint || '',
+        },
       });
     } catch (e: any) {
       console.error('[Ministry] profile sync failed', e);
@@ -379,8 +638,169 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
     }
   }, [userProfile, updateUserProfile, toast]);
 
-  const glnState: 'empty' | 'valid' | 'invalid' = !config.gln ? 'empty' : validateGLN(config.gln) ? 'valid' : 'invalid';
   const ministryActive = config.bkts || config.gts;
+
+  const activeMeta = SERVICE_META[activeService];
+  const activeAuth = authByService[activeService] || null;
+  const isAuthenticated = Boolean(
+    activeAuth
+    && activeAuth.username.trim()
+    && activeAuth.password,
+  );
+
+  const validateServiceUsername = (service: ActiveMinistryService, raw: string): string | null => {
+    const clean = raw.trim();
+    if (service === 'GTS') {
+      const digits = clean.replace(/\D/g, '');
+      if (digits !== clean || (digits.length !== 10 && digits.length !== 11)) {
+        return 'GTS girişi için 11 haneli T.C. Kimlik Numarası veya 10 haneli Vergi Numarası girin.';
+      }
+      return null;
+    }
+    if (service === 'BRECETE') {
+      if (!/^\d{11}$/.test(clean)) {
+        return 'B-Reçete girişi için 11 haneli T.C. Kimlik Numaranızı girin.';
+      }
+      return null;
+    }
+    if (!clean || clean.length < 4) {
+      return 'BKTS Kullanıcı Adı (T.C. Kimlik / Vergi No) girin.';
+    }
+    return null;
+  };
+
+  const applyAuthenticatedCredentials = async (usernameClean: string, passwordValue: string, rememberValue: boolean) => {
+    const authRecord: SavedServiceAuth = {
+      gln: '',
+      username: usernameClean,
+      password: passwordValue,
+      remember: rememberValue,
+      environment: config.environment === 'TEST' ? 'TEST' : 'LIVE',
+      loggedInAt: new Date().toISOString(),
+    };
+    setAuthByService(prev => ({ ...prev, [activeService]: authRecord }));
+    setAccountUsername(usernameClean);
+    setAccountPassword(passwordValue);
+    setLoginAutoEntered(false);
+    if (rememberValue) saveSavedServiceAuth(activeService, authRecord);
+    else clearSavedServiceAuth(activeService);
+
+    const nextConfig: MinistryConfig = {
+      ...config,
+      bkts: activeService === 'BKTS' ? true : config.bkts,
+      gts: activeService === 'GTS' ? true : config.gts,
+      bRecete: activeService === 'BRECETE' ? true : config.bRecete,
+      bktsUsername: activeService === 'BKTS' ? usernameClean : config.bktsUsername,
+      gtsUsername: activeService === 'GTS' ? usernameClean : config.gtsUsername,
+      bReceteUsername: activeService === 'BRECETE' ? usernameClean : config.bReceteUsername,
+    };
+    setLocalOnly(false);
+    await persistConfig(nextConfig);
+  };
+
+  const handleServiceLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const usernameClean = loginUsername.trim();
+    const userErr = validateServiceUsername(activeService, usernameClean);
+    if (userErr) {
+      setLoginError(userErr);
+      return;
+    }
+    if (!loginPassword) {
+      setLoginError(`${activeMeta.passwordLabel} alanını doldurun.`);
+      return;
+    }
+    setLoginError('');
+    await applyAuthenticatedCredentials(usernameClean, loginPassword, loginRemember);
+    toast(
+      loginRemember
+        ? `${activeMeta.shortLabel} hesabına giriş yapıldı (Beni Hatırla aktif).`
+        : `${activeMeta.shortLabel} oturumu açıldı.`,
+      'success',
+    );
+  };
+
+  const handleUpdateSavedAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const usernameClean = accountUsername.trim();
+    const userErr = validateServiceUsername(activeService, usernameClean);
+    if (userErr) {
+      toast(userErr, 'error');
+      return;
+    }
+    if (!accountPassword) {
+      toast(`${activeMeta.passwordLabel} alanını doldurun.`, 'error');
+      return;
+    }
+    const rememberNext = activeAuth?.remember ?? true;
+    await applyAuthenticatedCredentials(usernameClean, accountPassword, rememberNext);
+    toast(
+      rememberNext
+        ? `${activeMeta.shortLabel} hesap bilgileri güncellendi ve otomatik giriş için kaydedildi.`
+        : `${activeMeta.shortLabel} hesap bilgileri bu oturum için güncellendi.`,
+      'success',
+    );
+  };
+
+  const handleServiceLogout = () => {
+    clearSavedServiceAuth(activeService);
+    setAuthByService(prev => {
+      const next = { ...prev };
+      delete next[activeService];
+      return next;
+    });
+    setLoginUsername(activeAuth?.username || '');
+    setLoginPassword('');
+    setAccountPassword('');
+    setLoginAutoEntered(false);
+    setLoginError('');
+    toast(`${activeMeta.shortLabel} oturumu kapatıldı. Başka hesapla giriş yapabilirsiniz.`, 'info');
+  };
+
+  const openOfficialPortalWindow = (targetUrl?: string) => {
+    const url = targetUrl || activeMeta.portalUrl;
+    const width = 1220;
+    const height = 840;
+    const left = typeof window !== 'undefined'
+      ? Math.max(0, Math.round((window.screenX ?? 0) + ((window.outerWidth || width) - width) / 2))
+      : 100;
+    const top = typeof window !== 'undefined'
+      ? Math.max(0, Math.round((window.screenY ?? 0) + ((window.outerHeight || height) - height) / 2))
+      : 60;
+    if (activeAuth?.username && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(activeAuth.username).catch(() => {});
+    }
+    const win = window.open(
+      url,
+      `mks_ministry_portal_${activeService}`,
+      `width=${width},height=${height},left=${left},top=${top},menubar=no,toolbar=no,location=yes,resizable=yes,scrollbars=yes`,
+    );
+    if (!win) {
+      toast('Tarayıcı açılır pencereyi engelledi. Lütfen bu site için açılır pencerelere izin verin.', 'error');
+      return;
+    }
+    if (activeAuth?.username) {
+      toast(
+        `${activeMeta.portalLabel} açıldı — ${activeMeta.idLabel} (${activeAuth.username}) panoya kopyalandı, giriş kutusuna yapıştırabilirsiniz (Ctrl+V).`,
+        'success',
+      );
+    } else {
+      toast(`${activeMeta.portalLabel} penceresi açıldı.`, 'info');
+    }
+  };
+
+  const copyCredentialField = async (label: string, val?: string) => {
+    if (!val) {
+      toast(`Kopyalanacak ${label} bulunamadı.`, 'error');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(val);
+      toast(`${label} panoya kopyalandı.`, 'success');
+    } catch {
+      toast(`${label} kopyalanamadı — lütfen manuel seçip kopyalayın.`, 'error');
+    }
+  };
 
   // ---- Persistent data ----------------------------------------------------
   const [shipments, setShipmentsState] = useState<MinistryShipmentRecord[]>([]);
@@ -620,10 +1040,15 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
     if (!text.trim()) return;
     const parsed = parseGS1Barcode(text, format);
 
-    if (tab === 'engine') {
-      const hit = findItemByScan(inventoryRef.current, parsed);
-      if (hit) { setQuery(hit.pesticideName); okScan(`${hit.pesticideName} için muadiller listelendi`, source); }
-      else fail('Okutulan ürün depoda bulunamadı.');
+    if (activeService === 'BRECETE') {
+      if (parsed.gtin) {
+        setBreceteGtinInput(parsed.gtin);
+        if (parsed.batch) setBreceteLotInput(parsed.batch);
+        setTab('brecete');
+        okScan('GTIN / Lot bilgisi B-Reçete bildirim formuna aktarıldı', source);
+      } else {
+        fail('B-Reçete ekranında ürün karekodu (GTIN) okutabilirsiniz.');
+      }
       return;
     }
     if (tab !== 'receive') setTab('receive');
@@ -763,12 +1188,7 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
     }
     const registerToMinistry = !localOnly;
     if (registerToMinistry && !ministryActive) {
-      fail('BKTS/GTS kaydı kapalı. Üstteki anahtarlardan açın veya "BKTS/GTS kaydı yok" seçeneğini işaretleyin.');
-      return;
-    }
-    if (registerToMinistry && glnState !== 'valid') {
-      fail('Bakanlık kaydı için geçerli 13 haneli GLN girin veya "BKTS/GTS kaydı yok" seçin.');
-      setShowCredentials(true);
+      fail(`${SERVICE_META[activeService].shortLabel} resmi kaydı kapalı. Hesap girişinizi tamamlayın veya "Bakanlık kaydı yok" seçeneğini işaretleyin.`);
       return;
     }
     if (s.sscc && shipmentsRef.current.some(o => o.id !== s.id && !o.deletedAt && o.sscc === s.sscc && o.status === 'ACCEPTED')) {
@@ -808,10 +1228,12 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
       const item = byGroup.get(normalizeGtin(l.gtin) || l.name);
       return {
         id: generateUUID(),
-        system: isFertilizer(item?.category) || (config.gts && !config.bkts) ? 'GTS' : 'BKTS',
+        system: activeService === 'GTS' ? 'GTS' : activeService === 'BKTS' ? 'BKTS' : (isFertilizer(item?.category) || (config.gts && !config.bkts) ? 'GTS' : 'BKTS'),
         recordType: 'SHIPMENT_ACCEPT',
         date: acceptedAt,
         documentNo: s.waybillNo || s.sscc || s.id.slice(0, 8).toUpperCase(),
+        senderGln: s.senderGln || undefined,
+        receiverGln: config.gln || undefined,
         supplierName: s.senderName || undefined,
         sscc: s.sscc || undefined,
         waybillNo: s.waybillNo || undefined,
@@ -843,32 +1265,44 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
     );
   };
 
-  // ---- Ledger / export ----------------------------------------------------
-  const [ledgerQuery, setLedgerQuery] = useState('');
-  const [ledgerType, setLedgerType] = useState<'ALL' | MinistryLedgerRecord['recordType']>('ALL');
-  const [ledgerSystem, setLedgerSystem] = useState<'ALL' | 'BKTS' | 'GTS'>('ALL');
+  // ---- Ledger / export (scoped strictly to activeService) -------------
+  const serviceRecords = useMemo(() => {
+    return records.filter(r => {
+      if (r.deletedAt) return false;
+      if (activeService === 'GTS') return r.system === 'GTS';
+      if (activeService === 'BKTS') return r.system === 'BKTS';
+      return Boolean(r.bReceteCode) || r.system === 'BKTS';
+    });
+  }, [records, activeService]);
 
   const filteredRecords = useMemo(() => {
     const q = ledgerQuery.trim().toLocaleLowerCase('tr-TR');
-    return records.filter(r => {
-      if (r.deletedAt) return false;
+    return serviceRecords.filter(r => {
       if (ledgerType !== 'ALL' && r.recordType !== ledgerType) return false;
-      if (ledgerSystem !== 'ALL' && r.system !== ledgerSystem) return false;
       if (!q) return true;
       return [r.productName, r.farmerName, r.farmerTcNo, r.gtin, r.lotNumber, r.serialNumber, r.documentNo, r.supplierName, r.bReceteCode]
         .some(v => String(v ?? '').toLocaleLowerCase('tr-TR').includes(q));
     });
-  }, [records, ledgerQuery, ledgerType, ledgerSystem]);
+  }, [serviceRecords, ledgerQuery, ledgerType]);
 
   const officialRecords = useMemo(() => filterOfficialMinistryRecords(filteredRecords), [filteredRecords]);
   const counts = useMemo(() => ({
-    ready: records.filter(r => r.status === 'Dışa Aktarıma Hazır' && !r.deletedAt).length,
-    free: records.filter(r => r.status === FREE_SALE_STATUS && !r.deletedAt).length,
-    accept: records.filter(r => r.recordType === 'SHIPMENT_ACCEPT' && !r.deletedAt).length,
-  }), [records]);
+    reported: serviceRecords.filter(r => r.status === 'Bakanlığa Bildirildi').length,
+    ready: serviceRecords.filter(r => r.status === 'Dışa Aktarıma Hazır').length,
+    free: serviceRecords.filter(r => r.status === FREE_SALE_STATUS).length,
+    accept: serviceRecords.filter(r => r.recordType === 'SHIPMENT_ACCEPT').length,
+  }), [serviceRecords]);
 
   const exportRows = (rows: MinistryLedgerRecord[]): MinistryExportRecord[] =>
-    rows.map(r => ({ ...r, senderGln: config.gln || undefined, prescriptionNo: r.documentNo }));
+    rows.map(r => {
+      const isInbound = r.recordType === 'SHIPMENT_ACCEPT' || r.recordType === 'RETURN';
+      return {
+        ...r,
+        senderGln: isInbound ? (r.senderGln || undefined) : (r.senderGln || config.gln || undefined),
+        receiverGln: isInbound ? (r.receiverGln || config.gln || undefined) : r.receiverGln,
+        prescriptionNo: r.documentNo,
+      };
+    });
 
   const reportShare = (result: 'shared' | 'downloaded' | 'cancelled', fileName: string) => {
     if (result === 'shared') toast('Paylaşım ekranı açıldı', 'success');
@@ -879,13 +1313,13 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
     if (exporting) return;
     const rows = format === 'txt' ? officialRecords.filter(r => r.gtin) : officialRecords;
     if (rows.length === 0) {
-      toast(filteredRecords.length ? 'Dışa aktarılacak kayıtlı (BKTS/GTS) satır yok — serbest satışlar resmi dosyaya girmez.' : 'Dışa aktarılacak kayıt yok', 'error');
+      toast(filteredRecords.length ? `Dışa aktarılacak kayıtlı (${SERVICE_META[activeService].shortLabel}) satır yok — serbest satışlar resmi dosyaya girmez.` : 'Dışa aktarılacak kayıt yok', 'error');
       return;
     }
     setExporting(format);
     try {
       const f = generateMinistryExportFile(exportRows(rows), format);
-      const result = await shareOrDownload(f.fileName, new Blob([f.content], { type: f.mimeType }), 'MKS BKTS/GTS dışa aktarım dosyası');
+      const result = await shareOrDownload(f.fileName, new Blob([f.content], { type: f.mimeType }), `MKS ${SERVICE_META[activeService].shortLabel} dışa aktarım dosyası`);
       reportShare(result, f.fileName);
     } catch (e: any) {
       console.error('[Ministry] export failed', e);
@@ -897,16 +1331,22 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
 
   const exportPdf = async () => {
     if (exporting) return;
-    if (officialRecords.length === 0) { toast('Deftere yazılacak kayıtlı (BKTS/GTS) satır yok', 'error'); return; }
+    if (officialRecords.length === 0) { toast(`Deftere yazılacak kayıtlı (${SERVICE_META[activeService].shortLabel}) satır yok`, 'error'); return; }
     setExporting('pdf');
     try {
       const { jsPDF, autoTable } = await loadJsPdfWithAutoTable();
       const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+      const pdfHeading =
+        activeService === 'GTS'
+          ? 'Gübre Takip Sistemi (GTS) Satış ve Mal Kabul Denetim Defteri'
+          : activeService === 'BRECETE'
+            ? 'B-Reçete Resmi Satış ve Bildirim Denetim Defteri'
+            : 'Bitki Koruma Ürünleri Takip Sistemi (BKTS) Denetim Defteri';
       doc.setFontSize(13);
-      doc.text(pdfSafe('Bitki Koruma Ürünleri / Gübre Satış ve Mal Kabul Denetim Defteri'), 14, 14);
+      doc.text(pdfSafe(pdfHeading), 14, 14);
       doc.setFontSize(8.5);
       doc.text(pdfSafe(`Bayi: ${userProfile?.companyName || userProfile?.fullName || '-'} · GLN: ${config.gln || '-'} · Düzenlenme: ${new Date().toLocaleString('tr-TR')} · Kayıt: ${officialRecords.length}`), 14, 20);
-      doc.text(pdfSafe('Durum: Dışa Aktarıma Hazır (XML / CSV / PDF) — Bakanlık web servisine otomatik gönderim yapılmamıştır.'), 14, 24.5);
+      doc.text(pdfSafe('Durum: Resmi XML / CSV / PDF Denetim Çıktısı'), 14, 24.5);
       autoTable(doc, {
         startY: 28,
         head: [['Tarih', 'Sistem', 'Tür', 'TCKN/VKN', 'Alıcı / Tedarikçi', 'Ürün', 'GTIN', 'Seri No', 'Lot', 'SKT', 'Miktar', 'Belge No'].map(pdfSafe)],
@@ -924,10 +1364,11 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
       doc.setFontSize(9);
       doc.text(pdfSafe('Bayi Kaşe / İmza'), 14, sigY);
       doc.text(pdfSafe('Denetim Elemanı'), doc.internal.pageSize.getWidth() - 60, sigY);
-      const fileName = `bkts_gts_denetim_defteri_${todayISO()}.pdf`;
+      const prefix = activeService === 'GTS' ? 'gts' : activeService === 'BRECETE' ? 'brecete' : 'bkts';
+      const fileName = `${prefix}_denetim_defteri_${todayISO()}.pdf`;
       const auditPdfBlob = doc.output('blob');
       void archivePdf(fileName, auditPdfBlob);
-      const result = await shareOrDownload(fileName, auditPdfBlob, 'MKS Denetim Defteri (PDF)');
+      const result = await shareOrDownload(fileName, auditPdfBlob, `MKS ${SERVICE_META[activeService].shortLabel} Denetim Defteri (PDF)`);
       reportShare(result, fileName);
     } catch (e: any) {
       console.error('[Ministry] PDF failed', e);
@@ -937,24 +1378,182 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
     }
   };
 
-  // ---- Engine tab ---------------------------------------------------------
-  const [query, setQuery] = useState('');
-  const [tank, setTank] = useState<TankMixInput[]>([]);
-  const [customTankItem, setCustomTankItem] = useState('');
-  const equivalents = useMemo(() => (query.trim().length >= 2 ? findEquivalentProducts(query, inventory) : []), [query, inventory]);
-  const mix = useMemo(() => checkTankMixCompatibility(tank), [tank]);
-  const addToTank = (item: TankMixInput) => {
-    if (!item.name.trim() || tank.some(t => t.name === item.name)) return;
-    setTank(prev => [...prev, item]);
+  // ---- B-Reçete & Resmi Satış Bildirimi helpers ---------------------------
+  const farmerById = useMemo(() => {
+    const m = new Map<string, Farmer>();
+    farmers.forEach(f => m.set(f.id, f));
+    return m;
+  }, [farmers]);
+
+  const invoiceList = useMemo(() => {
+    const q = breceteSearch.trim().toLocaleLowerCase('tr-TR');
+    return [...prescriptions]
+      .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
+      .filter(p => {
+        if (!q) return true;
+        const fr = farmerById.get(p.farmerId);
+        return [p.prescriptionNo, fr?.fullName, fr?.tcNo, p.crop, p.bReceteCode, ...(p.items || []).map(it => it.pesticideName)]
+          .some(v => String(v ?? '').toLocaleLowerCase('tr-TR').includes(q));
+      })
+      .slice(0, 40);
+  }, [prescriptions, farmerById, breceteSearch]);
+
+  const selectedInvoice = useMemo(
+    () => prescriptions.find(p => p.id === selectedInvoiceId) || null,
+    [prescriptions, selectedInvoiceId],
+  );
+
+  const handleSelectInvoiceForBrecete = (p: Prescription) => {
+    setSelectedInvoiceId(p.id);
+    const fr = farmerById.get(p.farmerId);
+    setBreceteCodeInput(p.bReceteCode || '');
+    setBreceteDocNo(p.prescriptionNo || '');
+    setBreceteTcInput(fr?.tcNo || '');
+  };
+
+  const handleSubmitInvoiceToMinistry = async () => {
+    if (!selectedInvoice || savingBrecete) return;
+    const fr = farmerById.get(selectedInvoice.farmerId);
+    const tcVal = validateTcOrVkn(breceteTcInput.trim());
+    if (!tcVal.isValid || tcVal.status === 'EMPTY') {
+      fail('Resmi kayıt (BKTS/GTS/B-Reçete) için çiftçinin geçerli 10/11 haneli VKN veya TCKN numarasını girin.');
+      return;
+    }
+    setSavingBrecete(true);
+    try {
+      const nowIso = selectedInvoice.date || new Date().toISOString();
+      const rows: MinistryLedgerRecord[] = (selectedInvoice.items || []).map(it => {
+        const invMatch = inventory.find(inv => inv.pesticideId === it.pesticideId);
+        const sys: 'BKTS' | 'GTS' = activeService === 'GTS' ? 'GTS' : activeService === 'BKTS' ? 'BKTS' : (isFertilizer(invMatch?.category) || breceteSystem === 'GTS' ? 'GTS' : 'BKTS');
+        return {
+          id: generateUUID(),
+          system: sys,
+          recordType: selectedInvoice.type === 'RETURN' ? 'RETURN' : 'FARMER_SALE',
+          date: nowIso,
+          documentNo: (breceteDocNo.trim() || selectedInvoice.prescriptionNo || '').slice(0, 40),
+          prescriptionId: selectedInvoice.id,
+          bReceteCode: breceteCodeInput.trim() || undefined,
+          farmerId: fr?.id || selectedInvoice.farmerId,
+          farmerName: fr?.fullName || 'Çiftçi',
+          farmerTcNo: breceteTcInput.trim(),
+          pesticideId: it.pesticideId,
+          productName: it.pesticideName,
+          gtin: normalizeGtin(it.gtin || invMatch?.gtin || invMatch?.barcode) || '',
+          lotNumber: it.lotNumber || invMatch?.lotNumber || '',
+          serialNumber: it.serialNumbers?.[0],
+          expiryDate: it.expiryDate || invMatch?.expiryDate,
+          quantity: round2(Math.abs(Number(String(it.quantity || '1').replace(',', '.')) || 1)),
+          unit: invMatch?.unit || 'Adet',
+          status: 'Dışa Aktarıma Hazır',
+        };
+      });
+      if (!rows.length) {
+        fail('Seçili faturada ürün kalemi bulunamadı.');
+        setSavingBrecete(false);
+        return;
+      }
+      const res = await saveMinistryRecords(rows);
+      if (!res.ok) {
+        fail(`Resmi deftere yazılamadı: ${res.error || 'depolama hatası'}`);
+        setSavingBrecete(false);
+        return;
+      }
+      setRecords(prev => [...rows, ...prev]);
+      playScanBeep();
+      toast(`${rows.length} kalem resmi ${activeMeta.shortLabel} defterine işlendi (XML/CSV/PDF dışa aktarıma hazır).`, 'success');
+      setTab('ledger');
+      setSelectedInvoiceId('');
+      setBreceteCodeInput('');
+    } finally {
+      setSavingBrecete(false);
+    }
+  };
+
+  const handleCreateManualBrecete = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (savingBrecete) return;
+    const fr = farmerById.get(breceteFarmerId);
+    const tcRaw = (breceteTcInput || fr?.tcNo || '').trim();
+    const tcVal = validateTcOrVkn(tcRaw);
+    if (!tcVal.isValid || tcVal.status === 'EMPTY') {
+      fail('Geçerli 11 haneli TCKN veya 10 haneli VKN girin.');
+      return;
+    }
+    if (!breceteProductInput.trim()) {
+      fail('Ürün adını girin veya seçin.');
+      return;
+    }
+    const qty = round2(Number(breceteQtyInput.replace(',', '.')) || 0);
+    if (!(qty > 0)) {
+      fail('Miktar 0\'dan büyük olmalıdır.');
+      return;
+    }
+    setSavingBrecete(true);
+    try {
+      const invMatch = inventory.find(inv => inv.pesticideName.toLocaleLowerCase('tr-TR') === breceteProductInput.trim().toLocaleLowerCase('tr-TR'));
+      const rec: MinistryLedgerRecord = {
+        id: generateUUID(),
+        system: activeService === 'GTS' ? 'GTS' : activeService === 'BKTS' ? 'BKTS' : breceteSystem,
+        recordType: 'FARMER_SALE',
+        date: new Date().toISOString(),
+        documentNo: (breceteDocNo.trim() || `BR-${Date.now().toString().slice(-6)}`).slice(0, 40),
+        bReceteCode: breceteCodeInput.trim() || undefined,
+        farmerId: fr?.id,
+        farmerName: fr?.fullName || 'Kayıtlı Çiftçi',
+        farmerTcNo: tcRaw,
+        pesticideId: invMatch?.pesticideId,
+        productName: breceteProductInput.trim(),
+        gtin: normalizeGtin(breceteGtinInput.trim() || invMatch?.gtin || invMatch?.barcode) || '',
+        lotNumber: breceteLotInput.trim() || invMatch?.lotNumber || '',
+        expiryDate: breceteSktInput.trim() || invMatch?.expiryDate,
+        quantity: qty,
+        unit: invMatch?.unit || 'Adet',
+        status: 'Dışa Aktarıma Hazır',
+      };
+      const res = await saveMinistryRecords([rec]);
+      if (!res.ok) {
+        fail(`B-Reçete kaydı yazılamadı: ${res.error || 'depolama hatası'}`);
+        setSavingBrecete(false);
+        return;
+      }
+      setRecords(prev => [rec, ...prev]);
+      playScanBeep();
+      toast(`${activeMeta.shortLabel} resmi satış kaydı deftere eklendi (XML/CSV/PDF dışa aktarıma hazır).`, 'success');
+      setTab('ledger');
+      setBreceteProductInput('');
+      setBreceteGtinInput('');
+      setBreceteLotInput('');
+      setBreceteSktInput('');
+      setBreceteQtyInput('1');
+      setBreceteCodeInput('');
+      setBreceteDocNo('');
+    } finally {
+      setSavingBrecete(false);
+    }
   };
 
   if (!isOpen) return null;
 
-  const tabs: { id: TabId; label: string; icon: React.ReactNode; badge?: number }[] = [
-    { id: 'receive', label: 'Fabrikadan Mal Kabul', icon: <Factory size={16} />, badge: pendingList.length || undefined },
-    { id: 'ledger', label: 'Satış & Denetim Defteri', icon: <ScrollText size={16} />, badge: counts.ready || undefined },
-    { id: 'engine', label: 'Muadil & Tank Karışımı', icon: <FlaskConical size={16} /> },
-  ];
+  const tabs: { id: TabId; label: string; icon: React.ReactNode; badge?: number }[] =
+    activeService === 'GTS'
+      ? [
+          { id: 'receive', label: '1. Gübre Mal Kabul', icon: <Factory size={16} />, badge: pendingList.length || undefined },
+          { id: 'brecete', label: '2. Gübre Satış Bildirimi', icon: <Sprout size={16} /> },
+          { id: 'ledger', label: '3. GTS Denetim Defteri', icon: <ScrollText size={16} />, badge: counts.ready || undefined },
+          { id: 'webservice', label: '4. Resmî Portal & Hesap', icon: <Globe size={16} /> },
+        ]
+      : activeService === 'BRECETE'
+        ? [
+            { id: 'brecete', label: '1. B-Reçete & Resmi Satış Kaydı', icon: <ShieldCheck size={16} /> },
+            { id: 'ledger', label: '2. B-Reçete Denetim Defteri', icon: <ScrollText size={16} />, badge: counts.ready || undefined },
+            { id: 'webservice', label: '3. Resmî Portal & Hesap', icon: <Globe size={16} /> },
+          ]
+        : [
+            { id: 'receive', label: '1. İlaç Mal Kabul (Karekod / SSCC)', icon: <Factory size={16} />, badge: pendingList.length || undefined },
+            { id: 'brecete', label: '2. BKTS Satış Bildirimi', icon: <QrCode size={16} /> },
+            { id: 'ledger', label: '3. BKTS Denetim Defteri', icon: <ScrollText size={16} />, badge: counts.ready || undefined },
+            { id: 'webservice', label: '4. Resmî Portal & Hesap', icon: <Globe size={16} /> },
+          ];
 
   const renderLine = (s: MinistryShipmentRecord, l: MinistryShipmentLine, i: number, editable: boolean) => {
     const d = daysUntilExpiry(l.expiry);
@@ -1055,7 +1654,7 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
         </div>
 
         {pending && (active || s.lines.length === 0) && (
-          <div className="grid gap-2 sm:grid-cols-3">
+          <div className="grid gap-2 sm:grid-cols-2">
             <input
               value={s.senderName}
               onChange={e => updateShipmentField(s, { senderName: e.target.value }, false)}
@@ -1073,16 +1672,6 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
               aria-label="İrsaliye numarası"
               className="min-h-[44px] rounded-xl border px-3 text-sm outline-none focus:ring-2 focus:ring-emerald-500/40"
               style={inputStyle}
-            />
-            <input
-              value={s.senderGln || ''}
-              onChange={e => updateShipmentField(s, { senderGln: e.target.value.replace(/\D/g, '').slice(0, 13) }, false)}
-              onBlur={e => updateShipmentField(s, { senderGln: e.target.value.replace(/\D/g, '').slice(0, 13) }, true)}
-              placeholder="Gönderen GLN (ops.)"
-              inputMode="numeric"
-              aria-label="Gönderen GLN"
-              className={`min-h-[44px] rounded-xl border px-3 text-sm font-mono outline-none focus:ring-2 focus:ring-emerald-500/40 ${s.senderGln && !validateGLN(s.senderGln) ? 'border-red-500/60' : ''}`}
-              style={s.senderGln && !validateGLN(s.senderGln) ? { ...inputStyle, borderColor: undefined } : inputStyle}
             />
           </div>
         )}
@@ -1108,99 +1697,240 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
         className="w-full max-w-6xl max-h-[92dvh] rounded-t-3xl sm:rounded-3xl border overflow-hidden flex flex-col shadow-2xl pb-[env(safe-area-inset-bottom)]"
         style={{ background: 'var(--mks-modal-bg)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-text)' }}
       >
-        {/* Header */}
+        {/* Header (Servis Bazlı Kurumsal Başlık) */}
         <div className="px-4 sm:px-5 pt-4 pb-3 border-b" style={{ borderColor: 'var(--mks-card-border)' }}>
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-11 h-11 shrink-0 rounded-2xl flex items-center justify-center" style={{ background: 'var(--mks-accent-soft)', color: 'var(--mks-accent-soft-text)' }}>
-                <Landmark size={22} />
+              <div
+                className="w-11 h-11 shrink-0 rounded-2xl flex items-center justify-center border"
+                style={{
+                  background: `${activeMeta.accentHex}1f`,
+                  borderColor: `${activeMeta.accentHex}55`,
+                  color: activeMeta.accentHex,
+                }}
+              >
+                {activeService === 'GTS' ? <Sprout size={22} /> : activeService === 'BRECETE' ? <ShieldCheck size={22} /> : <QrCode size={22} />}
               </div>
               <div className="min-w-0">
-                <h2 id="ministry-modal-title" className="text-base sm:text-lg font-black tracking-tight truncate">Bakanlık Kayıt Merkezi</h2>
-                <p className="text-xs truncate" style={mutedStyle}>BKTS · GTS · B-Reçete · Fabrikadan Mal Kabul</p>
-              </div>
-            </div>
-            <ModalCloseButton onClick={onClose} label="Bakanlık penceresini kapat" />
-          </div>
-
-          <div className="mt-3 rounded-2xl border px-3 py-2.5 flex items-start gap-2 text-xs" style={subSurface}>
-            <Info size={16} className="shrink-0 mt-0.5 text-emerald-500" />
-            <span>
-              <b>Durum: Dışa Aktarıma Hazır (XML / CSV / PDF).</b>{' '}
-              <span style={mutedStyle}>MKS kayıtları kalıcı olarak saklar ve resmi dosya üretir; Bakanlık web servisine otomatik canlı gönderim yapılmaz.</span>
-            </span>
-          </div>
-
-          <div className="mt-3 grid grid-cols-1 sm:grid-cols-[repeat(3,minmax(0,1fr))_auto] gap-2">
-            <Switch label="BKTS (İlaç Takip)" on={config.bkts} onText="Kayıtlı" offText="Kaydı Yok" onChange={v => void persistConfig({ ...config, bkts: v })} />
-            <Switch label="GTS (Gübre Takip)" on={config.gts} onText="Kayıtlı" offText="Kaydı Yok" onChange={v => void persistConfig({ ...config, gts: v })} />
-            <Switch label="B-Reçete" on={config.bRecete} onText="Satışta kod alanı açık" offText="Kapalı" onChange={v => void persistConfig({ ...config, bRecete: v })} />
-            <button
-              type="button"
-              onClick={() => setShowCredentials(s => !s)}
-              aria-expanded={showCredentials}
-              className="min-h-[48px] flex items-center justify-center gap-2 rounded-2xl border px-3 text-xs font-bold"
-              style={subSurface}
-            >
-              {glnState === 'valid' ? <ShieldCheck size={16} className="text-emerald-500" /> : <ShieldAlert size={16} className={glnState === 'invalid' ? 'text-red-500' : ''} />}
-              Bayi GLN
-              <ChevronDown size={14} className={`transition-transform ${showCredentials ? 'rotate-180' : ''}`} />
-            </button>
-          </div>
-
-          {showCredentials && (
-            <div className="mt-2 rounded-2xl border p-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end" style={subSurface}>
-              <label className="flex flex-col gap-1">
-                <span className="text-[11px]" style={mutedStyle}>Bayi GLN Numarası (13 hane, profil ile senkron)</span>
-                <div className="relative">
-                  <input
-                    value={config.gln}
-                    onChange={e => setConfig(c => ({ ...c, gln: e.target.value.replace(/\D/g, '').slice(0, 13) }))}
-                    onBlur={e => void persistConfig({ ...config, gln: e.target.value.replace(/\D/g, '').slice(0, 13) })}
-                    inputMode="numeric"
-                    placeholder={EXAMPLE_GLN}
-                    aria-label="Bayi GLN numarası"
-                    className={`w-full min-h-[44px] border rounded-xl px-3 pr-28 text-sm font-mono outline-none focus:ring-2 focus:ring-emerald-500/40 ${glnState === 'invalid' ? 'border-red-500/70' : ''}`}
-                    style={glnState === 'invalid' ? { ...inputStyle, borderColor: undefined } : inputStyle}
-                  />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-bold">
-                    {glnState === 'valid' && <span className="text-emerald-500 flex items-center gap-1"><CheckCircle2 size={13} /> Geçerli</span>}
-                    {glnState === 'invalid' && <span className="text-red-500">{config.gln.length < 13 ? `${config.gln.length}/13` : 'Kontrol hanesi hatalı'}</span>}
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 id="ministry-modal-title" className="text-base sm:text-lg font-black tracking-tight truncate">
+                    {activeMeta.title}
+                  </h2>
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-black"
+                    style={{
+                      background: `${activeMeta.accentHex}18`,
+                      borderColor: `${activeMeta.accentHex}44`,
+                      color: activeMeta.accentHex,
+                    }}
+                  >
+                    {isAuthenticated ? 'Oturum Açık' : 'Giriş Gerekli'}
                   </span>
                 </div>
-              </label>
-              <p className="text-[11px] sm:max-w-[260px]" style={mutedStyle}>
-                Web servis anahtarı istenmez: canlı Bakanlık bağlantısı yoktur, kayıtlar dışa aktarım dosyası olarak verilir.
-              </p>
+                <p className="text-xs truncate" style={mutedStyle}>{activeMeta.subtitle}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => openOfficialPortalWindow()}
+                className="hidden sm:inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[11px] font-bold hover:opacity-90"
+                style={subSurface}
+              >
+                <ExternalLink size={13} />
+                <span>Resmî Portalı Aç</span>
+              </button>
+              <ModalCloseButton onClick={onClose} label={`${activeMeta.shortLabel} penceresini kapat`} />
+            </div>
+          </div>
+
+          {isAuthenticated && activeAuth && (
+            <div className="mt-3 rounded-2xl border px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs" style={subSurface}>
+              <div className="flex flex-wrap items-center gap-2 min-w-0">
+                <ShieldCheck size={15} className="shrink-0" style={{ color: activeMeta.accentHex }} />
+                <span className="font-bold truncate">
+                  Bağlı Hesap ({activeMeta.id === 'BRECETE' ? 'TCKN' : 'TCKN / VKN'}):{' '}
+                  <span className="font-mono">{activeAuth.username}</span>
+                </span>
+                {(loginAutoEntered || activeAuth.remember) && (
+                  <span className="rounded-full bg-emerald-500/15 border border-emerald-500/35 px-2 py-0.5 text-[10px] font-black text-emerald-500">
+                    {loginAutoEntered ? 'Otomatik Giriş Yapıldı' : 'Otomatik Giriş Kayıtlı'}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => openOfficialPortalWindow()}
+                  className="sm:hidden inline-flex items-center gap-1 rounded-xl border px-2.5 py-1.5 text-[11px] font-bold"
+                  style={surface}
+                >
+                  <ExternalLink size={12} /> Portal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleServiceLogout}
+                  className="inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[11px] font-bold text-red-400 border-red-500/30 hover:bg-red-500/10"
+                >
+                  <LogOut size={13} />
+                  <span>Hesap / Çıkış</span>
+                </button>
+              </div>
             </div>
           )}
         </div>
 
-        {/* Tabs */}
-        <div className="mks-tab-rail px-3 pt-2.5 pb-2 border-b flex gap-2 overflow-x-auto" role="tablist" style={{ borderColor: 'var(--mks-card-border)' }}>
-          {tabs.map(t => (
-            <button
-              key={t.id}
-              type="button"
-              role="tab"
-              aria-selected={tab === t.id}
-              onClick={() => setTab(t.id)}
-              className="shrink-0 min-h-[44px] flex items-center gap-2 whitespace-nowrap px-3.5 text-xs font-bold rounded-xl border transition-colors"
-              style={tab === t.id ? { ...accentStyle, borderColor: 'transparent' } : subSurface}
-            >
-              {t.icon}{t.label}
-              {t.badge ? <span className={`min-w-[20px] h-5 px-1.5 rounded-full text-[11px] flex items-center justify-center ${tab === t.id ? 'bg-white/25' : 'bg-emerald-500/20 text-emerald-500'}`}>{t.badge}</span> : null}
-            </button>
-          ))}
-        </div>
+        {isAuthenticated && (
+          <div className="mks-tab-rail px-3 pt-2.5 pb-2 border-b flex gap-2 overflow-x-auto" role="tablist" style={{ borderColor: 'var(--mks-card-border)' }}>
+            {tabs.map(t => (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={tab === t.id}
+                onClick={() => setTab(t.id)}
+                className="shrink-0 min-h-[44px] flex items-center gap-2 whitespace-nowrap px-3.5 text-xs font-bold rounded-xl border transition-colors"
+                style={tab === t.id ? { ...accentStyle, borderColor: 'transparent' } : subSurface}
+              >
+                {t.icon}{t.label}
+                {t.badge ? <span className={`min-w-[20px] h-5 px-1.5 rounded-full text-[11px] flex items-center justify-center ${tab === t.id ? 'bg-white/25' : 'bg-emerald-500/20 text-emerald-500'}`}>{t.badge}</span> : null}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="flex-1 overflow-y-auto overscroll-contain p-3 sm:p-5">
-          {loading && (
-            <div className="flex items-center gap-2 text-xs mb-3" style={mutedStyle}><Loader2 size={14} className="animate-spin" /> Kayıtlar yükleniyor…</div>
-          )}
+          {!isAuthenticated ? (
+            <div className="max-w-xl mx-auto py-2 sm:py-6 space-y-4">
+              <form onSubmit={handleServiceLogin} className="rounded-3xl border p-5 sm:p-6 space-y-4 shadow-lg" style={surface}>
+                <div className="flex items-start gap-3">
+                  <div
+                    className="w-12 h-12 shrink-0 rounded-2xl flex items-center justify-center border"
+                    style={{
+                      background: `${activeMeta.accentHex}1f`,
+                      borderColor: `${activeMeta.accentHex}55`,
+                      color: activeMeta.accentHex,
+                    }}
+                  >
+                    <Lock size={22} />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-base font-black">{activeMeta.loginTitle}</h3>
+                    <p className="text-xs leading-relaxed" style={mutedStyle}>{activeMeta.loginDesc}</p>
+                  </div>
+                </div>
 
-          {/* TAB 1 — Mal kabul */}
-          {tab === 'receive' && (
+                {loginError && (
+                  <div className="rounded-2xl border border-red-500/40 bg-red-500/10 px-3.5 py-2.5 text-xs font-semibold text-red-400 flex items-start gap-2">
+                    <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+                    <span>{loginError}</span>
+                  </div>
+                )}
+
+                <div className="space-y-3">
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs font-bold" style={mutedStyle}>{activeMeta.idLabel} *</span>
+                    <div className="relative">
+                      <User size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={mutedStyle} />
+                      <input
+                        type="text"
+                        inputMode={activeService === 'BKTS' ? 'text' : 'numeric'}
+                        value={loginUsername}
+                        onChange={e =>
+                          setLoginUsername(
+                            activeService === 'BKTS'
+                              ? e.target.value
+                              : e.target.value.replace(/\D/g, '').slice(0, 11),
+                          )
+                        }
+                        placeholder={activeMeta.idPlaceholder}
+                        autoComplete="username"
+                        className="w-full min-h-[46px] border rounded-xl pl-10 pr-3.5 text-sm font-mono outline-none focus:ring-2 focus:ring-emerald-500/40"
+                        style={inputStyle}
+                      />
+                    </div>
+                  </label>
+
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs font-bold" style={mutedStyle}>{activeMeta.passwordLabel} *</span>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type={loginShowPassword ? 'text' : 'password'}
+                        value={loginPassword}
+                        onChange={e => setLoginPassword(e.target.value)}
+                        placeholder="••••••••"
+                        autoComplete="current-password"
+                        className="flex-1 min-h-[46px] border rounded-xl px-3.5 text-sm font-mono outline-none focus:ring-2 focus:ring-emerald-500/40"
+                        style={inputStyle}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setLoginShowPassword(v => !v)}
+                        aria-label={loginShowPassword ? 'Şifreyi gizle' : 'Şifreyi göster'}
+                        className="min-h-[46px] w-11 shrink-0 rounded-xl border flex items-center justify-center"
+                        style={subSurface}
+                      >
+                        {loginShowPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
+                    </div>
+                  </label>
+
+                  <label className="flex items-center gap-3 rounded-2xl border px-3.5 py-3 cursor-pointer" style={subSurface}>
+                    <input
+                      type="checkbox"
+                      checked={loginRemember}
+                      onChange={e => setLoginRemember(e.target.checked)}
+                      className="h-5 w-5 shrink-0 accent-emerald-500 rounded"
+                    />
+                    <div className="text-xs">
+                      <div className="font-bold">Beni Hatırla — Sonraki Girişlerde Otomatik Bağlan</div>
+                      <div className="text-[11px]" style={mutedStyle}>
+                        İşaretliyken {activeMeta.shortLabel} ekranını her açtığınızda giriş adımı atlanıp doğrudan çalışma alanınız açılır.
+                      </div>
+                    </div>
+                  </label>
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full min-h-[48px] rounded-2xl font-black text-sm flex items-center justify-center gap-2 transition-opacity hover:opacity-95"
+                  style={{ background: activeMeta.accentHex, color: '#ffffff' }}
+                >
+                  <ShieldCheck size={18} />
+                  {`Giriş Yap ve ${activeMeta.shortLabel} Ekranını Aç`}
+                </button>
+              </form>
+
+              <div className="rounded-2xl border p-4 space-y-2.5 text-xs" style={subSurface}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-black flex items-center gap-1.5">
+                    <Globe size={15} style={{ color: activeMeta.accentHex }} />
+                    <span>Resmî Portal Üzerinden İşlem (Alternatif)</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => openOfficialPortalWindow()}
+                    className="rounded-xl border px-3 py-1.5 text-xs font-bold flex items-center gap-1.5"
+                    style={surface}
+                  >
+                    <ExternalLink size={13} /> {activeMeta.portalLabel}
+                  </button>
+                </div>
+                <p className="text-[11px] leading-relaxed" style={mutedStyle}>
+                  {activeService === 'GTS'
+                    ? 'Resmî GTS web portalı (gtsapp.tarimorman.gov.tr) giriş sırasında görsel güvenlik kodu (Captcha) ve Mobil Onay (SMS) istediği ve .gov.tr sayfaları gömülü iframe içinde açılamadığı için MKS üzerinden SMS kodu gönderilemez. Uygulama içi mal kabul, karekod ve defter işlemleri için yukarıdan doğrudan giriş yapabilir; SMS onaylı resmî web oturumu için portalı ayrı pencerede açabilirsiniz.'
+                    : 'Devlet portalları (.gov.tr ve e-Devlet) tarayıcı güvenlik politikası gereği gömülü iframe içinde açılamaz; bu nedenle tüm mal kabul, satış bildirimi ve denetim defteri işlemleri öncelikli olarak buradan uygulama içinde çalışır. İhtiyaç duyduğunuzda resmî site yukarıdaki butonla uygulama boyutunda ayrı pencerede açılır.'}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <>
+              {loading && (
+                <div className="flex items-center gap-2 text-xs mb-3" style={mutedStyle}><Loader2 size={14} className="animate-spin" /> Kayıtlar yükleniyor…</div>
+              )}
+
+              {/* TAB 1 — Mal kabul */}
+              {tab === 'receive' && activeService !== 'BRECETE' && (
             <div className="space-y-4">
               <div className="rounded-2xl border p-3 sm:p-4 space-y-3" style={surface}>
                 <form
@@ -1216,7 +1946,11 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
                       onKeyDown={e => {
                         if (e.key === 'Enter') { e.preventDefault(); const v = scanInput; setScanInput(''); void handleScanText(v, 'manual'); }
                       }}
-                      placeholder="SSCC koli / ürün karekodu okutun veya İrsaliye No girin"
+                      placeholder={
+                        activeService === 'GTS'
+                          ? 'Gübre Karekod / Barkod okutun veya İrsaliye No girin'
+                          : 'SSCC koli / zirai ilaç karekodu okutun veya İrsaliye No girin'
+                      }
                       aria-label="Karekod veya irsaliye numarası"
                       autoComplete="off"
                       spellCheck={false}
@@ -1247,10 +1981,7 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
 
                 <label className="flex items-center gap-3 rounded-xl border px-3 min-h-[48px] cursor-pointer" style={subSurface}>
                   <input type="checkbox" checked={localOnly} onChange={e => setLocalOnly(e.target.checked)} className="h-5 w-5 shrink-0 accent-emerald-500 rounded" />
-                  <span className="text-xs sm:text-sm font-semibold">BKTS/GTS kaydı yok (sadece kendi depoma ekle, resmi dosyaya girmez)</span>
-                  {!localOnly && !ministryActive && (
-                    <span className="ml-auto text-[11px] text-amber-500 flex items-center gap-1 shrink-0"><AlertTriangle size={13} /> Kayıt kapalı</span>
-                  )}
+                  <span className="text-xs sm:text-sm font-semibold">{activeMeta.shortLabel} kaydı yok (sadece kendi depoma ekle, resmi dosyaya girmez)</span>
                 </label>
                 <p className="text-[11px]" style={mutedStyle}>
                   Akış: 1) Koli SSCC etiketini okutun · 2) Koli içindeki her ürünün karekodunu okutun (Lot / SKT / Seri otomatik) · 3) Onaylayın — stok, parti ve seri numaraları depoya yazılır. Aynı koli veya seri ikinci kez kabul edilemez.
@@ -1278,7 +2009,282 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
             </div>
           )}
 
-          {/* TAB 2 — Defter */}
+          {/* TAB 2 — B-Reçete & Resmi Satış Bildirimi */}
+          {tab === 'brecete' && (
+            <div className="space-y-4">
+              <div className="rounded-2xl border p-3 sm:p-4 space-y-3" style={surface}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-black">
+                      {activeService === 'GTS'
+                        ? 'GTS Gübre Satış & Resmi Kayıt'
+                        : activeService === 'BRECETE'
+                          ? 'B-Reçete & Resmi Satış Kaydı'
+                          : 'BKTS Zirai İlaç Satış Kaydı'}
+                    </h3>
+                    <p className="text-[11px]" style={mutedStyle}>
+                      {activeService === 'GTS'
+                        ? 'Fatura Defterindeki gübre satışlarını buraya aktarıp çiftçi TCKN/VKN ile GTS defterine işleyin veya yeni kayıt ekleyin.'
+                        : activeService === 'BRECETE'
+                          ? 'Faturaları B-Reçete Kodu / TCKN ile eşleştirin veya yeni B-Reçete kaydı oluşturup denetim defterine işleyin.'
+                          : 'Fatura Defterindeki ilaç satışlarını buraya aktarıp TCKN ve opsiyonel B-Reçete kodu ile BKTS defterine işleyin.'}
+                    </p>
+                  </div>
+                  <div className="flex rounded-xl border p-1 gap-1" style={subSurface}>
+                    <button
+                      type="button"
+                      onClick={() => setBreceteMode('invoice')}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold transition-colors"
+                      style={breceteMode === 'invoice' ? accentStyle : mutedStyle}
+                    >
+                      Faturadan Aktar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBreceteMode('manual')}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold transition-colors"
+                      style={breceteMode === 'manual' ? accentStyle : mutedStyle}
+                    >
+                      Yeni Resmi Kayıt
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {breceteMode === 'invoice' ? (
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <div className="rounded-2xl border p-3 sm:p-4 space-y-3" style={surface}>
+                    <div className="relative">
+                      <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={mutedStyle} />
+                      <input
+                        value={breceteSearch}
+                        onChange={e => setBreceteSearch(e.target.value)}
+                        placeholder="Fatura no, çiftçi adı veya ürün ara..."
+                        className="w-full min-h-[44px] border rounded-xl pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-emerald-500/40"
+                        style={inputStyle}
+                      />
+                    </div>
+                    <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
+                      {invoiceList.length === 0 ? (
+                        <p className="text-xs py-6 text-center" style={mutedStyle}>Eşleşen satış veya iade faturası bulunamadı.</p>
+                      ) : (
+                        invoiceList.map(p => {
+                          const fr = farmerById.get(p.farmerId);
+                          const isSel = selectedInvoiceId === p.id;
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => handleSelectInvoiceForBrecete(p)}
+                              className={`w-full text-left rounded-xl border p-3 transition-all ${isSel ? 'ring-2 ring-emerald-500' : ''}`}
+                              style={subSurface}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-xs font-black truncate">{fr?.fullName || 'Çiftçi'}</span>
+                                <span className="text-[11px] font-mono" style={mutedStyle}>{p.prescriptionNo}</span>
+                              </div>
+                              <div className="mt-1 flex items-center justify-between text-[11px]" style={mutedStyle}>
+                                <span>{fmtDate(p.date)} · {(p.items || []).length} kalem</span>
+                                <span>{p.type === 'RETURN' ? 'İade' : 'Satış'}</span>
+                              </div>
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border p-3 sm:p-4 space-y-3" style={surface}>
+                    {!selectedInvoice ? (
+                      <div className="py-12 text-center text-xs" style={mutedStyle}>
+                        <ShieldCheck size={32} className="mx-auto mb-2 opacity-50" />
+                        Soldan bir satış/iade faturası seçerek B-Reçete / BKTS / GTS resmi bildirim kaydı oluşturun.
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between gap-2 pb-2 border-b" style={{ borderColor: 'var(--mks-card-border)' }}>
+                          <div>
+                            <div className="text-sm font-black">{farmerById.get(selectedInvoice.farmerId)?.fullName || 'Çiftçi'}</div>
+                            <div className="text-[11px]" style={mutedStyle}>Fatura: {selectedInvoice.prescriptionNo} · {(selectedInvoice.items || []).length} ürün</div>
+                          </div>
+                          <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-500">
+                            {selectedInvoice.type === 'RETURN' ? 'İADE' : 'SATIŞ'}
+                          </span>
+                        </div>
+
+                        <div className="grid gap-2.5 sm:grid-cols-2">
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[11px] font-bold" style={mutedStyle}>Resmi Sistem</span>
+                            <div className="min-h-[42px] border rounded-xl px-3 flex items-center text-sm font-bold" style={subSurface}>
+                              {activeService === 'GTS' ? 'GTS (Gübre Takip Sistemi)' : activeService === 'BRECETE' ? 'B-Reçete / BKTS' : 'BKTS (Bitki Koruma Takip)'}
+                            </div>
+                          </div>
+                          <label className="flex flex-col gap-1">
+                            <span className="text-[11px] font-bold" style={mutedStyle}>
+                              {activeService === 'GTS' ? 'GTS Sipariş / Onay Kodu (Opsiyonel)' : activeService === 'BRECETE' ? 'B-Reçete Kodu *' : 'B-Reçete Kodu (Varsa)'}
+                            </span>
+                            <input
+                              value={breceteCodeInput}
+                              onChange={e => setBreceteCodeInput(e.target.value)}
+                              placeholder="Örn: BR-2026-00412"
+                              className="w-full min-h-[42px] border rounded-xl px-3 text-sm font-mono outline-none"
+                              style={inputStyle}
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1">
+                            <span className="text-[11px] font-bold" style={mutedStyle}>Çiftçi TCKN / VKN *</span>
+                            <input
+                              value={breceteTcInput}
+                              onChange={e => setBreceteTcInput(e.target.value.replace(/\D/g, '').slice(0, 11))}
+                              placeholder="11 haneli TCKN / 10 haneli VKN"
+                              className="min-h-[42px] border rounded-xl px-3 text-sm font-mono outline-none"
+                              style={inputStyle}
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1">
+                            <span className="text-[11px] font-bold" style={mutedStyle}>Belge / Reçete No</span>
+                            <input
+                              value={breceteDocNo}
+                              onChange={e => setBreceteDocNo(e.target.value)}
+                              className="min-h-[42px] border rounded-xl px-3 text-sm font-mono outline-none"
+                              style={inputStyle}
+                            />
+                          </label>
+                        </div>
+
+                        <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                          {(selectedInvoice.items || []).map((it, idx) => (
+                            <div key={idx} className="rounded-xl border px-3 py-2 flex items-center justify-between text-xs" style={subSurface}>
+                              <span className="font-semibold truncate pr-2">{it.pesticideName}</span>
+                              <span className="font-mono shrink-0">{String(it.quantity || '1').replace(/^-/, '')} Adet</span>
+                            </div>
+                          ))}
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={savingBrecete}
+                          onClick={() => void handleSubmitInvoiceToMinistry()}
+                          className="w-full min-h-[46px] rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                          style={accentStyle}
+                        >
+                          {savingBrecete ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+                          Resmi Deftere Kaydet
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <form onSubmit={handleCreateManualBrecete} className="rounded-2xl border p-4 space-y-3" style={surface}>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[11px] font-bold" style={mutedStyle}>Resmi Sistem</span>
+                      <div className="min-h-[44px] border rounded-xl px-3 flex items-center text-sm font-bold" style={subSurface}>
+                        {activeService === 'GTS' ? 'GTS (Gübre Takip)' : activeService === 'BRECETE' ? 'B-Reçete / BKTS' : 'BKTS (Bitki Koruma)'}
+                      </div>
+                    </div>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[11px] font-bold" style={mutedStyle}>Çiftçi Seç (Opsiyonel)</span>
+                      <select
+                        value={breceteFarmerId}
+                        onChange={e => {
+                          setBreceteFarmerId(e.target.value);
+                          const fr = farmerById.get(e.target.value);
+                          if (fr?.tcNo) setBreceteTcInput(fr.tcNo);
+                        }}
+                        className="min-h-[44px] border rounded-xl px-3 text-sm"
+                        style={inputStyle}
+                      >
+                        <option value="">-- Listeden Seç --</option>
+                        {farmers.map(f => <option key={f.id} value={f.id}>{f.fullName}{f.village ? ` (${f.village})` : ''}</option>)}
+                      </select>
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[11px] font-bold" style={mutedStyle}>TCKN / VKN *</span>
+                      <input
+                        value={breceteTcInput}
+                        onChange={e => setBreceteTcInput(e.target.value.replace(/\D/g, '').slice(0, 11))}
+                        placeholder="11 haneli TCKN / 10 haneli VKN"
+                        className="min-h-[44px] border rounded-xl px-3 text-sm font-mono outline-none"
+                        style={inputStyle}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <label className="flex flex-col gap-1 sm:col-span-2">
+                      <span className="text-[11px] font-bold" style={mutedStyle}>Ürün Adı *</span>
+                      <input
+                        list="mks-ministry-inventory-products"
+                        value={breceteProductInput}
+                        onChange={e => {
+                          setBreceteProductInput(e.target.value);
+                          const hit = inventory.find(inv => inv.pesticideName === e.target.value);
+                          if (hit) {
+                            if (hit.gtin || hit.barcode) setBreceteGtinInput(String(hit.gtin || hit.barcode));
+                            if (hit.lotNumber) setBreceteLotInput(hit.lotNumber);
+                            if (hit.expiryDate) setBreceteSktInput(hit.expiryDate);
+                          }
+                        }}
+                        placeholder="Ürün adını yazın veya depodan seçin"
+                        className="min-h-[44px] border rounded-xl px-3 text-sm outline-none"
+                        style={inputStyle}
+                      />
+                      <datalist id="mks-ministry-inventory-products">
+                        {inventory.filter(i => !i.deletedAt).map(i => (
+                          <option key={i.id} value={i.pesticideName} />
+                        ))}
+                      </datalist>
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[11px] font-bold" style={mutedStyle}>Miktar (Adet) *</span>
+                      <input
+                        type="number"
+                        min={0.01}
+                        step="any"
+                        value={breceteQtyInput}
+                        onChange={e => setBreceteQtyInput(e.target.value)}
+                        className="min-h-[44px] border rounded-xl px-3 text-sm font-mono outline-none"
+                        style={inputStyle}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-4">
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[11px] font-bold" style={mutedStyle}>B-Reçete Kodu</span>
+                      <input value={breceteCodeInput} onChange={e => setBreceteCodeInput(e.target.value)} placeholder="BR-..." className="w-full min-h-[42px] border rounded-xl px-3 text-sm font-mono outline-none" style={inputStyle} />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[11px] font-bold" style={mutedStyle}>GTIN / Barkod</span>
+                      <input value={breceteGtinInput} onChange={e => setBreceteGtinInput(e.target.value)} placeholder="14 haneli GTIN" className="min-h-[42px] border rounded-xl px-3 text-sm font-mono outline-none" style={inputStyle} />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[11px] font-bold" style={mutedStyle}>Lot / Parti No</span>
+                      <input value={breceteLotInput} onChange={e => setBreceteLotInput(e.target.value)} placeholder="Lot No" className="min-h-[42px] border rounded-xl px-3 text-sm font-mono outline-none" style={inputStyle} />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[11px] font-bold" style={mutedStyle}>Belge No</span>
+                      <input value={breceteDocNo} onChange={e => setBreceteDocNo(e.target.value)} placeholder="Otomatik" className="min-h-[42px] border rounded-xl px-3 text-sm font-mono outline-none" style={inputStyle} />
+                    </label>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={savingBrecete}
+                    className="w-full min-h-[46px] rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                    style={accentStyle}
+                  >
+                    {savingBrecete ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+                    Deftere Kaydet (Dışa Aktarım)
+                  </button>
+                </form>
+              )}
+            </div>
+          )}
+
+          {/* TAB 3 — Defter */}
           {tab === 'ledger' && (
             <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -1307,11 +2313,6 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
                     <option value="SHIPMENT_ACCEPT">Mal kabul</option>
                     <option value="RETURN">İade</option>
                   </select>
-                  <select value={ledgerSystem} onChange={e => setLedgerSystem(e.target.value as typeof ledgerSystem)} aria-label="Sistem" className="min-h-[44px] border rounded-xl px-3 text-sm" style={inputStyle}>
-                    <option value="ALL">BKTS + GTS</option>
-                    <option value="BKTS">BKTS</option>
-                    <option value="GTS">GTS</option>
-                  </select>
                 </div>
                 <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2">
                   <button type="button" disabled={!!exporting} onClick={() => exportFile('xml')} className="min-h-[44px] flex items-center justify-center gap-2 rounded-xl border px-3 text-sm font-bold disabled:opacity-50" style={subSurface}>
@@ -1334,8 +2335,8 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
 
               {filteredRecords.length === 0 ? (
                 <div className="text-center py-12 text-sm" style={mutedStyle}>
-                  {records.length === 0
-                    ? 'Henüz kayıt yok. BKTS modunda yapılan TC kimlikli satışlar ve onaylanan mal kabulleri burada listelenir.'
+                  {serviceRecords.length === 0
+                    ? `Henüz ${SERVICE_META[activeService].shortLabel} kaydı yok. Bu ekrandan yapılan resmi kayıtlar ve mal kabuller burada listelenir.`
                     : 'Filtreye uyan kayıt yok.'}
                 </div>
               ) : (
@@ -1343,7 +2344,7 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
                   {/* Mobile cards */}
                   <div className="grid gap-2 md:hidden">
                     {filteredRecords.slice(0, 300).map(r => (
-                      <div key={r.id} className="rounded-2xl border p-3 text-xs space-y-1" style={subSurface}>
+                      <div key={r.id} className="rounded-2xl border p-3 text-xs space-y-1.5" style={subSurface}>
                         <div className="flex items-start justify-between gap-2">
                           <div className="font-bold text-sm min-w-0 truncate">{r.productName}</div>
                           <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] ${statusClass(r.status)}`}>{r.status}</span>
@@ -1353,7 +2354,10 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
                         <div className="font-mono text-[11px]" style={mutedStyle}>
                           GTIN {r.gtin || '—'} · Lot {r.lotNumber || '—'}{r.serialNumber ? ` · Seri ${r.serialNumber}` : ''}{r.expiryDate ? ` · SKT ${fmtDate(r.expiryDate)}` : ''}
                         </div>
-                        <div className="text-[11px]" style={mutedStyle}>Belge {r.documentNo || '—'}{r.bReceteCode ? ` · B-Reçete ${r.bReceteCode}` : ''}</div>
+                        <div className="pt-1 text-[11px] truncate" style={mutedStyle}>
+                          Belge {r.documentNo || '—'}{r.bReceteCode ? ` · B-Reçete ${r.bReceteCode}` : ''}
+                          {r.status === 'Bakanlığa Bildirildi' && r.ministryRefNo ? ` · Ref: ${r.ministryRefNo}` : ''}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1389,98 +2393,151 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
             </div>
           )}
 
-          {/* TAB 3 — Muadil & tank */}
-          {tab === 'engine' && (
+          {/* TAB 4 — Resmî Portal & Bağlı Hesap */}
+          {tab === 'webservice' && (
             <div className="grid gap-4 lg:grid-cols-2">
-              <section className="rounded-2xl border p-4 space-y-3" style={surface}>
-                <h3 className="text-sm font-black">Muadil İlaç / Gübre Bul</h3>
-                <div className="relative">
-                  <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={mutedStyle} />
-                  <input
-                    value={query}
-                    onChange={e => setQuery(e.target.value)}
-                    placeholder="Etken madde veya ürün adı (örn. Abamectin, DAP 18-46)"
-                    aria-label="Etken madde veya ürün adı"
-                    className="w-full min-h-[44px] border rounded-xl pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-emerald-500/40"
-                    style={inputStyle}
-                  />
+              <section className="rounded-2xl border p-4 sm:p-5 space-y-4 flex flex-col justify-between" style={surface}>
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2.5">
+                    <div
+                      className="w-10 h-10 shrink-0 rounded-xl flex items-center justify-center border"
+                      style={{
+                        background: `${activeMeta.accentHex}1f`,
+                        borderColor: `${activeMeta.accentHex}55`,
+                        color: activeMeta.accentHex,
+                      }}
+                    >
+                      <Globe size={18} />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black">Resmî Bakanlık Penceresi (Uygulama Boyutunda Tarayıcı)</h3>
+                      <p className="text-[11px]" style={mutedStyle}>{activeMeta.portalUrl}</p>
+                    </div>
+                  </div>
+                  <p className="text-xs leading-relaxed" style={mutedStyle}>
+                    Devlet portalları (<span className="font-mono">.gov.tr</span> ve e-Devlet) güvenlik politikaları gereği gömülü iframe içinde açılmaz; ayrıca{' '}
+                    {activeService === 'GTS'
+                      ? 'görsel güvenlik kodu (Captcha) ve Mobil Onay (SMS)'
+                      : 'resmî oturum ve güvenlik doğrulaması'}{' '}
+                    yalnızca kendi alan adı üzerinde çalışır. Portalı buradan açtığınızda MKS bağlı bilginizi panoya hazırlar; tek tıkla kopyalayıp yapıştırarak resmî işlemi tamamlayabilirsiniz.
+                  </p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={() => void copyCredentialField(activeMeta.idLabel, activeAuth?.username)}
+                      className="min-h-[42px] rounded-xl border px-3 text-xs font-bold flex items-center justify-center gap-1.5"
+                      style={subSurface}
+                    >
+                      <Copy size={14} /> {activeMeta.id === 'BRECETE' ? 'T.C. Kimlik Kopyala' : 'TCKN / VKN Kopyala'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void copyCredentialField('Şifre', activeAuth?.password)}
+                      className="min-h-[42px] rounded-xl border px-3 text-xs font-bold flex items-center justify-center gap-1.5"
+                      style={subSurface}
+                    >
+                      <Copy size={14} /> Şifre Kopyala
+                    </button>
+                  </div>
                 </div>
-                {query.trim().length >= 2 && equivalents.length === 0 && (
-                  <p className="text-xs" style={mutedStyle}>Stokta eşleşen muadil bulunamadı.</p>
-                )}
-                <ul className="space-y-2">
-                  {equivalents.map(m => (
-                    <li key={String(m.item.id ?? m.name)} className="flex items-center justify-between gap-3 rounded-xl border px-3 py-2" style={subSurface}>
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold truncate">{m.name}</div>
-                        <div className="text-[11px] text-emerald-500">{m.ingredients.join(' + ')} · Stok: {m.quantity} {m.item.unit ?? ''}</div>
-                      </div>
+                <button
+                  type="button"
+                  onClick={() => openOfficialPortalWindow()}
+                  className="w-full min-h-[46px] rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-opacity hover:opacity-95"
+                  style={{ background: activeMeta.accentHex, color: '#ffffff' }}
+                >
+                  <ExternalLink size={16} />
+                  <span>{activeMeta.portalLabel} Penceresini Aç — TCKN/VKN Otomatik Kopyalanır</span>
+                </button>
+              </section>
+
+              <form onSubmit={handleUpdateSavedAccount} className="rounded-2xl border p-4 sm:p-5 space-y-4 flex flex-col justify-between" style={surface}>
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <KeyRound size={17} style={{ color: activeMeta.accentHex }} />
+                      <h3 className="text-sm font-black">Bağlı Hesap &amp; Otomatik Giriş Bilgileri</h3>
+                    </div>
+                    {(loginAutoEntered || activeAuth?.remember) && (
+                      <span className="rounded-full bg-emerald-500/15 border border-emerald-500/35 px-2.5 py-0.5 text-[10px] font-black text-emerald-500">
+                        Otomatik Giriş Kayıtlı
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="rounded-xl border px-3 py-2 text-xs flex items-center gap-2" style={subSurface}>
+                    <ShieldCheck size={15} className="shrink-0 text-emerald-500" />
+                    <span className="truncate">
+                      <span className="font-bold">{activeMeta.idLabel}: </span>
+                      <span className="font-mono">{activeAuth?.username || '—'}</span>
+                    </span>
+                  </div>
+
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] font-bold" style={mutedStyle}>{activeMeta.idLabel}</span>
+                    <input
+                      type="text"
+                      inputMode={activeService === 'BKTS' ? 'text' : 'numeric'}
+                      value={accountUsername}
+                      onChange={e =>
+                        setAccountUsername(
+                          activeService === 'BKTS'
+                            ? e.target.value
+                            : e.target.value.replace(/\D/g, '').slice(0, 11),
+                        )
+                      }
+                      placeholder={activeMeta.idPlaceholder}
+                      autoComplete="username"
+                      className="min-h-[42px] border rounded-xl px-3 text-xs font-mono outline-none focus:ring-2 focus:ring-emerald-500/40"
+                      style={inputStyle}
+                    />
+                  </label>
+
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] font-bold" style={mutedStyle}>{activeMeta.passwordLabel}</span>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type={accountShowPassword ? 'text' : 'password'}
+                        value={accountPassword}
+                        onChange={e => setAccountPassword(e.target.value)}
+                        placeholder="••••••••"
+                        autoComplete="current-password"
+                        className="flex-1 min-h-[42px] border rounded-xl px-3 text-xs font-mono outline-none focus:ring-2 focus:ring-emerald-500/40"
+                        style={inputStyle}
+                      />
                       <button
                         type="button"
-                        onClick={() => addToTank({ name: m.name, category: m.item.category, activeIngredient: m.ingredients.join(', ') })}
-                        className="shrink-0 min-h-[44px] rounded-xl border px-3 text-xs font-bold flex items-center gap-1"
-                        style={surface}
+                        onClick={() => setAccountShowPassword(v => !v)}
+                        aria-label={accountShowPassword ? 'Şifreyi gizle' : 'Şifreyi göster'}
+                        className="min-h-[42px] w-11 shrink-0 rounded-xl border flex items-center justify-center"
+                        style={subSurface}
                       >
-                        <Plus size={14} /> Tanka Ekle
+                        {accountShowPassword ? <EyeOff size={15} /> : <Eye size={15} />}
                       </button>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-
-              <section className="rounded-2xl border p-4 space-y-3" style={surface}>
-                <h3 className="text-sm font-black">Tank Karışımı & Fitotoksisite Kontrolü</h3>
-                <form
-                  className="flex gap-2"
-                  onSubmit={e => { e.preventDefault(); addToTank({ name: customTankItem.trim() }); setCustomTankItem(''); }}
-                >
-                  <input
-                    value={customTankItem}
-                    onChange={e => setCustomTankItem(e.target.value)}
-                    placeholder="Ürün ekle (örn. Kükürt 80 WG)"
-                    aria-label="Tanka ürün ekle"
-                    className="flex-1 min-h-[44px] border rounded-xl px-3 text-sm outline-none focus:ring-2 focus:ring-emerald-500/40"
-                    style={inputStyle}
-                  />
-                  <button type="submit" className="w-11 min-h-[44px] rounded-xl flex items-center justify-center" style={accentStyle} aria-label="Tanka ekle"><Plus size={18} /></button>
-                </form>
-
-                {tank.length === 0 ? (
-                  <p className="text-xs" style={mutedStyle}>Tanka ürün ekleyin; uyumsuzluklar ve karışım sırası otomatik hesaplanır.</p>
-                ) : (
-                  <>
-                    <div className={`rounded-xl px-3 py-2 text-sm font-semibold flex items-center gap-2 border ${mix.compatible ? (mix.warnings.length ? 'bg-amber-500/10 border-amber-500/30 text-amber-500' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-500') : 'bg-red-500/10 border-red-500/30 text-red-500'}`}>
-                      {mix.compatible && !mix.warnings.length ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
-                      {!mix.compatible ? 'Karıştırılmamalı!' : mix.warnings.length ? 'Dikkatli karıştırın' : 'Bilinen bir uyumsuzluk yok'}
                     </div>
+                  </label>
+                </div>
 
-                    {mix.warnings.map((w, i) => (
-                      <div key={i} className={`rounded-xl border px-3 py-2 ${w.severity === 'danger' ? 'border-red-500/30 bg-red-500/5' : 'border-amber-500/30 bg-amber-500/5'}`}>
-                        <div className={`text-xs font-bold ${w.severity === 'danger' ? 'text-red-500' : 'text-amber-500'}`}>{w.title}</div>
-                        <div className="text-[11px]" style={mutedStyle}>{w.items[0]} ↔ {w.items[1]}</div>
-                        <div className="text-xs mt-1">{w.message}</div>
-                      </div>
-                    ))}
-
-                    <div>
-                      <div className="text-[11px] mb-1" style={mutedStyle}>Önerilen karışım sırası (SC → WP/WG → EC → SL/SP)</div>
-                      <ol className="space-y-1.5">
-                        {mix.mixingOrder.map(o => (
-                          <li key={o.name} className="flex items-center gap-3 rounded-xl border pl-3 text-sm" style={subSurface}>
-                            <span className="w-6 h-6 shrink-0 rounded-full bg-emerald-500/15 text-emerald-500 text-xs font-bold flex items-center justify-center">{o.step}</span>
-                            <span className="flex-1 truncate">{o.name}</span>
-                            <span className="text-[11px] font-mono" style={mutedStyle}>{o.formulation}</span>
-                            <button type="button" onClick={() => setTank(prev => prev.filter(t => t.name !== o.name))} aria-label={`${o.name} çıkar`} className="w-11 h-11 flex items-center justify-center text-red-500 hover:bg-red-500/10 rounded-xl">
-                              <Trash2 size={16} />
-                            </button>
-                          </li>
-                        ))}
-                      </ol>
-                    </div>
-                  </>
-                )}
-              </section>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <button
+                    type="submit"
+                    className="min-h-[44px] rounded-xl font-bold text-xs flex items-center justify-center gap-1.5"
+                    style={accentStyle}
+                  >
+                    <CheckCircle2 size={15} /> Bilgileri Güncelle ve Kaydet
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleServiceLogout}
+                    className="min-h-[44px] rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 text-red-400 border-red-500/35 hover:bg-red-500/10"
+                  >
+                    <LogOut size={15} /> Hesap Değiştir / Çıkış Yap
+                  </button>
+                </div>
+              </form>
             </div>
+          )}
+            </>
           )}
         </div>
       </div>
@@ -1488,7 +2545,7 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
       {cameraOpen && (
         <LazyBarcodeScanner
           continuous
-          title={tab === 'engine' ? 'Ürün Karekodu Okut' : 'Koli / Ürün Karekodu Okut'}
+          title="Koli / Ürün Karekodu Okut"
           onScan={(text, meta) => { void scanHandlerRef.current(text, 'camera', meta?.format); }}
           onClose={() => setCameraOpen(false)}
         />

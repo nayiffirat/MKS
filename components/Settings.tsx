@@ -1,17 +1,23 @@
 
 import React, { useState, useMemo } from 'react';
-import { Database, Download, Upload, Type, User, ChevronRight, ChevronLeft, Briefcase, UserRound, Sun, Moon, Settings, RefreshCw, Globe, Paintbrush, Sparkles, Key, Check, Copy, LogOut, Loader2, Trash2, AlertTriangle, Lock, Eye, EyeOff, CheckCircle2, FileText, X, ShieldCheck, MessageSquare, FileSpreadsheet, Shield, Bell } from 'lucide-react';
+import { Database, Download, Upload, User, ChevronRight, ChevronLeft, Briefcase, Sun, Settings, RefreshCw, Globe, Paintbrush, Key, Check, Loader2, Trash2, AlertTriangle, Lock, Eye, EyeOff, CheckCircle2, FileText, X, ShieldCheck, MessageSquare, FileSpreadsheet, Shield, Bell, Users, Package, Wallet, Cloud, Wrench } from 'lucide-react';
 import { useAppViewModel } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
-import { db as firestore, auth, googleProvider } from '../services/firebase';
-import { signInWithPopup, linkWithPopup, signInWithRedirect, linkWithRedirect, getRedirectResult, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { auth, googleProvider } from '../services/firebase';
+import { getRedirectResult, EmailAuthProvider, reauthenticateWithCredential, reauthenticateWithPopup } from 'firebase/auth';
 import { UIScale, Language, InventoryItem } from '../types';
 import { ConfirmationModal } from './ConfirmationModal';
 import PermissionsPanel from './PermissionsPanel';
 import { dbService } from '../services/db';
-import { runIntegrityCheck, IntegrityReport } from '../services/integrity';
+import {
+  runIntegrityCheck,
+  IntegrityReport,
+  repairStockMismatchesFromIntegrity,
+  repairCashSalesWithoutKasa,
+  repairNegativeStocksToZero
+} from '../services/integrity';
 import { verifySecret } from '../utils/crypto';
+import { getLocalDateString } from '../utils/dateUtils';
 import { translateFirebaseError } from '../utils/firebaseErrors';
 import { DEFAULT_WHATSAPP_TEMPLATES } from '../utils/whatsappTemplates';
 import {
@@ -58,7 +64,7 @@ import { useBackHandler } from '../utils/navigationManager';
 import { APP_VERSION_LABEL } from '../constants';
 
 export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
-  const { currentUser, logout } = useAuth();
+  const { currentUser } = useAuth();
   const { 
     uiScale, 
     setUiScale, 
@@ -88,13 +94,42 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
   const [isRebuildModalOpen, setIsRebuildModalOpen] = useState(false);
   const [integrityReport, setIntegrityReport] = useState<IntegrityReport | null>(null);
   const [integrityBusy, setIntegrityBusy] = useState(false);
+  const [repairingIntegrityCode, setRepairingIntegrityCode] = useState<string | null>(null);
+  const [stockMismatches, setStockMismatches] = useState<{pesticideId: string; pesticideName: string; currentQty: number; calculatedQty: number; purchasedQty: number; soldQty: number; adjustedQty: number}[]>([]);
+  const [isAnalyzingStock, setIsAnalyzingStock] = useState(false);
+  const [isRepairingStock, setIsRepairingStock] = useState(false);
+  const [turnoverLogsList, setTurnoverLogsList] = useState<{ id: string; year: number; date: string; type: string }[]>([]);
+  const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
+  const [isReauthenticatingGoogle, setIsReauthenticatingGoogle] = useState(false);
   const [turnoverCompletedYear, setTurnoverCompletedYear] = useState<number | null>(null);
   const [isGeneratingTurnoverPdf, setIsGeneratingTurnoverPdf] = useState(false);
   const [isYearEndDocsModalOpen, setIsYearEndDocsModalOpen] = useState(false);
   const [downloadingYearPdf, setDownloadingYearPdf] = useState<number | null>(null);
   const [activeSection, setActiveSection] = useState<string | null>(null);
-  const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [isSendingTelegramBackup, setIsSendingTelegramBackup] = useState(false);
+
+  const isGoogleUser = useMemo(() => {
+    return currentUser?.providerData?.some(p => p.providerId === 'google.com');
+  }, [currentUser]);
+
+  const refreshSystemStatus = React.useCallback(async () => {
+    try {
+      const [logs, outboxCount] = await Promise.all([
+        dbService.getTurnoverLogs(),
+        dbService.getPendingOutboxCount(currentUser?.uid)
+      ]);
+      setTurnoverLogsList(logs || []);
+      setPendingSyncCount(outboxCount || 0);
+    } catch (e) {
+      console.warn("System status refresh error:", e);
+    }
+  }, [currentUser?.uid]);
+
+  React.useEffect(() => {
+    if (activeSection === 'SYSTEM' || isYearEndDocsModalOpen) {
+      void refreshSystemStatus();
+    }
+  }, [activeSection, isYearEndDocsModalOpen, refreshSystemStatus]);
 
   // #50 AES-256 Şifreli Yedekleme Durumları
   const [backupPassword, setBackupPassword] = useState('');
@@ -159,24 +194,75 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
   const [turnoverError, setTurnoverError] = useState<string | null>(null);
   const [isAlreadyTurnedOverModalOpen, setIsAlreadyTurnedOverModalOpen] = useState(false);
 
+  const verifySensitiveActionPassword = async (password: string): Promise<boolean> => {
+    if (!currentUser) return false;
+    if (currentUser.email) {
+      try {
+        const credential = EmailAuthProvider.credential(currentUser.email, password);
+        await reauthenticateWithCredential(currentUser, credential);
+        return true;
+      } catch (authErr) {
+        console.warn("Credential re-authentication error:", authErr);
+      }
+    }
+    if (userProfile?.adminPassword) {
+      return await verifySecret(password.trim(), userProfile.adminPassword);
+    }
+    return false;
+  };
+
+  const reauthenticateWithGooglePopup = async (onError: (msg: string) => void): Promise<boolean> => {
+    if (!currentUser) {
+      onError('Kullanıcı oturumu bulunamadı.');
+      return false;
+    }
+    setIsReauthenticatingGoogle(true);
+    try {
+      googleProvider.setCustomParameters({ prompt: 'select_account' });
+      await reauthenticateWithPopup(currentUser, googleProvider);
+      return true;
+    } catch (e: any) {
+      if (e?.code === 'auth/popup-closed-by-user' || e?.code === 'auth/cancelled-popup-request') {
+        return false;
+      }
+      if (e?.code === 'auth/popup-blocked') {
+        onError('Açılır pencere engellendi! Lütfen tarayıcıdan pop-up izni verip tekrar deneyin.');
+        return false;
+      }
+      console.warn("Google reauthenticate error:", e);
+      onError(translateFirebaseError(e?.code) || 'Google hesabı ile doğrulama tamamlanamadı.');
+      return false;
+    } finally {
+      setIsReauthenticatingGoogle(false);
+    }
+  };
+
+  const executeTurnoverAfterAuth = async () => {
+    setIsTurnoverModalOpen(false);
+    setTurnoverPassword('');
+    const res = await performManualTurnover();
+    await refreshSystemStatus();
+    if (res?.success) {
+      setTurnoverCompletedYear(res.year);
+    }
+  };
+
   const handleInitiateTurnover = async () => {
     const currentYear = new Date().getFullYear();
     try {
       const logs = await dbService.getTurnoverLogs();
+      setTurnoverLogsList(logs || []);
       const finLog = logs.find(l => l.year === currentYear && l.type === 'FINANCIAL');
       if (finLog) {
         setIsAlreadyTurnedOverModalOpen(true);
         return;
       }
-      setTurnoverPassword('');
-      setTurnoverError(null);
-      setIsTurnoverModalOpen(true);
     } catch (e) {
       console.error("Turnover log check error:", e);
-      setTurnoverPassword('');
-      setTurnoverError(null);
-      setIsTurnoverModalOpen(true);
     }
+    setTurnoverPassword('');
+    setTurnoverError(null);
+    setIsTurnoverModalOpen(true);
   };
 
   const handleConfirmTurnover = async (e?: React.FormEvent) => {
@@ -185,7 +271,6 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
       setTurnoverError('Lütfen şifrenizi giriniz.');
       return;
     }
-
     if (!currentUser) {
       setTurnoverError('Kullanıcı oturumu bulunamadı.');
       return;
@@ -196,40 +281,15 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
     hapticFeedback('medium');
 
     try {
-      let isPasswordCorrect = false;
-
-      // 1. Firebase Auth şifre doğrulaması
-      if (currentUser.email) {
-        try {
-          const credential = EmailAuthProvider.credential(currentUser.email, turnoverPassword);
-          await reauthenticateWithCredential(currentUser, credential);
-          isPasswordCorrect = true;
-        } catch (authErr) {
-          console.warn("Turnover re-authentication error:", authErr);
-        }
-      }
-
-      // 2. Yönetici şifresi (hash) doğrulaması (Google / Telefon ile giriş yapan hesaplar için)
-      if (!isPasswordCorrect && userProfile?.adminPassword) {
-        isPasswordCorrect = await verifySecret(turnoverPassword.trim(), userProfile.adminPassword);
-      }
-
+      const isPasswordCorrect = await verifySensitiveActionPassword(turnoverPassword);
       if (!isPasswordCorrect) {
         setTurnoverError('Girdiğiniz şifre hatalı! Lütfen şifrenizi doğru girdiğinizden emin olun.');
         setIsVerifyingTurnoverPassword(false);
         hapticFeedback('error');
         return;
       }
-
-      // Şifre doğru -> Devir İşlemini Gerçekleştir
-      setIsTurnoverModalOpen(false);
-      setTurnoverPassword('');
-      const res = await performManualTurnover();
+      await executeTurnoverAfterAuth();
       setIsVerifyingTurnoverPassword(false);
-
-      if (res?.success) {
-        setTurnoverCompletedYear(res.year);
-      }
     } catch (err: any) {
       console.error("Turnover confirm error:", err);
       setTurnoverError("Devir işlemi sırasında bir hata oluştu.");
@@ -237,18 +297,159 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
     }
   };
 
+  const handleConfirmTurnoverWithGoogle = async () => {
+    setTurnoverError(null);
+    hapticFeedback('medium');
+    const ok = await reauthenticateWithGooglePopup((msg) => setTurnoverError(msg));
+    if (!ok) return;
+    setIsVerifyingTurnoverPassword(true);
+    try {
+      await executeTurnoverAfterAuth();
+    } catch (err: any) {
+      console.error("Google turnover error:", err);
+      setTurnoverError("Devir işlemi sırasında bir hata oluştu.");
+    } finally {
+      setIsVerifyingTurnoverPassword(false);
+    }
+  };
+
+  const downloadYearEndReport = async (targetYear: number, source: 'TURNOVER_DONE' | 'ARCHIVE') => {
+    if (source === 'TURNOVER_DONE') setIsGeneratingTurnoverPdf(true);
+    else setDownloadingYearPdf(targetYear);
+    try {
+      const supplierPayments = await dbService.getSupplierPayments().catch(() => []);
+      await generateYearEndReportPDF({
+        targetYear,
+        farmers,
+        inventory,
+        prescriptions,
+        payments,
+        manualDebts,
+        myPayments,
+        suppliers,
+        supplierPurchases,
+        supplierPayments,
+        accounts,
+        expenses,
+        userProfile
+      });
+      showToast(`${targetYear} yılı devir ve bilanço raporu PDF olarak indirildi.`, 'success');
+      hapticFeedback('success');
+    } catch (e) {
+      console.error("Year-end PDF download error:", e);
+      showToast("Rapor oluşturulurken hata oluştu.", 'error');
+    } finally {
+      if (source === 'TURNOVER_DONE') setIsGeneratingTurnoverPdf(false);
+      else setDownloadingYearPdf(null);
+    }
+  };
+
+  const handleOpenRebuildModal = async () => {
+    setIsRebuildModalOpen(true);
+    setIsAnalyzingStock(true);
+    try {
+      const mismatches = await dbService.analyzeInventoryBalances();
+      setStockMismatches(mismatches);
+    } catch (e) {
+      console.error("Analyze stock error:", e);
+      setStockMismatches([]);
+      showToast('Stok farkları analiz edilirken hata oluştu.', 'error');
+    } finally {
+      setIsAnalyzingStock(false);
+    }
+  };
+
+  const handleRebuildAction = async (mode: 'USE_LEDGER' | 'KEEP_SHELF') => {
+    setIsRepairingStock(true);
+    hapticFeedback('medium');
+    try {
+      if (mode === 'USE_LEDGER') {
+        const res = await dbService.rebuildInventoryBalances();
+        showToast(
+          res.updatedCount > 0 || res.deduplicatedCount > 0
+            ? `${res.updatedCount} stok kalemi senkronize edildi${res.deduplicatedCount > 0 ? `, ${res.deduplicatedCount} mükerrer kart birleştirildi` : ''}.`
+            : 'Tüm stok kartları, açılış düzeltmeleri ve parti bilgileri zaten uyumlu.',
+          'success'
+        );
+      } else {
+        const fixed = await dbService.preserveInventoryCurrentQuantities();
+        showToast(`${fixed} ürün için mevcut depo miktarı korunarak sayım farkı işlendi.`, 'success');
+      }
+      await refreshInventory();
+      await refreshStats();
+      await refreshSystemStatus();
+      const remaining = await dbService.analyzeInventoryBalances();
+      setStockMismatches(remaining);
+      hapticFeedback('success');
+      if (remaining.length === 0) {
+        setIsRebuildModalOpen(false);
+      }
+    } catch (e) {
+      console.error("Stock rebuild error:", e);
+      showToast("Stok onarımı sırasında bir hata oluştu.", "error");
+      hapticFeedback('error');
+    } finally {
+      setIsRepairingStock(false);
+    }
+  };
+
+  const handleIntegrityQuickRepair = async (
+    action: 'STOCK_LEDGER' | 'STOCK_SHELF' | 'CASH_TO_TERM' | 'CASH_CREATE_TX' | 'NEGATIVE_ZERO',
+    issueCode: string
+  ) => {
+    setRepairingIntegrityCode(issueCode);
+    hapticFeedback('medium');
+    try {
+      let count = 0;
+      if (action === 'STOCK_LEDGER') {
+        count = await repairStockMismatchesFromIntegrity('USE_LEDGER');
+        showToast(`${count} stok kaydı hareketlere göre güncellendi.`, 'success');
+      } else if (action === 'STOCK_SHELF') {
+        count = await repairStockMismatchesFromIntegrity('KEEP_SHELF');
+        showToast(`${count} ürün için mevcut depo miktarı sayım farkıyla korundu.`, 'success');
+      } else if (action === 'CASH_TO_TERM') {
+        count = await repairCashSalesWithoutKasa('CONVERT_TO_CREDIT');
+        showToast(`${count} peşin satış vadeli (cari) satışa dönüştürüldü.`, 'success');
+      } else if (action === 'CASH_CREATE_TX') {
+        count = await repairCashSalesWithoutKasa('CREATE_CASH_TX');
+        showToast(`${count} peşin satış için kasa hareketi oluşturuldu.`, 'success');
+      } else if (action === 'NEGATIVE_ZERO') {
+        count = await repairNegativeStocksToZero();
+        showToast(`${count} eksi stoklu ürün sıfırlandı.`, 'success');
+      }
+
+      await refreshInventory();
+      await refreshStats();
+      await refreshSystemStatus();
+      const refreshedReport = await runIntegrityCheck(false);
+      setIntegrityReport(refreshedReport);
+      hapticFeedback('success');
+    } catch (e) {
+      console.error("Integrity quick repair error:", e);
+      showToast("Onarım sırasında bir hata oluştu.", "error");
+      hapticFeedback('error');
+    } finally {
+      setRepairingIntegrityCode(null);
+    }
+  };
+
   const availableDocYears = useMemo(() => {
     const currentY = new Date().getFullYear();
     const years = new Set<number>([currentY]);
     for (let y = currentY; y >= currentY - 5; y--) years.add(y);
-    prescriptions.forEach(p => {
-      if (p.date) {
-        const y = new Date(p.date).getFullYear();
-        if (!isNaN(y)) years.add(y);
-      }
-    });
+    const collectDateYear = (dateStr?: string) => {
+      if (!dateStr) return;
+      const y = new Date(dateStr).getFullYear();
+      if (!Number.isNaN(y) && y > 2000 && y <= currentY + 1) years.add(y);
+    };
+    prescriptions.forEach(p => { if (!p.deletedAt) collectDateYear(p.date); });
+    payments.forEach(p => { if (!p.deletedAt) collectDateYear(p.date); });
+    manualDebts.forEach(d => { if (!d.deletedAt) collectDateYear(d.date); });
+    supplierPurchases.forEach(sp => { if (!sp.deletedAt) collectDateYear(sp.date); });
+    expenses.forEach(e => { if (!e.deletedAt) collectDateYear(e.date); });
+    turnoverLogsList.forEach(l => { if (l.year) years.add(l.year); });
     return Array.from(years).sort((a, b) => b - a);
-  }, [prescriptions]);
+  }, [prescriptions, payments, manualDebts, supplierPurchases, expenses, turnoverLogsList]);
 
   // Verilerimi Sil Modal & Şifre durumları
   const [isDeleteDataModalOpen, setIsDeleteDataModalOpen] = useState(false);
@@ -257,12 +458,23 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
   const [isDeletingData, setIsDeletingData] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  const executeDeleteAllDataAfterAuth = async () => {
+    if (!currentUser) return;
+    showToast('Tüm verileriniz kalıcı olarak siliniyor...', 'info');
+    await dbService.deleteAllUserData(currentUser.uid);
+    showToast('Tüm verileriniz başarıyla silindi. Hesabınız sıfırlandı.', 'success');
+    hapticFeedback('success');
+    setIsDeleteDataModalOpen(false);
+    setTimeout(() => {
+      window.location.reload();
+    }, 1000);
+  };
+
   const handleDeleteAllData = async () => {
     if (!deletePassword) {
       setDeleteError('Lütfen şifrenizi girin.');
       return;
     }
-
     if (!currentUser) {
       setDeleteError('Kullanıcı oturumu bulunamadı.');
       return;
@@ -273,43 +485,14 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
     hapticFeedback('medium');
 
     try {
-      let isPasswordCorrect = false;
-
-      // 1. Firebase Auth şifre doğrulaması dene
-      if (currentUser.email) {
-        try {
-          const credential = EmailAuthProvider.credential(currentUser.email, deletePassword);
-          await reauthenticateWithCredential(currentUser, credential);
-          isPasswordCorrect = true;
-        } catch (authErr: any) {
-          console.warn("Re-authentication error:", authErr);
-        }
-      }
-
-      // 2. Yönetici şifresi (hash) doğrulaması (Google / Telefon ile giriş yapan hesaplar için)
-      if (!isPasswordCorrect && userProfile?.adminPassword) {
-        isPasswordCorrect = await verifySecret(deletePassword.trim(), userProfile.adminPassword);
-      }
-
+      const isPasswordCorrect = await verifySensitiveActionPassword(deletePassword);
       if (!isPasswordCorrect) {
         setDeleteError('Girdiğiniz şifre hatalı! Lütfen şifrenizi doğru girdiğinizden emin olun.');
         setIsDeletingData(false);
         hapticFeedback('error');
         return;
       }
-
-      // Şifre doğru -> Tüm kullanıcı verilerini buluttan ve yerelden tamamen sil!
-      showToast('Tüm verileriniz kalıcı olarak siliniyor...', 'info');
-      await dbService.deleteAllUserData(currentUser.uid);
-
-      showToast('Tüm verileriniz başarıyla silindi. Hesabınız sıfırlandı.', 'success');
-      hapticFeedback('success');
-
-      setIsDeleteDataModalOpen(false);
-      setTimeout(() => {
-        window.location.reload();
-      }, 1000);
-
+      await executeDeleteAllDataAfterAuth();
     } catch (error: any) {
       console.error("Delete data error:", error);
       setDeleteError('Veriler silinirken bir hata oluştu: ' + (error?.message || 'Bilinmeyen hata'));
@@ -318,9 +501,21 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
     }
   };
 
-  const isGoogleUser = useMemo(() => {
-    return currentUser?.providerData?.some(p => p.providerId === 'google.com');
-  }, [currentUser]);
+  const handleDeleteAllDataWithGoogle = async () => {
+    setDeleteError(null);
+    hapticFeedback('medium');
+    const ok = await reauthenticateWithGooglePopup((msg) => setDeleteError(msg));
+    if (!ok) return;
+    setIsDeletingData(true);
+    try {
+      await executeDeleteAllDataAfterAuth();
+    } catch (error: any) {
+      console.error("Google delete data error:", error);
+      setDeleteError('Veriler silinirken bir hata oluştu: ' + (error?.message || 'Bilinmeyen hata'));
+      setIsDeletingData(false);
+      hapticFeedback('error');
+    }
+  };
 
   // Handle Redirect Result on Mount for phones
   React.useEffect(() => {
@@ -337,51 +532,6 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
     };
     checkRedirect();
   }, []);
-
-  const handleGoogleAuth = async () => {
-    if (isAuthLoading) return;
-    setIsAuthLoading(true);
-    hapticFeedback('medium');
-
-    try {
-        googleProvider.setCustomParameters({ prompt: 'select_account' });
-
-        // Google'ın standart, desteklenen giriş yöntemi:
-        try {
-            if (!currentUser) await signInWithPopup(auth, googleProvider);
-            else if (!isGoogleUser) await linkWithPopup(currentUser, googleProvider);
-            else showToast('Zaten bağlı.', 'info');
-            
-            showToast('İşlem başarılı!', 'success');
-            hapticFeedback('success');
-        } catch (e: any) {
-            if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') {
-                return;
-            }
-            if (e.code === 'auth/popup-blocked') {
-                showToast('Popup engellendi! Lütfen adres çubuğundan açılır pencerelere izin verin.', 'error');
-                return;
-            }
-            console.error("Auth error:", e);
-            showToast(translateFirebaseError(e.code) || 'Bağlantı kurulamadı. Tekrar deneyin.', 'error');
-        }
-    } catch (error: any) {
-        console.error("Auth error:", error);
-        showToast('Bağlantı kurulamadı. Tekrar deneyin.', 'error');
-    } finally {
-        setIsAuthLoading(false);
-    }
-  };
-
-  const handleLogout = async () => {
-      try {
-          await logout();
-          showToast('Başarıyla çıkış yapıldı.', 'success');
-          onNavigate('LOGIN');
-      } catch (error) {
-          showToast('Çıkış yapılırken hata oluştu.', 'error');
-      }
-  };
 
   const handleScaleChange = (scale: UIScale) => {
     setUiScale(scale);
@@ -537,7 +687,7 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
 
   const handleExportData = async () => {
     try {
-      await downloadPlainBackup(`mks_yedek_${new Date().toISOString().split('T')[0]}.json`);
+      await downloadPlainBackup(`mks_yedek_${getLocalDateString()}.json`);
       showToast('Veriler başarıyla dışa aktarıldı', 'success');
       hapticFeedback('success');
     } catch (error) {
@@ -632,7 +782,7 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
     try {
       const plainJson = await dbService.exportData();
       const encryptedEnvelope = await encryptMksBackup(plainJson, backupPassword);
-      const dateStamp = new Date().toISOString().split('T')[0];
+      const dateStamp = getLocalDateString();
       downloadTextFile(encryptedEnvelope, `mks_sifreli_yedek_${dateStamp}.mksbackup`, 'application/octet-stream');
       showToast('AES-256 şifreli tam yedeğiniz (.mksbackup) indirildi.', 'success');
       hapticFeedback('success');
@@ -696,7 +846,7 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
       Math.round((f.balance || 0) * 100) / 100
     ]);
     const csv = buildUtf8BomCsv(headers, rows);
-    downloadTextFile(csv, `MKS_Ciftci_Cari_Listesi_${new Date().toISOString().split('T')[0]}.csv`, 'text/csv;charset=utf-8');
+    downloadTextFile(csv, `MKS_Ciftci_Cari_Listesi_${getLocalDateString()}.csv`, 'text/csv;charset=utf-8');
     showToast(`${farmers.length} kayıt Excel uyumlu CSV olarak indirildi.`, 'success');
   };
 
@@ -735,7 +885,7 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
           ]
     );
     const csv = buildUtf8BomCsv(headers, rows);
-    downloadTextFile(csv, `MKS_Depo_Stok_Listesi_${new Date().toISOString().split('T')[0]}.csv`, 'text/csv;charset=utf-8');
+    downloadTextFile(csv, `MKS_Depo_Stok_Listesi_${getLocalDateString()}.csv`, 'text/csv;charset=utf-8');
     showToast(`${inventory.length} stok kalemi Excel uyumlu CSV olarak indirildi.`, 'success');
   };
 
@@ -764,7 +914,7 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
       ]);
     });
     const csv = buildUtf8BomCsv(headers, rows);
-    downloadTextFile(csv, `MKS_Recete_Tahsilat_Hareketleri_${new Date().toISOString().split('T')[0]}.csv`, 'text/csv;charset=utf-8');
+    downloadTextFile(csv, `MKS_Recete_Tahsilat_Hareketleri_${getLocalDateString()}.csv`, 'text/csv;charset=utf-8');
     showToast(`${rows.length} finansal hareket CSV olarak indirildi.`, 'success');
   };
 
@@ -905,6 +1055,7 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
             barcode: barcode || undefined,
             lotNumber: lotNumber || undefined,
             expiryDate: expiryDate || undefined,
+            adjustments: quantity > 0 ? [{ date: nowIso, amount: quantity, note: 'Excel/CSV İçe Aktarım Açılış Stoğu' }] : undefined,
             lowStockThreshold: 5,
             lastUpdated: nowIso
           };
@@ -1683,110 +1834,214 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
     </div>
   );
 
-  const renderSystemSection = () => (
-    <div className="pb-32 animate-in slide-in-from-right-8 duration-300 px-4 mt-6">
-      {renderSectionHeader(t('settings.system'), t('settings.system.desc'), RefreshCw, "bg-stone-800 text-stone-400")}
-      
-      <div className="bg-stone-900/60 backdrop-blur rounded-[2.5rem] p-5 sm:p-6 shadow-sm border border-white/5">
-        <div className="grid grid-cols-2 gap-3 sm:gap-4">
-          {/* Devret (Turnover) Button */}
-          <button 
-            onClick={handleInitiateTurnover}
-            className="w-full flex flex-col justify-between p-4 bg-purple-950/30 rounded-2xl border border-purple-500/40 hover:border-purple-400 hover:bg-purple-950/50 transition-all group shadow-sm text-left h-full min-h-[115px]"
-          >
-              <div className="flex items-center justify-between w-full mb-2">
-                  <div className="p-2.5 bg-purple-500/20 text-purple-400 rounded-xl group-hover:bg-purple-500 group-hover:text-white transition-colors">
-                      <RefreshCw size={20} />
-                  </div>
-                  <ChevronRight size={18} className="text-purple-500/60 group-hover:text-purple-300 transition-colors" />
-              </div>
-              <div>
-                  <h4 className="text-xs sm:text-sm font-black text-purple-200 group-hover:text-white transition-colors">{t('settings.turnover')}</h4>
-                  <p className="text-[11px] text-purple-300/70 font-semibold leading-tight mt-1">Şifreli & tek seferlik sene devir işlemi</p>
-              </div>
-          </button>
+  const renderSystemSection = () => {
+    const currentYear = new Date().getFullYear();
+    const currentYearTurnedOver = turnoverLogsList.some(l => l.year === currentYear && l.type === 'FINANCIAL');
+    const activeFarmersCount = (farmers || []).filter(f => !(f as any).deletedAt).length;
+    const activeInventoryCount = (inventory || []).filter(i => !(i as any).deletedAt).length;
+    const activeAccountsCount = (accounts || []).filter(a => !(a as any).deletedAt).length;
 
-          {/* Yıl Sonu Dokümanları (Year-End Documents) Button */}
-          <button 
-            onClick={() => setIsYearEndDocsModalOpen(true)}
-            className="w-full flex flex-col justify-between p-4 bg-emerald-950/30 rounded-2xl border border-emerald-500/40 hover:border-emerald-400 hover:bg-emerald-950/50 transition-all group shadow-sm text-left h-full min-h-[115px]"
-          >
-              <div className="flex items-center justify-between w-full mb-2">
-                  <div className="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-xl group-hover:bg-emerald-500 group-hover:text-stone-950 transition-colors">
-                      <FileText size={20} />
-                  </div>
-                  <ChevronRight size={18} className="text-emerald-500/60 group-hover:text-emerald-300 transition-colors" />
-              </div>
-              <div>
-                  <h4 className="text-xs sm:text-sm font-black text-emerald-200 group-hover:text-white transition-colors">Yıl Sonu Dokümanları</h4>
-                  <p className="text-[11px] text-emerald-300/70 font-semibold leading-tight mt-1">Devir raporları ve resmi bilançolar</p>
-              </div>
-          </button>
+    return (
+      <div className="pb-32 animate-in slide-in-from-right-8 duration-300 px-4 mt-6">
+        {renderSectionHeader(t('settings.system'), t('settings.system.desc'), RefreshCw, "bg-emerald-500/15 text-emerald-400")}
 
-          {/* Veri Sağlığı Denetimi */}
-          <button
-            disabled={integrityBusy}
-            onClick={async () => {
-              setIntegrityBusy(true);
-              try { setIntegrityReport(await runIntegrityCheck(true)); }
-              catch { showToast('Denetim çalıştırılamadı.', 'error'); }
-              finally { setIntegrityBusy(false); }
-            }}
-            className="w-full flex flex-col justify-between p-4 bg-sky-950/20 rounded-2xl border border-sky-900/40 hover:border-sky-500/50 hover:bg-sky-950/40 transition-all group text-left disabled:opacity-60"
-          >
-              <div className="flex items-center justify-between w-full mb-2">
-                  <div className="p-2.5 bg-sky-500/20 text-sky-400 rounded-xl group-hover:bg-sky-500 group-hover:text-white transition-colors">
-                      <RefreshCw size={20} className={integrityBusy ? 'animate-spin' : ''} />
-                  </div>
-                  <ChevronRight size={18} className="text-sky-500/60 group-hover:text-sky-300 transition-colors" />
+        <div className="v22-bento-card rounded-[2rem] p-4 sm:p-6 space-y-5">
+          {/* Canlı Sistem Özeti Şeridi */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
+            <div className="p-3.5 rounded-2xl bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-sky-500/15 text-sky-400 flex items-center justify-center shrink-0">
+                <Users size={17} />
               </div>
-              <div>
-                  <h4 className="text-xs sm:text-sm font-black text-sky-200 group-hover:text-white transition-colors">Veri Sağlığı Denetimi</h4>
-                  <p className="text-[11px] text-sky-300/70 font-semibold leading-tight mt-1">{integrityBusy ? 'Denetleniyor…' : 'Kasa, stok ve yarım kayıtları kontrol et'}</p>
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-[color:var(--mks-muted)] truncate">Çiftçi Cari</p>
+                <p className="text-sm font-black text-[color:var(--mks-text)] tabular-nums">{activeFarmersCount} Kayıt</p>
               </div>
-          </button>
+            </div>
 
-          {/* Stokları / Depoyu Onar Button */}
-          <button 
-            onClick={() => setIsRebuildModalOpen(true)}
-            className="w-full flex flex-col justify-between p-4 bg-orange-950/20 rounded-2xl border border-orange-900/40 hover:border-orange-500/50 hover:bg-orange-950/40 transition-all group shadow-sm text-left h-full min-h-[115px]"
-          >
-              <div className="flex items-center justify-between w-full mb-2">
-                  <div className="p-2.5 bg-orange-500/20 text-orange-400 rounded-xl group-hover:bg-orange-500 group-hover:text-white transition-colors">
-                      <RefreshCw size={20} />
-                  </div>
-                  <ChevronRight size={18} className="text-orange-500/60 group-hover:text-orange-300 transition-colors" />
+            <div className="p-3.5 rounded-2xl bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/15 text-amber-400 flex items-center justify-center shrink-0">
+                <Package size={17} />
               </div>
-              <div>
-                  <h4 className="text-xs sm:text-sm font-black text-orange-200 group-hover:text-white transition-colors">Stokları Onar</h4>
-                  <p className="text-[11px] text-orange-300/70 font-semibold leading-tight mt-1">Depo stok durumunu senkronize edin</p>
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-[color:var(--mks-muted)] truncate">Depo Kalemi</p>
+                <p className="text-sm font-black text-[color:var(--mks-text)] tabular-nums">{activeInventoryCount} Ürün</p>
               </div>
-          </button>
+            </div>
 
-          {/* Verilerimi Sil (Delete My Data) Button */}
-          <button 
-            onClick={() => {
-              setDeletePassword('');
-              setDeleteError(null);
-              setIsDeleteDataModalOpen(true);
-            }}
-            className="w-full flex flex-col justify-between p-4 bg-rose-950/20 rounded-2xl border border-rose-900/40 hover:border-rose-500/50 hover:bg-rose-950/40 transition-all group shadow-sm text-left h-full min-h-[115px]"
-          >
-              <div className="flex items-center justify-between w-full mb-2">
-                  <div className="p-2.5 bg-rose-500/20 text-rose-400 rounded-xl group-hover:bg-rose-500 group-hover:text-white transition-colors">
-                      <Trash2 size={20} />
+            <div className="p-3.5 rounded-2xl bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center shrink-0">
+                <Wallet size={17} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-[color:var(--mks-muted)] truncate">Kasa & Banka</p>
+                <p className="text-sm font-black text-[color:var(--mks-text)] tabular-nums">{activeAccountsCount} Hesap</p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] flex items-center gap-3">
+              <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${pendingSyncCount > 0 ? 'bg-amber-500/15 text-amber-400' : 'bg-purple-500/15 text-purple-400'}`}>
+                <Cloud size={17} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-[color:var(--mks-muted)] truncate">Bulut Kuyruğu</p>
+                <p className="text-sm font-black text-[color:var(--mks-text)] truncate">
+                  {pendingSyncCount > 0 ? `${pendingSyncCount} Bekleyen` : 'Senkron Tamam'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Yıl Sonu & Bakım Kartları */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+            {/* Devret (Turnover) Button */}
+            <button
+              type="button"
+              onClick={handleInitiateTurnover}
+              className="w-full flex flex-col justify-between p-4 sm:p-5 rounded-2xl bg-[color:var(--mks-subcard)] border border-purple-500/30 hover:border-purple-500/60 hover:bg-purple-500/5 transition-all group shadow-sm text-left min-h-[126px]"
+            >
+              <div className="flex items-center justify-between w-full mb-3 gap-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2.5 bg-purple-500/15 text-purple-400 rounded-xl group-hover:bg-purple-600 group-hover:text-white transition-colors">
+                    <RefreshCw size={19} />
                   </div>
-                  <ChevronRight size={18} className="text-rose-500/60 group-hover:text-rose-300 transition-colors" />
+                  <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${currentYearTurnedOver ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-purple-500/10 text-purple-400 border-purple-500/30'}`}>
+                    {currentYear} • {currentYearTurnedOver ? 'Devir Kayıtlı' : 'Devre Hazır'}
+                  </span>
+                </div>
+                <ChevronRight size={18} className="text-[color:var(--mks-muted)] group-hover:text-purple-400 group-hover:translate-x-0.5 transition-all shrink-0" />
               </div>
               <div>
-                  <h4 className="text-xs sm:text-sm font-black text-rose-200 group-hover:text-white transition-colors">Verilerimi Sil</h4>
-                  <p className="text-[11px] text-rose-300/70 font-semibold leading-tight mt-1">Hesap verilerini kalıcı sıfırlayın</p>
+                <h4 className="text-sm font-black text-[color:var(--mks-text)] group-hover:text-purple-400 transition-colors">{t('settings.turnover')}</h4>
+                <p className="text-xs text-[color:var(--mks-muted)] font-medium leading-relaxed mt-1">
+                  {currentYearTurnedOver
+                    ? `${currentYear} yılı mali devri mevcut. Doğrulama veya rapor için açın.`
+                    : 'Şifreli & güvenli yıl sonu cari, kasa ve stok devri işlemi'}
+                </p>
               </div>
-          </button>
+            </button>
+
+            {/* Yıl Sonu Dokümanları (Year-End Documents) Button */}
+            <button
+              type="button"
+              onClick={() => setIsYearEndDocsModalOpen(true)}
+              className="w-full flex flex-col justify-between p-4 sm:p-5 rounded-2xl bg-[color:var(--mks-subcard)] border border-emerald-500/30 hover:border-emerald-500/60 hover:bg-emerald-500/5 transition-all group shadow-sm text-left min-h-[126px]"
+            >
+              <div className="flex items-center justify-between w-full mb-3 gap-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2.5 bg-emerald-500/15 text-emerald-400 rounded-xl group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+                    <FileText size={19} />
+                  </div>
+                  <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                    {availableDocYears.length} Dönem
+                  </span>
+                </div>
+                <ChevronRight size={18} className="text-[color:var(--mks-muted)] group-hover:text-emerald-400 group-hover:translate-x-0.5 transition-all shrink-0" />
+              </div>
+              <div>
+                <h4 className="text-sm font-black text-[color:var(--mks-text)] group-hover:text-emerald-400 transition-colors">Yıl Sonu Dokümanları</h4>
+                <p className="text-xs text-[color:var(--mks-muted)] font-medium leading-relaxed mt-1">
+                  Resmi yıl sonu devir raporları, cari mizan ve stok bilançoları (PDF)
+                </p>
+              </div>
+            </button>
+
+            {/* Veri Sağlığı Denetimi */}
+            <button
+              type="button"
+              disabled={integrityBusy}
+              onClick={async () => {
+                setIntegrityBusy(true);
+                try {
+                  const report = await runIntegrityCheck(true);
+                  await refreshInventory();
+                  await refreshStats();
+                  await refreshSystemStatus();
+                  setIntegrityReport(report);
+                } catch {
+                  showToast('Denetim çalıştırılamadı.', 'error');
+                } finally {
+                  setIntegrityBusy(false);
+                }
+              }}
+              className="w-full flex flex-col justify-between p-4 sm:p-5 rounded-2xl bg-[color:var(--mks-subcard)] border border-sky-500/30 hover:border-sky-500/60 hover:bg-sky-500/5 transition-all group shadow-sm text-left min-h-[126px] disabled:opacity-60"
+            >
+              <div className="flex items-center justify-between w-full mb-3 gap-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2.5 bg-sky-500/15 text-sky-400 rounded-xl group-hover:bg-sky-600 group-hover:text-white transition-colors">
+                    <ShieldCheck size={19} className={integrityBusy ? 'animate-pulse' : ''} />
+                  </div>
+                  <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-sky-500/10 text-sky-400 border border-sky-500/30">
+                    {integrityBusy ? 'Taranıyor…' : 'Otomatik + Hızlı Onarım'}
+                  </span>
+                </div>
+                <ChevronRight size={18} className="text-[color:var(--mks-muted)] group-hover:text-sky-400 group-hover:translate-x-0.5 transition-all shrink-0" />
+              </div>
+              <div>
+                <h4 className="text-sm font-black text-[color:var(--mks-text)] group-hover:text-sky-400 transition-colors">Veri Sağlığı Denetimi</h4>
+                <p className="text-xs text-[color:var(--mks-muted)] font-medium leading-relaxed mt-1">
+                  {integrityBusy ? 'Kasa, stok, cari ve bulut kuyruğu taranıyor…' : 'Kasa, stok, peşin satış ve yarım kayıt tutarlılığını kontrol et'}
+                </p>
+              </div>
+            </button>
+
+            {/* Stokları / Depoyu Onar Button */}
+            <button
+              type="button"
+              onClick={handleOpenRebuildModal}
+              className="w-full flex flex-col justify-between p-4 sm:p-5 rounded-2xl bg-[color:var(--mks-subcard)] border border-amber-500/30 hover:border-amber-500/60 hover:bg-amber-500/5 transition-all group shadow-sm text-left min-h-[126px]"
+            >
+              <div className="flex items-center justify-between w-full mb-3 gap-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2.5 bg-amber-500/15 text-amber-400 rounded-xl group-hover:bg-amber-600 group-hover:text-white transition-colors">
+                    <Wrench size={19} />
+                  </div>
+                  <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                    Depo Mutabakatı
+                  </span>
+                </div>
+                <ChevronRight size={18} className="text-[color:var(--mks-muted)] group-hover:text-amber-400 group-hover:translate-x-0.5 transition-all shrink-0" />
+              </div>
+              <div>
+                <h4 className="text-sm font-black text-[color:var(--mks-text)] group-hover:text-amber-400 transition-colors">Stokları Onar</h4>
+                <p className="text-xs text-[color:var(--mks-muted)] font-medium leading-relaxed mt-1">
+                  Alış, satış ve mükerrer kart farklarını analiz edip depoyu senkronize edin
+                </p>
+              </div>
+            </button>
+
+            {/* Verilerimi Sil (Delete My Data) Banner Card */}
+            <button
+              type="button"
+              onClick={() => {
+                setDeletePassword('');
+                setDeleteError(null);
+                setIsDeleteDataModalOpen(true);
+              }}
+              className="sm:col-span-2 w-full flex items-center justify-between gap-4 p-4 sm:p-5 rounded-2xl bg-[color:var(--mks-subcard)] border border-rose-500/30 hover:border-rose-500/60 hover:bg-rose-500/5 transition-all group shadow-sm text-left"
+            >
+              <div className="flex items-center gap-3.5 min-w-0">
+                <div className="p-3 bg-rose-500/15 text-rose-400 rounded-xl group-hover:bg-rose-600 group-hover:text-white transition-colors shrink-0">
+                  <Trash2 size={20} />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h4 className="text-sm font-black text-[color:var(--mks-text)] group-hover:text-rose-400 transition-colors">Verilerimi Sil</h4>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/30">
+                      Kalıcı Sıfırlama
+                    </span>
+                  </div>
+                  <p className="text-xs text-[color:var(--mks-muted)] font-medium leading-relaxed mt-0.5">
+                    Bulut ve cihazdaki tüm cari, fatura, stok ve kasa kayıtlarını doğrulamalı olarak sıfırlayın
+                  </p>
+                </div>
+              </div>
+              <ChevronRight size={18} className="text-[color:var(--mks-muted)] group-hover:text-rose-400 group-hover:translate-x-0.5 transition-all shrink-0" />
+            </button>
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   // UI-08/09: Donanım geri tuşu açık modalı kapatsın (alt bölüm işleyicisinden [55] daha yüksek öncelik)
   useBackHandler(isTurnoverModalOpen, () => {
@@ -1798,7 +2053,14 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
   useBackHandler(isAlreadyTurnedOverModalOpen, () => setIsAlreadyTurnedOverModalOpen(false), 'settings_already_turned_over_modal', 70);
   useBackHandler(turnoverCompletedYear !== null, () => setTurnoverCompletedYear(null), 'settings_turnover_done_modal', 70);
   useBackHandler(isYearEndDocsModalOpen, () => setIsYearEndDocsModalOpen(false), 'settings_year_end_docs_modal', 70);
-  useBackHandler(isRebuildModalOpen, () => setIsRebuildModalOpen(false), 'settings_rebuild_modal', 70);
+  useBackHandler(isRebuildModalOpen, () => {
+    if (isRepairingStock) return;
+    setIsRebuildModalOpen(false);
+  }, 'settings_rebuild_modal', 70);
+  useBackHandler(integrityReport !== null, () => {
+    if (repairingIntegrityCode) return;
+    setIntegrityReport(null);
+  }, 'settings_integrity_modal', 70);
   useBackHandler(isDeleteDataModalOpen, () => {
     if (isDeletingData) return;
     setIsDeleteDataModalOpen(false);
@@ -1821,51 +2083,80 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
 
       {/* Devir İşlemi Şifreli Onay Modalı */}
       {isTurnoverModalOpen && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
-          <div className="bg-stone-900 border border-purple-500/40 w-full max-w-md rounded-3xl p-6 shadow-2xl relative overflow-hidden">
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-stone-950/75 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-[color:var(--mks-modal-bg)] border border-purple-500/40 w-full max-w-md rounded-3xl p-6 shadow-2xl relative overflow-hidden">
             <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-purple-600 via-indigo-500 to-purple-500" />
 
-            <div className="flex items-center justify-between border-b border-white/10 pb-4 mb-4">
+            <div className="flex items-center justify-between border-b border-[color:var(--mks-card-border)] pb-4 mb-4">
               <div className="flex items-center gap-3">
-                <div className="p-2.5 bg-purple-500/20 text-purple-400 rounded-2xl border border-purple-500/30">
+                <div className="p-2.5 bg-purple-500/15 text-purple-400 rounded-2xl border border-purple-500/30">
                   <RefreshCw size={22} />
                 </div>
                 <div>
-                  <h3 className="text-base font-black text-white tracking-tight">{new Date().getFullYear()} Yılı Devir İşlemi</h3>
-                  <p className="text-[11px] text-purple-300 font-bold uppercase">Şifreli Güvenlik Doğrulaması</p>
+                  <h3 className="text-base font-black text-[color:var(--mks-text)] tracking-tight">{new Date().getFullYear()} Yılı Devir İşlemi</h3>
+                  <p className="text-[11px] text-purple-400 font-bold uppercase">Şifreli Güvenlik Doğrulaması</p>
                 </div>
               </div>
-              <button 
+              <button
                 type="button"
                 aria-label="Devir penceresini kapat"
+                disabled={isVerifyingTurnoverPassword || isReauthenticatingGoogle}
                 onClick={() => {
                   setIsTurnoverModalOpen(false);
                   setTurnoverPassword('');
                   setTurnoverError(null);
                 }}
-                className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-stone-400 hover:text-white bg-stone-800/80 hover:bg-stone-800 rounded-xl transition-colors"
+                className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-[color:var(--mks-muted)] hover:text-[color:var(--mks-text)] bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] rounded-xl transition-colors disabled:opacity-50"
               >
                 <X size={18} />
               </button>
             </div>
 
             <form onSubmit={handleConfirmTurnover} className="space-y-4">
-              <div className="p-3 bg-purple-950/40 border border-purple-500/20 rounded-2xl text-xs text-purple-200 leading-relaxed space-y-1">
-                <p className="font-bold flex items-center gap-1.5 text-purple-300">
+              <div className="p-3.5 bg-purple-500/10 border border-purple-500/25 rounded-2xl text-xs text-[color:var(--mks-text)] leading-relaxed space-y-1">
+                <p className="font-bold flex items-center gap-1.5 text-purple-400">
                   <AlertTriangle size={15} className="text-purple-400 flex-shrink-0" />
-                  Tek Seferlik Devir İşlemi Onayı
+                  Güvenli Yıl Sonu Devir Onayı
                 </p>
-                <p className="text-[11px] text-purple-200/80">
-                  {new Date().getFullYear()} yılı için devir işlemi cari bakiyeleri ve depo stok durumunu devreder. Devir işlemi her yıl için yalnızca <strong>1 defa</strong> gerçekleştirilebilir. Devri onaylamak için lütfen şifrenizi girin.
+                <p className="text-[11px] text-[color:var(--mks-muted)]">
+                  {new Date().getFullYear()} yılı için devir işlemi cari bakiyeleri, kasa ve depo stok durumunu bir sonraki yıla taşır. Devir onayı için Google hesabınızı veya şifrenizi doğrulayın.
                 </p>
               </div>
 
+              {isGoogleUser && (
+                <div className="space-y-3">
+                  <button
+                    type="button"
+                    onClick={handleConfirmTurnoverWithGoogle}
+                    disabled={isReauthenticatingGoogle || isVerifyingTurnoverPassword}
+                    className="w-full py-3 px-4 rounded-2xl bg-[color:var(--mks-subcard)] border border-purple-500/40 hover:border-purple-500 text-[color:var(--mks-text)] font-bold text-xs flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                  >
+                    {isReauthenticatingGoogle ? (
+                      <>
+                        <Loader2 size={16} className="animate-spin text-purple-400" />
+                        <span>Google Hesabı Doğrulanıyor...</span>
+                      </>
+                    ) : (
+                      <>
+                        <ShieldCheck size={16} className="text-purple-400" />
+                        <span>Google Hesabı ile Doğrula ve Devret</span>
+                      </>
+                    )}
+                  </button>
+                  <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-[color:var(--mks-muted)]">
+                    <div className="h-px flex-1 bg-[color:var(--mks-card-border)]" />
+                    <span>veya yönetici / hesap şifresi</span>
+                    <div className="h-px flex-1 bg-[color:var(--mks-card-border)]" />
+                  </div>
+                </div>
+              )}
+
               <div>
-                <label className="block text-xs font-bold text-stone-300 mb-1.5">
-                  Hesap Şifrenizi Giriniz:
+                <label className="block text-xs font-bold text-[color:var(--mks-text)] mb-1.5">
+                  Hesap / Yönetici Şifrenizi Giriniz:
                 </label>
                 <div className="relative">
-                  <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-500">
+                  <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[color:var(--mks-muted)]">
                     <Lock size={16} />
                   </div>
                   <input
@@ -1876,14 +2167,15 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
                       if (turnoverError) setTurnoverError(null);
                     }}
                     placeholder="Şifreniz"
-                    className="w-full pl-10 pr-10 py-3 bg-stone-950/80 border border-stone-800 rounded-2xl text-white text-xs font-medium outline-none focus:border-purple-500 transition-colors"
-                    autoFocus
+                    disabled={isVerifyingTurnoverPassword || isReauthenticatingGoogle}
+                    className="w-full pl-10 pr-10 py-3 bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] rounded-2xl text-[color:var(--mks-text)] text-xs font-medium outline-none focus:border-purple-500 transition-colors"
+                    autoFocus={!isGoogleUser}
                   />
                   <button
                     type="button"
                     onClick={() => setShowTurnoverPassword(!showTurnoverPassword)}
                     aria-label={showTurnoverPassword ? 'Şifreyi gizle' : 'Şifreyi göster'}
-                    className="absolute right-0 top-1/2 -translate-y-1/2 w-11 h-11 flex items-center justify-center text-stone-500 hover:text-stone-300 transition-colors"
+                    className="absolute right-0 top-1/2 -translate-y-1/2 w-11 h-11 flex items-center justify-center text-[color:var(--mks-muted)] hover:text-[color:var(--mks-text)] transition-colors"
                   >
                     {showTurnoverPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
@@ -1891,7 +2183,7 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
               </div>
 
               {turnoverError && (
-                <div className="p-3 bg-rose-950/50 border border-rose-500/30 rounded-xl text-[11px] text-rose-300 font-medium flex items-center gap-2">
+                <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-[11px] text-rose-400 font-semibold flex items-center gap-2">
                   <AlertTriangle size={14} className="text-rose-400 flex-shrink-0" />
                   <span>{turnoverError}</span>
                 </div>
@@ -1900,19 +2192,20 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
               <div className="flex items-center gap-3 pt-2">
                 <button
                   type="button"
+                  disabled={isVerifyingTurnoverPassword || isReauthenticatingGoogle}
                   onClick={() => {
                     setIsTurnoverModalOpen(false);
                     setTurnoverPassword('');
                     setTurnoverError(null);
                   }}
-                  className="flex-1 py-3 bg-stone-800 hover:bg-stone-700 text-stone-300 font-bold text-xs rounded-xl transition-colors"
+                  className="flex-1 py-3 bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] hover:opacity-90 text-[color:var(--mks-text)] font-bold text-xs rounded-xl transition-colors disabled:opacity-50"
                 >
                   İptal
                 </button>
                 <button
                   type="submit"
-                  disabled={isVerifyingTurnoverPassword || !turnoverPassword}
-                  className="flex-1 py-3 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-lg shadow-purple-950/50 transition-all flex items-center justify-center gap-2"
+                  disabled={isVerifyingTurnoverPassword || isReauthenticatingGoogle || !turnoverPassword}
+                  className="flex-1 py-3 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-lg transition-all flex items-center justify-center gap-2"
                 >
                   {isVerifyingTurnoverPassword ? (
                     <>
@@ -1934,48 +2227,64 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
 
       {/* Aynı Yıl İçinde Zaten Devir Yapıldı Bilgilendirme Modalı */}
       {isAlreadyTurnedOverModalOpen && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
-          <div className="bg-stone-900 border border-purple-500/40 w-full max-w-md rounded-3xl p-6 shadow-2xl relative overflow-hidden text-center space-y-4">
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-stone-950/75 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-[color:var(--mks-modal-bg)] border border-purple-500/40 w-full max-w-md rounded-3xl p-6 shadow-2xl relative overflow-hidden text-center space-y-4">
             <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-purple-600 via-indigo-500 to-purple-500" />
 
-            <div className="w-16 h-16 bg-purple-500/20 text-purple-400 border border-purple-500/40 rounded-full flex items-center justify-center mx-auto shadow-inner">
-              <ShieldCheck size={36} />
+            <div className="w-16 h-16 bg-purple-500/15 text-purple-400 border border-purple-500/30 rounded-full flex items-center justify-center mx-auto shadow-inner">
+              <ShieldCheck size={34} />
             </div>
 
             <div>
-              <h3 className="text-lg font-black text-white tracking-tight">
-                {new Date().getFullYear()} Yılı Devri Zaten Yapıldı!
+              <h3 className="text-lg font-black text-[color:var(--mks-text)] tracking-tight">
+                {new Date().getFullYear()} Yılı Devri Zaten Kayıtlı
               </h3>
-              <p className="text-xs text-stone-300 font-medium leading-relaxed mt-2">
-                Aynı yıl içinde devir işlemi yalnızca <strong>1 defa</strong> gerçekleştirilebilir. {new Date().getFullYear()} yılına ait sene sonu devir kaydı sistemde mevcuttur.
+              <p className="text-xs text-[color:var(--mks-muted)] font-medium leading-relaxed mt-2">
+                {new Date().getFullYear()} yılına ait sene sonu devir kaydı sistemde mevcuttur. Oluşturulan bilançoyu inceleyebilir veya gerekirse devir bakiyelerini yeniden doğrulayıp güncelleyebilirsiniz.
               </p>
             </div>
 
-            <div className="p-3 bg-purple-950/40 border border-purple-500/20 rounded-2xl text-left text-[11px] text-purple-300 space-y-1">
-              <p className="font-bold flex items-center gap-1.5">
-                <FileText size={14} className="text-purple-400" />
-                Hazırlanan Devir Raporuna Erişin:
+            <div className="p-3.5 bg-purple-500/10 border border-purple-500/25 rounded-2xl text-left text-[11px] space-y-1">
+              <p className="font-bold flex items-center gap-1.5 text-purple-400">
+                <FileText size={14} />
+                Hazırlanan Devir Raporu & Mutabakat:
               </p>
-              <p className="text-[11px] text-purple-200/80">
-                Oluşturulan tüm devir bilançolarını, ürün kârlılıklarını ve cari bakiyeleri <strong>"Yıl Sonu Dokümanları"</strong> bölümünden istediğiniz zaman PDF olarak indirebilirsiniz.
+              <p className="text-[11px] text-[color:var(--mks-muted)]">
+                Devir bilançolarını, ürün kârlılıklarını ve cari bakiyeleri <strong>"Yıl Sonu Dokümanları"</strong> bölümünden PDF olarak indirebilirsiniz.
               </p>
             </div>
 
             <div className="pt-2 space-y-2">
               <button
+                type="button"
                 onClick={() => {
                   setIsAlreadyTurnedOverModalOpen(false);
                   setIsYearEndDocsModalOpen(true);
                 }}
-                className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-stone-950 font-black rounded-2xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/40 transition-all"
+                className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-2xl text-xs flex items-center justify-center gap-2 shadow-lg transition-all"
               >
-                <FileText size={18} />
+                <FileText size={17} />
                 Yıl Sonu Dokümanlarını Görüntüle & İndir
               </button>
 
               <button
+                type="button"
+                onClick={() => {
+                  setIsAlreadyTurnedOverModalOpen(false);
+                  setTurnoverPassword('');
+                  setTurnoverError(null);
+                  setIsTurnoverModalOpen(true);
+                }}
+                className="w-full py-2.5 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 text-purple-400 font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition-colors"
+              >
+                <RefreshCw size={15} />
+                Devir Bakiyelerini Yeniden Doğrula / Güncelle
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setIsAlreadyTurnedOverModalOpen(false)}
-                className="w-full py-2.5 bg-stone-800 hover:bg-stone-700 text-stone-300 font-bold rounded-xl text-xs transition-colors"
+                className="w-full py-2.5 bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] hover:opacity-90 text-[color:var(--mks-text)] font-bold rounded-xl text-xs transition-colors"
               >
                 Kapat
               </button>
@@ -1986,33 +2295,33 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
 
       {/* Devir Tamamlandı & PDF İndirme Modalı */}
       {turnoverCompletedYear !== null && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
-          <div className="bg-stone-900 border border-emerald-500/40 w-full max-w-md rounded-3xl p-6 shadow-2xl relative overflow-hidden text-center space-y-4">
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-stone-950/75 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-[color:var(--mks-modal-bg)] border border-emerald-500/40 w-full max-w-md rounded-3xl p-6 shadow-2xl relative overflow-hidden text-center space-y-4">
             <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-600" />
 
-            <div className="w-16 h-16 bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 rounded-full flex items-center justify-center mx-auto shadow-inner">
+            <div className="w-16 h-16 bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 rounded-full flex items-center justify-center mx-auto shadow-inner">
               <CheckCircle2 size={36} />
             </div>
 
             <div>
-              <h3 className="text-lg font-black text-white tracking-tight">
+              <h3 className="text-lg font-black text-[color:var(--mks-text)] tracking-tight">
                 {turnoverCompletedYear} Yılı Devri Tamamlandı!
               </h3>
-              <p className="text-xs text-stone-300 font-medium leading-relaxed mt-2">
-                Eksiksiz sene sonu bilançonuz, ürün kârlılıklarınız, çiftçi ve tedarikçi borçlarınız, stok değerlemeniz ve ortaklık kâr-zarar raporunuz hazırlandı.
+              <p className="text-xs text-[color:var(--mks-muted)] font-medium leading-relaxed mt-2">
+                Eksiksiz sene sonu bilançonuz, ürün kârlılıklarınız, çiftçi ve tedarikçi bakiyeleriniz, stok değerlemeniz ve ortaklık kâr-zarar raporunuz hazırlandı.
               </p>
             </div>
 
-            <div className="p-3 bg-emerald-950/40 border border-emerald-500/20 rounded-2xl text-left text-[11px] text-emerald-300 space-y-1">
-              <p className="font-bold flex items-center gap-1.5">
-                <FileText size={14} className="text-emerald-400" />
+            <div className="p-3.5 bg-emerald-500/10 border border-emerald-500/25 rounded-2xl text-left text-[11px] space-y-1">
+              <p className="font-bold flex items-center gap-1.5 text-emerald-400">
+                <FileText size={14} />
                 Rapor İçeriği (Tam Kapsamlı):
               </p>
-              <ul className="list-disc list-inside text-[11px] text-emerald-200/80 space-y-0.5">
+              <ul className="list-disc list-inside text-[11px] text-[color:var(--mks-muted)] space-y-0.5">
                 <li>Satılan ürün kârlılık ve ciro dökümü</li>
                 <li>Çiftçi (cari) borç ve alacak bakiyeleri</li>
                 <li>Depo stok miktarları ve varlık değerlemesi</li>
-                <li>Tedarikçi (bayi) borç durumu</li>
+                <li>Tedarikçi (bayi) net borç / alacak durumu</li>
                 <li>Kasalar, banka hesapları, çek ve senetler</li>
                 <li>Ortaklık kâr / zarar paylaşım analizi</li>
               </ul>
@@ -2020,33 +2329,10 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
 
             <div className="pt-2 space-y-2">
               <button
-                onClick={async () => {
-                  setIsGeneratingTurnoverPdf(true);
-                  try {
-                    await generateYearEndReportPDF({
-                      targetYear: turnoverCompletedYear,
-                      farmers,
-                      inventory,
-                      prescriptions,
-                      payments,
-                      manualDebts,
-                      myPayments,
-                      suppliers,
-                      supplierPurchases,
-                      accounts,
-                      expenses,
-                      userProfile
-                    });
-                    showToast("Yıl sonu devir raporu PDF olarak indirildi.", "success");
-                  } catch (e) {
-                    console.error("Turnover PDF download error:", e);
-                    showToast("PDF oluşturulurken hata oluştu.", "error");
-                  } finally {
-                    setIsGeneratingTurnoverPdf(false);
-                  }
-                }}
+                type="button"
+                onClick={() => downloadYearEndReport(turnoverCompletedYear, 'TURNOVER_DONE')}
                 disabled={isGeneratingTurnoverPdf}
-                className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 text-stone-950 font-black rounded-2xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/40 transition-all active:scale-95 disabled:opacity-50"
+                className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-2xl text-xs flex items-center justify-center gap-2 shadow-lg transition-all active:scale-95 disabled:opacity-50"
               >
                 {isGeneratingTurnoverPdf ? (
                   <>
@@ -2062,8 +2348,9 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
               </button>
 
               <button
+                type="button"
                 onClick={() => setTurnoverCompletedYear(null)}
-                className="w-full py-2.5 bg-stone-800 hover:bg-stone-700 text-stone-300 font-bold rounded-xl text-xs transition-colors"
+                className="w-full py-2.5 bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] hover:opacity-90 text-[color:var(--mks-text)] font-bold rounded-xl text-xs transition-colors"
               >
                 Kapat
               </button>
@@ -2074,25 +2361,25 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
 
       {/* Yıl Sonu Dokümanları Arşivi Modalı */}
       {isYearEndDocsModalOpen && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
-          <div className="bg-stone-900 border border-emerald-500/30 w-full max-w-lg rounded-3xl p-6 shadow-2xl relative overflow-hidden flex flex-col max-h-[85dvh]">
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-stone-950/75 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-[color:var(--mks-modal-bg)] border border-emerald-500/30 w-full max-w-lg rounded-3xl p-6 shadow-2xl relative overflow-hidden flex flex-col max-h-[85dvh]">
             <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-600" />
 
-            <div className="flex items-center justify-between border-b border-white/10 pb-4 mb-4 mt-1">
+            <div className="flex items-center justify-between border-b border-[color:var(--mks-card-border)] pb-4 mb-4 mt-1">
               <div className="flex items-center gap-3">
-                <div className="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-2xl border border-emerald-500/30">
+                <div className="p-2.5 bg-emerald-500/15 text-emerald-400 rounded-2xl border border-emerald-500/30">
                   <FileText size={22} />
                 </div>
                 <div>
-                  <h3 className="text-base font-black text-white tracking-tight">Yıl Sonu Dokümanları & Devir Raporları</h3>
-                  <p className="text-[11px] text-stone-400 font-medium">Sene sonu resmi bilançoları ve devir belgeleri arşivi</p>
+                  <h3 className="text-base font-black text-[color:var(--mks-text)] tracking-tight">Yıl Sonu Dokümanları & Devir Raporları</h3>
+                  <p className="text-[11px] text-[color:var(--mks-muted)] font-medium">Sene sonu resmi bilançoları ve devir belgeleri arşivi</p>
                 </div>
               </div>
-              <button 
+              <button
                 type="button"
                 aria-label="Yıl sonu dokümanları penceresini kapat"
                 onClick={() => setIsYearEndDocsModalOpen(false)}
-                className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-stone-400 hover:text-white bg-stone-800/80 hover:bg-stone-800 rounded-xl transition-colors"
+                className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-[color:var(--mks-muted)] hover:text-[color:var(--mks-text)] bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] rounded-xl transition-colors"
               >
                 <X size={18} />
               </button>
@@ -2101,52 +2388,30 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
             <div className="overflow-y-auto space-y-3 pr-1 flex-1 no-scrollbar">
               {availableDocYears.map(year => {
                 const isDownloadingThis = downloadingYearPdf === year;
+                const hasTurnoverLog = turnoverLogsList.some(l => l.year === year && l.type === 'FINANCIAL');
                 return (
-                  <div key={year} className="p-4 bg-stone-950/70 border border-white/10 rounded-2xl space-y-3 hover:border-emerald-500/40 transition-all">
-                    <div className="flex items-center justify-between">
+                  <div key={year} className="p-4 bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] rounded-2xl space-y-3 hover:border-emerald-500/40 transition-all">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div className="flex items-center gap-2">
-                        <span className="px-2.5 py-1 bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 font-black text-xs rounded-xl">
+                        <span className="px-2.5 py-1 bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-black text-xs rounded-xl">
                           {year} YILI
                         </span>
-                        <span className="text-xs font-bold text-stone-200">Devir & Bilanço Raporu</span>
+                        <span className="text-xs font-bold text-[color:var(--mks-text)]">Devir & Bilanço Raporu</span>
                       </div>
-                      <span className="text-[11px] font-bold text-emerald-400/90 bg-emerald-950/80 border border-emerald-500/30 px-2.5 py-0.5 rounded-lg flex items-center gap-1">
-                        <CheckCircle2 size={12} className="text-emerald-400" /> Kurumsal PDF
+                      <span className={`text-[11px] font-bold border px-2.5 py-0.5 rounded-lg flex items-center gap-1 ${hasTurnoverLog ? 'text-purple-400 bg-purple-500/10 border-purple-500/30' : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30'}`}>
+                        <CheckCircle2 size={12} /> {hasTurnoverLog ? 'Devir Kayıtlı PDF' : 'Kurumsal PDF'}
                       </span>
                     </div>
 
-                    <p className="text-[11px] text-stone-400 leading-relaxed">
-                      {year} yılına ait ürün bazlı net kârlılık, çiftçi (cari) borç/alacak bakiyeleri, depo stoğu ve varlık değerlemesi, kasa-banka durumları ve ortaklık pay analiz raporu.
+                    <p className="text-[11px] text-[color:var(--mks-muted)] leading-relaxed">
+                      {year} yılına ait ürün bazlı net kârlılık, tüm çiftçi ve tedarikçi bakiyeleri, depo stoğu ve varlık değerlemesi, kasa-banka durumları ve ortaklık pay analiz raporu.
                     </p>
 
                     <button
-                      onClick={async () => {
-                        setDownloadingYearPdf(year);
-                        try {
-                          await generateYearEndReportPDF({
-                            targetYear: year,
-                            farmers,
-                            inventory,
-                            prescriptions,
-                            payments,
-                            manualDebts,
-                            myPayments,
-                            suppliers,
-                            supplierPurchases,
-                            accounts,
-                            expenses,
-                            userProfile
-                          });
-                          showToast(`${year} yılı devir raporu PDF olarak indirildi.`, 'success');
-                        } catch (e) {
-                          console.error("Year doc download error:", e);
-                          showToast("Rapor oluşturulurken hata oluştu.", 'error');
-                        } finally {
-                          setDownloadingYearPdf(null);
-                        }
-                      }}
+                      type="button"
+                      onClick={() => downloadYearEndReport(year, 'ARCHIVE')}
                       disabled={isDownloadingThis}
-                      className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-stone-950 font-black rounded-xl text-xs flex items-center justify-center gap-2 transition-all active:scale-98 disabled:opacity-50 shadow-md shadow-emerald-950/50"
+                      className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-xl text-xs flex items-center justify-center gap-2 transition-all active:scale-98 disabled:opacity-50 shadow-md"
                     >
                       {isDownloadingThis ? (
                         <>
@@ -2165,10 +2430,11 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
               })}
             </div>
 
-            <div className="pt-4 border-t border-white/10 mt-2">
+            <div className="pt-4 border-t border-[color:var(--mks-card-border)] mt-2">
               <button
+                type="button"
                 onClick={() => setIsYearEndDocsModalOpen(false)}
-                className="w-full py-2.5 bg-stone-800 hover:bg-stone-700 text-stone-300 font-bold rounded-xl text-xs transition-colors"
+                className="w-full py-2.5 bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] hover:opacity-90 text-[color:var(--mks-text)] font-bold rounded-xl text-xs transition-colors"
               >
                 Kapat
               </button>
@@ -2177,44 +2443,307 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
         </div>
       )}
 
+      {/* Veri Sağlığı Denetimi Modalı */}
       {integrityReport && (
-        <div className="fixed inset-0 z-[130] bg-black/75 flex items-end sm:items-center justify-center sm:p-4" onClick={() => setIntegrityReport(null)}>
-          <div className="w-full sm:max-w-lg max-h-[85dvh] overflow-y-auto bg-stone-900 border border-white/10 rounded-t-3xl sm:rounded-3xl p-5 space-y-3" onClick={e => e.stopPropagation()}>
-            <h3 className="text-base font-black text-stone-100">Veri Sağlığı Denetimi</h3>
-            {integrityReport.issues.length === 0 ? (
-              <p className="text-sm font-bold text-emerald-400">Her şey tutarlı: kasa, stok ve kayıtlar birbiriyle uyuşuyor.</p>
-            ) : integrityReport.issues.map(i => (
-              <div key={i.code} className={`rounded-2xl border p-3 ${i.repaired ? 'border-emerald-500/30 bg-emerald-500/10' : 'border-amber-500/40 bg-amber-500/10'}`}>
-                <p className="text-sm font-black text-stone-100">{i.title} <span className="font-mono">({i.count})</span></p>
-                <p className="text-xs text-stone-300 mt-1 leading-snug">{i.detail}</p>
-                <p className={`text-[11px] font-black mt-1.5 ${i.repaired ? 'text-emerald-400' : 'text-amber-400'}`}>{i.repaired ? 'Otomatik düzeltildi' : 'Sizin kararınız gerekiyor'}</p>
+        <div
+          className="fixed inset-0 z-[130] bg-stone-950/75 backdrop-blur-md flex items-end sm:items-center justify-center sm:p-4 animate-in fade-in duration-200"
+          onClick={() => { if (!repairingIntegrityCode) setIntegrityReport(null); }}
+        >
+          <div
+            className="w-full sm:max-w-xl max-h-[88dvh] overflow-hidden flex flex-col bg-[color:var(--mks-modal-bg)] border border-sky-500/30 rounded-t-3xl sm:rounded-3xl p-5 sm:p-6 shadow-2xl relative"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-sky-500 via-cyan-400 to-emerald-500" />
+
+            <div className="flex items-center justify-between border-b border-[color:var(--mks-card-border)] pb-4 mb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-sky-500/15 text-sky-400 rounded-2xl border border-sky-500/30">
+                  <ShieldCheck size={22} />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-[color:var(--mks-text)] tracking-tight">Veri Sağlığı Denetimi</h3>
+                  <p className="text-[11px] text-[color:var(--mks-muted)] font-medium">
+                    Kasa, stok, satış kayıtları ve bulut senkron kontrolü
+                  </p>
+                </div>
               </div>
-            ))}
-            <button type="button" onClick={() => setIntegrityReport(null)} className="w-full min-h-[46px] rounded-xl bg-stone-800 text-stone-100 text-sm font-bold">Kapat</button>
+              <button
+                type="button"
+                aria-label="Veri sağlığı penceresini kapat"
+                disabled={repairingIntegrityCode !== null}
+                onClick={() => setIntegrityReport(null)}
+                className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-[color:var(--mks-muted)] hover:text-[color:var(--mks-text)] bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] rounded-xl transition-colors disabled:opacity-50"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto space-y-3 pr-1 flex-1 no-scrollbar">
+              {integrityReport.issues.length === 0 ? (
+                <div className="p-5 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 flex items-start gap-3">
+                  <CheckCircle2 size={22} className="text-emerald-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-black text-[color:var(--mks-text)]">Her şey tutarlı!</p>
+                    <p className="text-xs text-[color:var(--mks-muted)] mt-1 leading-relaxed">
+                      Kasa hesapları, depo stok bakiyeleri, peşin satış kayıtları ve bulut kuyruğu birbiriyle tam uyumlu.
+                    </p>
+                  </div>
+                </div>
+              ) : integrityReport.issues.map(i => {
+                const isRepairingThis = repairingIntegrityCode === i.code;
+                const isAnyRepairing = repairingIntegrityCode !== null;
+                return (
+                  <div
+                    key={i.code}
+                    className={`rounded-2xl border p-4 space-y-2.5 ${i.repaired ? 'border-emerald-500/30 bg-emerald-500/10' : 'border-amber-500/35 bg-amber-500/10'}`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-sm font-black text-[color:var(--mks-text)]">
+                        {i.title} <span className="font-mono text-xs text-[color:var(--mks-muted)]">({i.count})</span>
+                      </p>
+                      <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border shrink-0 ${i.repaired ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10' : 'text-amber-400 border-amber-500/30 bg-amber-500/10'}`}>
+                        {i.repaired ? 'Otomatik Düzeltildi' : 'Karar / Onarım Gerekli'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-[color:var(--mks-muted)] leading-relaxed">{i.detail}</p>
+
+                    {!i.repaired && i.code === 'STOCK_MISMATCH' && (
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <button
+                          type="button"
+                          disabled={isAnyRepairing}
+                          onClick={() => handleIntegrityQuickRepair('STOCK_LEDGER', i.code)}
+                          className="px-3 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                        >
+                          {isRepairingThis ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                          Kayıtlara Göre Stoğu Güncelle
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isAnyRepairing}
+                          onClick={() => handleIntegrityQuickRepair('STOCK_SHELF', i.code)}
+                          className="px-3 py-2 rounded-xl bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] hover:border-emerald-500/50 text-[color:var(--mks-text)] text-xs font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                        >
+                          <Package size={14} className="text-emerald-400" />
+                          Mevcut Depo Miktarını Koru
+                        </button>
+                      </div>
+                    )}
+
+                    {!i.repaired && i.code === 'CASH_SALE_NO_KASA' && (
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <button
+                          type="button"
+                          disabled={isAnyRepairing}
+                          onClick={() => handleIntegrityQuickRepair('CASH_CREATE_TX', i.code)}
+                          className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                        >
+                          {isRepairingThis ? <Loader2 size={14} className="animate-spin" /> : <Wallet size={14} />}
+                          Peşin Satışı Kasaya İşle
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isAnyRepairing}
+                          onClick={() => handleIntegrityQuickRepair('CASH_TO_TERM', i.code)}
+                          className="px-3 py-2 rounded-xl bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] hover:border-amber-500/50 text-[color:var(--mks-text)] text-xs font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                        >
+                          <Users size={14} className="text-amber-400" />
+                          Vadeliye Çevir
+                        </button>
+                      </div>
+                    )}
+
+                    {!i.repaired && i.code === 'NEGATIVE_STOCK' && (
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <button
+                          type="button"
+                          disabled={isAnyRepairing}
+                          onClick={() => handleIntegrityQuickRepair('NEGATIVE_ZERO', i.code)}
+                          className="px-3 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                        >
+                          {isRepairingThis ? <Loader2 size={14} className="animate-spin" /> : <Wrench size={14} />}
+                          Eksi Stokları 0'a Eşitle
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="pt-4 mt-3 border-t border-[color:var(--mks-card-border)] flex items-center gap-2.5">
+              <button
+                type="button"
+                disabled={integrityBusy || repairingIntegrityCode !== null}
+                onClick={async () => {
+                  setIntegrityBusy(true);
+                  try {
+                    const report = await runIntegrityCheck(true);
+                    await refreshInventory();
+                    await refreshStats();
+                    await refreshSystemStatus();
+                    setIntegrityReport(report);
+                  } catch {
+                    showToast('Denetim yeniden çalıştırılamadı.', 'error');
+                  } finally {
+                    setIntegrityBusy(false);
+                  }
+                }}
+                className="flex-1 min-h-[44px] rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-black flex items-center justify-center gap-1.5 disabled:opacity-50 transition-colors"
+              >
+                <RefreshCw size={15} className={integrityBusy ? 'animate-spin' : ''} />
+                Yeniden Denetle
+              </button>
+              <button
+                type="button"
+                disabled={repairingIntegrityCode !== null}
+                onClick={() => setIntegrityReport(null)}
+                className="flex-1 min-h-[44px] rounded-xl bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] text-[color:var(--mks-text)] text-xs font-bold disabled:opacity-50 transition-colors"
+              >
+                Kapat
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      <ConfirmationModal
-        isOpen={isRebuildModalOpen}
-        onClose={() => setIsRebuildModalOpen(false)}
-        onConfirm={async () => {
-            try {
-               await dbService.rebuildInventoryBalances();
-               showToast("Stoklar başarıyla yeniden hesaplandı. Sistem yenileniyor...", "success");
-               setTimeout(() => {
-                   window.location.reload();
-               }, 1500);
-            } catch (e) {
-               showToast("Hata oluştu.", "error");
-            }
-            setIsRebuildModalOpen(false);
-        }}
-        title="Stokları Yeniden Hesapla"
-        message="Bu işlem tüm geçmiş alım ve satımlarınızı tarayarak mevcut stok miktarlarınızı baştan hesaplar. Stok miktarındaki uyuşmazlıkları gidermek için kullanılır. Onaylıyor musunuz?"
-        confirmText="Evet, Onar"
-        variant="warning"
-      />
+      {/* İnteraktif Stok & Depo Senkronizasyon Merkezi Modalı */}
+      {isRebuildModalOpen && (
+        <div
+          className="fixed inset-0 z-[125] flex items-end sm:items-center justify-center sm:p-4 bg-stone-950/75 backdrop-blur-md animate-in fade-in duration-200"
+          onClick={() => { if (!isRepairingStock) setIsRebuildModalOpen(false); }}
+        >
+          <div
+            className="w-full sm:max-w-2xl max-h-[88dvh] overflow-hidden flex flex-col bg-[color:var(--mks-modal-bg)] border border-amber-500/35 rounded-t-3xl sm:rounded-3xl p-5 sm:p-6 shadow-2xl relative"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-amber-500 via-orange-400 to-emerald-500" />
+
+            <div className="flex items-center justify-between border-b border-[color:var(--mks-card-border)] pb-4 mb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-amber-500/15 text-amber-400 rounded-2xl border border-amber-500/30">
+                  <Wrench size={22} />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-[color:var(--mks-text)] tracking-tight">Stok & Depo Senkronizasyon Merkezi</h3>
+                  <p className="text-[11px] text-[color:var(--mks-muted)] font-medium">Alış, satış, sayım farkı ve mükerrer kart mutabakatı</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-label="Stok onarım penceresini kapat"
+                disabled={isRepairingStock}
+                onClick={() => setIsRebuildModalOpen(false)}
+                className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-[color:var(--mks-muted)] hover:text-[color:var(--mks-text)] bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] rounded-xl transition-colors disabled:opacity-50"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto space-y-3 pr-1 flex-1 no-scrollbar">
+              {isAnalyzingStock ? (
+                <div className="py-10 flex flex-col items-center justify-center gap-3 text-center">
+                  <Loader2 size={28} className="animate-spin text-amber-400" />
+                  <p className="text-xs font-bold text-[color:var(--mks-text)]">Depo stok hareketleri ve mükerrer kartlar analiz ediliyor...</p>
+                </div>
+              ) : stockMismatches.length === 0 ? (
+                <div className="p-5 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 flex items-start gap-3">
+                  <CheckCircle2 size={22} className="text-emerald-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-black text-[color:var(--mks-text)]">Stok Kartları Uyumlu</p>
+                    <p className="text-xs text-[color:var(--mks-muted)] mt-1 leading-relaxed">
+                      Tüm ürünlerin mevcut depo miktarı; alış, satış ve açılış düzeltmeleriyle eşleşiyor. Yine de aşağıdaki butonla parti (SKT) ve sayısal alanları genel senkronize edebilirsiniz.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="p-3.5 rounded-2xl border border-amber-500/30 bg-amber-500/10 text-xs text-[color:var(--mks-muted)] leading-relaxed">
+                    <span className="font-black text-amber-400">{stockMismatches.length} üründe</span> kayıt farkı tespit edildi.
+                    <strong> "Kayıtlara Göre Stoğu Güncelle"</strong> seçeneği depo miktarını alış-satış hareketlerine eşitler;
+                    <strong> "Mevcut Depo Miktarını Koru"</strong> ise elinizdeki güncel depo miktarını baz alıp aradaki farkı resmi sayım düzeltmesi olarak işler.
+                  </div>
+
+                  <div className="space-y-2">
+                    {stockMismatches.map(m => (
+                      <div key={m.pesticideId} className="p-3.5 rounded-2xl bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                        <div className="min-w-0">
+                          <p className="text-xs font-black text-[color:var(--mks-text)] truncate">{m.pesticideName}</p>
+                          <p className="text-[11px] text-[color:var(--mks-muted)] mt-0.5">
+                            Alış: <strong className="text-[color:var(--mks-text)]">{m.purchasedQty}</strong> • Satış: <strong className="text-[color:var(--mks-text)]">{m.soldQty}</strong> • Düzeltme: <strong className="text-[color:var(--mks-text)]">{m.adjustedQty}</strong>
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="px-2.5 py-1 rounded-xl bg-amber-500/10 border border-amber-500/30 text-[11px] font-bold text-amber-400 tabular-nums">
+                            Depo: {m.currentQty}
+                          </span>
+                          <span className="px-2.5 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-[11px] font-bold text-emerald-400 tabular-nums">
+                            Kayıt: {m.calculatedQty}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="pt-4 mt-3 border-t border-[color:var(--mks-card-border)] space-y-2">
+              {stockMismatches.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    disabled={isRepairingStock || isAnalyzingStock}
+                    onClick={() => handleRebuildAction('USE_LEDGER')}
+                    className="py-3 px-4 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-black flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
+                  >
+                    {isRepairingStock ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+                    Kayıtlara Göre Stoğu Güncelle
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isRepairingStock || isAnalyzingStock}
+                    onClick={() => handleRebuildAction('KEEP_SHELF')}
+                    className="py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
+                  >
+                    {isRepairingStock ? <Loader2 size={15} className="animate-spin" /> : <Package size={15} />}
+                    Mevcut Depo Miktarını Koru
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  disabled={isRepairingStock || isAnalyzingStock}
+                  onClick={() => handleRebuildAction('USE_LEDGER')}
+                  className="w-full py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
+                >
+                  {isRepairingStock ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+                  Tüm Stok & Parti Kayıtlarını Senkronize Et
+                </button>
+              )}
+
+              <div className="flex items-center gap-2.5">
+                <button
+                  type="button"
+                  disabled={isRepairingStock || isAnalyzingStock}
+                  onClick={handleOpenRebuildModal}
+                  className="flex-1 py-2.5 bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] hover:opacity-90 text-[color:var(--mks-text)] text-xs font-bold rounded-xl disabled:opacity-50 transition-colors"
+                >
+                  Yeniden Analiz Et
+                </button>
+                <button
+                  type="button"
+                  disabled={isRepairingStock}
+                  onClick={() => setIsRebuildModalOpen(false)}
+                  className="flex-1 py-2.5 bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] hover:opacity-90 text-[color:var(--mks-text)] text-xs font-bold rounded-xl disabled:opacity-50 transition-colors"
+                >
+                  Kapat
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* AK-05: Yedekten geri yükleme onayı — onaylanınca önce otomatik güvenlik yedeği indirilir, sonra içe aktarılır */}
       <ConfirmationModal
@@ -2230,44 +2759,87 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
 
       {/* Verilerimi Sil Şifreli Onay Modalı */}
       {isDeleteDataModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
-          <div className="bg-stone-900 border border-rose-500/30 w-full max-w-md rounded-3xl p-6 shadow-2xl relative overflow-hidden">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-stone-950/75 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-[color:var(--mks-modal-bg)] border border-rose-500/35 w-full max-w-md rounded-3xl p-6 shadow-2xl relative overflow-hidden">
             {/* Üst Vurgu Çizgisi */}
             <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-rose-600 via-red-500 to-amber-500" />
 
-            <div className="flex items-start gap-4 mb-4">
-              <div className="p-3 bg-rose-950/80 text-rose-400 border border-rose-500/30 rounded-2xl flex-shrink-0">
-                <Trash2 size={24} />
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <div className="flex items-start gap-3.5">
+                <div className="p-3 bg-rose-500/15 text-rose-400 border border-rose-500/30 rounded-2xl flex-shrink-0">
+                  <Trash2 size={22} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-[color:var(--mks-text)] tracking-tight">Verilerimi Sil</h3>
+                  <p className="text-xs font-bold text-rose-400 uppercase tracking-wider mt-0.5">Kalıcı Hesap Sıfırlama</p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-lg font-black text-white tracking-tight">Verilerimi Sil</h3>
-                <p className="text-xs font-bold text-rose-400/80 uppercase tracking-wider mt-0.5">Kalıcı Hesap Sıfırlama</p>
-              </div>
+              <button
+                type="button"
+                aria-label="Veri silme penceresini kapat"
+                disabled={isDeletingData || isReauthenticatingGoogle}
+                onClick={() => {
+                  setIsDeleteDataModalOpen(false);
+                  setDeletePassword('');
+                  setDeleteError(null);
+                }}
+                className="p-2 min-w-[40px] min-h-[40px] flex items-center justify-center text-[color:var(--mks-muted)] hover:text-[color:var(--mks-text)] bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] rounded-xl transition-colors disabled:opacity-50"
+              >
+                <X size={18} />
+              </button>
             </div>
 
-            <div className="bg-rose-950/30 border border-rose-900/50 p-4 rounded-2xl mb-5 text-xs text-rose-200 leading-relaxed">
-              <p className="font-bold text-rose-300 mb-1 flex items-center gap-1.5">
+            <div className="bg-rose-500/10 border border-rose-500/30 p-4 rounded-2xl mb-5 text-xs leading-relaxed">
+              <p className="font-bold text-rose-400 mb-1 flex items-center gap-1.5">
                 <AlertTriangle size={14} className="text-rose-400 flex-shrink-0" />
                 Bu işlem geri alınamaz!
               </p>
-              <p className="opacity-90">
-                Müşteri kayıtlarınız, reçeteleriniz, stoklarınız, borç/alacak takibiniz ve tüm işlem geçmişiniz hem cihazınızdan hem de sunucudan kalıcı olarak silinecek, hesabınız sıfır veri haline gelecektir.
+              <p className="text-[color:var(--mks-muted)]">
+                Müşteri kayıtlarınız, reçeteleriniz, stoklarınız, borç/alacak takibiniz, bulut yedekleriniz ve tüm işlem geçmişiniz hem cihazınızdan hem de sunucudan kalıcı olarak silinecek, hesabınız sıfır veri haline gelecektir.
               </p>
             </div>
 
             {deleteError && (
-              <div className="p-3 bg-red-950/80 border border-red-500/50 text-red-200 text-xs font-bold rounded-xl mb-4 flex items-center gap-2 animate-in fade-in">
-                <AlertTriangle size={16} className="text-red-400 flex-shrink-0" />
+              <div className="p-3 bg-rose-500/15 border border-rose-500/40 text-rose-400 text-xs font-bold rounded-xl mb-4 flex items-center gap-2 animate-in fade-in">
+                <AlertTriangle size={16} className="text-rose-400 flex-shrink-0" />
                 <span>{deleteError}</span>
               </div>
             )}
 
+            {isGoogleUser && (
+              <div className="space-y-3 mb-4">
+                <button
+                  type="button"
+                  onClick={handleDeleteAllDataWithGoogle}
+                  disabled={isDeletingData || isReauthenticatingGoogle}
+                  className="w-full py-3 px-4 rounded-2xl bg-[color:var(--mks-subcard)] border border-rose-500/40 hover:border-rose-500 text-[color:var(--mks-text)] font-bold text-xs flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                >
+                  {isReauthenticatingGoogle || isDeletingData ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin text-rose-400" />
+                      <span>Google Hesabı Doğrulanıyor...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck size={16} className="text-rose-400" />
+                      <span>Google Hesabı ile Doğrula ve Sil</span>
+                    </>
+                  )}
+                </button>
+                <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-[color:var(--mks-muted)]">
+                  <div className="h-px flex-1 bg-[color:var(--mks-card-border)]" />
+                  <span>veya yönetici / hesap şifresi</span>
+                  <div className="h-px flex-1 bg-[color:var(--mks-card-border)]" />
+                </div>
+              </div>
+            )}
+
             <div className="space-y-2 mb-6">
-              <label className="text-[11px] font-black text-stone-400 uppercase tracking-widest block">
+              <label className="text-[11px] font-black text-[color:var(--mks-muted)] uppercase tracking-widest block">
                 Silme İşlemini Onaylamak İçin Şifrenizi Girin
               </label>
               <div className="relative">
-                <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-500">
+                <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[color:var(--mks-muted)]">
                   <Lock size={18} />
                 </div>
                 <input
@@ -2277,11 +2849,11 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
                     setDeletePassword(e.target.value);
                     if (deleteError) setDeleteError(null);
                   }}
-                  placeholder="Hesap şifreniz"
-                  disabled={isDeletingData}
-                  className="w-full bg-stone-950 border border-stone-800 text-white pl-10 pr-12 py-3.5 rounded-2xl text-sm font-medium outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20 transition-all"
+                  placeholder="Hesap / yönetici şifreniz"
+                  disabled={isDeletingData || isReauthenticatingGoogle}
+                  className="w-full bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] text-[color:var(--mks-text)] pl-10 pr-12 py-3.5 rounded-2xl text-sm font-medium outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20 transition-all"
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !isDeletingData) {
+                    if (e.key === 'Enter' && !isDeletingData && !isReauthenticatingGoogle && deletePassword) {
                       handleDeleteAllData();
                     }
                   }}
@@ -2290,7 +2862,7 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
                   type="button"
                   onClick={() => setShowDeletePassword(!showDeletePassword)}
                   aria-label={showDeletePassword ? 'Şifreyi gizle' : 'Şifreyi göster'}
-                  className="absolute right-0.5 top-1/2 -translate-y-1/2 w-11 h-11 flex items-center justify-center text-stone-500 hover:text-stone-300"
+                  className="absolute right-0.5 top-1/2 -translate-y-1/2 w-11 h-11 flex items-center justify-center text-[color:var(--mks-muted)] hover:text-[color:var(--mks-text)]"
                 >
                   {showDeletePassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
@@ -2301,22 +2873,22 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
               <button
                 type="button"
                 onClick={() => {
-                  if (!isDeletingData) {
+                  if (!isDeletingData && !isReauthenticatingGoogle) {
                     setIsDeleteDataModalOpen(false);
                     setDeletePassword('');
                     setDeleteError(null);
                   }
                 }}
-                disabled={isDeletingData}
-                className="flex-1 py-3.5 px-4 bg-stone-800 hover:bg-stone-700 disabled:opacity-50 text-stone-300 text-xs font-bold rounded-2xl transition-all"
+                disabled={isDeletingData || isReauthenticatingGoogle}
+                className="flex-1 py-3.5 px-4 bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] hover:opacity-90 disabled:opacity-50 text-[color:var(--mks-text)] text-xs font-bold rounded-2xl transition-all"
               >
                 Vazgeç
               </button>
               <button
                 type="button"
                 onClick={handleDeleteAllData}
-                disabled={isDeletingData || !deletePassword}
-                className="flex-1 py-3.5 px-4 bg-rose-600 hover:bg-rose-500 disabled:bg-stone-800 disabled:text-stone-400 text-white text-xs font-bold rounded-2xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-rose-950/50"
+                disabled={isDeletingData || isReauthenticatingGoogle || !deletePassword}
+                className="flex-1 py-3.5 px-4 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white text-xs font-bold rounded-2xl transition-all flex items-center justify-center gap-2 shadow-lg"
               >
                 {isDeletingData ? (
                   <>

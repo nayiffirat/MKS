@@ -1,7 +1,6 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   TrendingUp, 
-  TrendingDown, 
   DollarSign, 
   Package, 
   Wallet, 
@@ -9,22 +8,21 @@ import {
   Calendar, 
   X, 
   Copy, 
-  Download, 
   Check, 
-  ArrowUpRight, 
-  ArrowDownRight, 
   Percent, 
   Receipt, 
   ShoppingBag, 
   CreditCard, 
-  Info,
-  Layers,
-  Award,
-  ChevronRight,
-  FileText
+  Layers
 } from 'lucide-react';
 import { Farmer, Prescription, Payment, ManualDebt, InventoryItem, VisitLog } from '../types';
-import { formatCurrency } from '../utils/currency';
+import { formatCurrency, parseTrDecimal } from '../utils/currency';
+import {
+  computeFarmerLedgerTotals,
+  getBouncedRelatedPaymentIds,
+  getIndependentFarmerMyPayments,
+  isTurnoverDebtRecord
+} from '../utils/ledger';
 import { useAppViewModel } from '../context/AppContext';
 
 interface FarmerFinancialAnalysisModalProps {
@@ -67,11 +65,17 @@ export const FarmerFinancialAnalysisModal: React.FC<FarmerFinancialAnalysisModal
   const availableYears = useMemo(() => {
     const years = new Set<number>();
     years.add(new Date().getFullYear());
-    prescriptions.forEach(p => years.add(new Date(p.date).getFullYear()));
-    payments.forEach(p => years.add(new Date(p.date).getFullYear()));
-    manualDebts.forEach(d => years.add(new Date(d.date).getFullYear()));
+    const addYear = (dateStr?: string) => {
+      if (!dateStr) return;
+      const y = new Date(dateStr).getFullYear();
+      if (Number.isFinite(y) && y > 1900) years.add(y);
+    };
+    prescriptions.forEach(p => addYear(p.date));
+    payments.forEach(p => addYear(p.date));
+    manualDebts.forEach(d => addYear(d.date));
+    myPayments.forEach(mp => addYear(mp.issueDate || mp.dueDate));
     return Array.from(years).sort((a, b) => b - a);
-  }, [prescriptions, payments, manualDebts]);
+  }, [prescriptions, payments, manualDebts, myPayments]);
 
   // Inventory buying price lookup map
   const buyingPriceMap = useMemo(() => {
@@ -85,25 +89,42 @@ export const FarmerFinancialAnalysisModal: React.FC<FarmerFinancialAnalysisModal
 
   // Filtered dataset according to year selection
   const filteredData = useMemo(() => {
-    const filterByYear = (dateStr: string) => {
+    const filterByYear = (dateStr?: string) => {
       if (selectedYear === 'ALL') return true;
-      return new Date(dateStr).getFullYear().toString() === selectedYear;
+      if (!dateStr) return false;
+      const y = new Date(dateStr).getFullYear();
+      return Number.isFinite(y) && y.toString() === selectedYear;
     };
 
+    const bouncedRelatedIds = getBouncedRelatedPaymentIds(myPayments);
     const filteredPrescriptions = prescriptions.filter(p => !p.deletedAt && filterByYear(p.date));
-    const filteredPayments = payments.filter(p => !p.deletedAt && filterByYear(p.date));
+    const filteredPayments = payments.filter(
+      p => !p.deletedAt && !bouncedRelatedIds.has(p.id) && filterByYear(p.date)
+    );
     const filteredManualDebts = manualDebts.filter(d => !d.deletedAt && filterByYear(d.date));
+    const filteredMyPayments = myPayments.filter(
+      mp => !mp.deletedAt && filterByYear(mp.issueDate || mp.dueDate)
+    );
+    const independentMyPays = getIndependentFarmerMyPayments(filteredMyPayments, farmer.id);
 
     return {
       prescriptions: filteredPrescriptions,
       payments: filteredPayments,
-      manualDebts: filteredManualDebts
+      manualDebts: filteredManualDebts,
+      myPayments: filteredMyPayments,
+      independentMyPays
     };
-  }, [prescriptions, payments, manualDebts, selectedYear]);
+  }, [prescriptions, payments, manualDebts, myPayments, farmer.id, selectedYear]);
 
   // Main Financial Metrics Calculation
   const metrics = useMemo(() => {
-    const { prescriptions: pList, payments: payList, manualDebts: debtList } = filteredData;
+    const {
+      prescriptions: pList,
+      payments: payList,
+      manualDebts: debtList,
+      myPayments: mpList,
+      independentMyPays
+    } = filteredData;
 
     let grossSales = 0;
     let returnAmount = 0;
@@ -112,7 +133,7 @@ export const FarmerFinancialAnalysisModal: React.FC<FarmerFinancialAnalysisModal
     let itemCountTotal = 0;
 
     pList.forEach(p => {
-      const pTotal = p.totalAmount || 0;
+      const pTotal = Number(p.totalAmount) || 0;
       const isReturn = p.type === 'RETURN' || pTotal < 0;
 
       if (isReturn) {
@@ -124,8 +145,8 @@ export const FarmerFinancialAnalysisModal: React.FC<FarmerFinancialAnalysisModal
       // Calculate cost of items inside prescription
       if (p.items && p.items.length > 0) {
         p.items.forEach(item => {
-          let qty = parseFloat(String(item.quantity || '1').replace(',', '.')) || 1;
-          if (qty < 0) qty = Math.abs(qty);
+          const parsedQty = parseTrDecimal(item.quantity);
+          const qty = Math.abs(parsedQty);
 
           // Get buying price: from item first, then inventory lookup
           let unitBuyingPrice = item.buyingPrice;
@@ -145,8 +166,8 @@ export const FarmerFinancialAnalysisModal: React.FC<FarmerFinancialAnalysisModal
     });
 
     debtList.forEach(d => {
-      if (!d.id.startsWith('turnover-')) {
-        manualDebtTotal += (d.amount || 0);
+      if (!isTurnoverDebtRecord(d.id)) {
+        manualDebtTotal += Number(d.amount) || 0;
       }
     });
 
@@ -154,22 +175,34 @@ export const FarmerFinancialAnalysisModal: React.FC<FarmerFinancialAnalysisModal
     const netProfit = netSales - totalCost;
     const profitMargin = netSales > 0 ? (netProfit / netSales) * 100 : 0;
 
-    // Payments Received
-    const totalPayments = payList.reduce((acc, p) => acc + (p.amount || 0), 0);
-    const collectionRate = netSales > 0 ? Math.min(100, Math.max(0, (totalPayments / netSales) * 100)) : (totalPayments > 0 ? 100 : 0);
-    const remainingBalance = netSales - totalPayments;
+    // Unified Ledger Calculation (excludes CASH prescriptions from open debt and BOUNCED checks from payments)
+    const ledgerTotals = computeFarmerLedgerTotals({
+      farmerId: farmer.id,
+      prescriptions: pList,
+      manualDebts: debtList,
+      payments: payList,
+      myPayments: mpList
+    });
+    const totalPayments = ledgerTotals.totalPaid;
+    const openDebt = ledgerTotals.totalDebt;
+    const collectionRate = openDebt > 0
+      ? Math.min(100, Math.max(0, (totalPayments / openDebt) * 100))
+      : (totalPayments > 0 ? 100 : 0);
+    const remainingBalance = ledgerTotals.netDebt;
 
-    // Payment methods breakdown
+    // Payment methods breakdown (regular non-bounced payments + standalone checks/notes)
     const paymentMethods: Record<string, number> = {
       CASH: 0,
       CARD: 0,
       CHECK: 0,
       TEDYE: 0,
+      PROMISSORY_NOTE: 0,
       OTHER: 0
     };
-    payList.forEach(p => {
+    const combinedPayments = [...payList, ...independentMyPays];
+    combinedPayments.forEach(p => {
       const method = p.method || 'CASH';
-      paymentMethods[method] = (paymentMethods[method] || 0) + (p.amount || 0);
+      paymentMethods[method] = (paymentMethods[method] || 0) + (Number(p.amount) || 0);
     });
 
     // Average order value
@@ -188,11 +221,12 @@ export const FarmerFinancialAnalysisModal: React.FC<FarmerFinancialAnalysisModal
       collectionRate,
       remainingBalance,
       paymentMethods,
+      combinedPayments,
       totalOrdersCount,
       averageOrderValue,
       itemCountTotal
     };
-  }, [filteredData, buyingPriceMap]);
+  }, [filteredData, buyingPriceMap, farmer.id]);
 
   // Product-Level Analysis
   const productAnalysis = useMemo(() => {
@@ -212,8 +246,8 @@ export const FarmerFinancialAnalysisModal: React.FC<FarmerFinancialAnalysisModal
       if (!p.items) return;
 
       p.items.forEach(item => {
-        let qty = parseFloat(String(item.quantity || '1').replace(',', '.')) || 1;
-        if (qty < 0) qty = Math.abs(qty);
+        const parsedQty = parseTrDecimal(item.quantity);
+        const qty = Math.abs(parsedQty);
         const unitPrice = item.unitPrice || (qty > 0 && item.totalPrice ? item.totalPrice / qty : 0);
         const revenue = item.totalPrice !== undefined ? item.totalPrice : qty * unitPrice;
 
@@ -275,9 +309,18 @@ export const FarmerFinancialAnalysisModal: React.FC<FarmerFinancialAnalysisModal
       profit: 0
     }));
 
+    const parseMonthIndex = (dateStr?: string): number | null => {
+      if (!dateStr) return null;
+      const d = new Date(dateStr);
+      if (Number.isNaN(d.getTime())) return null;
+      const m = d.getMonth();
+      return m >= 0 && m < 12 ? m : null;
+    };
+
     filteredData.prescriptions.forEach(p => {
-      const m = new Date(p.date).getMonth();
-      const pTotal = p.totalAmount || 0;
+      const m = parseMonthIndex(p.date);
+      if (m === null) return;
+      const pTotal = Number(p.totalAmount) || 0;
       if (p.type === 'RETURN' || pTotal < 0) {
         months[m].sales -= Math.abs(pTotal);
       } else {
@@ -286,8 +329,8 @@ export const FarmerFinancialAnalysisModal: React.FC<FarmerFinancialAnalysisModal
 
       if (p.items) {
         p.items.forEach(item => {
-          let qty = parseFloat(String(item.quantity || '1').replace(',', '.')) || 1;
-          let unitCost = item.buyingPrice || buyingPriceMap[item.pesticideId] || 0;
+          const qty = Math.abs(parseTrDecimal(item.quantity));
+          const unitCost = item.buyingPrice || buyingPriceMap[item.pesticideId] || 0;
           const cost = qty * unitCost;
           if (p.type === 'RETURN' || pTotal < 0) {
             months[m].cost -= cost;
@@ -299,15 +342,20 @@ export const FarmerFinancialAnalysisModal: React.FC<FarmerFinancialAnalysisModal
     });
 
     filteredData.manualDebts.forEach(d => {
-      if (!d.id.startsWith('turnover-')) {
-        const m = new Date(d.date).getMonth();
-        months[m].sales += (d.amount || 0);
+      if (!isTurnoverDebtRecord(d.id)) {
+        const m = parseMonthIndex(d.date);
+        if (m !== null) months[m].sales += Number(d.amount) || 0;
       }
     });
 
     filteredData.payments.forEach(p => {
-      const m = new Date(p.date).getMonth();
-      months[m].payments += (p.amount || 0);
+      const m = parseMonthIndex(p.date);
+      if (m !== null) months[m].payments += Number(p.amount) || 0;
+    });
+
+    filteredData.independentMyPays.forEach(p => {
+      const m = parseMonthIndex(p.date);
+      if (m !== null) months[m].payments += Number(p.amount) || 0;
     });
 
     months.forEach(m => {
@@ -316,6 +364,9 @@ export const FarmerFinancialAnalysisModal: React.FC<FarmerFinancialAnalysisModal
 
     return months;
   }, [filteredData, buyingPriceMap]);
+
+  const formatBalanceText = (val: number) =>
+    val < -0.005 ? `${formatCurrency(Math.abs(val), currency)} (Alacak)` : formatCurrency(Math.max(0, val), currency);
 
   // Copy Summary Function
   const handleCopySummary = () => {
@@ -329,12 +380,12 @@ export const FarmerFinancialAnalysisModal: React.FC<FarmerFinancialAnalysisModal
       `💰 *Toplam Satış (Ciro):* ${formatCurrency(metrics.netSales, currency)}\n` +
       costLines +
       `💳 *Tahsil Edilen Tutar:* ${formatCurrency(metrics.totalPayments, currency)} (%${metrics.collectionRate.toFixed(1)} Tahsilat)\n` +
-      `⚠️ *Kalan Borç Bakiye:* ${formatCurrency(metrics.remainingBalance, currency)}\n` +
+      `⚠️ *Kalan Borç Bakiye:* ${formatBalanceText(metrics.remainingBalance)}\n` +
       `----------------------------------------\n` +
       `📋 *Toplam İşlem Sayısı:* ${metrics.totalOrdersCount} Reçete/Satış\n` +
       `📅 Rapor Tarihi: ${new Date().toLocaleDateString('tr-TR')}`;
 
-    navigator.clipboard.writeText(text);
+    navigator.clipboard?.writeText(text).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 2500);
   };
@@ -471,7 +522,7 @@ export const FarmerFinancialAnalysisModal: React.FC<FarmerFinancialAnalysisModal
                 {formatCurrency(metrics.totalPayments, currency)}
               </div>
               <div className="text-[9px] text-stone-300 font-medium mt-1 flex items-center justify-between">
-                <span>Kalan: <strong className="text-amber-400 font-mono">{formatCurrency(farmer.balance !== undefined ? farmer.balance : metrics.remainingBalance, currency)}</strong></span>
+                <span>Kalan: <strong className="text-amber-400 font-mono">{formatBalanceText(metrics.remainingBalance)}</strong></span>
               </div>
             </div>
 
@@ -579,7 +630,7 @@ export const FarmerFinancialAnalysisModal: React.FC<FarmerFinancialAnalysisModal
                   </div>
                   <div className="flex justify-between items-center text-[10px] text-stone-400 mt-2 font-medium">
                     <span>Tahsil Edilen: <strong className="text-white font-mono">{formatCurrency(metrics.totalPayments, currency)}</strong></span>
-                    <span>Kalan: <strong className="text-amber-400 font-mono">{formatCurrency(metrics.remainingBalance, currency)}</strong></span>
+                    <span>Kalan: <strong className="text-amber-400 font-mono">{formatBalanceText(metrics.remainingBalance)}</strong></span>
                   </div>
                 </div>
 
@@ -688,7 +739,7 @@ export const FarmerFinancialAnalysisModal: React.FC<FarmerFinancialAnalysisModal
                 <div className="p-3 bg-stone-900/60 rounded-2xl border border-white/5">
                   <span className="text-[9px] font-black text-stone-400 uppercase block mb-1">Çek / Senet</span>
                   <span className="text-sm font-black font-mono text-purple-400">
-                    {formatCurrency(metrics.paymentMethods.CHECK || 0, currency)}
+                    {formatCurrency((metrics.paymentMethods.CHECK || 0) + (metrics.paymentMethods.PROMISSORY_NOTE || 0), currency)}
                   </span>
                 </div>
                 <div className="p-3 bg-stone-900/60 rounded-2xl border border-white/5">
@@ -703,21 +754,31 @@ export const FarmerFinancialAnalysisModal: React.FC<FarmerFinancialAnalysisModal
               <div className="bg-stone-900/60 border border-white/5 rounded-2xl p-4">
                 <h3 className="text-xs font-black uppercase tracking-wider text-stone-300 mb-3 flex items-center gap-2">
                   <CreditCard size={16} className="text-purple-400" />
-                  <span>Geçmiş Tahsilat Kayıtları ({filteredData.payments.length})</span>
+                  <span>Geçmiş Tahsilat Kayıtları ({metrics.combinedPayments.length})</span>
                 </h3>
 
-                {filteredData.payments.length === 0 ? (
+                {metrics.combinedPayments.length === 0 ? (
                   <div className="text-center py-8 text-stone-500 text-xs font-medium">
                     Tahsilat kaydı bulunmuyor.
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {filteredData.payments.map((pay) => (
+                    {metrics.combinedPayments.map((pay) => (
                       <div key={pay.id} className="p-3 bg-stone-950/60 rounded-xl border border-white/5 flex items-center justify-between">
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="text-xs font-bold text-white">
-                              {pay.method === 'CASH' ? 'Nakit Ödeme' : pay.method === 'CARD' ? 'Kredi Kartı' : pay.method === 'CHECK' ? 'Çek' : 'Tahsilat'}
+                              {pay.method === 'CASH'
+                                ? 'Nakit Ödeme'
+                                : pay.method === 'CARD'
+                                  ? 'Kredi Kartı'
+                                  : pay.method === 'CHECK'
+                                    ? 'Çek'
+                                    : pay.method === 'PROMISSORY_NOTE'
+                                      ? 'Senet'
+                                      : pay.method === 'TEDYE'
+                                        ? 'Tediye'
+                                        : 'Tahsilat'}
                             </span>
                             {pay.note && <span className="text-[10px] text-stone-400 italic">({pay.note})</span>}
                           </div>

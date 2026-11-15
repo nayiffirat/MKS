@@ -10,6 +10,7 @@ const iosAppDir = path.join(rootDir, 'ios', 'App', 'App');
 
 const stripTargets = [
   path.join(iosPublicDir, 'downloads'),
+  path.join(iosPublicDir, 'shopier-covers'),
   path.join(iosPublicDir, 'server.cjs'),
   path.join(iosPublicDir, 'server.cjs.map'),
 ];
@@ -20,6 +21,19 @@ for (const target of stripTargets) {
     fs.rmSync(target, { recursive: true, force: true });
     removedCount++;
     console.log(`[iOS Sanitizer] Stripped non-iOS binary/server asset: ${path.relative(rootDir, target)}`);
+  }
+}
+
+const showcaseDir = path.join(iosPublicDir, 'showcase');
+const keepShowcaseFiles = new Set(['apple-hero-devices.png']);
+if (fs.existsSync(showcaseDir)) {
+  for (const entry of fs.readdirSync(showcaseDir, { withFileTypes: true })) {
+    if (!keepShowcaseFiles.has(entry.name)) {
+      const target = path.join(showcaseDir, entry.name);
+      fs.rmSync(target, { recursive: true, force: true });
+      removedCount++;
+      console.log(`[iOS Sanitizer] Stripped web-only showcase asset: ${path.relative(rootDir, target)}`);
+    }
   }
 }
 

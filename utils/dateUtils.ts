@@ -1,12 +1,7 @@
 /**
  * Shared local-timezone date, currency rounding, and GTIN normalization helpers.
  */
-
-export function round2(value: number): number {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return 0;
-  return Math.round((n + Number.EPSILON) * 100) / 100;
-}
+export { roundAmount, round2 } from './currency';
 
 export function round4(value: number): number {
   const n = Number(value);
@@ -38,6 +33,22 @@ export function daysUntilExpiry(isoDate?: string | null): number | null {
 export function isExpiredDate(isoDate?: string | null): boolean {
   const d = daysUntilExpiry(isoDate);
   return d !== null && d < 0;
+}
+
+/**
+ * Returns local calendar date `YYYY-MM-DD` without UTC day-shift bugs in UTC+3.
+ */
+export function getLocalDateString(date: Date | number | string = new Date()): string {
+  if (typeof date === 'string') {
+    const trimmed = date.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+  }
+  const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return getLocalDateString(new Date());
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 /**

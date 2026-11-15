@@ -6,8 +6,8 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
 
-def customVersionCode = project.hasProperty('versionCode') ? project.property('versionCode').toInteger() : 26
-def customVersionName = project.hasProperty('versionName') ? project.property('versionName').toString() : "8.1.0"
+def customVersionCode = project.hasProperty('versionCode') ? project.property('versionCode').toInteger() : 30
+def customVersionName = project.hasProperty('versionName') ? project.property('versionName').toString() : "8.3.0"
 
 android {
     namespace "com.nayiffirat.muhendiskayitsistemi"
@@ -41,8 +41,8 @@ android {
             if (keystorePropertiesFile.exists() && keystoreProperties['storeFile']) {
                 signingConfig signingConfigs.release
             }
-            minifyEnabled false
-            shrinkResources false
+            minifyEnabled true
+            shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }

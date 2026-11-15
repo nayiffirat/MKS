@@ -20,7 +20,6 @@ import {
   Droplets,
   CloudRain,
   MapPin,
-  ArrowLeft,
   Zap,
   Cloud,
   CloudSun,
@@ -34,9 +33,6 @@ import {
   AlertTriangle,
   MessageSquare,
   CheckCircle2,
-  Clock,
-  Sparkles,
-  RefreshCw,
 } from 'lucide-react';
 
 const WeatherAnimations = () => (
@@ -160,7 +156,6 @@ export const WeatherWidget: React.FC = () => {
   const {
     weather,
     isLoading,
-    refreshWeather,
     getSprayingAdvice,
     getWeatherUITheme,
     selectedCity,
@@ -170,16 +165,19 @@ export const WeatherWidget: React.FC = () => {
     detectCurrentLocation,
   } = useWeatherViewModel();
   const { t } = useAppViewModel();
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCitySelectorOpen, setIsCitySelectorOpen] = useState(false);
   const [isAgroOpen, setIsAgroOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useBackHandler(isDialogOpen, () => setIsDialogOpen(false), 'WeatherComponents_detail', 50);
-  // City selector can open on top of the detail dialog, so it gets a higher priority.
   useBackHandler(isCitySelectorOpen, () => setIsCitySelectorOpen(false), 'WeatherComponents_citySelector', 60);
   useBackHandler(isAgroOpen, () => setIsAgroOpen(false), 'WeatherComponents_agro', 55);
+
+  useEffect(() => {
+    return () => {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    };
+  }, []);
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
@@ -190,21 +188,19 @@ export const WeatherWidget: React.FC = () => {
     }, 450);
   };
 
-  const hourlyWindow = useMemo(() => computeHourlySprayingWindow(weather), [weather]);
-  const gddAlerts = useMemo(() => {
-    if (!weather?.daily) return [];
-    const fullMax = (weather.daily as any)._fullMax || weather.daily.temperature_2m_max || [];
-    const fullMin = (weather.daily as any)._fullMin || weather.daily.temperature_2m_min || [];
-    return computeGddPestAlerts(fullMax, fullMin, weather.current?.relative_humidity_2m || 50);
-  }, [weather]);
-
   if (!weather && isLoading)
     return <div className="h-24 bg-stone-900/50 rounded-2xl animate-pulse mb-3 border border-white/5" />;
   if (!weather) return null;
 
   const current = weather.current;
   const theme = getWeatherUITheme(current.weather_code);
-  const advice = getSprayingAdvice(current.wind_speed_10m, current.temperature_2m, current.weather_code);
+  const advice = getSprayingAdvice(
+    current.wind_speed_10m,
+    current.temperature_2m,
+    current.weather_code,
+    current.relative_humidity_2m,
+    (current as any).wind_gusts_10m
+  );
   const deltaT = calculateDeltaT(current.temperature_2m, current.relative_humidity_2m);
 
   return (
@@ -316,193 +312,6 @@ export const WeatherWidget: React.FC = () => {
           </div>
         </div>
       )}
-
-      {/* Detailed Agro-Weather, Delta-T & GDD Modal */}
-      {isDialogOpen && (
-        <div className="fixed inset-0 z-[120] bg-stone-950/95 backdrop-blur-xl flex flex-col p-4 sm:p-6 overflow-y-auto custom-scrollbar animate-in fade-in duration-200">
-          <div className="max-w-3xl w-full mx-auto space-y-5 pb-10">
-            <div className="flex justify-between items-center">
-              <button
-                onClick={() => setIsDialogOpen(false)}
-                className="px-3 py-2 bg-stone-900 rounded-xl border border-white/10 hover:bg-stone-800 transition-colors flex items-center gap-1.5 text-xs font-bold text-stone-200"
-              >
-                <ArrowLeft size={16} />
-                <span>Kapat</span>
-              </button>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setIsCitySelectorOpen(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-stone-900 rounded-full border border-white/10 hover:border-emerald-500/40"
-                >
-                  <MapPin size={13} className="text-emerald-400" />
-                  <span className="text-xs font-bold text-stone-200">{selectedCity.name}</span>
-                </button>
-                <button
-                  onClick={() => refreshWeather(true)}
-                  className="p-2 bg-stone-900 rounded-full border border-white/10 text-stone-300 hover:text-white"
-                  title="Hava Durumunu Yenile"
-                >
-                  <RefreshCw size={14} />
-                </button>
-              </div>
-            </div>
-
-            {/* Hero Current Weather */}
-            <div className="bg-stone-900/90 border border-white/10 rounded-3xl p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
-              <div className="flex items-center gap-4">
-                <WeatherIcon code={current.weather_code} size={56} />
-                <div>
-                  <div className="text-4xl sm:text-5xl font-black text-white tabular-nums">
-                    {Math.round(current.temperature_2m)}°C
-                  </div>
-                  <div className="text-sm text-stone-300 font-semibold mt-0.5">{theme.label}</div>
-                </div>
-              </div>
-              <div className="grid grid-cols-3 gap-2.5 w-full sm:w-auto">
-                <div className="bg-stone-950/80 px-3.5 py-2.5 rounded-2xl border border-white/5 text-center">
-                  <div className="text-[11px] text-stone-400 font-bold uppercase">Rüzgar</div>
-                  <div className="text-base font-black text-white mt-0.5">{Math.round(current.wind_speed_10m)} km/s</div>
-                </div>
-                <div className="bg-stone-950/80 px-3.5 py-2.5 rounded-2xl border border-white/5 text-center">
-                  <div className="text-[11px] text-stone-400 font-bold uppercase">Bağıl Nem</div>
-                  <div className="text-base font-black text-sky-300 mt-0.5">%{current.relative_humidity_2m}</div>
-                </div>
-                <div className="bg-stone-950/80 px-3.5 py-2.5 rounded-2xl border border-white/5 text-center">
-                  <div className="text-[11px] text-stone-400 font-bold uppercase">Delta-T (ΔT)</div>
-                  <div
-                    className={`text-base font-black mt-0.5 ${
-                      deltaT >= 2 && deltaT <= 8 ? 'text-emerald-400' : 'text-amber-400'
-                    }`}
-                  >
-                    {deltaT}°C
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Spraying Suitability Banner */}
-            <div className={`p-4 rounded-2xl border flex gap-3 items-start ${advice.bg} ${advice.border}`}>
-              <Zap size={22} className={`shrink-0 mt-0.5 ${advice.iconColor}`} />
-              <div>
-                <h4 className={`text-xs font-black uppercase tracking-wider ${advice.color}`}>{advice.status}</h4>
-                <p className="text-xs text-stone-200 mt-1 leading-relaxed">
-                  {advice.message} • Anlık Delta-T değeri <b>{deltaT}°C</b>{' '}
-                  {deltaT >= 2 && deltaT <= 8
-                    ? '(2°C–8°C ideal ilaçlama aralığında; damlacık tutunması yüksek).'
-                    : deltaT > 8
-                    ? '(8°C üzerinde damlacık yaprağa ulaşmadan buharlaşabilir; yayıcı-yapıştırıcı kullanın).'
-                    : '(Çok yüksek nem / çiğ riski; yaprak yüzeyinden akma olabilir).'}
-                </p>
-              </div>
-            </div>
-
-            {/* #1: 12-Hour Spraying Window */}
-            {hourlyWindow.length > 0 && (
-              <div className="bg-stone-900/90 border border-white/10 rounded-3xl p-4 sm:p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
-                    <Clock size={14} /> 12 Saatlik İlaçlama Uygunluk Penceresi (Delta-T & Rüzgar)
-                  </h3>
-                  <span className="text-[11px] text-stone-400 font-semibold">Yeşil saatler ilaçlama için idealdir</span>
-                </div>
-                <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-                  {hourlyWindow.map((slot, idx) => {
-                    const pillCls =
-                      slot.suitability === 'IDEAL'
-                        ? 'bg-emerald-500/15 border-emerald-500/35 text-emerald-300'
-                        : slot.suitability === 'DIKKAT'
-                        ? 'bg-amber-500/15 border-amber-500/35 text-amber-300'
-                        : 'bg-rose-500/15 border-rose-500/35 text-rose-300';
-                    return (
-                      <div key={idx} className={`p-2.5 rounded-2xl border text-center space-y-1 ${pillCls}`} title={slot.reason}>
-                        <div className="text-xs font-black text-white font-mono">{slot.hourLabel}</div>
-                        <div className="text-[11px] font-bold">{slot.tempC}°C</div>
-                        <div className="text-[11px] opacity-90">ΔT {slot.deltaT} • {slot.windKmh}km/s</div>
-                        <div className="text-[11px] font-black uppercase tracking-tight">
-                          {slot.suitability === 'IDEAL' ? '✓ Uygun' : slot.suitability === 'DIKKAT' ? '⚠ Dikkat' : '✕ Uygunsuz'}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* #2: GDD Pest Emergence Alerts */}
-            {gddAlerts.length > 0 && (
-              <div className="bg-stone-900/90 border border-white/10 rounded-3xl p-4 sm:p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-black uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
-                    <Bug size={14} /> GDD (Gün-Derece) Zararlı & Hastalık Çıkış Tahmini
-                  </h3>
-                  <span className="text-[11px] text-stone-400">Son 14 Gün + 7 Gün Tahmini Sıcaklık Birikimi</span>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  {gddAlerts.map(alert => {
-                    const badgeCls =
-                      alert.riskLevel === 'YUKSEK'
-                        ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
-                        : alert.riskLevel === 'ORTA'
-                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                        : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40';
-                    return (
-                      <div key={alert.id} className="bg-stone-950/80 border border-white/10 rounded-2xl p-3.5 space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-black text-white">{alert.pestName}</span>
-                          <span className={`px-2 py-0.5 rounded-full text-[11px] font-black border ${badgeCls}`}>
-                            {alert.riskLevel} RİSK
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-stone-400 font-semibold">
-                          {alert.crop} • Baz {alert.baseTempC}°C • Birikim: <b className="text-white">{alert.accumulatedGdd} GDD</b>
-                        </div>
-                        <p className="text-[11px] text-stone-300 leading-relaxed">{alert.advice}</p>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* 7-Day Forecast */}
-            <div className="bg-stone-900/90 border border-white/10 rounded-3xl p-4 sm:p-5">
-              <h3 className="text-xs font-black text-stone-400 uppercase tracking-wider mb-3">7 Günlük Tarım Tahmini</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {weather.daily.time.map((dateStr, idx) => {
-                  const dateObj = new Date(dateStr);
-                  const dayName = dateObj.toLocaleDateString('tr-TR', { weekday: 'long', day: 'numeric', month: 'short' });
-                  const isToday = new Date().toDateString() === dateObj.toDateString();
-                  const rainMm = Number(weather.daily.precipitation_sum?.[idx] || 0);
-                  return (
-                    <div
-                      key={idx}
-                      className="flex items-center justify-between p-3 bg-stone-950/70 rounded-2xl border border-white/5"
-                    >
-                      <span className="text-xs font-bold text-stone-200">{isToday ? 'Bugün' : dayName}</span>
-                      <div className="flex gap-3 items-center">
-                        {rainMm > 0 && (
-                          <span className="text-[11px] font-bold text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-full">
-                            {rainMm.toFixed(1)} mm
-                          </span>
-                        )}
-                        <WeatherIcon code={weather.daily.weather_code[idx]} size={16} />
-                        <div className="flex items-baseline gap-1.5 font-mono">
-                          <span className="text-xs font-black text-white">
-                            {Math.round(weather.daily.temperature_2m_max[idx])}°
-                          </span>
-                          <span className="text-[11px] font-bold text-stone-500">
-                            {Math.round(weather.daily.temperature_2m_min[idx])}°
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </>
   );
 };
@@ -521,6 +330,7 @@ export const DashboardWeatherAndBriefingBanner: React.FC<{
   const [isPortalInboxOpen, setIsPortalInboxOpen] = useState(false);
   const [inquiries, setInquiries] = useState<PortalInquiry[]>([]);
   const [replyTexts, setReplyTexts] = useState<Record<string, string>>({});
+  const [resolvingIds, setResolvingIds] = useState<Record<string, boolean>>({});
   const [isCityQuickOpen, setIsCityQuickOpen] = useState(false);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
 
@@ -561,13 +371,20 @@ export const DashboardWeatherAndBriefingBanner: React.FC<{
     }).length;
   }, [myPayments]);
 
+  const isInquiryOpen = (status?: PortalInquiry['status']) => status === 'OPEN' || status === 'NEW';
   const openRemindersCount = useMemo(() => (reminders || []).filter(r => !r.isCompleted).length, [reminders]);
-  const unreadInquiriesCount = useMemo(() => inquiries.filter(q => q.status === 'OPEN').length, [inquiries]);
+  const unreadInquiriesCount = useMemo(() => inquiries.filter(q => isInquiryOpen(q.status)).length, [inquiries]);
 
   const current = weather?.current;
   const deltaT = current ? calculateDeltaT(current.temperature_2m, current.relative_humidity_2m) : 4.5;
   const advice = current
-    ? getSprayingAdvice(current.wind_speed_10m, current.temperature_2m, current.weather_code)
+    ? getSprayingAdvice(
+        current.wind_speed_10m,
+        current.temperature_2m,
+        current.weather_code,
+        current.relative_humidity_2m,
+        (current as any).wind_gusts_10m
+      )
     : { status: 'Yükleniyor', color: 'text-emerald-300 font-extrabold', bg: 'bg-emerald-500/20', isSuitable: true };
   const theme = current ? getWeatherUITheme(current.weather_code) : { label: 'Açık' };
   const hourlySlots = useMemo(() => computeHourlySprayingWindow(weather), [weather]);
@@ -587,49 +404,68 @@ export const DashboardWeatherAndBriefingBanner: React.FC<{
   }, [weather, current]);
 
   const handleResolveInquiry = async (inq: PortalInquiry) => {
-    const reply = (replyTexts[inq.id] || '').trim();
-    await dbService.updatePortalInquiryStatus(inq.id, 'ANSWERED', reply || 'İncelendi / Onaylandı');
-    setInquiries(prev =>
-      prev.map(item => (item.id === inq.id ? { ...item, status: 'ANSWERED', engineerReply: reply } : item))
-    );
-    showToast?.('Üretici bildirimi yanıtlandı olarak işaretlendi.', 'success');
+    if (resolvingIds[inq.id]) return;
+    setResolvingIds(prev => ({ ...prev, [inq.id]: true }));
+    try {
+      const reply = (replyTexts[inq.id] || '').trim();
+      await dbService.updatePortalInquiryStatus(inq.id, 'ANSWERED', reply || 'İncelendi / Onaylandı');
+      setInquiries(prev =>
+        prev.map(item => (item.id === inq.id ? { ...item, status: 'ANSWERED', engineerReply: reply } : item))
+      );
+      showToast?.('Üretici bildirimi yanıtlandı olarak işaretlendi.', 'success');
+    } catch (err) {
+      console.error('Inquiry resolve failed:', err);
+      showToast?.('Bildirim güncellenemedi.', 'error');
+    } finally {
+      setResolvingIds(prev => ({ ...prev, [inq.id]: false }));
+    }
   };
 
   return (
     <>
-      <div className="v22-bento-card p-3.5 sm:p-4 border border-emerald-500/20 shadow-lg">
-        <div className="grid grid-cols-1 xl:grid-cols-12 gap-3.5 items-center">
+      <div
+        className="v22-bento-card p-3 sm:p-4 border"
+        style={{ background: 'var(--mks-card)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-text)' }}
+      >
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-3 items-center">
           {/* Left 5 Cols: Live Weather + Delta-T Spraying Radar */}
-          <div className="xl:col-span-5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 rounded-2xl mks-on-dark border border-white/10 text-white">
+          <div
+            className="xl:col-span-5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 rounded-2xl border"
+            style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-text)' }}
+          >
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-11 h-11 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
-                <WeatherIcon code={current?.weather_code ?? 0} size={26} />
+              <div
+                className="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0"
+                style={{ background: 'var(--mks-card)', borderColor: 'var(--mks-card-border)' }}
+              >
+                <WeatherIcon code={current?.weather_code ?? 0} size={22} />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
                   <button
                     type="button"
                     onClick={() => setIsCityQuickOpen(!isCityQuickOpen)}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 min-h-[34px] rounded-lg bg-white/10 hover:bg-white/20 text-xs font-bold text-emerald-300 transition-colors"
+                    className="inline-flex items-center gap-1 px-2 py-1 min-h-[30px] rounded-lg text-xs font-bold transition-colors"
+                    style={{ background: 'var(--mks-accent-soft)', color: 'var(--mks-accent-soft-text)' }}
                   >
                     <MapPin size={12} />
                     <span className="truncate max-w-[130px]">{selectedCity.name}</span>
                   </button>
-                  <span className="text-xl font-black tracking-tight tabular-nums text-white">
+                  <span className="text-lg font-black tracking-tight tabular-nums">
                     {current ? `${Math.round(current.temperature_2m)}°C` : '—'}
                   </span>
-                  <span className="text-[11px] text-stone-300 font-semibold">{theme.label}</span>
+                  <span className="text-[11px] font-semibold" style={{ color: 'var(--mks-muted)' }}>{theme.label}</span>
                 </div>
-                <div className="flex items-center gap-2.5 text-[11px] text-stone-300 font-semibold mt-1 flex-wrap tabular-nums">
+                <div className="flex items-center gap-2.5 text-[11px] font-semibold mt-1 flex-wrap tabular-nums" style={{ color: 'var(--mks-muted)' }}>
                   <span className="inline-flex items-center gap-1">
-                    <Wind size={11} className="text-sky-400" />
+                    <Wind size={11} className="text-sky-500" />
                     {current ? `${Math.round(current.wind_speed_10m)} km/s` : '—'}
                   </span>
                   <span className="inline-flex items-center gap-1">
-                    <Droplets size={11} className="text-blue-400" />
+                    <Droplets size={11} className="text-blue-500" />
                     {current ? `%${current.relative_humidity_2m}` : '—'}
                   </span>
-                  <span className="inline-flex items-center gap-1 text-emerald-300 font-bold">
+                  <span className="inline-flex items-center gap-1 font-bold" style={{ color: 'var(--mks-accent-primary)' }}>
                     <Thermometer size={11} />
                     ΔT {deltaT}°C
                   </span>
@@ -637,50 +473,53 @@ export const DashboardWeatherAndBriefingBanner: React.FC<{
               </div>
             </div>
 
-            <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-white/10 shrink-0">
+            <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-1.5 pt-2 sm:pt-0 border-t sm:border-t-0 shrink-0" style={{ borderColor: 'var(--mks-card-border)' }}>
               <button
                 type="button"
                 onClick={() => setIsDetailOpen(true)}
-                className={`px-3 py-1.5 min-h-[36px] rounded-xl text-xs font-bold border border-emerald-400/40 shadow-sm ${advice.bg} ${advice.color} hover:opacity-95 transition-opacity`}
+                className={`px-2.5 py-1 min-h-[32px] rounded-xl text-xs font-bold border border-emerald-500/35 shadow-sm ${advice.bg} ${advice.color} hover:opacity-95 transition-opacity`}
               >
                 {advice.status}
               </button>
               <button
                 type="button"
                 onClick={() => setIsDetailOpen(true)}
-                className="text-[11px] text-emerald-300/90 hover:text-emerald-200 font-bold underline-offset-2 hover:underline py-1 transition-colors"
+                className="text-[11px] font-bold underline-offset-2 hover:underline py-0.5 transition-colors"
+                style={{ color: 'var(--mks-accent-primary)' }}
               >
                 {idealHoursLabel} →
               </button>
             </div>
           </div>
 
-          {/* Right 7 Cols: Engineer Morning Briefing Pills (#45, #17, #2, #35/#38) */}
+          {/* Right 7 Cols: Engineer Morning Briefing Pills */}
           <div className="xl:col-span-7 grid grid-cols-2 sm:grid-cols-4 gap-2.5">
             <button
               type="button"
               onClick={() => onNavigate('INVENTORY')}
-              className="p-2.5 rounded-2xl bg-stone-900/75 hover:bg-stone-900 border border-white/10 text-left transition-all"
+              className="p-2.5 rounded-2xl border text-left transition-colors hover:opacity-95"
+              style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-text)' }}
             >
-              <div className="flex items-center justify-between text-amber-400">
+              <div className="flex items-center justify-between text-amber-500">
                 <AlertTriangle size={14} />
-                <span className="text-sm font-black font-mono text-white">{expiringOrLowCount}</span>
+                <span className="text-sm font-black font-mono tabular-nums" style={{ color: 'var(--mks-text)' }}>{expiringOrLowCount}</span>
               </div>
-              <div className="text-[11px] font-bold text-stone-200 mt-1 truncate">Kritik Stok & SKT</div>
-              <div className="text-[11px] text-stone-400 truncate">FEFO & Azalan Ürün</div>
+              <div className="text-[11px] font-bold mt-1 truncate">Kritik Stok &amp; SKT</div>
+              <div className="text-[11px] truncate" style={{ color: 'var(--mks-muted)' }}>FEFO &amp; Azalan Ürün</div>
             </button>
 
             <button
               type="button"
               onClick={() => onNavigate('PAYMENTS')}
-              className="p-2.5 rounded-2xl bg-stone-900/75 hover:bg-stone-900 border border-white/10 text-left transition-all"
+              className="p-2.5 rounded-2xl border text-left transition-colors hover:opacity-95"
+              style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-text)' }}
             >
-              <div className="flex items-center justify-between text-sky-400">
+              <div className="flex items-center justify-between text-sky-500">
                 <CalendarCheck size={14} />
-                <span className="text-sm font-black font-mono text-white">{dueChecksCount + openRemindersCount}</span>
+                <span className="text-sm font-black font-mono tabular-nums" style={{ color: 'var(--mks-text)' }}>{dueChecksCount + openRemindersCount}</span>
               </div>
-              <div className="text-[11px] font-bold text-stone-200 mt-1 truncate">Sabah Brifingi</div>
-              <div className="text-[11px] text-stone-400 truncate">
+              <div className="text-[11px] font-bold mt-1 truncate">Vade &amp; Görevler</div>
+              <div className="text-[11px] truncate" style={{ color: 'var(--mks-muted)' }}>
                 {dueChecksCount} Vade • {openRemindersCount} Görev
               </div>
             </button>
@@ -688,27 +527,29 @@ export const DashboardWeatherAndBriefingBanner: React.FC<{
             <button
               type="button"
               onClick={() => setIsDetailOpen(true)}
-              className="p-2.5 rounded-2xl bg-stone-900/75 hover:bg-stone-900 border border-white/10 text-left transition-all"
+              className="p-2.5 rounded-2xl border text-left transition-colors hover:opacity-95"
+              style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-text)' }}
             >
-              <div className="flex items-center justify-between text-rose-400">
+              <div className="flex items-center justify-between text-rose-500">
                 <Bug size={14} />
-                <span className="text-sm font-black font-mono text-white">{gddHighCount}</span>
+                <span className="text-sm font-black font-mono tabular-nums" style={{ color: 'var(--mks-text)' }}>{gddHighCount}</span>
               </div>
-              <div className="text-[11px] font-bold text-stone-200 mt-1 truncate">GDD Zararlı Riski</div>
-              <div className="text-[11px] text-stone-400 truncate">Gün-Derece Tahmini</div>
+              <div className="text-[11px] font-bold mt-1 truncate">GDD Zararlı Riski</div>
+              <div className="text-[11px] truncate" style={{ color: 'var(--mks-muted)' }}>Gün-Derece Tahmini</div>
             </button>
 
             <button
               type="button"
               onClick={() => setIsPortalInboxOpen(true)}
-              className="p-2.5 rounded-2xl bg-stone-900/75 hover:bg-stone-900 border border-white/10 text-left transition-all relative"
+              className="p-2.5 rounded-2xl border text-left transition-colors hover:opacity-95 relative"
+              style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-text)' }}
             >
-              <div className="flex items-center justify-between text-emerald-400">
+              <div className="flex items-center justify-between text-emerald-500">
                 <MessageSquare size={14} />
-                <span className="text-sm font-black font-mono text-white">{unreadInquiriesCount}</span>
+                <span className="text-sm font-black font-mono tabular-nums" style={{ color: 'var(--mks-text)' }}>{unreadInquiriesCount}</span>
               </div>
-              <div className="text-[11px] font-bold text-stone-200 mt-1 truncate">Üretici Portalı</div>
-              <div className="text-[11px] text-stone-400 truncate">Soru & Ödeme Bildirimi</div>
+              <div className="text-[11px] font-bold mt-1 truncate">Çiftçi Portalı</div>
+              <div className="text-[11px] truncate" style={{ color: 'var(--mks-muted)' }}>Soru &amp; Ödeme Bildirimi</div>
               {unreadInquiriesCount > 0 && (
                 <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
               )}
@@ -718,14 +559,14 @@ export const DashboardWeatherAndBriefingBanner: React.FC<{
 
         {/* Quick City Bar */}
         {isCityQuickOpen && (
-          <div className="mt-3 pt-3 border-t border-white/10 flex flex-wrap items-center gap-2">
+          <div className="mt-3 pt-3 border-t flex flex-wrap items-center gap-2" style={{ borderColor: 'var(--mks-card-border)' }}>
             <button
               type="button"
               onClick={() => {
                 detectCurrentLocation();
                 setIsCityQuickOpen(false);
               }}
-              className="px-3 py-1.5 min-h-[38px] rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold flex items-center gap-1.5"
+              className="px-3 py-1.5 min-h-[38px] rounded-xl bg-emerald-500/20 text-emerald-500 border border-emerald-500/30 text-xs font-bold flex items-center gap-1.5"
             >
               <LocateFixed size={13} /> GPS Konumum
             </button>
@@ -737,11 +578,12 @@ export const DashboardWeatherAndBriefingBanner: React.FC<{
                   changeCity(c);
                   setIsCityQuickOpen(false);
                 }}
-                className={`px-3 py-1.5 min-h-[38px] rounded-xl text-xs font-bold border transition-colors ${
+                className="px-3 py-1.5 min-h-[38px] rounded-xl text-xs font-bold border transition-colors"
+                style={
                   selectedCity.name === c.name
-                    ? 'bg-emerald-600 text-white border-emerald-400'
-                    : 'bg-stone-900 text-stone-300 border-white/10 hover:bg-stone-800'
-                }`}
+                    ? { background: 'var(--mks-accent-primary)', color: '#ffffff', borderColor: 'var(--mks-accent-primary)' }
+                    : { background: 'var(--mks-subcard)', color: 'var(--mks-text)', borderColor: 'var(--mks-card-border)' }
+                }
               >
                 {c.name}
               </button>
@@ -771,7 +613,7 @@ export const DashboardWeatherAndBriefingBanner: React.FC<{
               <div>
                 <h3 className="text-base font-black text-white flex items-center gap-2">
                   <MessageSquare size={18} className="text-emerald-400" />
-                  <span>Üretici Portalından Gelen Sorular & Ödeme Bildirimleri</span>
+                  <span>Çiftçi Portalından Gelen Sorular & Ödeme Bildirimleri</span>
                 </h3>
                 <p className="text-xs text-stone-400 mt-0.5">
                   Çiftçilerinizin portal linki üzerinden gönderdiği hastalık fotoğrafları ve IBAN ödeme bildirimleri
@@ -784,8 +626,8 @@ export const DashboardWeatherAndBriefingBanner: React.FC<{
               {inquiries.length === 0 ? (
                 <div className="text-center py-12 text-stone-400 text-xs space-y-2">
                   <CheckCircle2 size={32} className="mx-auto text-emerald-500/60" />
-                  <div className="font-bold text-stone-200">Henüz üretici portalından gelen yeni bildirim yok</div>
-                  <p>Müstahsillerinize cari portal linki paylaştığınızda gönderdikleri fotoğraf ve ödeme bildirimleri anında buraya düşer.</p>
+                  <div className="font-bold text-stone-200">Henüz çiftçi portalından gelen yeni bildirim yok</div>
+                  <p>Çiftçilerinize cari portal linki paylaştığınızda gönderdikleri fotoğraf ve ödeme bildirimleri anında buraya düşer.</p>
                 </div>
               ) : (
                 inquiries.map(inq => {
@@ -794,7 +636,7 @@ export const DashboardWeatherAndBriefingBanner: React.FC<{
                     <div
                       key={inq.id}
                       className={`rounded-2xl border p-4 space-y-3 ${
-                        inq.status === 'OPEN'
+                        isInquiryOpen(inq.status)
                           ? 'bg-stone-900 border-emerald-500/40'
                           : 'bg-stone-900/40 border-white/10 opacity-80'
                       }`}
@@ -835,7 +677,7 @@ export const DashboardWeatherAndBriefingBanner: React.FC<{
                         />
                       )}
 
-                      {inq.status === 'OPEN' ? (
+                      {isInquiryOpen(inq.status) ? (
                         <div className="flex flex-col sm:flex-row gap-2 pt-1">
                           <input
                             value={replyTexts[inq.id] || ''}
@@ -844,10 +686,12 @@ export const DashboardWeatherAndBriefingBanner: React.FC<{
                             className="flex-1 px-3 py-2 rounded-xl bg-stone-950 border border-white/15 text-xs text-white"
                           />
                           <button
+                            type="button"
+                            disabled={!!resolvingIds[inq.id]}
                             onClick={() => handleResolveInquiry(inq)}
-                            className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-stone-950 font-black text-xs shrink-0"
+                            className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-stone-950 font-black text-xs shrink-0 disabled:opacity-50"
                           >
-                            ✓ İncelendi İşaretle
+                            {resolvingIds[inq.id] ? 'İşleniyor...' : '✓ İncelendi İşaretle'}
                           </button>
                         </div>
                       ) : (

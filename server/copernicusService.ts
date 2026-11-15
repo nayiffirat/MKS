@@ -511,127 +511,132 @@ export async function analyzeFieldPolygonSatellite(
   };
 }
 
+/** TKGM alan değerini ("30,634.00" veya "30.634,00") güvenle m² sayısına çevirir. */
+function parseTkgmAreaM2(raw: unknown): number {
+  const s = String(raw ?? "").trim().replace(/\s+/g, "");
+  if (!s) return 0;
+  let normalized = s;
+  const lastComma = s.lastIndexOf(",");
+  const lastDot = s.lastIndexOf(".");
+  if (lastComma !== -1 && lastDot !== -1) {
+    normalized = lastComma < lastDot ? s.replace(/,/g, "") : s.replace(/\./g, "").replace(",", ".");
+  } else if (lastComma !== -1) {
+    normalized = /,\d{3}$/.test(s) ? s.replace(/,/g, "") : s.replace(",", ".");
+  }
+  const n = Number(normalized);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 /**
- * In-App TKGM Parcel Lookup by Coordinate (with official CBS API + WMS GetFeatureInfo + Nominatim administrative enrichment)
+ * In-App TKGM Parcel Lookup by Coordinate (with official CBS REST API + Nominatim administrative fallback)
  * so engineers see parcel details directly inside MKS without being forced out to parselsorgu.tkgm.gov.tr.
  */
 export async function lookupTkgmParcelByCoord(lat: number, lng: number): Promise<any> {
   const cleanLat = Number(lat.toFixed(6));
   const cleanLng = Number(lng.toFixed(6));
 
-  // 1. Try official TKGM MEGSIS CBS REST v3.1 / v3 endpoints
-  const tkgmEndpoints = [
-    `https://cbsapi.tkgm.gov.tr/megsiswebapi.v3.1/api/parsel/${cleanLat}/${cleanLng}/`,
-    `https://cbsapi.tkgm.gov.tr/megsiswebapi.v3/api/parsel/${cleanLat}/${cleanLng}/`,
-  ];
+  const fetchServerTkgmAt = async (qLat: number, qLng: number, allowV3Fallback: boolean) => {
+    const rLat = Number(qLat.toFixed(6));
+    const rLng = Number(qLng.toFixed(6));
+    const endpoints = [
+      `https://cbsapi.tkgm.gov.tr/megsiswebapi.v3.1/api/parsel/${rLat}/${rLng}/`,
+      ...(allowV3Fallback
+        ? [`https://cbsapi.tkgm.gov.tr/megsiswebapi.v3/api/parsel/${rLat}/${rLng}/`]
+        : []),
+    ];
 
-  for (const url of tkgmEndpoints) {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 6500);
-      const res = await fetch(url, {
-        headers: {
-          Accept: "application/json",
-          "User-Agent": "MKS-MuhendisKayitSistemi/4.0",
-        },
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
+    for (const url of endpoints) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 6500);
+        const res = await fetch(url, {
+          headers: {
+            Accept: "application/json",
+            "User-Agent": "MKS-MuhendisKayitSistemi/4.0",
+          },
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
 
-      if (res.ok) {
-        const data: any = await res.json();
-        const props = data?.properties || data;
-        if (props && (props.parselNo || props.ParselNo || props.adaNo || props.ilAd)) {
-          let alanM2 = Number(
-            String(props.alan || props.Alan || "0")
-              .replace(/\./g, "")
-              .replace(",", ".")
-          );
-          if ((!alanM2 || isNaN(alanM2)) && data?.geometry) {
-            try {
-              alanM2 = area({ type: "Feature", properties: {}, geometry: data.geometry } as any);
-            } catch {
-              alanM2 = 0;
+        if (res.status === 404) {
+          return null;
+        }
+
+        if (res.ok) {
+          const data: any = await res.json();
+          const props = data?.properties || data;
+          const rawAda = String(props?.adaNo ?? props?.Ada ?? "").trim();
+          const ada = rawAda || "0";
+          const parsel = String(props?.parselNo ?? props?.ParselNo ?? "").trim();
+          if (props && (parsel || rawAda)) {
+            let alanM2 = parseTkgmAreaM2(props.alan ?? props.Alan);
+            if ((!alanM2 || isNaN(alanM2)) && data?.geometry) {
+              try {
+                alanM2 = area({ type: "Feature", properties: {}, geometry: data.geometry } as any);
+              } catch {
+                alanM2 = 0;
+              }
             }
-          }
-          return {
-            source: "TKGM_CBS",
-            il: props.ilAd || props.Il || "",
-            ilce: props.ilceAd || props.Ilce || "",
-            mahalle: props.mahalleAd || props.Mahalle || "",
-            ada: String(props.adaNo ?? props.Ada ?? "0"),
-            parsel: String(props.parselNo ?? props.ParselNo ?? ""),
-            alanM2: Math.round(alanM2 * 100) / 100,
-            alanDekar: Math.round((alanM2 / 1000) * 100) / 100,
-            nitelik: props.nitelik || props.Nitelik || "Tarla / Arazi",
-            mevkii: props.mevkii || props.Mevkii || "",
-            pafta: props.pafta || props.Pafta || "",
-            ozet: props.ozet || "",
-            lat: cleanLat,
-            lng: cleanLng,
-            geometry: data?.geometry || null,
-          };
-        }
-      }
-    } catch {
-      // Proceed to WMS GetFeatureInfo / administrative lookup
-    }
-  }
-
-  // 2. Try TKGM WMS GetFeatureInfo (JSON / GML / HTML properties)
-  try {
-    const delta = 0.0005;
-    const bboxStr = `${cleanLng - delta},${cleanLat - delta},${cleanLng + delta},${cleanLat + delta}`;
-    const wmsUrl =
-      `https://megsiswms.tkgm.gov.tr/tkgm.mahalli/wms?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetFeatureInfo` +
-      `&LAYERS=TKGM.MAHALLI.PARSEL&QUERY_LAYERS=TKGM.MAHALLI.PARSEL&SRS=EPSG:4326` +
-      `&BBOX=${bboxStr}&WIDTH=101&HEIGHT=101&X=50&Y=50&INFO_FORMAT=application/json`;
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5500);
-    const wmsRes = await fetch(wmsUrl, { signal: controller.signal });
-    clearTimeout(timer);
-
-    if (wmsRes.ok) {
-      const wmsJson: any = await wmsRes.json().catch(() => null);
-      const feat = wmsJson?.features?.[0];
-      if (feat?.properties) {
-        const p = feat.properties;
-        let alanM2 = Number(
-          String(p.ALAN || p.alan || "0")
-            .replace(/\./g, "")
-            .replace(",", ".")
-        );
-        if ((!alanM2 || isNaN(alanM2)) && feat.geometry) {
-          try {
-            alanM2 = area(feat as any);
-          } catch {
-            alanM2 = 0;
+            return {
+              source: "TKGM_CBS",
+              il: props.ilAd || props.Il || "",
+              ilce: props.ilceAd || props.Ilce || "",
+              mahalle: props.mahalleAd || props.Mahalle || "",
+              ada,
+              parsel,
+              alanM2: Math.round(alanM2 * 100) / 100,
+              alanDekar: Math.round((alanM2 / 1000) * 100) / 100,
+              nitelik: props.nitelik || props.Nitelik || "Tarla / Arazi",
+              mevkii: props.mevkii || props.Mevkii || "",
+              pafta: props.pafta || props.Pafta || "",
+              ozet: props.ozet || "",
+              lat: rLat,
+              lng: rLng,
+              geometry: data?.geometry || null,
+            };
           }
         }
-        return {
-          source: "TKGM_WMS",
-          il: p.ILAD || p.ilAd || "",
-          ilce: p.ILCEAD || p.ilceAd || "",
-          mahalle: p.MAHALLEAD || p.mahalleAd || "",
-          ada: String(p.ADANO ?? p.adaNo ?? "-"),
-          parsel: String(p.PARSELNO ?? p.parselNo ?? "-"),
-          alanM2: Math.round(alanM2 * 100) / 100,
-          alanDekar: Math.round((alanM2 / 1000) * 100) / 100,
-          nitelik: p.NITELIK || p.nitelik || "Tarım Arazisi",
-          mevkii: p.MEVKII || p.mevkii || "",
-          pafta: p.PAFTA || p.pafta || "",
-          lat: cleanLat,
-          lng: cleanLng,
-          geometry: feat.geometry || null,
-        };
+      } catch {
+        // Try next endpoint
       }
     }
-  } catch {
-    // Proceed to Nominatim administrative reverse geocoding
+    return null;
+  };
+
+  // 1. Official TKGM MEGSIS CBS REST v3.1 / v3 exact lookup
+  const exact = await fetchServerTkgmAt(cleanLat, cleanLng, true);
+  if (exact) return exact;
+
+  // 1b. If point fell inside a road/boundary gap (404), probe nearby parcel centers in batches of 3
+  const nearbyOffsets: [number, number][] = [
+    [0.00045, 0],
+    [-0.00045, 0],
+    [0, 0.00045],
+    [0, -0.00045],
+    [-0.0006, -0.0006],
+    [0.0006, 0.0006],
+  ];
+  const nearbyHits: any[] = [];
+  for (let i = 0; i < nearbyOffsets.length; i += 3) {
+    const batch = nearbyOffsets.slice(i, i + 3);
+    const res = await Promise.all(
+      batch.map(([dlat, dlng]) => fetchServerTkgmAt(cleanLat + dlat, cleanLng + dlng, false))
+    );
+    for (const hit of res) {
+      if (hit) nearbyHits.push(hit);
+    }
+  }
+  if (nearbyHits.length > 0) {
+    const preferred =
+      nearbyHits.find((h) => !String(h.nitelik || "").toLowerCase().includes("mera")) ||
+      nearbyHits[0];
+    return {
+      ...preferred,
+      note: `Seçilen nokta kadastro yolu/sınır boşluğunda kaldığı için en yakın resmi parsel (${preferred.mahalle} Ada ${preferred.ada} / Parsel ${preferred.parsel}) yüklendi.`,
+    };
   }
 
-  // 3. Always return rich in-app administrative location details so the user never leaves MKS empty-handed
+  // 2. Administrative location fallback when TKGM does not return a parcel at this exact coordinate
   let il = "";
   let ilce = "";
   let mahalle = "";
@@ -677,6 +682,6 @@ export async function lookupTkgmParcelByCoord(lat: number, lng: number): Promise
     lat: cleanLat,
     lng: cleanLng,
     geometry: null,
-    note: "TKGM anlık servis hız sınırında olduğu için idari mahalle/köy bilgisi getirildi. 'Parselleri Çiz' katmanını açarak parsel sınırlarını harita üstünde görebilir ve tek tıkla çizebilirsiniz.",
+    note: "Bu noktada kayıtlı parsel bulunamadı; idari mahalle/köy bilgisi getirildi. Tarlanın üzerine dokunarak veya 'Parsel Çiz' ile alanı çizebilirsiniz.",
   };
 }

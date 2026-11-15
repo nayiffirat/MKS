@@ -1,55 +1,26 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useAppViewModel } from '../context/AppContext';
-import { useAuth } from '../context/AuthContext';
-import { WeatherWidget, DashboardWeatherAndBriefingBanner } from './WeatherComponents';
+import { DashboardWeatherAndBriefingBanner } from './WeatherComponents';
 import {
-  Users, FileText, Sprout, Plus, X, ChevronRight, ChevronLeft, Zap,
-  CalendarCheck, TrendingUp, AlertCircle, Bug, Package,
-  FlaskConical, Star, Truck, Search, DollarSign, Trash2,
-  Wallet, Calculator, Map, Newspaper, Bot, Database,
-  CreditCard, ArrowUpRight, Sparkles, LineChart, Layers, Copy, CheckCircle2, Eye, BookOpen
+  Users, FileText, Sprout, Plus, X, ChevronRight, Zap,
+  CalendarCheck, Bug, Package, FlaskConical, Star, Truck, Search,
+  Trash2, Wallet, Map as MapIcon, Newspaper, ArrowUpRight, Sparkles,
+  CheckCircle2, QrCode, ShieldCheck, Receipt, AlertTriangle
 } from 'lucide-react';
 import { Pesticide } from '../types';
 import { dbService } from '../services/db';
 import { formatCurrency } from '../utils/currency';
+import { getLocalDateString } from '../utils/dateUtils';
 import { useBackHandler } from '../utils/navigationManager';
 import { buildWaUrl } from '../utils/whatsappTemplates';
 import { SUPPORT_WHATSAPP } from '../constants';
-import { GlassyV30Studio } from './GlassyV30Studio';
+import { validateTcOrVkn } from '../utils/tcNoValidator';
 
 interface DashboardProps {
   onNavigate: (view: any) => void;
 }
 
-// Smooth Rolling Odometer Hook (Matches Reel DfcQ2TrTbGV 00 -> 49 | 83 animation)
-function useRollingNumber(target: number, duration = 750): number {
-  const [val, setVal] = useState(0);
-  useEffect(() => {
-    let start = 0;
-    const end = Math.max(0, Math.round(target));
-    if (end === 0) {
-      setVal(0);
-      return;
-    }
-    const startTime = performance.now();
-    let rafId: number;
-    const step = (now: number) => {
-      const progress = Math.min(1, (now - startTime) / duration);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      start = Math.round(eased * end);
-      setVal(start);
-      if (progress < 1) {
-        rafId = requestAnimationFrame(step);
-      }
-    };
-    rafId = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(rafId);
-  }, [target, duration]);
-  return val;
-}
-
 export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
-  const { currentUser } = useAuth();
   const {
     userProfile,
     reminders,
@@ -67,27 +38,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     activeTeamMember,
     t,
     language,
-    news
   } = useAppViewModel();
 
   const [selectedNews, setSelectedNews] = useState<any>(null);
   const [isBuyPlanModalOpen, setIsBuyPlanModalOpen] = useState(false);
-  const [statsPeriod, setStatsPeriod] = useState<'WEEKLY' | 'MONTHLY'>('WEEKLY');
-  const [impactTab, setImpactTab] = useState<'IMPACT' | 'ENGAGEMENT'>('IMPACT');
-  const [feedTab, setFeedTab] = useState<'OVERVIEW' | 'FOCUS' | 'WEATHER'>('OVERVIEW');
+  const [workspaceTab, setWorkspaceTab] = useState<'SALES' | 'CHART' | 'LOW_STOCK'>('SALES');
+  const [farmerQuickSearch, setFarmerQuickSearch] = useState('');
 
   const isSales = activeTeamMember?.role === 'SALES';
   const canCreatePrescription = !isSales;
-  const farmerLabel = t('label.farmer') || 'Müstahsil';
-  const prescriptionLabel = t('label.prescription') || 'Reçete';
-
-  // Klavye erişilebilirliği: role="button" kartlar için Enter/Space ile tetikleme (UI-54)
-  const activateOnKey = (fn: () => void) => (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      fn();
-    }
-  };
+  const farmerLabel = t('label.farmer') || 'Çiftçi';
 
   // Quick Purchase Modal State
   const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
@@ -105,10 +65,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
 
   const handleQuickFarmerSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSavingQuickFarmer) return;
     const trimmedName = quickFarmerName.trim();
     if (!trimmedName) {
-      showToast('Lütfen çiftçi (müstahsil) adını girin.', 'error');
+      showToast('Lütfen çiftçi adını girin.', 'error');
       return;
+    }
+    const trimmedTc = quickFarmerTcNo.trim();
+    if (trimmedTc) {
+      const tcRes = validateTcOrVkn(trimmedTc);
+      if (!tcRes.isValid) {
+        showToast(tcRes.message || 'Geçersiz T.C. Kimlik veya Vergi Kimlik Numarası.', 'error');
+        return;
+      }
     }
     setIsSavingQuickFarmer(true);
     try {
@@ -116,7 +85,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         fullName: trimmedName,
         phoneNumber: quickFarmerPhone.trim(),
         village: quickFarmerVillage.trim() || 'Merkez',
-        tcNo: quickFarmerTcNo.trim() || undefined,
+        tcNo: trimmedTc || undefined,
         fields: [],
         balance: 0
       });
@@ -141,6 +110,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   const [pesticides, setPesticides] = useState<Pesticide[]>([]);
   const [searchPestTerm, setSearchPestTerm] = useState('');
   const [paymentType, setPaymentType] = useState<'TERM' | 'CASH'>('TERM');
+  const [isSubmittingPurchase, setIsSubmittingPurchase] = useState(false);
 
   useEffect(() => {
     const fetchPesticides = async () => {
@@ -161,8 +131,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   const activeDebtorsCount = useMemo(() => {
     return (farmers || []).filter(f => !f.deletedAt && (f.balance || 0) < -0.01).length;
   }, [farmers]);
-
-  const nextReminder = reminders.find(r => !r.isCompleted);
 
   const filteredPesticides = useMemo(() => {
     if (!searchPestTerm) return [];
@@ -189,37 +157,48 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
 
   const handlePurchaseSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedSupplierId || purchaseItems.length === 0) return;
+    if (isSubmittingPurchase || !selectedSupplierId || purchaseItems.length === 0) return;
 
-    const totalAmount = purchaseItems.reduce((sum, item) => sum + item.quantity * item.buyingPrice, 0);
-    const date = new Date().toISOString();
+    setIsSubmittingPurchase(true);
+    try {
+      const totalAmount = purchaseItems.reduce((sum, item) => sum + item.quantity * item.buyingPrice, 0);
+      const date = new Date().toISOString();
 
-    await addSupplierPurchase({
-      supplierId: selectedSupplierId,
-      date,
-      receiptNo,
-      items: purchaseItems,
-      totalAmount
-    });
-
-    if (paymentType === 'CASH') {
-      await addSupplierPayment({
+      await addSupplierPurchase({
         supplierId: selectedSupplierId,
-        amount: totalAmount,
         date,
-        method: 'CASH',
-        note: receiptNo ? `Hızlı Peşin Alım - Fiş No: ${receiptNo}` : 'Hızlı Peşin Alım Ödemesi',
-        createdById: activeTeamMember?.id
+        receiptNo,
+        items: purchaseItems,
+        totalAmount
       });
-    }
 
-    showToast(paymentType === 'CASH' ? 'Peşin alım ve ödeme kaydedildi' : t('dashboard.purchase_success'), 'success');
-    hapticFeedback('success');
-    setIsPurchaseModalOpen(false);
-    setPurchaseItems([]);
-    setSelectedSupplierId('');
-    setReceiptNo('');
-    setPaymentType('TERM');
+      if (paymentType === 'CASH') {
+        const cashAcc =
+          (accounts || []).find(a => !a.deletedAt && a.type === 'CASH') ||
+          (accounts || []).find(a => !a.deletedAt);
+        await addSupplierPayment({
+          supplierId: selectedSupplierId,
+          amount: totalAmount,
+          date,
+          method: 'CASH',
+          accountId: cashAcc?.id,
+          note: receiptNo ? `Hızlı Peşin Alım - Fiş No: ${receiptNo}` : 'Hızlı Peşin Alım Ödemesi',
+          createdById: activeTeamMember?.id
+        });
+      }
+
+      showToast(paymentType === 'CASH' ? 'Peşin alım ve ödeme kaydedildi' : t('dashboard.purchase_success'), 'success');
+      hapticFeedback('success');
+      setIsPurchaseModalOpen(false);
+      setPurchaseItems([]);
+      setSelectedSupplierId('');
+      setReceiptNo('');
+      setPaymentType('TERM');
+    } catch {
+      showToast('Alım kaydedilirken bir hata oluştu.', 'error');
+    } finally {
+      setIsSubmittingPurchase(false);
+    }
   };
 
   // Daily Sales Chart Data (Last 7 days)
@@ -228,13 +207,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
       .map((_, i) => {
         const d = new Date();
         d.setDate(d.getDate() - i);
-        return d.toISOString().split('T')[0];
+        return getLocalDateString(d);
       })
       .reverse();
 
     const salesMap: Record<string, number> = {};
     prescriptions.forEach(p => {
-      const date = p.date.split('T')[0];
+      if (p.deletedAt || p.isProcessed === false || !p.date) return;
+      const date = getLocalDateString(p.date);
       if (days.includes(date)) {
         const amt = Number(p.totalAmount) || 0;
         const isReturn = p.type === 'RETURN' || amt < 0;
@@ -242,15 +222,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
       }
     });
 
-    return days.map(date => ({
-      date: new Date(date).toLocaleDateString(
-        language === 'tr' ? 'tr-TR' : language === 'ar' ? 'ar-SA' : 'en-US',
-        { weekday: 'short' }
-      ),
-      dayNum: new Date(date).getDate(),
-      amount: salesMap[date] || 0,
-      fullDate: date
-    }));
+    return days.map(date => {
+      const parsedDate = new Date(`${date}T12:00:00`);
+      return {
+        date: parsedDate.toLocaleDateString(
+          language === 'tr' ? 'tr-TR' : language === 'ar' ? 'ar-SA' : 'en-US',
+          { weekday: 'short' }
+        ),
+        dayNum: parsedDate.getDate(),
+        amount: salesMap[date] || 0,
+        fullDate: date
+      };
+    });
   }, [prescriptions, language]);
 
   const sevenDayTotalSales = useMemo(() => {
@@ -261,7 +244,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     return [...prescriptions]
       .filter(p => !p.deletedAt)
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-      .slice(0, 4);
+      .slice(0, 6);
   }, [prescriptions]);
 
   const farmerNameMap = useMemo(() => {
@@ -274,7 +257,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
 
   const currency = userProfile?.currency || 'TRY';
 
-  // Portfolio Distribution Percentages for Card 2 ("Data 10,4h" 3-segment bar in frame_06.jpg)
   const portfolioTotals = useMemo(() => {
     const debt = Math.max(0, Math.round(stats.totalDebt || 0));
     const stock = Math.max(0, Math.round(stats.inventoryValue || 0));
@@ -291,24 +273,46 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
 
   const hideCosts = Boolean(userProfile?.hideCostAndProfit || activeTeamMember?.role === 'SALES');
 
-  // Rolling Odometer Counters (100% genuine account figures — zero fake fallbacks)
   const activeFarmersList = useMemo(() => (farmers || []).filter(f => !f.deletedAt), [farmers]);
   const activeInventoryList = useMemo(() => (inventory || []).filter(i => !i.deletedAt), [inventory]);
   const activePrescriptionsList = useMemo(() => (prescriptions || []).filter(p => !p.deletedAt), [prescriptions]);
 
-  const rollingPrimaryStat = useRollingNumber(
-    statsPeriod === 'WEEKLY' ? stats.todayPrescriptions || 0 : activePrescriptionsList.length
-  );
-  const rollingSecondaryStat = useRollingNumber(
-    statsPeriod === 'WEEKLY' ? activePrescriptionsList.length : activeFarmersList.length
-  );
-  const rollingCompleted = useRollingNumber(activeFarmersList.length);
-  const rollingInProgress = useRollingNumber(activeInventoryList.length);
+  const criticalStockItems = useMemo(() => {
+    const in60DaysMs = Date.now() + 60 * 86400000;
+    return activeInventoryList
+      .filter(item => {
+        const qty = Number(item.quantity) || 0;
+        const threshold = Number(item.lowStockThreshold) || 10;
+        const expMs = item.expiryDate ? Date.parse(item.expiryDate) : NaN;
+        const isExpiring = !Number.isNaN(expMs) && expMs <= in60DaysMs;
+        return qty <= threshold || isExpiring;
+      })
+      .sort((a, b) => (Number(a.quantity) || 0) - (Number(b.quantity) || 0))
+      .slice(0, 6);
+  }, [activeInventoryList]);
 
-  // Top 6 Real Farmers ONLY (zero demo/sample farmers)
-  const displayFarmers = useMemo(() => {
-    return activeFarmersList.slice(0, 6);
-  }, [activeFarmersList]);
+  const filteredQuickFarmers = useMemo(() => {
+    const q = farmerQuickSearch.trim().toLocaleLowerCase('tr-TR');
+    return [...activeFarmersList]
+      .filter(f => {
+        if (!q) return true;
+        return [f.fullName, f.village, f.phoneNumber].some(v =>
+          String(v ?? '').toLocaleLowerCase('tr-TR').includes(q)
+        );
+      })
+      .sort((a, b) => {
+        const aOpen = (a.balance || 0) < -0.01 ? 1 : 0;
+        const bOpen = (b.balance || 0) < -0.01 ? 1 : 0;
+        if (aOpen !== bOpen) return bOpen - aOpen;
+        return (a.balance || 0) - (b.balance || 0);
+      })
+      .slice(0, 6);
+  }, [activeFarmersList, farmerQuickSearch]);
+
+  const openRemindersList = useMemo(
+    () => (reminders || []).filter(r => !r.isCompleted).slice(0, 4),
+    [reminders]
+  );
 
   const avatarGradients = [
     'from-[#0d2822] to-[#22a071]',
@@ -319,6 +323,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     'from-[#0f766e] to-[#2dd4bf]'
   ];
 
+  const maxDailySales = useMemo(
+    () => Math.max(...dailyChartData.map(x => Math.max(0, x.amount)), 1),
+    [dailyChartData]
+  );
+
   return (
     <div className="space-y-4 pb-6">
       {/* ==================== LIVE WEATHER, DELTA-T SPRAYING SUITABILITY & MORNING BRIEFING ==================== */}
@@ -328,14 +337,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
       {stats.regionalAlerts.length > 0 && (
         <div className="v22-bento-card p-3.5 border-l-4 border-l-rose-500 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-full bg-rose-500/15 text-rose-600 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-full bg-rose-500/15 text-rose-500 flex items-center justify-center shrink-0">
               <Bug size={16} />
             </div>
             <div>
-              <h4 className="text-xs font-extrabold text-rose-600 uppercase tracking-wider">
+              <h4 className="text-xs font-extrabold text-rose-500 uppercase tracking-wider">
                 {t('dashboard.regional_risk') || 'Bölgesel Salgın & Zararlı Uyarısı'}
               </h4>
-              <p className="text-xs font-semibold opacity-80">
+              <p className="text-xs font-semibold" style={{ color: 'var(--mks-muted)' }}>
                 {stats.regionalAlerts.map(a => `${a.village} (${a.type})`).join(' • ')}
               </p>
             </div>
@@ -346,246 +355,740 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         </div>
       )}
 
-      {/* ==================== CODEXR GLASSY DASHBOARD V30 (ONLY WHEN EXPLICITLY SELECTED IN SETTINGS) ==================== */}
-      {userProfile?.theme === 'GLASSY_V30' ? (
-        <GlassyV30Studio
-          onNavigate={onNavigate}
-          onOpenQuickPurchase={() => setIsPurchaseModalOpen(true)}
-        />
-      ) : (
-      /* ==================== MASTER 12-COLUMN REEL DfcQ2TrTbGV BENTO LAYOUT ==================== */
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
-        {/* ==================== LEFT 8 COLUMNS (Hero Banner + 3 Middle Cards + 2 Bottom Cards) ==================== */}
-        <div className="lg:col-span-8 space-y-4">
-          {/* 1. HERO COMMAND CARD ("Bereket her zaman birlikte büyür" + 3 Ana Hızlı İşlem Kartı) */}
-          <div className="v22-forest-card v22-stagger-1 p-5 sm:p-6 relative overflow-hidden">
-            {/* Soft radial mint aura on right */}
-            <div
-              className="absolute -right-12 -top-12 w-64 h-64 rounded-full pointer-events-none"
-              style={{
-                background: 'radial-gradient(circle, rgba(52,211,153,0.20) 0%, rgba(243,146,100,0.10) 50%, transparent 72%)'
-              }}
-            />
+      {/* ==================== UNIFIED KURUMSAL KOMUTA MERKEZİ (TÜM TEMALAR & CİHAZLAR) ==================== */}
+      <div className="space-y-4">
+        {/* TIER 1 — Hızlı İşlem & Resmi Servis Komuta Paneli */}
+        <section className="v22-forest-card v22-stagger-1 p-4 sm:p-5 relative overflow-hidden">
+          <div
+            className="absolute -right-12 -top-12 w-56 h-56 rounded-full pointer-events-none"
+            style={{
+              background: 'radial-gradient(circle, rgba(52,211,153,0.18) 0%, rgba(56,189,248,0.10) 55%, transparent 74%)'
+            }}
+          />
 
-            <div className="relative z-10 space-y-5">
-              {/* Top Row: Headline & Subtitle on Left, Live Sync & Kasa Status on Right */}
-              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                <div className="space-y-1.5 max-w-xl">
-                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-[11px] font-extrabold shadow-sm">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span className="text-emerald-300 font-extrabold">Yerel Hafıza + Bulut Canlı Senkron</span>
-                  </div>
-                  <h2 className="v22-keep-white text-2xl sm:text-[26px] font-extrabold tracking-tight text-white leading-tight">
-                    Bereket her zaman{' '}
-                    <span className="font-serif-editorial italic font-normal text-[#f39264] text-[26px] sm:text-[30px] px-0.5">
-                      birlikte
-                    </span>{' '}
-                    büyür
-                  </h2>
-                  <p className="v22-keep-white text-xs sm:text-[13px] text-white/75 leading-relaxed font-medium">
-                    Çiftçi cari hesapları, tahsilatlar, depo stokları, BKTS/GTS karekod ve e-Fatura işlemlerinizi tek merkezden yönetin.
-                  </p>
-                </div>
-
-                {/* Right Avatar Cluster + Real Account Pill */}
-                <div className="flex flex-row sm:flex-col items-center sm:items-end justify-between gap-2 shrink-0">
-                  <div className="flex items-center -space-x-2">
-                    <span className="w-8 h-8 rounded-full bg-[#1b4d3e] border-2 border-[#0d2822] text-[#8fd9b8] text-[11px] font-extrabold flex items-center justify-center z-10">
-                      {activeFarmersList.length}
-                    </span>
-                    {displayFarmers.slice(0, 4).map((f, i) => (
-                      <button
-                        type="button"
-                        key={f.id}
-                        onClick={() => onNavigate('FARMERS')}
-                        className={`v22-keep-white w-8 h-8 rounded-full bg-gradient-to-br ${avatarGradients[i % avatarGradients.length]} border-2 border-[#0d2822] text-white text-[11px] font-extrabold flex items-center justify-center cursor-pointer hover:scale-110 transition-transform`}
-                        title={f.fullName}
-                        aria-label={f.fullName}
-                      >
-                        {f.fullName.charAt(0).toUpperCase()}
-                      </button>
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => onNavigate('KASA')}
-                    className="v22-keep-white inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/30 border border-white/15 text-[11px] font-bold text-white/90 cursor-pointer hover:bg-black/45 transition-colors"
-                  >
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#34d399] animate-pulse" />
-                    <span>{(accounts || []).length} kasa &amp; banka aktif</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Primary 3-Column Action Shortcuts: 1. Satış Oluştur, 2. Tahsilat Yap, 3. Çiftçi Ekle */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <button
-                  type="button"
-                  onClick={() => onNavigate(canCreatePrescription ? 'PRESCRIPTION_NEW' : 'PRESCRIPTION_LIST')}
-                  className="group p-3.5 rounded-2xl bg-gradient-to-br from-[#f39264] to-[#e57c4b] hover:from-[#f6a077] hover:to-[#eb8758] text-[#0b211d] text-left flex items-center gap-3 shadow-lg shadow-black/25 active:scale-[0.98] transition-all"
-                >
-                  <div className="w-11 h-11 rounded-xl bg-black/15 text-[#0b211d] flex items-center justify-center shrink-0">
-                    <FileText size={20} strokeWidth={2.4} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-xs sm:text-sm font-black leading-tight text-[#0b211d] flex items-center justify-between gap-1">
-                      <span>Satış / Reçete Oluştur</span>
-                      <ChevronRight size={15} className="shrink-0 group-hover:translate-x-0.5 transition-transform" />
-                    </div>
-                    <p className="text-[11px] font-bold text-[#0b211d]/80 mt-0.5 truncate">
-                      Barkodlu &amp; B-Reçete satış
-                    </p>
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    window.dispatchEvent(
-                      new CustomEvent('mks-open-quick-modal', { detail: { modal: 'RECEIVE_PAYMENT' } })
-                    );
-                  }}
-                  className="v22-keep-white group p-3.5 rounded-2xl bg-emerald-500/25 hover:bg-emerald-500/35 border border-emerald-400/40 text-white text-left flex items-center gap-3 shadow-md active:scale-[0.98] transition-all"
-                >
-                  <div className="w-11 h-11 rounded-xl bg-emerald-400/25 text-emerald-300 flex items-center justify-center shrink-0">
-                    <Wallet size={20} strokeWidth={2.2} className="text-emerald-300" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="v22-keep-white text-xs sm:text-sm font-extrabold leading-tight text-white flex items-center justify-between gap-1">
-                      <span>Tahsilat Yap</span>
-                      <ChevronRight size={15} className="shrink-0 text-emerald-300 group-hover:translate-x-0.5 transition-transform" />
-                    </div>
-                    <p className="v22-keep-white text-[11px] font-semibold text-emerald-200 mt-0.5 truncate">
-                      Nakit, POS, Çek &amp; Senet al
-                    </p>
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setIsQuickFarmerModalOpen(true)}
-                  className="v22-keep-white group p-3.5 rounded-2xl bg-sky-500/20 hover:bg-sky-500/30 border border-sky-400/35 text-white text-left flex items-center gap-3 shadow-md active:scale-[0.98] transition-all"
-                >
-                  <div className="w-11 h-11 rounded-xl bg-sky-400/20 text-sky-300 flex items-center justify-center shrink-0">
-                    <Users size={20} strokeWidth={2.2} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="v22-keep-white text-xs sm:text-sm font-extrabold leading-tight text-white flex items-center justify-between gap-1">
-                      <span>Çiftçi (Müstahsil) Ekle</span>
-                      <ChevronRight size={15} className="shrink-0 text-sky-300 group-hover:translate-x-0.5 transition-transform" />
-                    </div>
-                    <p className="v22-keep-white text-[11px] font-medium text-sky-100/80 mt-0.5 truncate">
-                      Yeni cari hesap &amp; WhatsApp
-                    </p>
-                  </div>
-                </button>
-              </div>
-
-              {/* Bottom Secondary Bar: Stok Girişi, BKTS/GTS, EDM e-Fatura, Görselli Kılavuz */}
-              <div className="pt-3.5 border-t border-white/10 flex flex-wrap items-center justify-between gap-2">
+          <div className="relative z-10 space-y-4">
+            {/* Compact Header Row */}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsPurchaseModalOpen(true)}
-                    className="v22-keep-white px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/18 text-white border border-white/15 font-bold text-xs flex items-center gap-1.5 active:scale-95 transition-all"
-                  >
-                    <Truck size={14} />
-                    <span>Stok Girişi</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => (window as any).mks_open_ministry?.('malkabul')}
-                    className="v22-keep-white px-3.5 py-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 border border-emerald-400/30 font-bold text-xs flex items-center gap-1.5 active:scale-95 transition-all"
-                  >
-                    <CheckCircle2 size={14} className="text-emerald-300" />
-                    <span>BKTS / GTS Mal Kabul</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => (window as any).mks_open_edm?.('incoming')}
-                    className="v22-keep-white px-3.5 py-2 rounded-xl bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-200 border border-indigo-400/30 font-bold text-xs flex items-center gap-1.5 active:scale-95 transition-all"
-                  >
-                    <Layers size={14} className="text-indigo-300" />
-                    <span>EDM e-Fatura &amp; Depo</span>
-                  </button>
+                  <h2 className="v22-keep-white text-lg sm:text-xl font-black tracking-tight text-white truncate">
+                    {userProfile?.companyName || 'MKS Kurumsal Komuta Merkezi'}
+                  </h2>
+                  <span className="v22-keep-white inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/35 text-[11px] font-bold text-emerald-200">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    Yerel Hafıza + Bulut Senkron
+                  </span>
                 </div>
+                <p className="v22-keep-white text-xs text-white/75 mt-0.5">
+                  Satış, tahsilat, depo, resmi bakanlık bildirimleri ve saha araçlarını tek merkezden yönetin.
+                </p>
+              </div>
 
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
                 <button
                   type="button"
-                  onClick={() => onNavigate('USER_GUIDE')}
-                  className="v22-keep-white px-3.5 py-2 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 text-sky-200 border border-sky-400/30 font-bold text-xs flex items-center gap-1.5 active:scale-95 transition-all"
+                  onClick={() => onNavigate('FARMERS')}
+                  className="v22-keep-white inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/10 hover:bg-white/20 border border-white/15 text-[11px] font-bold text-white transition-colors"
                 >
-                  <BookOpen size={14} className="text-sky-300" />
-                  <span>Görselli Kılavuz</span>
+                  <Users size={12} className="text-sky-300" />
+                  <span>{activeFarmersList.length} Çiftçi</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onNavigate('KASA')}
+                  className="v22-keep-white inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/10 hover:bg-white/20 border border-white/15 text-[11px] font-bold text-white transition-colors"
+                >
+                  <Wallet size={12} className="text-emerald-300" />
+                  <span>{(accounts || []).length} Kasa &amp; Banka</span>
                 </button>
               </div>
             </div>
-          </div>
 
-          {/* 2. MIDDLE 3-CARD BENTO ROW */}
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-4 v22-stagger-2">
-            {/* Card 2A: Müstahsiller (Cari) Portrait Grid */}
-            <div className="md:col-span-5 v22-bento-card p-4 sm:p-5 flex flex-col justify-between">
-              <div className="flex items-center justify-between mb-3.5">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-extrabold tracking-tight text-[#0b211d]">Müstahsiller</h3>
-                  <span className="px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-[#d5f2e5] text-[#116a4e]">
-                    • {activeFarmersList.length}
-                  </span>
+            {/* Primary 4-Button Action Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2.5">
+              <button
+                type="button"
+                onClick={() => onNavigate(canCreatePrescription ? 'PRESCRIPTION_NEW' : 'PRESCRIPTION_LIST')}
+                className="group p-3.5 rounded-2xl bg-gradient-to-br from-[#f39264] to-[#e57c4b] hover:from-[#f6a077] hover:to-[#eb8758] text-[#0b211d] text-left flex items-center gap-3 shadow-lg shadow-black/25 active:scale-[0.98] transition-all"
+              >
+                <div className="w-10 h-10 rounded-xl bg-black/15 text-[#0b211d] flex items-center justify-center shrink-0">
+                  <FileText size={19} strokeWidth={2.4} />
                 </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs sm:text-sm font-black leading-tight text-[#0b211d] flex items-center justify-between gap-1">
+                    <span className="truncate">Satış / Reçete Oluştur</span>
+                    <ChevronRight size={15} className="shrink-0 group-hover:translate-x-0.5 transition-transform" />
+                  </div>
+                  <p className="text-[11px] font-bold text-[#0b211d]/80 mt-0.5 truncate">
+                    Barkodlu &amp; vadeli satış
+                  </p>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  window.dispatchEvent(
+                    new CustomEvent('mks-open-quick-modal', { detail: { modal: 'RECEIVE_PAYMENT' } })
+                  );
+                }}
+                className="v22-keep-white group p-3.5 rounded-2xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/35 text-white text-left flex items-center gap-3 shadow-md active:scale-[0.98] transition-all"
+              >
+                <div className="w-10 h-10 rounded-xl bg-emerald-400/20 text-emerald-300 flex items-center justify-center shrink-0">
+                  <Wallet size={19} strokeWidth={2.2} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="v22-keep-white text-xs sm:text-sm font-extrabold leading-tight text-white flex items-center justify-between gap-1">
+                    <span className="truncate">Tahsilat Al</span>
+                    <ChevronRight size={15} className="shrink-0 text-emerald-300 group-hover:translate-x-0.5 transition-transform" />
+                  </div>
+                  <p className="v22-keep-white text-[11px] font-medium text-emerald-100/85 mt-0.5 truncate">
+                    Nakit, POS, Çek &amp; Senet
+                  </p>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsPurchaseModalOpen(true)}
+                className="v22-keep-white group p-3.5 rounded-2xl bg-white/10 hover:bg-white/18 border border-white/20 text-white text-left flex items-center gap-3 shadow-md active:scale-[0.98] transition-all"
+              >
+                <div className="w-10 h-10 rounded-xl bg-white/15 text-amber-300 flex items-center justify-center shrink-0">
+                  <Truck size={19} strokeWidth={2.2} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="v22-keep-white text-xs sm:text-sm font-extrabold leading-tight text-white flex items-center justify-between gap-1">
+                    <span className="truncate">Hızlı Stok Girişi</span>
+                    <ChevronRight size={15} className="shrink-0 text-white/80 group-hover:translate-x-0.5 transition-transform" />
+                  </div>
+                  <p className="v22-keep-white text-[11px] font-medium text-white/75 mt-0.5 truncate">
+                    Tedarikçiden ürün alımı
+                  </p>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsQuickFarmerModalOpen(true)}
+                className="v22-keep-white group p-3.5 rounded-2xl bg-sky-500/20 hover:bg-sky-500/30 border border-sky-400/35 text-white text-left flex items-center gap-3 shadow-md active:scale-[0.98] transition-all"
+              >
+                <div className="w-10 h-10 rounded-xl bg-sky-400/20 text-sky-300 flex items-center justify-center shrink-0">
+                  <Users size={19} strokeWidth={2.2} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="v22-keep-white text-xs sm:text-sm font-extrabold leading-tight text-white flex items-center justify-between gap-1">
+                    <span className="truncate">Yeni {farmerLabel} Ekle</span>
+                    <ChevronRight size={15} className="shrink-0 text-sky-300 group-hover:translate-x-0.5 transition-transform" />
+                  </div>
+                  <p className="v22-keep-white text-[11px] font-medium text-sky-100/80 mt-0.5 truncate">
+                    Hızlı cari hesap açılışı
+                  </p>
+                </div>
+              </button>
+            </div>
+
+            {/* Single-Row Resmi Servisler & Saha Araçları Kısayol Şeridi */}
+            <div className="pt-3 border-t border-white/15 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => (window as any).mks_open_ministry?.('bkts')}
+                className="v22-keep-white px-3 py-1.5 min-h-[34px] rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 border border-emerald-400/30 font-bold text-xs flex items-center gap-1.5 transition-colors"
+              >
+                <QrCode size={14} className="text-emerald-300" />
+                <span>BKTS (Yakında)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => (window as any).mks_open_ministry?.('gts')}
+                className="v22-keep-white px-3 py-1.5 min-h-[34px] rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 border border-emerald-400/30 font-bold text-xs flex items-center gap-1.5 transition-colors"
+              >
+                <Sprout size={14} className="text-emerald-300" />
+                <span>GTS (Yakında)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => (window as any).mks_open_ministry?.('brecete')}
+                className="v22-keep-white px-3 py-1.5 min-h-[34px] rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 border border-emerald-400/30 font-bold text-xs flex items-center gap-1.5 transition-colors"
+              >
+                <ShieldCheck size={14} className="text-emerald-300" />
+                <span>B-Reçete (Yakında)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => (window as any).mks_open_ministry?.('malkabul')}
+                className="v22-keep-white px-3 py-1.5 min-h-[34px] rounded-xl bg-white/10 hover:bg-white/20 text-white border border-white/15 font-bold text-xs flex items-center gap-1.5 transition-colors"
+              >
+                <CheckCircle2 size={14} className="text-emerald-300" />
+                <span>Mal Kabul</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => (window as any).mks_open_efatura?.('issue')}
+                className="v22-keep-white px-3 py-1.5 min-h-[34px] rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-100 border border-indigo-400/30 font-bold text-xs flex items-center gap-1.5 transition-colors"
+              >
+                <Receipt size={14} className="text-indigo-300" />
+                <span>e-Fatura</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => onNavigate('MAP')}
+                className="v22-keep-white px-3 py-1.5 min-h-[34px] rounded-xl bg-white/10 hover:bg-white/20 text-white border border-white/15 font-bold text-xs flex items-center gap-1.5 transition-colors"
+              >
+                <MapIcon size={14} className="text-sky-300" />
+                <span>TKGM Harita</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => onNavigate('AI_ASSISTANT')}
+                className="v22-keep-white px-3 py-1.5 min-h-[34px] rounded-xl bg-white/10 hover:bg-white/20 text-white border border-white/15 font-bold text-xs flex items-center gap-1.5 transition-colors"
+              >
+                <Sparkles size={14} className="text-amber-300" />
+                <span>Zirai Asistan</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => onNavigate('MKS_MUHENDISIM')}
+                className="v22-keep-white px-3 py-1.5 min-h-[34px] rounded-xl bg-white/10 hover:bg-white/20 text-white border border-white/15 font-bold text-xs flex items-center gap-1.5 transition-colors"
+              >
+                <FlaskConical size={14} className="text-emerald-300" />
+                <span>MKS Mühendisim</span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {/* TIER 2 — 4 Kurumsal Finans & Stok Özeti Kartı */}
+        <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3.5 v22-stagger-2">
+          {/* 1. Toplam Cari Alacak */}
+          <button
+            type="button"
+            onClick={() => onNavigate(isSales ? 'PRESCRIPTIONS' : 'DEBT_TRACKING')}
+            className="v22-bento-card p-4 flex flex-col justify-between text-left cursor-pointer"
+          >
+            <div className="flex items-center justify-between gap-2 w-full">
+              <span className="text-xs font-extrabold truncate" style={{ color: 'var(--mks-muted)' }}>
+                Toplam Cari Alacak
+              </span>
+              <ArrowUpRight size={15} className="shrink-0" style={{ color: 'var(--mks-muted)' }} />
+            </div>
+            <div className="my-2.5 min-w-0">
+              <div
+                className="text-xl sm:text-2xl font-extrabold font-mono tabular-nums truncate"
+                style={{ color: 'var(--mks-text)' }}
+              >
+                {isSales
+                  ? `${activePrescriptionsList.length} Reçete`
+                  : formatCurrency(Math.round(stats.totalDebt || 0), currency)}
+              </div>
+              <p className="text-[11px] font-semibold mt-1 truncate" style={{ color: 'var(--mks-muted)' }}>
+                {activeDebtorsCount} borçlu cari · {activeFarmersList.length} kayıtlı çiftçi
+              </p>
+            </div>
+            <div className="space-y-1.5 w-full">
+              <div className="h-1.5 w-full rounded-full overflow-hidden" style={{ background: 'var(--mks-subcard)' }}>
+                <div
+                  className="h-full rounded-full transition-all duration-500"
+                  style={{ width: `${portfolioTotals.debtPct}%`, background: 'var(--mks-accent-primary)' }}
+                />
+              </div>
+              <div className="text-[11px] font-bold flex items-center justify-between" style={{ color: 'var(--mks-muted)' }}>
+                <span>%{portfolioTotals.debtPct} portföy payı</span>
+                <span style={{ color: 'var(--mks-accent-primary)' }}>Risk Takibi →</span>
+              </div>
+            </div>
+          </button>
+
+          {/* 2. Kasa & Banka Mevcudu */}
+          <button
+            type="button"
+            onClick={() => onNavigate('KASA')}
+            className="v22-bento-card p-4 flex flex-col justify-between text-left cursor-pointer"
+          >
+            <div className="flex items-center justify-between gap-2 w-full">
+              <span className="text-xs font-extrabold truncate" style={{ color: 'var(--mks-muted)' }}>
+                Kasa &amp; Banka Mevcudu
+              </span>
+              <ArrowUpRight size={15} className="shrink-0" style={{ color: 'var(--mks-muted)' }} />
+            </div>
+            <div className="my-2.5 min-w-0">
+              <div
+                className="text-xl sm:text-2xl font-extrabold font-mono tabular-nums truncate"
+                style={{ color: 'var(--mks-text)' }}
+              >
+                {formatCurrency(Math.round(totalKasaBalance || 0), currency)}
+              </div>
+              <p className="text-[11px] font-semibold mt-1 truncate" style={{ color: 'var(--mks-muted)' }}>
+                {(accounts || []).length} aktif kasa/banka · 7G Satış: {formatCurrency(Math.round(sevenDayTotalSales), currency)}
+              </p>
+            </div>
+            <div className="space-y-1.5 w-full">
+              <div className="h-1.5 w-full rounded-full overflow-hidden" style={{ background: 'var(--mks-subcard)' }}>
+                <div
+                  className="h-full rounded-full bg-[#f39264] transition-all duration-500"
+                  style={{ width: `${portfolioTotals.cashPct}%` }}
+                />
+              </div>
+              <div className="text-[11px] font-bold flex items-center justify-between" style={{ color: 'var(--mks-muted)' }}>
+                <span>%{portfolioTotals.cashPct} nakit payı</span>
+                <span style={{ color: 'var(--mks-accent-primary)' }}>Kasa Aç →</span>
+              </div>
+            </div>
+          </button>
+
+          {/* 3. Depo & Stok Varlığı */}
+          <button
+            type="button"
+            onClick={() => onNavigate('INVENTORY')}
+            className="v22-bento-card p-4 flex flex-col justify-between text-left cursor-pointer"
+          >
+            <div className="flex items-center justify-between gap-2 w-full">
+              <span className="text-xs font-extrabold truncate" style={{ color: 'var(--mks-muted)' }}>
+                Depo &amp; Stok Varlığı
+              </span>
+              <ArrowUpRight size={15} className="shrink-0" style={{ color: 'var(--mks-muted)' }} />
+            </div>
+            <div className="my-2.5 min-w-0">
+              <div
+                className="text-xl sm:text-2xl font-extrabold font-mono tabular-nums truncate"
+                style={{ color: 'var(--mks-text)' }}
+              >
+                {hideCosts ? '•••• ₺' : formatCurrency(Math.round(stats.inventoryValue || 0), currency)}
+              </div>
+              <p className="text-[11px] font-semibold mt-1 truncate" style={{ color: 'var(--mks-muted)' }}>
+                {activeInventoryList.length} aktif stok kalemi · {criticalStockItems.length} kritik stok
+              </p>
+            </div>
+            <div className="space-y-1.5 w-full">
+              <div className="h-1.5 w-full rounded-full overflow-hidden" style={{ background: 'var(--mks-subcard)' }}>
+                <div
+                  className="h-full rounded-full bg-emerald-400 transition-all duration-500"
+                  style={{ width: `${portfolioTotals.stockPct}%` }}
+                />
+              </div>
+              <div className="text-[11px] font-bold flex items-center justify-between" style={{ color: 'var(--mks-muted)' }}>
+                <span>%{portfolioTotals.stockPct} stok payı</span>
+                <span style={{ color: 'var(--mks-accent-primary)' }}>Depo Kontrol →</span>
+              </div>
+            </div>
+          </button>
+
+          {/* 4. Tedarikçi & Alım Dengesi */}
+          <button
+            type="button"
+            onClick={() => onNavigate('SUPPLIERS')}
+            className="v22-bento-card p-4 flex flex-col justify-between text-left cursor-pointer"
+          >
+            <div className="flex items-center justify-between gap-2 w-full">
+              <span className="text-xs font-extrabold truncate" style={{ color: 'var(--mks-muted)' }}>
+                Tedarikçi &amp; Alım Dengesi
+              </span>
+              <ArrowUpRight size={15} className="shrink-0" style={{ color: 'var(--mks-muted)' }} />
+            </div>
+            <div className="my-2.5 min-w-0">
+              <div
+                className="text-xl sm:text-2xl font-extrabold font-mono tabular-nums truncate"
+                style={{ color: 'var(--mks-text)' }}
+              >
+                {formatCurrency(Math.round(totalSupplierDebt || 0), currency)}
+              </div>
+              <p className="text-[11px] font-semibold mt-1 truncate" style={{ color: 'var(--mks-muted)' }}>
+                {suppliers.length} tedarikçi firma · Bugün {stats.todayPrescriptions || 0} işlem
+              </p>
+            </div>
+            <div className="pt-2 border-t flex items-center justify-between text-[11px] font-bold w-full" style={{ borderColor: 'var(--mks-card-border)', color: 'var(--mks-muted)' }}>
+              <span>Toplam Alacak: {activePrescriptionsList.length} kayıt</span>
+              <span style={{ color: 'var(--mks-accent-primary)' }}>Tedarikçi Hesapları →</span>
+            </div>
+          </button>
+        </section>
+
+        {/* TIER 3 — 12-Column Ana Operasyon Çalışma Alanı */}
+        <section className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start v22-stagger-3">
+          {/* Left 7 Columns: Tabbed Workspace (Son Satışlar | 7G Ciro Analizi | Kritik Stok) */}
+          <div className="lg:col-span-7 v22-bento-card p-4 sm:p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div
+                className="flex flex-wrap items-center gap-1 p-1 rounded-2xl border w-full sm:w-auto"
+                style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)' }}
+              >
                 <button
                   type="button"
-                  onClick={() => onNavigate('FARMERS')}
-                  className="w-11 h-11 rounded-full bg-[#f3f6f4] hover:bg-[#d5f2e5] text-[#0b211d] flex items-center justify-center transition-colors"
-                  title="Tüm Müstahsiller"
-                  aria-label="Tüm Müstahsiller"
+                  onClick={() => setWorkspaceTab('SALES')}
+                  className="flex-1 sm:flex-initial px-3 py-1.5 rounded-xl text-xs font-extrabold transition-colors whitespace-nowrap"
+                  style={
+                    workspaceTab === 'SALES'
+                      ? { background: 'var(--mks-card)', color: 'var(--mks-text)', boxShadow: '0 2px 6px rgba(0,0,0,0.08)' }
+                      : { color: 'var(--mks-muted)' }
+                  }
                 >
-                  <Plus size={16} />
+                  Son Satış &amp; Reçeteler ({recentPrescriptions.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setWorkspaceTab('CHART')}
+                  className="flex-1 sm:flex-initial px-3 py-1.5 rounded-xl text-xs font-extrabold transition-colors whitespace-nowrap"
+                  style={
+                    workspaceTab === 'CHART'
+                      ? { background: 'var(--mks-card)', color: 'var(--mks-text)', boxShadow: '0 2px 6px rgba(0,0,0,0.08)' }
+                      : { color: 'var(--mks-muted)' }
+                  }
+                >
+                  7 Günlük Ciro Analizi
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setWorkspaceTab('LOW_STOCK')}
+                  className="flex-1 sm:flex-initial px-3 py-1.5 rounded-xl text-xs font-extrabold transition-colors whitespace-nowrap"
+                  style={
+                    workspaceTab === 'LOW_STOCK'
+                      ? { background: 'var(--mks-card)', color: 'var(--mks-text)', boxShadow: '0 2px 6px rgba(0,0,0,0.08)' }
+                      : { color: 'var(--mks-muted)' }
+                  }
+                >
+                  Kritik Stok Kontrolü ({criticalStockItems.length})
                 </button>
               </div>
+            </div>
 
-              {displayFarmers.length === 0 ? (
+            {/* Tab 1: Son Satış & Reçeteler */}
+            {workspaceTab === 'SALES' && (
+              <div className="space-y-2">
+                {recentPrescriptions.length === 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => onNavigate(canCreatePrescription ? 'PRESCRIPTION_NEW' : 'PRESCRIPTIONS')}
+                    className="w-full py-10 px-4 rounded-2xl border border-dashed text-center space-y-1.5 hover:opacity-90 transition-opacity"
+                    style={{ borderColor: 'var(--mks-card-border)', background: 'var(--mks-subcard)' }}
+                  >
+                    <FileText size={24} className="mx-auto" style={{ color: 'var(--mks-accent-primary)' }} />
+                    <p className="text-xs font-extrabold" style={{ color: 'var(--mks-text)' }}>
+                      Henüz reçete veya satış kaydı yok
+                    </p>
+                    <p className="text-[11px]" style={{ color: 'var(--mks-muted)' }}>
+                      İlk satış veya zirai reçetenizi oluşturmak için tıklayın
+                    </p>
+                  </button>
+                ) : (
+                  <div className="space-y-2">
+                    {recentPrescriptions.map((p: any) => {
+                      const fName = farmerNameMap[p.farmerId] || 'Peşin Müşteri';
+                      const amt = Math.abs(Number(p.totalAmount) || 0);
+                      const isReturn = p.type === 'RETURN' || Number(p.totalAmount) < 0;
+                      const isCash = p.priceType === 'CASH';
+                      const itemCount = Array.isArray(p.items) ? p.items.length : 0;
+                      const formattedDate = p.date
+                        ? new Date(p.date).toLocaleDateString('tr-TR', { day: '2-digit', month: 'short' })
+                        : '';
+                      return (
+                        <button
+                          type="button"
+                          key={p.id}
+                          onClick={() => onNavigate('PRESCRIPTIONS')}
+                          className="w-full p-3 rounded-2xl border flex items-center justify-between gap-3 text-left transition-colors hover:opacity-95"
+                          style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)' }}
+                        >
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            <div
+                              className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 font-extrabold text-xs"
+                              style={{ background: 'var(--mks-accent-soft)', color: 'var(--mks-accent-soft-text)' }}
+                            >
+                              {fName.charAt(0).toUpperCase()}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="text-xs sm:text-sm font-extrabold truncate" style={{ color: 'var(--mks-text)' }}>
+                                  {fName}
+                                </span>
+                                <span
+                                  className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+                                    isReturn
+                                      ? 'bg-rose-500/15 text-rose-500'
+                                      : isCash
+                                        ? 'bg-emerald-500/15 text-emerald-500'
+                                        : 'bg-amber-500/15 text-amber-500'
+                                  }`}
+                                >
+                                  {isReturn ? 'İade' : isCash ? 'Peşin' : 'Vadeli'}
+                                </span>
+                              </div>
+                              <p className="text-[11px] font-semibold truncate mt-0.5" style={{ color: 'var(--mks-muted)' }}>
+                                {p.crop || 'Zirai Reçete'} · {itemCount} kalem{formattedDate ? ` · ${formattedDate}` : ''}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <div className="text-xs sm:text-sm font-extrabold font-mono tabular-nums" style={{ color: 'var(--mks-text)' }}>
+                              {isReturn ? '-' : ''}
+                              {formatCurrency(Math.round(amt), currency)}
+                            </div>
+                            <span className="text-[10px] font-bold" style={{ color: 'var(--mks-muted)' }}>
+                              {p.prescriptionNo || 'Detay →'}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => onNavigate('PRESCRIPTIONS')}
+                    className="w-full min-h-[40px] rounded-xl border text-xs font-extrabold flex items-center justify-center gap-1.5 transition-colors hover:opacity-90"
+                    style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-text)' }}
+                  >
+                    <span>Tüm Satış &amp; Reçeteleri Gör</span>
+                    <ArrowUpRight size={14} />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Tab 2: 7 Günlük Ciro Analizi */}
+            {workspaceTab === 'CHART' && (
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-2xl border" style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)' }}>
+                  <div>
+                    <div className="text-[11px] font-bold" style={{ color: 'var(--mks-muted)' }}>Son 7 Günlük Toplam Satış Hacmi</div>
+                    <div className="text-xl font-black font-mono tabular-nums mt-0.5" style={{ color: 'var(--mks-text)' }}>
+                      {formatCurrency(Math.round(sevenDayTotalSales), currency)}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate('STATISTICS')}
+                    className="px-3 py-1.5 rounded-xl text-xs font-extrabold border flex items-center gap-1"
+                    style={{ background: 'var(--mks-card)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-accent-primary)' }}
+                  >
+                    <span>Detaylı İstatistikler</span>
+                    <ArrowUpRight size={13} />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-7 gap-2 h-44 pt-4 items-end">
+                  {dailyChartData.map((d, idx) => {
+                    const pct = d.amount > 0 ? Math.max(14, Math.round((d.amount / maxDailySales) * 100)) : 4;
+                    const isToday = idx === dailyChartData.length - 1;
+                    return (
+                      <div
+                        key={d.fullDate}
+                        title={`${d.date} (${d.dayNum}): ${formatCurrency(Math.round(d.amount), currency)}`}
+                        className="flex flex-col items-center h-full justify-end min-w-0"
+                      >
+                        <span className="text-[10px] font-mono tabular-nums truncate w-full text-center mb-1" style={{ color: 'var(--mks-muted)' }}>
+                          {d.amount > 0 ? `${Math.round(d.amount / 1000)}k` : '0'}
+                        </span>
+                        <div
+                          className="w-full max-w-[32px] flex-1 rounded-xl flex flex-col justify-end p-0.5 overflow-hidden border"
+                          style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)' }}
+                        >
+                          <div
+                            className="w-full rounded-lg v22-bar-anim transition-all"
+                            style={{
+                              height: `${pct}%`,
+                              background: d.amount <= 0
+                                ? 'rgba(148,163,184,0.35)'
+                                : isToday
+                                  ? 'var(--mks-accent-primary)'
+                                  : '#f39264'
+                            }}
+                          />
+                        </div>
+                        <span
+                          className="text-[11px] font-bold mt-1.5"
+                          style={{ color: isToday ? 'var(--mks-accent-primary)' : 'var(--mks-muted)' }}
+                        >
+                          {d.date}
+                        </span>
+                        <span className="text-[10px] font-mono" style={{ color: 'var(--mks-muted)' }}>
+                          {d.dayNum}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Tab 3: Kritik Stok Kontrolü */}
+            {workspaceTab === 'LOW_STOCK' && (
+              <div className="space-y-2.5">
+                {criticalStockItems.length === 0 ? (
+                  <div
+                    className="py-10 px-4 rounded-2xl border text-center space-y-1.5"
+                    style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)' }}
+                  >
+                    <CheckCircle2 size={24} className="mx-auto text-emerald-500" />
+                    <p className="text-xs font-extrabold" style={{ color: 'var(--mks-text)' }}>
+                      Kritik seviyede veya SKT yaklaşan stok bulunmuyor
+                    </p>
+                    <p className="text-[11px]" style={{ color: 'var(--mks-muted)' }}>
+                      Depodaki {activeInventoryList.length} ürün kalemi güvenli stok aralığında.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {criticalStockItems.map(item => {
+                      const qty = Number(item.quantity) || 0;
+                      const isOut = qty <= 0;
+                      return (
+                        <div
+                          key={item.id}
+                          className="p-3 rounded-2xl border flex items-center justify-between gap-3"
+                          style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)' }}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                            <div
+                              className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                                isOut ? 'bg-rose-500/15 text-rose-500' : 'bg-amber-500/15 text-amber-500'
+                              }`}
+                            >
+                              <AlertTriangle size={16} />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="text-xs sm:text-sm font-extrabold truncate" style={{ color: 'var(--mks-text)' }}>
+                                {item.pesticideName}
+                              </div>
+                              <div className="text-[11px] font-semibold truncate" style={{ color: 'var(--mks-muted)' }}>
+                                {item.category || 'Zirai Ürün'}
+                                {item.expiryDate ? ` · SKT ${new Date(item.expiryDate).toLocaleDateString('tr-TR')}` : ''}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <span
+                              className={`px-2.5 py-1 rounded-full text-xs font-extrabold font-mono ${
+                                isOut ? 'bg-rose-500/15 text-rose-500' : 'bg-amber-500/15 text-amber-500'
+                              }`}
+                            >
+                              {qty} {item.unit || 'Adet'}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsPurchaseModalOpen(true)}
+                    className="min-h-[40px] rounded-xl border text-xs font-extrabold flex items-center justify-center gap-1.5"
+                    style={{ background: 'var(--mks-accent-soft)', color: 'var(--mks-accent-soft-text)', borderColor: 'var(--mks-card-border)' }}
+                  >
+                    <Plus size={14} /> Hızlı Stok Girişi Yap
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate('INVENTORY')}
+                    className="min-h-[40px] rounded-xl border text-xs font-extrabold flex items-center justify-center gap-1.5"
+                    style={{ background: 'var(--mks-subcard)', color: 'var(--mks-text)', borderColor: 'var(--mks-card-border)' }}
+                  >
+                    <span>Tüm Depoyu Aç</span>
+                    <ArrowUpRight size={14} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Right 5 Columns: Müstahsil Cari Kontrolü + Günlük Ajanda & Saha Görevleri */}
+          <div className="lg:col-span-5 space-y-4">
+            {/* Card A — Müstahsil Cari Kontrolü */}
+            <div className="v22-bento-card p-4 sm:p-5 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-extrabold" style={{ color: 'var(--mks-text)' }}>
+                  {farmerLabel} Cari Kontrolü
+                </h3>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setIsQuickFarmerModalOpen(true)}
+                    className="px-2.5 py-1 min-h-[32px] rounded-xl text-[11px] font-extrabold border flex items-center gap-1"
+                    style={{ background: 'var(--mks-accent-soft)', color: 'var(--mks-accent-soft-text)', borderColor: 'var(--mks-card-border)' }}
+                  >
+                    <Plus size={12} /> Yeni
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate('FARMERS')}
+                    className="px-2.5 py-1 min-h-[32px] rounded-xl text-[11px] font-bold border"
+                    style={{ background: 'var(--mks-subcard)', color: 'var(--mks-text)', borderColor: 'var(--mks-card-border)' }}
+                  >
+                    Tümü ({activeFarmersList.length})
+                  </button>
+                </div>
+              </div>
+
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--mks-muted)' }} />
+                <input
+                  type="text"
+                  value={farmerQuickSearch}
+                  onChange={e => setFarmerQuickSearch(e.target.value)}
+                  placeholder="Çiftçi veya köy ara..."
+                  aria-label="Çiftçi ara"
+                  className="w-full min-h-[40px] pl-8 pr-3 rounded-xl border text-xs font-semibold outline-none"
+                  style={{
+                    background: 'var(--mks-subcard)',
+                    borderColor: 'var(--mks-card-border)',
+                    color: 'var(--mks-text)'
+                  }}
+                />
+              </div>
+
+              {filteredQuickFarmers.length === 0 ? (
                 <button
                   type="button"
-                  onClick={() => onNavigate('FARMERS')}
-                  className="w-full my-auto py-6 px-3 rounded-2xl border border-dashed border-emerald-500/25 text-center cursor-pointer hover:bg-emerald-500/5 transition-colors space-y-1.5"
+                  onClick={() => setIsQuickFarmerModalOpen(true)}
+                  className="w-full py-6 px-3 rounded-2xl border border-dashed text-center space-y-1"
+                  style={{ borderColor: 'var(--mks-card-border)', background: 'var(--mks-subcard)' }}
                 >
-                  <Users size={22} className="mx-auto text-emerald-500" />
-                  <p className="text-xs font-extrabold text-[#0b211d]">Henüz müstahsil kaydı yok</p>
-                  <p className="text-[11px] text-[#5c726b]">İlk çiftçi ve tarla kaydınızı eklemek için dokunun</p>
+                  <Users size={20} className="mx-auto" style={{ color: 'var(--mks-accent-primary)' }} />
+                  <p className="text-xs font-bold" style={{ color: 'var(--mks-text)' }}>
+                    {farmerQuickSearch ? 'Aramanızla eşleşen çiftçi yok' : 'Henüz çiftçi kaydı yok'}
+                  </p>
                 </button>
               ) : (
-                <div className="grid grid-cols-3 gap-x-2 gap-y-3 my-auto">
-                  {displayFarmers.slice(0, 6).map((f, idx) => {
-                    const nameParts = f.fullName.trim().split(' ');
-                    const first = nameParts[0] || f.fullName;
-                    const last = nameParts.slice(1).join(' ') || (f as any).village || 'Cari';
+                <div className="space-y-2">
+                  {filteredQuickFarmers.slice(0, 5).map((f, idx) => {
+                    const bal = Number(f.balance) || 0;
+                    const hasDebt = bal < -0.01;
                     return (
                       <button
                         type="button"
                         key={f.id}
                         onClick={() => onNavigate('FARMERS')}
-                        aria-label={f.fullName}
-                        className="flex flex-col items-center text-center group cursor-pointer min-w-0"
+                        className="w-full p-2.5 rounded-2xl border flex items-center justify-between gap-2.5 text-left transition-colors hover:opacity-95"
+                        style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)' }}
                       >
-                        <div
-                          className={`w-12 h-12 rounded-full bg-gradient-to-br ${
-                            avatarGradients[idx % avatarGradients.length]
-                          } text-white font-extrabold text-sm flex items-center justify-center shadow-md group-hover:scale-108 transition-transform relative border-2 border-[#eff4f1]`}
-                        >
-                          <span className="text-white">{first.charAt(0).toUpperCase()}</span>
-                          {(f.balance || 0) < -0.01 && (
-                            <span
-                              className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-[#f39264] border-2 border-white"
-                              title="Açık Cari Bakiye"
-                            />
-                          )}
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          <div
+                            className={`w-9 h-9 rounded-full bg-gradient-to-br ${
+                              avatarGradients[idx % avatarGradients.length]
+                            } text-white font-extrabold text-xs flex items-center justify-center shrink-0`}
+                          >
+                            {f.fullName.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-xs font-extrabold truncate" style={{ color: 'var(--mks-text)' }}>
+                              {f.fullName}
+                            </div>
+                            <div className="text-[11px] truncate" style={{ color: 'var(--mks-muted)' }}>
+                              {f.village || 'Merkez'}{f.phoneNumber ? ` · ${f.phoneNumber}` : ''}
+                            </div>
+                          </div>
                         </div>
-                        <span className="text-[11px] font-extrabold text-[#0b211d] leading-tight mt-1.5 truncate w-full">
-                          {first}
-                        </span>
-                        <span className="text-[11px] font-semibold text-[#5c726b] leading-tight truncate w-full">
-                          {last}
+                        <span
+                          className={`shrink-0 px-2.5 py-1 rounded-full text-[11px] font-extrabold font-mono tabular-nums ${
+                            hasDebt
+                              ? 'bg-rose-500/15 text-rose-500'
+                              : 'bg-emerald-500/15 text-emerald-500'
+                          }`}
+                        >
+                          {hasDebt ? formatCurrency(Math.round(Math.abs(bal)), currency) : 'Dengeli'}
                         </span>
                       </button>
                     );
@@ -594,593 +1097,85 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
               )}
             </div>
 
-            {/* Card 2B: "Data 10,4h" -> Finans & Cari Portföy Dağılımı (Exact match to frame_06.jpg) */}
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => onNavigate(isSales ? 'PRESCRIPTIONS' : 'DEBT_TRACKING')}
-              onKeyDown={activateOnKey(() => onNavigate(isSales ? 'PRESCRIPTIONS' : 'DEBT_TRACKING'))}
-              className="md:col-span-4 v22-bento-card p-4 sm:p-5 flex flex-col justify-between cursor-pointer"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-extrabold text-[#5c726b]">Finans & Cari Veri</span>
-                <ArrowUpRight size={16} className="text-[#0b211d]" />
-              </div>
-
-              <div className="my-3">
-                <div className="text-2xl sm:text-3xl font-extrabold text-[#0b211d] tracking-tight font-mono tabular-nums">
-                  {isSales
-                    ? `${prescriptions.length} Adet`
-                    : formatCurrency(Math.round(stats.totalDebt || 0), currency)}
-                </div>
-                <div className="flex items-center justify-between text-[11px] font-bold text-[#5c726b] mt-2">
-                  <span>Kasa: {formatCurrency(Math.round(totalKasaBalance), currency)}</span>
-                  <span>
-                    Stok: {hideCosts ? '•••• ₺' : formatCurrency(Math.round(stats.inventoryValue || 0), currency)}
-                  </span>
-                </div>
-              </div>
-
-              {/* 3-Segment Horizontal Pill Progress Bar + Dots (Exact match to frame_06.jpg) */}
-              <div>
-                <div className="flex items-center gap-1.5 h-2.5 w-full">
-                  <div
-                    className="h-full rounded-full bg-[#116a4e] transition-all duration-700"
-                    style={{ width: `${portfolioTotals.debtPct}%` }}
-                  />
-                  <div
-                    className="h-full rounded-full bg-[#2cc98a] transition-all duration-700"
-                    style={{ width: `${portfolioTotals.stockPct}%` }}
-                  />
-                  <div
-                    className="h-full rounded-full bg-[#f39264] transition-all duration-700"
-                    style={{ width: `${portfolioTotals.cashPct}%` }}
-                  />
-                </div>
-                <div className="flex items-center justify-between mt-2.5 text-[11px] font-extrabold text-[#0b211d]">
-                  <span className="flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#116a4e]" />
-                    %{portfolioTotals.debtPct} Cari
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#2cc98a]" />
-                    %{portfolioTotals.stockPct} Stok
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#f39264]" />
-                    %{portfolioTotals.cashPct} Kasa
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Card 2C: "Impact | Engagement" Vertical Liquid Capsule Bars (Exact match to frame_06.jpg) */}
-            <div className="md:col-span-3 v22-bento-card p-4 sm:p-5 flex flex-col justify-between">
-              <div className="flex items-center justify-between border-b border-black/5 pb-2">
-                <button
-                  onClick={() => setImpactTab('IMPACT')}
-                  className={`text-[11px] font-extrabold transition-colors ${
-                    impactTab === 'IMPACT' ? 'text-[#0b211d]' : 'text-[#5c726b]'
-                  }`}
-                >
-                  Tahsilat
-                </button>
-                <button
-                  onClick={() => setImpactTab('ENGAGEMENT')}
-                  className={`text-[11px] font-extrabold transition-colors ${
-                    impactTab === 'ENGAGEMENT' ? 'text-[#0b211d]' : 'text-[#5c726b]'
-                  }`}
-                >
-                  Büyüme
-                </button>
-              </div>
-
-              <div className="flex items-end justify-around gap-2.5 h-32 pt-4">
-                {/* Capsule 1: Warm Coral-Peach */}
-                <div className="w-8 h-full rounded-full bg-[#f3f6f4] flex flex-col justify-end p-0.5 overflow-hidden">
-                  <div
-                    className="w-full rounded-full v22-bar-anim"
-                    style={{
-                      height: impactTab === 'IMPACT' ? '52%' : '68%',
-                      background: 'linear-gradient(180deg, #f7bda0 0%, #f39264 100%)'
-                    }}
-                  />
-                </div>
-
-                {/* Capsule 2: Tall Emerald Capsule with Floating "+58%" Dark Pill Badge */}
-                <div className="flex flex-col items-center h-full justify-end">
-                  <span className="v22-dark-pill mb-1 px-2 py-0.5 rounded-full bg-[#0b211d] text-white text-[11px] font-extrabold shadow">
-                    {impactTab === 'IMPACT' ? '+58%' : '+84%'}
-                  </span>
-                  <div className="w-8 flex-1 rounded-full bg-[#f3f6f4] flex flex-col justify-end p-0.5 overflow-hidden">
-                    <div
-                      className="w-full rounded-full v22-bar-anim"
-                      style={{
-                        height: impactTab === 'IMPACT' ? '86%' : '92%',
-                        background: 'var(--mks-accent-primary)'
-                      }}
-                    />
-                  </div>
-                </div>
-
-                {/* Capsule 3: Soft Mint / Theme Accent */}
-                <div className="w-8 h-full rounded-full bg-[#f3f6f4] flex flex-col justify-end p-0.5 overflow-hidden">
-                  <div
-                    className="w-full rounded-full v22-bar-anim opacity-75"
-                    style={{
-                      height: impactTab === 'IMPACT' ? '38%' : '56%',
-                      background: 'var(--mks-accent-primary)'
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* 3. BOTTOM 2-COLUMN BENTO ROW (Statistics 49|83 Barcode + Dark Capsule Reminder & Pro Card in frame_06.jpg) */}
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-4 v22-stagger-3">
-            {/* Card 3A: "Statistics 49 | 83" + 32-Tick Barcode + 2 Sub-Cards (Exact match to frame_06.jpg) */}
-            <div className="md:col-span-6 v22-bento-card p-5 flex flex-col justify-between">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-extrabold text-[#0b211d]">Operasyon İstatistiği</h3>
-                <div className="flex items-center bg-[#f3f6f4] rounded-full p-0.5">
-                  <button
-                    onClick={() => setStatsPeriod('WEEKLY')}
-                    className={`px-2.5 py-1 rounded-full text-[11px] font-extrabold transition-all ${
-                      statsPeriod === 'WEEKLY'
-                        ? 'v22-dark-pill bg-[#0b211d] text-white shadow-sm'
-                        : 'text-[#5c726b]'
-                    }`}
-                  >
-                    Haftalık
-                  </button>
-                  <button
-                    onClick={() => setStatsPeriod('MONTHLY')}
-                    className={`px-2.5 py-1 rounded-full text-[11px] font-extrabold transition-all ${
-                      statsPeriod === 'MONTHLY'
-                        ? 'v22-dark-pill bg-[#0b211d] text-white shadow-sm'
-                        : 'text-[#5c726b]'
-                    }`}
-                  >
-                    Aylık
-                  </button>
-                </div>
-              </div>
-
-              {/* Giant Split Odometer Counter: "49 | 83 tasks complete" */}
-              <div className="my-3.5">
-                <div className="flex items-baseline gap-2.5">
-                  <span className="text-3xl sm:text-4xl font-extrabold text-[#0b211d] font-mono tabular-nums tracking-tight">
-                    {String(rollingPrimaryStat).padStart(2, '0')}
-                  </span>
-                  <span className="text-2xl font-light text-[#5c726b]/40">|</span>
-                  <span className="text-3xl sm:text-4xl font-extrabold text-[#0b211d] font-mono tabular-nums tracking-tight">
-                    {String(rollingSecondaryStat).padStart(2, '0')}
-                  </span>
-                  <span className="text-xs font-semibold text-[#5c726b] ml-1">işlem & reçete kaydı</span>
-                </div>
-
-                {/* 32-Segment Vertical Tick Barcode Progress Bar (Exact match to frame_06.jpg) */}
-                <div className="flex items-center gap-[3px] mt-3 h-3">
-                  {Array.from({ length: 32 }).map((_, idx) => {
-                    const filledCount = statsPeriod === 'WEEKLY' ? 20 : 26;
-                    const isFilled = idx < filledCount;
-                    return (
-                      <span
-                        key={idx}
-                        className={`flex-1 h-full rounded-[2px] transition-colors duration-500 ${
-                          isFilled ? 'bg-[#147a58]' : 'bg-[#e2e8e5]'
-                        }`}
-                      />
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* 2 Inner Square Cards ("23 Project complete" & "16 Project in progress" in frame_06.jpg) */}
-              <div className="grid grid-cols-2 gap-3 mt-1">
+            {/* Card B — Günlük Ajanda & Saha Görevleri */}
+            <div className="v22-bento-card p-4 sm:p-5 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-extrabold" style={{ color: 'var(--mks-text)' }}>
+                  Ajanda &amp; Saha Görevleri
+                </h3>
                 <button
                   type="button"
-                  onClick={() => onNavigate('FARMERS')}
-                  className="bg-[#f3f6f4] hover:bg-[#e7f0ec] rounded-2xl p-3.5 flex flex-col items-center justify-center text-center cursor-pointer transition-colors"
+                  onClick={() => onNavigate('REMINDERS')}
+                  className="px-2.5 py-1 min-h-[32px] rounded-xl text-[11px] font-bold border"
+                  style={{ background: 'var(--mks-subcard)', color: 'var(--mks-text)', borderColor: 'var(--mks-card-border)' }}
                 >
-                  <Layers size={20} className="text-[#0b211d] mb-1.5" strokeWidth={1.8} />
-                  <span className="text-lg font-extrabold text-[#0b211d] font-mono tabular-nums">
-                    {rollingCompleted}
-                  </span>
-                  <span className="text-[11px] font-semibold text-[#5c726b]">Kayıtlı Müstahsil</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => onNavigate('INVENTORY')}
-                  className="bg-[#f3f6f4] hover:bg-[#e7f0ec] rounded-2xl p-3.5 flex flex-col items-center justify-center text-center cursor-pointer transition-colors"
-                >
-                  <Copy size={20} className="text-[#147a58] mb-1.5" strokeWidth={1.8} />
-                  <span className="text-lg font-extrabold text-[#0b211d] font-mono tabular-nums">
-                    {rollingInProgress}
-                  </span>
-                  <span className="text-[11px] font-semibold text-[#5c726b]">Aktif Stok Kalemi</span>
+                  Tüm Görevler
                 </button>
               </div>
-            </div>
 
-            {/* Card 3B: Center Stack -> Dark Forest Capsule Reminder + "Unleash Your Potential" MKS AI Card */}
-            <div className="md:col-span-6 flex flex-col gap-4 justify-between">
-              {/* Top: Dark Forest Outer Card Holding Inner White Pill ("Breakthrough Brainstorm 12:45 pm" in frame_06.jpg) */}
-              <div
-                role="button"
-                tabIndex={0}
-                aria-label="Hatırlatıcılar"
-                onClick={() => onNavigate('REMINDERS')}
-                onKeyDown={activateOnKey(() => onNavigate('REMINDERS'))}
-                className="v22-forest-card p-3 rounded-[24px] cursor-pointer group"
-              >
-                <div className="bg-white rounded-full px-4 py-2.5 flex items-center justify-between gap-3 shadow-md">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-8 h-8 rounded-full bg-[#d5f2e5] text-[#116a4e] flex items-center justify-center shrink-0">
-                      <CalendarCheck size={15} />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-extrabold text-[#0b211d] truncate">
-                        {nextReminder ? nextReminder.title : 'Saha Ziyareti & Tahsilat Kontrolü'}
-                      </p>
-                      <p className="text-[11px] font-semibold text-[#5c726b]">
-                        Bugün • {reminders.filter(r => !r.isCompleted).length} aktif görev
-                      </p>
-                    </div>
-                  </div>
-                  <div className="w-7 h-7 rounded-full border border-black/15 flex items-center justify-center text-[#0b211d] group-hover:bg-[#0b211d] group-hover:text-white transition-colors shrink-0">
-                    <ChevronRight size={14} />
-                  </div>
-                </div>
-              </div>
-
-              {/* Bottom: "Unleash Your Potential / Pro" Card -> Zirai AI & MKS Mühendislik (Exact match to frame_06.jpg) */}
-              <div className="v22-bento-card p-4 flex-1 grid grid-cols-12 gap-3.5 items-center">
-                {/* Left Theme-Adaptive Gradient Sub-Card */}
+              {openRemindersList.length === 0 ? (
                 <div
-                  role="button"
-                  tabIndex={0}
-                  aria-label="MKS Pro - Zirai AI"
-                  onClick={() => onNavigate('AI_ASSISTANT')}
-                  onKeyDown={activateOnKey(() => onNavigate('AI_ASSISTANT'))}
-                  className="v22-pro-subcard col-span-5 h-full rounded-2xl p-3.5 flex flex-col justify-between cursor-pointer border border-emerald-400/30"
+                  className="p-4 rounded-2xl border text-center space-y-2.5"
+                  style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)' }}
                 >
-                  <div className="w-7 h-7 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 flex items-center justify-center">
-                    <Zap size={14} className="fill-emerald-400 text-emerald-300" />
-                  </div>
-                  <div className="mt-2">
-                    <div className="text-sm font-extrabold text-white">MKS Pro</div>
-                    <ul className="mt-1.5 space-y-1 text-[11px] font-bold text-emerald-300">
-                      <li className="flex items-center gap-1.5"><span className="text-emerald-400 font-black">✓</span> Zirai AI Teşhis</li>
-                      <li className="flex items-center gap-1.5"><span className="text-emerald-400 font-black">✓</span> TKGM Parsel</li>
-                      <li className="flex items-center gap-1.5"><span className="text-emerald-400 font-black">✓</span> Silo &amp; Dozaj</li>
-                    </ul>
-                  </div>
-                </div>
-
-                {/* Right Text + Mint Pill CTA */}
-                <div className="col-span-7 flex flex-col justify-between h-full py-1">
-                  <div>
-                    <h4 className="text-sm font-extrabold text-white leading-snug">
-                      Zirai Zeka &amp; Saha Gücünü Keşfet
-                    </h4>
-                    <p className="text-[11px] font-medium text-stone-300 mt-1 leading-relaxed">
-                      Yapay zeka destekli reçete, TKGM parsel sorgu ve akıllı stok tahmini.
-                    </p>
-                  </div>
-
-                  {/* Quick Module Pills */}
-                  <div className="flex flex-wrap gap-1.5 mt-3">
+                  <CalendarCheck size={20} className="mx-auto" style={{ color: 'var(--mks-accent-primary)' }} />
+                  <p className="text-xs font-bold" style={{ color: 'var(--mks-text)' }}>
+                    Bugün için bekleyen açık görev yok
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
                     <button
-                      onClick={() => onNavigate('AI_ASSISTANT')}
-                      className="px-3 py-1.5 rounded-full bg-emerald-700 hover:bg-emerald-600 text-white text-[11px] font-extrabold flex items-center gap-1 transition-all shadow-sm"
+                      type="button"
+                      onClick={() => onNavigate('REMINDERS')}
+                      className="min-h-[36px] rounded-xl border text-[11px] font-bold"
+                      style={{ background: 'var(--mks-card)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-text)' }}
                     >
-                      <Sparkles size={12} />
-                      <span>Zirai AI</span>
+                      Ajanda Aç
                     </button>
                     <button
-                      onClick={() => onNavigate('MAP')}
-                      className="px-2.5 py-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white border border-white/15 text-[11px] font-bold transition-all"
+                      type="button"
+                      onClick={() => onNavigate('VISITS')}
+                      className="min-h-[36px] rounded-xl border text-[11px] font-bold"
+                      style={{ background: 'var(--mks-card)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-text)' }}
                     >
-                      TKGM Harita
+                      Tarla Ziyaretleri
                     </button>
                   </div>
                 </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* ==================== RIGHT 4 COLUMNS (November 2026 Week Strip + 3 Visual Cards + Live Feed) ==================== */}
-        <div className="lg:col-span-4 space-y-4 v22-stagger-4">
-          {/* 1. HORIZONTAL 7-DAY CALENDAR STRIP ("November, 2026" in frame_06.jpg) */}
-          <div className="v22-bento-card p-4 sm:p-5">
-            <div className="flex items-center justify-between mb-3.5">
-              <h3 className="text-base font-extrabold text-[#0b211d] tracking-tight">
-                {new Date().toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' })}
-              </h3>
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  aria-label="Önceki - Hatırlatıcılar"
-                  onClick={() => onNavigate('REMINDERS')}
-                  className="w-11 h-11 rounded-full bg-[#f3f6f4] hover:bg-[#e2ece7] flex items-center justify-center text-[#0b211d]"
-                >
-                  <ChevronLeft size={16} />
-                </button>
-                <button
-                  type="button"
-                  aria-label="Sonraki - Hatırlatıcılar"
-                  onClick={() => onNavigate('REMINDERS')}
-                  className="w-11 h-11 rounded-full bg-[#f3f6f4] hover:bg-[#e2ece7] flex items-center justify-center text-[#0b211d]"
-                >
-                  <ChevronRight size={16} />
-                </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-7 gap-1 text-center">
-              {dailyChartData.map((d, idx) => {
-                const isToday = idx === dailyChartData.length - 1;
-                return (
-                  <button
-                    type="button"
-                    key={d.fullDate}
-                    aria-label={`${d.date} ${d.dayNum}`}
-                    onClick={() => onNavigate('REMINDERS')}
-                    className={`py-2 px-1 rounded-2xl flex flex-col items-center cursor-pointer transition-all ${
-                      isToday
-                        ? 'v22-dark-pill bg-[#0b211d] text-white shadow-md scale-105'
-                        : 'hover:bg-[#f3f6f4] text-[#0b211d]'
-                    }`}
-                  >
-                    <span className={`text-[11px] font-bold ${isToday ? 'text-white/75' : 'text-[#5c726b]'}`}>
-                      {d.date}
-                    </span>
-                    <span className="text-xs font-extrabold mt-1 font-mono">{d.dayNum}</span>
-                    <div className="flex items-center gap-0.5 mt-1">
-                      <span
-                        className={`w-1 h-1 rounded-full ${
-                          isToday ? 'bg-[#34d399]' : d.amount > 0 ? 'bg-[#147a58]' : 'bg-black/15'
-                        }`}
-                      />
-                      {d.amount > 0 && (
-                        <span className={`w-1 h-1 rounded-full ${isToday ? 'bg-[#f39264]' : 'bg-[#f39264]'}`} />
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* 2. "Last videos" -> 3 VISUAL PRESCRIPTION / STOCK MINI-CARDS (Exact match to frame_06.jpg) */}
-          <div>
-            <div className="flex items-center justify-between px-1 mb-2.5">
-              <h3 className="text-sm font-extrabold text-[#0b211d]">Son Reçeteler & Satışlar</h3>
-              <button
-                type="button"
-                aria-label="Yeni reçete"
-                title="Yeni reçete"
-                onClick={() => onNavigate(canCreatePrescription ? 'PRESCRIPTION_NEW' : 'PRESCRIPTIONS')}
-                className="v22-surface-pill w-11 h-11 rounded-full flex items-center justify-center"
-              >
-                <Plus size={16} />
-              </button>
-            </div>
-
-            {recentPrescriptions.length === 0 ? (
-              <button
-                type="button"
-                onClick={() => onNavigate(canCreatePrescription ? 'PRESCRIPTION_NEW' : 'PRESCRIPTIONS')}
-                className="w-full v22-bento-card p-5 text-center cursor-pointer hover:border-emerald-500/40 transition-colors space-y-1.5"
-              >
-                <FileText size={20} className="mx-auto text-emerald-500" />
-                <p className="text-xs font-extrabold text-[#0b211d]">Henüz reçete veya satış kaydı yok</p>
-                <p className="text-[11px] text-[#5c726b]">Yeni reçete veya satış oluşturmak için tıklayın</p>
-              </button>
-            ) : (
-              <div className="grid grid-cols-3 gap-2.5">
-                {recentPrescriptions.slice(0, 3).map((p: any, idx: number) => {
-                  const fName = farmerNameMap[p.farmerId] || 'Peşin Müşteri';
-                  const amt = Math.abs(Number(p.totalAmount) || 0);
-                  const orbColors = [
-                    'radial-gradient(circle at 35% 30%, #6ee7b7, #0f766e 70%, #064e3b)',
-                    'radial-gradient(circle at 35% 30%, #93c5fd, #1d4ed8 70%, #1e3a8a)',
-                    'radial-gradient(circle at 35% 30%, #fdba74, #c2410c 70%, #7c2d12)'
-                  ];
-                  return (
-                    <div
-                      key={p.id}
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`${fName} - ${formatCurrency(Math.round(amt), currency)}`}
-                      onClick={() => onNavigate('PRESCRIPTIONS')}
-                      onKeyDown={activateOnKey(() => onNavigate('PRESCRIPTIONS'))}
-                      className="v22-bento-card p-2.5 flex flex-col justify-between cursor-pointer group"
+              ) : (
+                <div className="space-y-2">
+                  {openRemindersList.map(rem => (
+                    <button
+                      type="button"
+                      key={rem.id}
+                      onClick={() => onNavigate('REMINDERS')}
+                      className="w-full p-2.5 rounded-2xl border flex items-center justify-between gap-2.5 text-left transition-colors hover:opacity-95"
+                      style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)' }}
                     >
-                      <div className="h-16 rounded-xl bg-[#f3f6f4] relative flex items-center justify-center overflow-hidden">
+                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
                         <div
-                          className="w-10 h-10 rounded-full shadow-md group-hover:scale-110 transition-transform"
-                          style={{ background: orbColors[idx % 3] }}
-                        />
-                        <span className="v22-dark-pill absolute bottom-1 right-1 px-1.5 py-0.5 rounded-md bg-[#0b211d] text-white text-[11px] font-extrabold font-mono">
-                          {formatCurrency(Math.round(amt), currency)}
-                        </span>
-                      </div>
-
-                      <div className="mt-2">
-                        <p className="text-[11px] font-extrabold text-[#0b211d] leading-tight line-clamp-2">
-                          {fName}
-                        </p>
-                        <p className="text-[11px] font-semibold text-[#5c726b] truncate mt-0.5">
-                          {p.crop || 'Zirai Reçete'}
-                        </p>
-                      </div>
-
-                      <div className="flex items-center justify-between mt-2 pt-1.5 border-t border-black/5 text-[11px] font-bold text-[#5c726b]">
-                        <span>{p.priceType === 'CASH' ? 'Peşin' : 'Vadeli'}</span>
-                        <span className="flex items-center gap-0.5">
-                          <Eye size={10} /> Detay
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* 3. "Notifications / Focus this week" FEED CARD (Exact match to frame_06.jpg & frame_08.jpg) */}
-          <div className="v22-bento-card p-4 sm:p-5">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-extrabold text-[#0b211d]">Canlı Akış & Analiz</h3>
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => onNavigate('RECENT_TRANSACTIONS')}
-                  className="w-11 h-11 rounded-full bg-[#0b211d] text-white flex items-center justify-center"
-                  title="Tüm İşlemler"
-                  aria-label="Tüm İşlemler"
-                >
-                  <ArrowUpRight size={16} />
-                </button>
-              </div>
-            </div>
-
-            {/* Sub-Tabs: Overview | 7 Gün Ciro (frame_08 Focus) | Hava Durumu */}
-            <div className="flex items-center gap-4 border-b border-black/5 pb-2 mb-3 text-xs font-extrabold">
-              <button
-                onClick={() => setFeedTab('OVERVIEW')}
-                className={`pb-1 transition-all ${
-                  feedTab === 'OVERVIEW'
-                    ? 'text-white border-b-2 border-emerald-400 font-extrabold'
-                    : 'text-stone-400 hover:text-stone-200'
-                }`}
-              >
-                Son İşlemler
-              </button>
-              <button
-                onClick={() => setFeedTab('FOCUS')}
-                className={`pb-1 transition-all ${
-                  feedTab === 'FOCUS'
-                    ? 'text-white border-b-2 border-emerald-400 font-extrabold'
-                    : 'text-stone-400 hover:text-stone-200'
-                }`}
-              >
-                7 Günlük Ciro
-              </button>
-              <button
-                onClick={() => setFeedTab('WEATHER')}
-                className={`pb-1 transition-all ${
-                  feedTab === 'WEATHER'
-                    ? 'text-white border-b-2 border-emerald-400 font-extrabold'
-                    : 'text-stone-400 hover:text-stone-200'
-                }`}
-              >
-                Saha Hava
-              </button>
-            </div>
-
-            {feedTab === 'OVERVIEW' && (
-              <div className="space-y-2.5">
-                {[
-                  {
-                    title: `${farmers.length} Aktif Müstahsil Cari Hesabı`,
-                    sub: `Toplam Alacak: ${formatCurrency(Math.round(stats.totalDebt || 0), currency)}`,
-                    time: 'Canlı Mutabakat',
-                    action: 'FARMERS',
-                    btn: 'Cari Aç'
-                  },
-                  {
-                    title: `${activeInventoryList.length} Kalem Zirai İlaç & Gübre Stoğu`,
-                    sub: `Depo Değeri: ${hideCosts ? '•••• ₺' : formatCurrency(Math.round(stats.inventoryValue || 0), currency)}`,
-                    time: 'Stok Dengesi',
-                    action: 'INVENTORY',
-                    btn: 'Depo'
-                  },
-                  {
-                    title: `${suppliers.length} Tedarikçi & Firma Hesabı`,
-                    sub: `Borç Bakiyesi: ${formatCurrency(Math.round(totalSupplierDebt || 0), currency)}`,
-                    time: 'Tedarik Merkezi',
-                    action: 'SUPPLIERS',
-                    btn: 'Detay'
-                  }
-                ].map((row, idx) => (
-                  <button
-                    type="button"
-                    key={idx}
-                    onClick={() => onNavigate(row.action)}
-                    className="w-full text-left p-2.5 rounded-2xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 flex items-center justify-between gap-2.5 cursor-pointer transition-colors"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div
-                        className={`w-9 h-9 rounded-full bg-gradient-to-br ${
-                          avatarGradients[idx % avatarGradients.length]
-                        } text-white font-extrabold text-xs flex items-center justify-center shrink-0 shadow-sm`}
-                      >
-                        {idx + 1}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-xs font-extrabold text-white truncate">{row.title}</p>
-                        <p className="text-[11px] font-semibold text-stone-300 truncate">{row.sub}</p>
-                      </div>
-                    </div>
-                    <div className="flex flex-col items-end shrink-0">
-                      <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 text-[11px] font-extrabold shadow-sm">
-                        {row.btn}
-                      </span>
-                      <span className="text-[11px] font-semibold text-stone-400 mt-1">{row.time}</span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Frame_08.jpg "Focus this week" 7-Capsule Vertical Chart */}
-            {feedTab === 'FOCUS' && (
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-bold text-stone-300">Haftalık Toplam Hacim</span>
-                  <span className="text-sm font-extrabold text-white font-mono">
-                    {formatCurrency(Math.round(sevenDayTotalSales), currency)}
-                  </span>
-                </div>
-                <div className="grid grid-cols-7 gap-2 h-36 pt-3 items-end">
-                  {dailyChartData.map((d, i) => {
-                    const maxAmt = Math.max(...dailyChartData.map(x => x.amount), 1);
-                    const pct = d.amount > 0 ? Math.max(22, Math.round((d.amount / maxAmt) * 100)) : 28 + ((i * 13) % 45);
-                    const isPeak = i === 2 || i === dailyChartData.length - 1;
-                    return (
-                      <div key={d.fullDate} className="flex flex-col items-center h-full justify-end">
-                        <div className="w-6 flex-1 rounded-full bg-[#f3f6f4] flex flex-col justify-end p-0.5 overflow-hidden">
-                          <div
-                            className="w-full rounded-full v22-bar-anim"
-                            style={{
-                              height: `${pct}%`,
-                              background: isPeak ? 'var(--mks-accent-primary)' : '#f39264'
-                            }}
-                          />
+                          className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0"
+                          style={{ background: 'var(--mks-accent-soft)', color: 'var(--mks-accent-soft-text)' }}
+                        >
+                          <CalendarCheck size={14} />
                         </div>
-                        <span className="text-[11px] font-bold text-[#5c726b] mt-1.5">{d.date}</span>
+                        <div className="min-w-0">
+                          <div className="text-xs font-extrabold truncate" style={{ color: 'var(--mks-text)' }}>
+                            {rem.title}
+                          </div>
+                          <div className="text-[11px] truncate" style={{ color: 'var(--mks-muted)' }}>
+                            {rem.date ? new Date(rem.date).toLocaleDateString('tr-TR') : 'Planlı Görev'}
+                          </div>
+                        </div>
                       </div>
-                    );
-                  })}
+                      <ChevronRight size={14} className="shrink-0" style={{ color: 'var(--mks-muted)' }} />
+                    </button>
+                  ))}
                 </div>
-              </div>
-            )}
-
-            {feedTab === 'WEATHER' && (
-              <div className="pt-1">
-                <WeatherWidget />
-              </div>
-            )}
+              )}
+            </div>
           </div>
-        </div>
+        </section>
       </div>
-      )}
 
       {/* ==================== QUICK PURCHASE MODAL ==================== */}
       {isPurchaseModalOpen && (
@@ -1395,10 +1390,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 </div>
                 <button
                   type="submit"
-                  disabled={!selectedSupplierId || purchaseItems.length === 0}
+                  disabled={isSubmittingPurchase || !selectedSupplierId || purchaseItems.length === 0}
                   className="v22-dark-pill w-full bg-[#0b211d] text-white py-3.5 rounded-full font-extrabold text-xs uppercase tracking-wider shadow-lg active:scale-[0.98] transition-all disabled:opacity-40"
                 >
-                  {t('dashboard.save_purchase')}
+                  {isSubmittingPurchase ? 'Kaydediliyor...' : t('dashboard.save_purchase')}
                 </button>
               </div>
             </form>
@@ -1461,7 +1456,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                   <Users size={20} />
                 </div>
                 <div>
-                  <h3 className="text-base font-extrabold text-[#0b211d]">Hızlı Çiftçi (Müstahsil) Ekle</h3>
+                  <h3 className="text-base font-extrabold text-[#0b211d]">Hızlı Çiftçi Ekle</h3>
                   <p className="text-[11px] font-semibold text-[#5c726b]">Yeni cari hesap ve WhatsApp iletişim kartı</p>
                 </div>
               </div>
@@ -1542,7 +1537,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                   }}
                   className="sm:flex-1 py-3 px-4 rounded-xl bg-[#f3f6f4] text-[#0b211d] font-bold text-xs border border-black/10"
                 >
-                  Tüm Müstahsiller Ekranı
+                  Tüm Çiftçiler Ekranı
                 </button>
                 <button
                   type="submit"

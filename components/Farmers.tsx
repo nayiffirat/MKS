@@ -7,10 +7,11 @@ import { useAppViewModel } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { ContactService, ContactInfo } from '../services/contact';
 import { Farmer, Field, VisitLog, Prescription, ManualDebt, Payment, Pesticide, CardSettlementOption } from '../types';
-import { COMMON_CROPS, CROP_PESTICIDE_COSTS, DEFAULT_PESTICIDE_COST, CROP_AGRONOMY_INTEL, DEFAULT_AGRONOMY } from '../constants';
-import { Search, Phone, MessageCircle, MapPin, Wheat, ChevronLeft, ChevronRight, Contact, Loader2, User, Ruler, FileText, Calendar, Navigation, Plus, X, ArrowLeft, Edit2, Trash2, CheckSquare, Square, Check, FlaskConical, Clock, ImageIcon, Upload, AlertCircle, MessageSquare, Share2, Save, Download, FileJson, RefreshCw, RefreshCcw, Wallet, History, CreditCard, TrendingDown, TrendingUp as TrendingUpIcon, Send, Copy, ClipboardList, AlertTriangle, Sprout, Info, Scale, ShieldAlert, ShieldCheck, Hammer, ClipboardCheck, CheckCircle2, Satellite, Megaphone, Split } from 'lucide-react';
-import { renderWhatsAppTemplate, normalizeWaPhone, DEFAULT_WHATSAPP_TEMPLATES } from '../utils/whatsappTemplates';
+import { Search, Phone, MessageCircle, MapPin, Wheat, ChevronLeft, ChevronRight, Contact, Loader2, User, Users, FileText, Calendar, Navigation, Plus, X, ArrowLeft, Edit2, Trash2, Check, FlaskConical, Clock, ImageIcon, RefreshCw, RefreshCcw, Wallet, History, CreditCard, TrendingDown, TrendingUp as TrendingUpIcon, Send, Copy, ClipboardList, Scale, ShieldCheck, Satellite, Megaphone, Split, Download } from 'lucide-react';
+import { renderWhatsAppTemplate, normalizeWaPhone, DEFAULT_WHATSAPP_TEMPLATES, buildWaUrl } from '../utils/whatsappTemplates';
+import { parseTrDecimal } from '../utils/currency';
 import { formatCurrency, getCurrencySymbol } from '../utils/currency';
+import { getLocalDateString } from '../utils/dateUtils';
 import {
   computeFarmerLedgerTotals,
   computeFifoUnpaidDebtAgeDays,
@@ -78,19 +79,15 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
     updateFarmer, 
     softDeleteFarmer, 
     userProfile, 
-    updateUserProfile, 
-    updateVisit, 
     softDeleteVisit, 
     showToast, 
     hapticFeedback, 
     activeTeamMember,
     teamMembers,
     farmerLabel,
-    farmerPluralLabel,
     prescriptionLabel,
     inventory,
     addPrescription,
-    togglePrescriptionStatus,
     softDeletePrescription,
     refreshStats,
     t
@@ -101,6 +98,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const canCreateFarmer = canEditFarmer;
   const [farmers, setFarmers] = useState<Farmer[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [listFilter, setListFilter] = useState<'ALL' | 'DEBT' | 'CREDIT' | 'ZERO'>('ALL');
   const [selectedFarmer, setSelectedFarmer] = useState<Farmer | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   
@@ -195,7 +193,6 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const [importPreviewList, setImportPreviewList] = useState<TempContact[]>([]);
   const [selectedImportIds, setSelectedImportIds] = useState<Set<string>>(new Set());
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
 
   // Add/Edit Farmer Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -224,8 +221,8 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       dueDate: string;
       cardOption: CardSettlementOption;
   }[]>([
-      { id: 'fsp-1', method: 'CASH', amount: '', accountId: '', dueDate: new Date().toISOString().split('T')[0], cardOption: 'UNBLOCKED' },
-      { id: 'fsp-2', method: 'CARD', amount: '', accountId: '', dueDate: new Date().toISOString().split('T')[0], cardOption: 'DAYS_30' },
+      { id: 'fsp-1', method: 'CASH', amount: '', accountId: '', dueDate: getLocalDateString(), cardOption: 'UNBLOCKED' },
+      { id: 'fsp-2', method: 'CARD', amount: '', accountId: '', dueDate: getLocalDateString(), cardOption: 'DAYS_30' },
   ]);
   const [isAnnouncementModalOpen, setIsAnnouncementModalOpen] = useState(false);
   const [announceVillage, setAnnounceVillage] = useState('ALL');
@@ -238,10 +235,10 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
 
   const tabs = useMemo(() => {
     const allTabs = [
-        { id: 'GENERAL', label: 'Genel Bilgiler', icon: User },
-        { id: 'VISITS', label: 'Reçeteler', icon: ClipboardList },
+        { id: 'DEBT', label: 'Borç / Tahsilat', icon: Wallet },
         { id: 'PRESCRIPTIONS', label: prescriptionLabel, icon: FileText },
-        { id: 'DEBT', label: 'Borç / Tahsilat', icon: Wallet }
+        { id: 'VISITS', label: 'Reçeteler', icon: ClipboardList },
+        { id: 'GENERAL', label: 'Genel Bilgiler', icon: User }
     ];
     
     if (isSales) {
@@ -257,7 +254,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CARD' | 'CHECK' | 'TEDYE'>('CASH');
   const [cardOption, setCardOption] = useState<'UNBLOCKED' | 'DAYS_15' | 'DAYS_30' | 'DAYS_45'>('UNBLOCKED');
   const [commissionRate, setCommissionRate] = useState('4');
-  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [paymentDate, setPaymentDate] = useState(getLocalDateString());
   const [selectedAccountId, setSelectedAccountId] = useState('');
   const [isSavingPayment, setIsSavingPayment] = useState(false);
   const isSavingPaymentRef = useRef(false);
@@ -269,7 +266,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const [editingManualDebt, setEditingManualDebt] = useState<ManualDebt | null>(null);
   const [debtAmount, setDebtAmount] = useState('');
   const [debtNote, setDebtNote] = useState('');
-  const [debtDate, setDebtDate] = useState(new Date().toISOString().split('T')[0]);
+  const [debtDate, setDebtDate] = useState(getLocalDateString());
   const [isSavingDebt, setIsSavingDebt] = useState(false);
   const isSavingDebtRef = useRef(false);
 
@@ -604,36 +601,34 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       
       farmerManualDebts.forEach(d => {
           if (new Date(d.date).getFullYear() < selectedYear && !d.id.startsWith('turnover-')) {
-              balance -= d.amount;
+              balance -= (Number(d.amount) || 0);
           }
       });
       
       farmerPayments.forEach(p => {
           if (!bouncedRelatedIds.has(p.id) && new Date(p.date).getFullYear() < selectedYear) {
-              balance += p.amount;
+              balance += (Number(p.amount) || 0);
           }
       });
 
       getIndependentFarmerMyPayments(myPayments, selectedFarmer?.id).forEach(p => {
           if (new Date(p.date).getFullYear() < selectedYear) {
-              balance += p.amount;
+              balance += (Number(p.amount) || 0);
           }
       });
       
       return balance;
   }, [farmerPrescriptions, farmerManualDebts, farmerPayments, myPayments, bouncedRelatedIds, selectedYear, selectedFarmer]);
 
-  const yearTotalPaid = useMemo(() => filteredPayments.reduce((acc, p) => acc + p.amount, 0), [filteredPayments]);
+  const yearTotalPaid = useMemo(() => filteredPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0), [filteredPayments]);
   const yearTotalDebt = useMemo(() => 
     filteredPrescriptions.filter(p => p.priceType !== 'CASH').reduce((acc, p) => {
         const amt = Number(p.totalAmount) || 0;
         const isReturn = p.type === 'RETURN' || amt < 0;
         return acc + (isReturn ? -Math.abs(amt) : Math.abs(amt));
     }, 0) + 
-    filteredManualDebts.filter(d => !d.id.startsWith('turnover-')).reduce((acc, d) => acc + d.amount, 0),
+    filteredManualDebts.filter(d => !d.id.startsWith('turnover-')).reduce((acc, d) => acc + (Number(d.amount) || 0), 0),
   [filteredPrescriptions, filteredManualDebts]);
-
-  const yearBalance = openingBalance + yearTotalPaid - yearTotalDebt;
 
   // Overall totals via single source of truth ledger
   const selectedFarmerLedger = useMemo(() => computeFarmerLedgerTotals({
@@ -699,7 +694,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       
       text += `\nGeçmiş olsun.\n${selectedPrescription.engineerName}`;
       
-      const url = `https://wa.me/${selectedFarmer.phoneNumber.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`;
+      const url = buildWaUrl(selectedFarmer.phoneNumber, text) || `https://wa.me/?text=${encodeURIComponent(text)}`;
       window.open(url, '_blank');
   };
 
@@ -834,6 +829,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   };
 
   const confirmBulkImport = async () => {
+      if (isImporting) return;
       const toAdd = importPreviewList.filter(c => selectedImportIds.has(c.id)).map(c => ({ 
           fullName: c.fullName, 
           phoneNumber: c.phoneNumber, 
@@ -842,13 +838,16 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       }));
       if (toAdd.length > 0) {
           setIsImporting(true);
-          await bulkAddFarmers(toAdd);
-          await loadFarmers();
-          setIsImportModalOpen(false);
-          setImportPreviewList([]);
-          showToast(`${toAdd.length} çiftçi eklendi.`, "success");
+          try {
+              await bulkAddFarmers(toAdd);
+              await loadFarmers();
+              setIsImportModalOpen(false);
+              setImportPreviewList([]);
+              showToast(`${toAdd.length} çiftçi eklendi.`, "success");
+          } finally {
+              setIsImporting(false);
+          }
       }
-      setIsImporting(false);
   };
 
   const toggleSelectImport = (contact: TempContact) => {
@@ -860,6 +859,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
 
   const handleSaveFarmer = async (e: React.FormEvent) => {
       e.preventDefault();
+      if (isSavingFarmer) return;
       const tcCheck = validateTcOrVkn(editFarmerData.tcNo);
       if (!tcCheck.isValid) {
           showToast(tcCheck.message, 'error');
@@ -868,7 +868,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       setIsSavingFarmer(true);
       try {
           const parsedCreditLimit = editFarmerData.creditLimit !== undefined && String(editFarmerData.creditLimit).trim() !== ''
-              ? Number(editFarmerData.creditLimit) || 0
+              ? parseTrDecimal(editFarmerData.creditLimit)
               : undefined;
 
           const farmerData = { 
@@ -880,7 +880,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
               riskScoreOverride: (editFarmerData.riskScoreOverride || undefined) as Farmer['riskScoreOverride'],
               fields: (editFarmerData.fields || []).map((f: any) => ({
                   ...f,
-                  size: Number(f.size) || 0,
+                  size: parseTrDecimal(f.size),
                   plantingDate: f.plantingDate || undefined,
                   currentStage: f.currentStage || undefined
               }))
@@ -929,7 +929,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           riskScoreOverride: selectedFarmer.riskScoreOverride || '',
           fields: (selectedFarmer.fields || []).map(f => ({ 
               ...f, 
-              size: f.size.toString(),
+              size: String(f.size ?? ''),
               plantingDate: f.plantingDate || '',
               currentStage: f.currentStage || ''
           }))
@@ -977,8 +977,8 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
               setIsPaymentModalOpen(false);
               setIsFarmerSplitPayment(false);
               setFarmerSplitRows([
-                  { id: 'fsp-1', method: 'CASH', amount: '', accountId: '', dueDate: new Date().toISOString().split('T')[0], cardOption: 'UNBLOCKED' },
-                  { id: 'fsp-2', method: 'CARD', amount: '', accountId: '', dueDate: new Date().toISOString().split('T')[0], cardOption: 'DAYS_30' },
+                  { id: 'fsp-1', method: 'CASH', amount: '', accountId: '', dueDate: getLocalDateString(), cardOption: 'UNBLOCKED' },
+                  { id: 'fsp-2', method: 'CARD', amount: '', accountId: '', dueDate: getLocalDateString(), cardOption: 'DAYS_30' },
               ]);
               setPaymentNote('');
               setPaymentCrop('');
@@ -1038,7 +1038,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           setPaymentMethod('CASH');
           setCardOption('UNBLOCKED');
           setCommissionRate('4');
-          setPaymentDate(new Date().toISOString().split('T')[0]);
+          setPaymentDate(getLocalDateString());
           setSelectedAccountId('');
           await loadFarmerDetails();
       } catch (e) {
@@ -1102,7 +1102,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
               isInventoryProcessed: false
           };
           
-          const id = await addPrescription(prescriptionData);
+          await addPrescription(prescriptionData);
           
           showToast('İade başarıyla kaydedildi', 'success');
           hapticFeedback('success');
@@ -1154,33 +1154,33 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           container.style.left = '-9999px';
           container.style.top = '0';
           container.innerHTML = `
-              <div id="receipt-print-${payment.id}" style="width: 420px; padding: 40px; background: white; color: #1c1917; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+              <div id="receipt-print-${escapeHtml(payment.id)}" style="width: 420px; padding: 40px; background: white; color: #1c1917; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
                   <div style="text-align: center; margin-bottom: 24px;">
-                      <h2 style="margin: 0; font-size: 24px; font-weight: 900; color: #064e3b; text-transform: uppercase;">${userProfile?.companyName || 'ZİRAİ OTOMASYON'}</h2>
+                      <h2 style="margin: 0; font-size: 24px; font-weight: 900; color: #064e3b; text-transform: uppercase;">${escapeHtml(userProfile?.companyName || 'ZİRAİ OTOMASYON')}</h2>
                       <p style="margin: 5px 0 0; font-size: 13px; font-weight: 700; color: #57534e; letter-spacing: 2px;">TAHSİLAT DEKONTU</p>
                   </div>
                   <div style="border-top: 2px dashed #d6d3d1; margin: 16px 0;"></div>
                   <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 14px;">
                       <span style="color: #78716c; font-weight: 600;">Tarih:</span>
-                      <strong style="color: #292524;">${dateStr}</strong>
+                      <strong style="color: #292524;">${escapeHtml(dateStr)}</strong>
                   </div>
                   <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 14px;">
                       <span style="color: #78716c; font-weight: 600;">Müşteri:</span>
-                      <strong style="color: #292524;">${farmerName}</strong>
+                      <strong style="color: #292524;">${escapeHtml(farmerName)}</strong>
                   </div>
                   <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 14px;">
                       <span style="color: #78716c; font-weight: 600;">Ödeme Yöntemi:</span>
-                      <strong style="color: #292524;">${paymentTypeStr}</strong>
+                      <strong style="color: #292524;">${escapeHtml(paymentTypeStr)}</strong>
                   </div>
                   ${payment.dueDate ? `
                   <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 14px;">
                       <span style="color: #78716c; font-weight: 600;">Vade Tarihi:</span>
-                      <strong style="color: #292524;">${new Date(payment.dueDate).toLocaleDateString('tr-TR')}</strong>
+                      <strong style="color: #292524;">${escapeHtml(new Date(payment.dueDate).toLocaleDateString('tr-TR'))}</strong>
                   </div>` : ''}
                   ${payment.note ? `
                   <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 14px;">
                       <span style="color: #78716c; font-weight: 600;">Açıklama:</span>
-                      <strong style="color: #292524;">${payment.note}</strong>
+                      <strong style="color: #292524;">${escapeHtml(payment.note)}</strong>
                   </div>` : ''}
                   <div style="background: #f5f5f4; border: 1px solid #e7e5e4; border-radius: 12px; padding: 14px 16px; margin: 18px 0;">
                       <div style="display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px;">
@@ -1200,31 +1200,33 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                       <div style="font-size: 11px; font-weight: 600; color: #78716c;">
                           Ödemeniz cari hesabınıza işlenmiştir.<br/>Bereketli sezonlar dileriz.
                       </div>
-                      <div style="border: 2px solid ${userProfile?.stampColor || '#1d4ed8'}; border-radius: 6px; padding: 6px 10px; transform: rotate(-2.5deg); color: ${userProfile?.stampColor || '#1d4ed8'}; font-size: 8px; text-align: center; max-width: 190px;">
-                          <div style="font-weight: 900; text-transform: uppercase; border-bottom: 1px solid ${userProfile?.stampColor || '#1d4ed8'}; padding-bottom: 2px; margin-bottom: 2px; font-size: 8.5px;">
-                              ${(userProfile?.stampTitle || userProfile?.companyName || 'ZİRAİ OTOMASYON').toUpperCase()}
+                      <div style="border: 2px solid ${/^#[0-9a-fA-F]{3,8}$/.test(String(userProfile?.stampColor || '').trim()) ? String(userProfile?.stampColor).trim() : '#1d4ed8'}; border-radius: 6px; padding: 6px 10px; transform: rotate(-2.5deg); color: ${/^#[0-9a-fA-F]{3,8}$/.test(String(userProfile?.stampColor || '').trim()) ? String(userProfile?.stampColor).trim() : '#1d4ed8'}; font-size: 8px; text-align: center; max-width: 190px;">
+                          <div style="font-weight: 900; text-transform: uppercase; border-bottom: 1px solid ${/^#[0-9a-fA-F]{3,8}$/.test(String(userProfile?.stampColor || '').trim()) ? String(userProfile?.stampColor).trim() : '#1d4ed8'}; padding-bottom: 2px; margin-bottom: 2px; font-size: 8.5px;">
+                              ${escapeHtml((userProfile?.stampTitle || userProfile?.companyName || 'ZİRAİ OTOMASYON').toUpperCase())}
                           </div>
                           <div style="font-weight: 800; font-size: 8px; margin-bottom: 1px;">
-                              ${userProfile?.stampSubTitle || userProfile?.fullName || 'Ziraat Mühendisi'}
+                              ${escapeHtml(userProfile?.stampSubTitle || userProfile?.fullName || 'Ziraat Mühendisi')}
                           </div>
                           <div style="font-size: 7.5px; opacity: 0.9;">
-                              ${userProfile?.stampTaxInfo || 'Resmi Dijital Onaylı Kaşe'}
+                              ${escapeHtml(userProfile?.stampTaxInfo || 'Resmi Dijital Onaylı Kaşe')}
                           </div>
                       </div>
                   </div>
               </div>
           `;
           document.body.appendChild(container);
-          
-          const elementToCapture = container.firstElementChild as HTMLElement;
-          const canvas = await renderElementToCanvas(elementToCapture, {
-              scale: 3, 
-              backgroundColor: '#ffffff',
-              useCORS: true,
-              logging: false
-          });
-          
-          document.body.removeChild(container);
+          let canvas: HTMLCanvasElement;
+          try {
+              const elementToCapture = container.firstElementChild as HTMLElement;
+              canvas = await renderElementToCanvas(elementToCapture, {
+                  scale: 3, 
+                  backgroundColor: '#ffffff',
+                  useCORS: true,
+                  logging: false
+              });
+          } finally {
+              if (container.parentNode) container.parentNode.removeChild(container);
+          }
           
           const pdf = await createMultiPagePdf(canvas);
           const pdfBlob = pdf.output('blob');
@@ -1271,8 +1273,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           if (navigator.canShare && navigator.canShare(shareData)) {
               try {
                   await navigator.share(shareData);
-              } catch (shareError) {
-                  console.log('Share canceled or failed', shareError);
+              } catch {
                   fallbackToWhatsApp(selectedFarmer?.phoneNumber, message);
               }
           } else {
@@ -1317,7 +1318,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           setEditingManualDebt(null);
           setDebtAmount('');
           setDebtNote('');
-          setDebtDate(new Date().toISOString().split('T')[0]);
+          setDebtDate(getLocalDateString());
           await loadFarmerDetails();
       } catch (e) {
           showToast('İşlem başarısız', 'error');
@@ -1331,7 +1332,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       setEditingManualDebt(debt);
       setDebtAmount(debt.amount.toString());
       setDebtNote(debt.note || '');
-      setDebtDate(new Date(debt.date).toISOString().split('T')[0]);
+      setDebtDate(getLocalDateString(debt.date));
       setIsManualDebtModalOpen(true);
   };
 
@@ -1370,7 +1371,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
       text += `Toplam Ödeme: *${formatCurrency(reportTotalPaid, userProfile?.currency || 'TRY')}*\n`;
       text += `*KALAN BAKİYE: ${formatCurrency(Math.abs(reportBalance), userProfile?.currency || 'TRY')} ${reportBalance >= 0 ? 'ALACAK' : 'BORÇ'}*\n`;
       
-      const url = `https://wa.me/${selectedFarmer.phoneNumber.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`;
+      const url = buildWaUrl(selectedFarmer.phoneNumber, text) || `https://wa.me/?text=${encodeURIComponent(text)}`;
       window.open(url, '_blank');
   };
 
@@ -1573,19 +1574,23 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
               </div>
           `;
           document.body.appendChild(container);
-          const canvas = await renderElementToCanvas(container.firstElementChild as HTMLElement, {
-              scale: 3,
-              backgroundColor: '#ffffff',
-              useCORS: true,
-              logging: false,
-          });
-          document.body.removeChild(container);
+          let canvas: HTMLCanvasElement;
+          try {
+              canvas = await renderElementToCanvas(container.firstElementChild as HTMLElement, {
+                  scale: 3,
+                  backgroundColor: '#ffffff',
+                  useCORS: true,
+                  logging: false,
+              });
+          } finally {
+              if (container.parentNode) container.parentNode.removeChild(container);
+          }
           const pdf = await createMultiPagePdf(canvas);
           const charMap: {[key: string]: string} = {'Ğ':'G','ğ':'g','Ü':'U','ü':'u','Ş':'S','ş':'s','İ':'I','ı':'i','Ö':'O','ö':'o','Ç':'C','ç':'c'};
           const safeName = selectedFarmer.fullName
               .replace(/[ĞğÜüŞşİıÖöÇç]/g, m => charMap[m])
               .replace(/[^a-zA-Z0-9]/g, '_');
-          pdf.save(`${safeName}_Cari_Mutabakat_${new Date().toISOString().split('T')[0]}.pdf`);
+          pdf.save(`${safeName}_Cari_Mutabakat_${getLocalDateString()}.pdf`);
           showToast('Cari Mutabakat Mektubu (PDF) indirildi', 'success');
       } catch (err) {
           console.error('Farmer reconciliation PDF error:', err);
@@ -1701,9 +1706,54 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
     }).sort((a, b) => a.fullName.localeCompare(b.fullName, 'tr-TR'));
   }, [farmers, payments, myPayments, prescriptions, manualDebts]);
 
-  const filteredFarmers = farmersWithDebt.filter(f => 
-    turkishMatchesAny([f.fullName, f.village, f.tcNo, f.phoneNumber], searchTerm)
-  );
+  const farmerPortfolioSummary = useMemo(() => {
+    let debtorCount = 0;
+    let creditCount = 0;
+    let zeroCount = 0;
+    let totalReceivable = 0;
+    let totalFieldsCount = 0;
+    let totalDekar = 0;
+
+    for (const f of farmersWithDebt) {
+      const bal = Number(f.overallBalance) || 0;
+      if (bal < -0.01) {
+        debtorCount += 1;
+        totalReceivable += Math.abs(bal);
+      } else if (bal > 0.01) {
+        creditCount += 1;
+      } else {
+        zeroCount += 1;
+      }
+      const fFields = f.fields || [];
+      totalFieldsCount += fFields.length;
+      for (const fl of fFields) {
+        totalDekar += Number(fl.size) || 0;
+      }
+    }
+
+    return {
+      totalCount: farmersWithDebt.length,
+      debtorCount,
+      creditCount,
+      zeroCount,
+      totalReceivable,
+      totalFieldsCount,
+      totalDekar: Math.round(totalDekar * 10) / 10
+    };
+  }, [farmersWithDebt]);
+
+  const filteredFarmers = useMemo(() => {
+    return farmersWithDebt.filter(f => {
+      if (!turkishMatchesAny([f.fullName, f.village, f.tcNo, f.phoneNumber], searchTerm)) {
+        return false;
+      }
+      const bal = Number(f.overallBalance) || 0;
+      if (listFilter === 'DEBT') return bal < -0.01;
+      if (listFilter === 'CREDIT') return bal > 0.01;
+      if (listFilter === 'ZERO') return Math.abs(bal) <= 0.01;
+      return true;
+    });
+  }, [farmersWithDebt, searchTerm, listFilter]);
 
   const downloadFarmersPdf = async () => {
       setIsGeneratingReport(true);
@@ -1759,14 +1809,16 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           
           container.innerHTML = tableHtml;
           document.body.appendChild(container);
-          
-          const canvas = await renderElementToCanvas(container, {
-              scale: 3,
-              backgroundColor: '#ffffff',
-              logging: false
-          });
-          
-          document.body.removeChild(container);
+          let canvas: HTMLCanvasElement;
+          try {
+              canvas = await renderElementToCanvas(container, {
+                  scale: 3,
+                  backgroundColor: '#ffffff',
+                  logging: false
+              });
+          } finally {
+              if (container.parentNode) container.parentNode.removeChild(container);
+          }
           
           const pdf = await createMultiPagePdf(canvas);
           pdf.save('Ciftci_Cari_Listesi.pdf');
@@ -1777,19 +1829,6 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
           showToast('PDF oluşturulurken hata oluştu', 'error');
       } finally {
           setIsGeneratingReport(false);
-      }
-  };
-
-  const handleSync = async () => {
-      setIsSyncing(true);
-      try {
-          const result = await dbService.backupAllData();
-          updateUserProfile({ ...userProfile, lastSyncTime: result.timestamp });
-          showToast("Tüm veriler başarıyla Firebase'e yedeklendi.", "success");
-      } catch (error) {
-          showToast("Yedekleme hatası: " + (error as any).message, "error");
-      } finally {
-          setIsSyncing(false);
       }
   };
 
@@ -1854,396 +1893,562 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
          );
      }
 
-     return (
-        <div className="pb-24 animate-in slide-in-from-right duration-300">
-            {/* Compact Profile Card */}
-            <div className="bg-stone-900/80 backdrop-blur rounded-3xl p-4 shadow-lg border border-white/5 mb-4 flex flex-col items-center relative overflow-hidden">
-                <div className="absolute top-0 left-0 w-full h-16 bg-gradient-to-b from-emerald-900/10 to-transparent -z-10"></div>
-                
-                <div className="flex items-center space-x-3 w-full mb-4">
-                    <button onClick={() => changeFarmerSelection(null)} className="p-2 bg-stone-800 text-stone-400 rounded-xl hover:text-stone-200 transition-colors active:scale-90">
-                        <ChevronLeft size={18}/>
-                    </button>
-                    <div className="w-12 h-12 bg-stone-800 border border-emerald-500/20 rounded-2xl flex items-center justify-center text-xl font-black text-emerald-500 shadow-lg">
-                        {selectedFarmer.fullName.charAt(0)}
-                    </div>
-                    <div className="flex-1 min-w-0 text-left">
-                        <div className="flex items-center justify-between gap-2">
-                            <h2 className="text-base font-black text-stone-100 truncate tracking-tight">{selectedFarmer.fullName}</h2>
-                            <div className="flex items-center gap-1.5 shrink-0">
-                                <button 
-                                    onClick={() => setIsFinancialAnalysisOpen(true)} 
-                                    title="Finansal Analiz & Kârlılık"
-                                    className="p-1.5 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 rounded-lg transition-all active:scale-90 border border-emerald-500/20 flex items-center gap-1 px-2"
-                                >
-                                    <TrendingUpIcon size={12} />
-                                    <span className="text-[10px] font-black uppercase tracking-wider">Finans</span>
-                                </button>
-                                {canEditFarmer && (
-                                    <button onClick={openEditModal} className="p-1.5 bg-stone-800/60 text-stone-400 rounded-lg hover:text-emerald-400 transition-all active:scale-90 border border-white/5">
-                                        <Edit2 size={12} />
-                                    </button>
+      const currency = userProfile?.currency || 'TRY';
+      const totalFarmerDekar = Math.round(((selectedFarmer.fields || []).reduce((acc, f) => acc + (Number(f.size) || 0), 0)) * 10) / 10;
+      const yearHistoryItems = [
+          ...filteredPrescriptions.map(p => {
+              const isReturn = p.type === 'RETURN' || (Number(p.totalAmount) || 0) < 0;
+              return {
+                  ...p,
+                  type: p.priceType === 'CASH' ? 'CASH' : 'DEBT',
+                  label: p.priceType === 'CASH' ? 'Peşin Satış' : (isReturn ? 'İade Makbuzu' : `${prescriptionLabel} Satışı`)
+              };
+          }),
+          ...filteredPayments.map(p => ({ ...p, type: 'PAYMENT', label: 'Tahsilat' })),
+          ...filteredManualDebts.filter(d => !d.id.startsWith('turnover-')).map(d => ({ ...d, type: 'DEBT', label: 'Manuel Borç/Alacak' }))
+      ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+      return (
+        <div className="pb-24 animate-in slide-in-from-right duration-300 max-w-7xl mx-auto">
+            {/* KATMAN 1: Kurumsal Çiftçi Kimlik & İletişim Kartı */}
+            <section className="v22-forest-card p-4 sm:p-5 rounded-3xl mb-4 relative overflow-hidden">
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                    <div className="flex items-start gap-3 min-w-0 flex-1">
+                        <button
+                            type="button"
+                            onClick={() => changeFarmerSelection(null)}
+                            aria-label="Çiftçiler listesine dön"
+                            className="v22-keep-white shrink-0 h-10 px-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-white flex items-center gap-1 text-xs font-bold transition-colors active:scale-95"
+                        >
+                            <ChevronLeft size={16} />
+                            <span className="hidden sm:inline">Çiftçiler</span>
+                        </button>
+
+                        <div className="v22-keep-white w-12 h-12 rounded-2xl bg-white/15 border border-white/20 flex items-center justify-center text-xl font-black text-white shadow-sm shrink-0">
+                            {selectedFarmer.fullName.charAt(0).toUpperCase()}
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                            <h2 className="v22-keep-white text-base sm:text-xl font-black text-white truncate tracking-tight">
+                                {selectedFarmer.fullName}
+                            </h2>
+                            <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                                <span className="v22-keep-white inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-bold bg-white/10 border border-white/15 text-white/90">
+                                    <MapPin size={11} className="text-emerald-300 shrink-0" />
+                                    {selectedFarmer.village || 'Merkez'}
+                                </span>
+                                <span className="v22-keep-white inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-bold bg-white/10 border border-white/15 text-white/90">
+                                    <Wheat size={11} className="text-amber-300 shrink-0" />
+                                    {(selectedFarmer.fields || []).length} Tarla · {totalFarmerDekar} da
+                                </span>
+                                {selectedFarmer.tcNo && (
+                                    <span className="v22-keep-white inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-mono font-bold bg-white/10 border border-white/15 text-white/90">
+                                        <CreditCard size={11} className="text-sky-300 shrink-0" />
+                                        TC: {selectedFarmer.tcNo}
+                                    </span>
                                 )}
-                                {canEditFarmer && (
-                                    <button onClick={() => handleDeleteFarmer()} className="p-1.5 bg-stone-800/60 text-stone-400 rounded-lg hover:text-red-400 transition-all active:scale-90 border border-white/5">
-                                        <Trash2 size={12} />
-                                    </button>
-                                )}
+                                {(() => {
+                                    const unpaidRx = farmerPrescriptions.filter(p => p.priceType !== 'CASH' && (Number(p.totalAmount) || 0) > 0);
+                                    const oldestTimestamp = unpaidRx.length > 0
+                                        ? Math.min(...unpaidRx.map(p => new Date(p.date).getTime()))
+                                        : Date.now();
+                                    const curDebtAmt = overallBalance < 0 ? Math.abs(overallBalance) : 0;
+                                    const debtAgeDays = curDebtAmt > 50 ? Math.max(0, Math.floor((Date.now() - oldestTimestamp) / (1000 * 60 * 60 * 24))) : 0;
+                                    const payRatio = totalDebt > 0 ? totalPaid / totalDebt : 1;
+                                    const overLimit = (selectedFarmer.creditLimit || 0) > 0 && curDebtAmt > (selectedFarmer.creditLimit || 0);
+                                    const autoGrade: 'A' | 'B' | 'C' | 'D' =
+                                        overLimit || (debtAgeDays > 240 && payRatio < 0.25)
+                                            ? 'D'
+                                            : curDebtAmt <= 50 || (payRatio >= 0.7 && debtAgeDays <= 90)
+                                                ? 'A'
+                                                : debtAgeDays <= 180 && payRatio >= 0.35
+                                                    ? 'B'
+                                                    : 'C';
+                                    const finalGrade = selectedFarmer.riskScoreOverride || autoGrade;
+                                    const riskMap: Record<'A' | 'B' | 'C' | 'D', { label: string; cls: string }> = {
+                                        A: { label: 'A Güvenilir', cls: 'bg-emerald-500/20 text-emerald-200 border-emerald-400/35' },
+                                        B: { label: 'B Standart', cls: 'bg-sky-500/20 text-sky-200 border-sky-400/35' },
+                                        C: { label: 'C Gecikmeli', cls: 'bg-amber-500/20 text-amber-200 border-amber-400/35' },
+                                        D: { label: 'D Yüksek Risk', cls: 'bg-rose-500/25 text-rose-200 border-rose-400/45' },
+                                    };
+                                    const riskGrade = riskMap[finalGrade];
+                                    return (
+                                        <>
+                                            <span className={`v22-keep-white inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-extrabold border ${riskGrade.cls}`}>
+                                                <ShieldCheck size={11} />
+                                                {riskGrade.label}{selectedFarmer.riskScoreOverride ? ' (Manuel)' : ''}
+                                            </span>
+                                            {debtAgeDays > 0 && (
+                                                <span className="v22-keep-white inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-mono font-bold bg-white/10 text-amber-200 border border-white/15">
+                                                    <Clock size={11} className="text-amber-300" />
+                                                    Yaşlandırma: {debtAgeDays} Gün
+                                                </span>
+                                            )}
+                                        </>
+                                    );
+                                })()}
                             </div>
                         </div>
-                        <div className="flex items-center text-stone-500 text-xs mt-0.5 font-bold gap-2.5 flex-wrap">
-                            <span className="flex items-center"><MapPin size={10} className="mr-1 text-emerald-500/70"/> {selectedFarmer.village}</span>
-                            {selectedFarmer.tcNo && (
-                                <span className="flex items-center text-stone-300 font-mono text-[10px] bg-stone-800/80 px-2 py-0.5 rounded-md border border-white/5">
-                                    <CreditCard size={10} className="mr-1 text-blue-400" />
-                                    TC: {selectedFarmer.tcNo}
-                                </span>
-                            )}
-                            {(() => {
-                                const unpaidRx = farmerPrescriptions.filter(p => p.priceType !== 'CASH' && (p.totalAmount || 0) > 0);
-                                const oldestTimestamp = unpaidRx.length > 0
-                                    ? Math.min(...unpaidRx.map(p => new Date(p.date).getTime()))
-                                    : Date.now();
-                                const curDebtAmt = overallBalance < 0 ? Math.abs(overallBalance) : 0;
-                                const debtAgeDays = curDebtAmt > 50 ? Math.max(0, Math.floor((Date.now() - oldestTimestamp) / (1000 * 60 * 60 * 24))) : 0;
-                                const payRatio = totalDebt > 0 ? totalPaid / totalDebt : 1;
-                                const overLimit = (selectedFarmer.creditLimit || 0) > 0 && curDebtAmt > (selectedFarmer.creditLimit || 0);
-                                const autoGrade: 'A' | 'B' | 'C' | 'D' =
-                                    overLimit || (debtAgeDays > 240 && payRatio < 0.25)
-                                        ? 'D'
-                                        : curDebtAmt <= 50 || (payRatio >= 0.7 && debtAgeDays <= 90)
-                                            ? 'A'
-                                            : debtAgeDays <= 180 && payRatio >= 0.35
-                                                ? 'B'
-                                                : 'C';
-                                const finalGrade = selectedFarmer.riskScoreOverride || autoGrade;
-                                const riskMap: Record<'A' | 'B' | 'C' | 'D', { label: string; cls: string }> = {
-                                    A: { label: 'A Güvenilir', cls: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' },
-                                    B: { label: 'B Standart', cls: 'bg-sky-500/15 text-sky-400 border-sky-500/30' },
-                                    C: { label: 'C Gecikmeli', cls: 'bg-amber-500/15 text-amber-400 border-amber-500/30' },
-                                    D: { label: 'D Yüksek Risk', cls: 'bg-rose-500/20 text-rose-400 border-rose-500/40' },
-                                };
-                                const riskGrade = riskMap[finalGrade];
-                                return (
-                                    <>
-                                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black border ${riskGrade.cls}`}>
-                                            <ShieldCheck size={10} />
-                                            {riskGrade.label}{selectedFarmer.riskScoreOverride ? ' (Manuel)' : ''}
-                                        </span>
-                                        {debtAgeDays > 0 && (
-                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-stone-800/90 text-stone-300 border border-white/10">
-                                                <Clock size={10} className="text-amber-400" />
-                                                Yaşlandırma: {debtAgeDays} Gün
-                                            </span>
-                                        )}
-                                    </>
-                                );
-                            })()}
-                        </div>
-                        {(selectedFarmer.creditLimit || 0) > 0 && (() => {
-                            const curDebtAmt = overallBalance < 0 ? Math.abs(overallBalance) : 0;
-                            const limit = selectedFarmer.creditLimit || 1;
-                            const pct = Math.min(100, Math.round((curDebtAmt / limit) * 100));
-                            const isExceeded = curDebtAmt > limit;
-                            return (
-                                <div className="mt-2.5 bg-stone-950/70 border border-white/5 rounded-xl p-2">
-                                    <div className="flex items-center justify-between text-[10px] font-bold mb-1">
-                                        <span className={isExceeded ? 'text-rose-400 font-black' : 'text-stone-400'}>
-                                            {isExceeded ? 'Kredi Limiti Aşıldı' : 'Kredi / Açık Hesap Limiti'}
-                                        </span>
-                                        <span className="font-mono text-stone-200">
-                                            {formatCurrency(curDebtAmt, userProfile?.currency || 'TRY')} / {formatCurrency(limit, userProfile?.currency || 'TRY')} (%{Math.round((curDebtAmt / limit) * 100)})
-                                        </span>
-                                    </div>
-                                    <div className="h-1.5 w-full bg-stone-800 rounded-full overflow-hidden">
-                                        <div
-                                            className={`h-full transition-all ${isExceeded ? 'bg-rose-500' : pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                                            style={{ width: `${pct}%` }}
-                                        />
-                                    </div>
-                                </div>
-                            );
-                        })()}
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-start">
+                        <button
+                            type="button"
+                            onClick={() => setIsFinancialAnalysisOpen(true)}
+                            title="Finansal Analiz & Kârlılık"
+                            className="v22-keep-white px-3 py-1.5 min-h-[34px] bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 rounded-xl transition-all active:scale-95 border border-emerald-400/30 flex items-center gap-1.5 text-xs font-extrabold"
+                        >
+                            <TrendingUpIcon size={13} />
+                            <span>Finans Analizi</span>
+                        </button>
+                        {canEditFarmer && (
+                            <button
+                                type="button"
+                                onClick={openEditModal}
+                                title="Çiftçiyi Düzenle"
+                                aria-label="Çiftçiyi Düzenle"
+                                className="v22-keep-white p-2 min-h-[34px] min-w-[34px] bg-white/10 hover:bg-white/20 text-white rounded-xl transition-all active:scale-95 border border-white/15 flex items-center justify-center"
+                            >
+                                <Edit2 size={14} />
+                            </button>
+                        )}
+                        {canEditFarmer && (
+                            <button
+                                type="button"
+                                onClick={() => handleDeleteFarmer()}
+                                title="Çiftçiyi Sil"
+                                aria-label="Çiftçiyi Sil"
+                                className="v22-keep-white p-2 min-h-[34px] min-w-[34px] bg-rose-500/15 hover:bg-rose-500/30 text-rose-200 rounded-xl transition-all active:scale-95 border border-rose-400/30 flex items-center justify-center"
+                            >
+                                <Trash2 size={14} />
+                            </button>
+                        )}
                     </div>
                 </div>
 
-                <div className="grid grid-cols-4 gap-2 w-full">
-                    {/* Buttons condensed */}
-                    {[
-                        { icon: Phone, label: 'Ara', href: `tel:${selectedFarmer.phoneNumber}` },
-                        { icon: MessageCircle, label: 'WhatsApp', href: `https://wa.me/${selectedFarmer.phoneNumber.replace(/[^0-9]/g, '')}`, target: '_blank' },
-                        { icon: Wallet, label: 'Hatırlat', action: handleSendDebtReminder },
-                        { icon: Navigation, label: 'Konum', action: () => window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedFarmer.village)}`, '_blank') }
-                    ].map((btn, i) => (
-                        btn.href ? (
-                            <a key={i} href={btn.href} target={btn.target} className="flex flex-col items-center justify-center min-h-[46px] py-2 px-1 bg-stone-800/40 rounded-xl hover:bg-stone-800 transition-all border border-white/5 active:scale-95">
-                                <btn.icon size={16} className="mb-1 text-stone-300"/>
-                                <span className="text-[10px] font-bold text-stone-300 truncate max-w-full">{btn.label}</span>
-                            </a>
-                        ) : (
-                            <button key={i} onClick={btn.action} className="flex flex-col items-center justify-center min-h-[46px] py-2 px-1 bg-stone-800/40 rounded-xl hover:bg-stone-800 transition-all border border-white/5 active:scale-95">
-                                <btn.icon size={16} className="mb-1 text-stone-300"/>
-                                <span className="text-[10px] font-bold text-stone-300 truncate max-w-full">{btn.label}</span>
-                            </button>
-                        )
-                    ))}
-                </div>
+                {(selectedFarmer.creditLimit || 0) > 0 && (() => {
+                    const curDebtAmt = overallBalance < 0 ? Math.abs(overallBalance) : 0;
+                    const limit = selectedFarmer.creditLimit || 1;
+                    const pct = Math.min(100, Math.round((curDebtAmt / limit) * 100));
+                    const isExceeded = curDebtAmt > limit;
+                    return (
+                        <div className="mt-3 bg-black/25 border border-white/10 rounded-2xl p-2.5">
+                            <div className="flex items-center justify-between text-[11px] font-bold mb-1.5">
+                                <span className={isExceeded ? 'v22-keep-white text-rose-300 font-black' : 'v22-keep-white text-white/80'}>
+                                    {isExceeded ? 'Kredi Limiti Aşıldı' : 'Kredi / Açık Hesap Limiti'}
+                                </span>
+                                <span className="v22-keep-white font-mono tabular-nums text-white">
+                                    {formatCurrency(curDebtAmt, currency)} / {formatCurrency(limit, currency)} (%{Math.round((curDebtAmt / limit) * 100)})
+                                </span>
+                            </div>
+                            <div className="h-1.5 w-full bg-white/15 rounded-full overflow-hidden">
+                                <div
+                                    className={`h-full transition-all rounded-full ${isExceeded ? 'bg-rose-400' : pct >= 80 ? 'bg-amber-400' : 'bg-emerald-400'}`}
+                                    style={{ width: `${pct}%` }}
+                                />
+                            </div>
+                        </div>
+                    );
+                })()}
 
-                <button 
-                    onClick={handleCopyPortalLink}
-                    className="w-full mt-3 min-h-[42px] py-2.5 bg-emerald-900/20 text-emerald-400 border border-emerald-500/20 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-emerald-900/40 transition-colors"
-                >
-                    <Copy size={14} />
-                    {farmerLabel} Portalı Linkini Kopyala
-                </button>
-            </div>
-
-            {/* Tabs */}
-            <div className="mks-tab-rail flex gap-1 p-1 bg-stone-900/60 backdrop-blur rounded-xl mb-2 border border-white/5 shadow-inner">
-                {tabs.map(tab => (
-                    <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`flex-1 min-w-[68px] min-h-[40px] px-2 py-2 text-[11px] font-bold rounded-lg transition-all duration-200 whitespace-nowrap ${activeTab === tab.id ? 'bg-stone-700 text-white shadow-sm' : 'text-stone-400 hover:text-stone-200'}`}>
-                        {tab.label}
+                {/* Tek Satırlık Hızlı İletişim & Portal Şeridi */}
+                <div className="flex flex-wrap items-center gap-2 pt-3 mt-3 border-t border-white/15">
+                    <a
+                        href={`tel:${selectedFarmer.phoneNumber}`}
+                        className="v22-keep-white px-3 py-1.5 min-h-[36px] rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-xs font-bold text-white flex items-center gap-1.5 transition-colors"
+                    >
+                        <Phone size={13} className="text-sky-300" />
+                        <span>Ara</span>
+                    </a>
+                    <a
+                        href={buildWaUrl(selectedFarmer.phoneNumber) || undefined}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="v22-keep-white px-3 py-1.5 min-h-[36px] rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-xs font-bold text-white flex items-center gap-1.5 transition-colors"
+                    >
+                        <MessageCircle size={13} className="text-emerald-300" />
+                        <span>WhatsApp</span>
+                    </a>
+                    <button
+                        type="button"
+                        onClick={handleSendDebtReminder}
+                        className="v22-keep-white px-3 py-1.5 min-h-[36px] rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-xs font-bold text-white flex items-center gap-1.5 transition-colors"
+                    >
+                        <Wallet size={13} className="text-amber-300" />
+                        <span>Borç Hatırlat</span>
                     </button>
-                ))}
+                    <button
+                        type="button"
+                        onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedFarmer.village || '')}`, '_blank')}
+                        className="v22-keep-white px-3 py-1.5 min-h-[36px] rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-xs font-bold text-white flex items-center gap-1.5 transition-colors"
+                    >
+                        <Navigation size={13} className="text-indigo-300" />
+                        <span>Konum</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={handleCopyPortalLink}
+                        className="v22-keep-white px-3 py-1.5 min-h-[36px] rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/30 text-xs font-bold text-emerald-200 flex items-center gap-1.5 transition-colors"
+                    >
+                        <Copy size={13} />
+                        <span>{farmerLabel} Portalı Linkini Kopyala</span>
+                    </button>
+                    {canEditFarmer && (
+                        <button
+                            type="button"
+                            onClick={() => onNavigateToPrescription(selectedFarmer.id)}
+                            className="sm:ml-auto px-3.5 py-1.5 min-h-[36px] rounded-xl bg-gradient-to-r from-[#f39264] to-[#e57c4b] hover:from-[#f6a077] hover:to-[#eb8758] text-[#0b211d] text-xs font-black flex items-center gap-1.5 shadow-md active:scale-95 transition-all"
+                        >
+                            <Plus size={14} />
+                            <span>Yeni {prescriptionLabel} / Satış</span>
+                        </button>
+                    )}
+                </div>
+            </section>
+
+            {/* KATMAN 2: Birleşik Sekme ve Tekil Yıl Seçici Şeridi */}
+            <div className="v22-bento-card p-2 sm:p-2.5 mb-4 flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                    {tabs.map(tab => {
+                        const TabIcon = tab.icon;
+                        const isActive = activeTab === tab.id;
+                        return (
+                            <button
+                                type="button"
+                                key={tab.id}
+                                onClick={() => setActiveTab(tab.id as any)}
+                                className="min-h-[38px] px-3.5 py-2 rounded-xl text-xs font-extrabold flex items-center gap-1.5 shrink-0 transition-all"
+                                style={
+                                    isActive
+                                        ? { background: 'var(--mks-accent-primary)', color: '#ffffff' }
+                                        : { background: 'var(--mks-subcard)', color: 'var(--mks-muted)' }
+                                }
+                            >
+                                <TabIcon size={14} />
+                                <span>{tab.label}</span>
+                            </button>
+                        );
+                    })}
+                </div>
+
+                {(activeTab === 'PRESCRIPTIONS' || activeTab === 'DEBT') && availableYears.length > 1 && (
+                    <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1 lg:pt-0">
+                        <span className="text-[10px] font-extrabold uppercase tracking-wider px-1.5 shrink-0" style={{ color: 'var(--mks-muted)' }}>
+                            Dönem:
+                        </span>
+                        {availableYears.map(year => {
+                            const isSelected = selectedYear === year;
+                            return (
+                                <button
+                                    type="button"
+                                    key={year}
+                                    onClick={() => setSelectedYear(year)}
+                                    className="px-3 py-1.5 rounded-xl text-[11px] font-black transition-all border shrink-0"
+                                    style={
+                                        isSelected
+                                            ? { background: 'var(--mks-accent-soft)', color: 'var(--mks-accent-soft-text)', borderColor: 'var(--mks-accent-primary)' }
+                                            : { background: 'var(--mks-subcard)', color: 'var(--mks-muted)', borderColor: 'var(--mks-card-border)' }
+                                    }
+                                >
+                                    {year}{year === currentYear ? ' · Güncel' : ''}
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
             </div>
 
-            {/* Year Selector - Visible for relevant tabs */}
-            {(activeTab === 'PRESCRIPTIONS' || activeTab === 'DEBT') && availableYears.length > 1 && (
-                <div className="flex gap-1 overflow-x-auto no-scrollbar mb-4 py-1">
-                    {availableYears.map(year => (
-                        <button 
-                            key={year}
-                            onClick={() => setSelectedYear(year)}
-                            className={`px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border shrink-0 ${selectedYear === year ? 'bg-emerald-600 text-white border-emerald-500 shadow-lg shadow-emerald-900/20' : 'bg-stone-900/50 text-stone-500 border-white/5 hover:text-stone-300'}`}
-                        >
-                            {year}
-                        </button>
-                    ))}
-                </div>
-            )}
-
-            {/* Content */}
+            {/* KATMAN 3: Sekme İçerikleri */}
             <div className="animate-in fade-in duration-300">
                 {activeTab === 'GENERAL' && (
-                    <div className="space-y-3">
-                        <div className="bg-stone-900/80 backdrop-blur p-4 rounded-2xl border border-white/5 shadow-sm">
-                            <h3 className="font-bold text-stone-200 text-xs mb-3 flex items-center uppercase tracking-wider opacity-70"><Wheat size={14} className="mr-1.5 text-amber-500"/> Tarla Bilgileri</h3>
-                            <div className="space-y-2">
-                                {(selectedFarmer.fields || []).map((field, idx) => (
-                                    <div key={field.id} className="p-3 bg-stone-950/50 rounded-xl border border-white/5">
-                                        <div className="flex items-center justify-between mb-2">
-                                            <div className="flex-1">
-                                                <p className="text-[8px] text-stone-500 uppercase font-bold mb-0.5">{field.name || `Tarla ${idx + 1}`}</p>
-                                                <p className="text-sm font-bold text-stone-200">{field.crop}</p>
-                                            </div>
-                                            <div className="text-right">
-                                                <p className="text-[8px] text-stone-500 uppercase font-bold mb-0.5">Alan</p>
-                                                <p className="text-sm font-bold text-emerald-500">{field.size} <span className="text-[10px] font-normal text-stone-400">da</span></p>
-                                            </div>
-                                        </div>
-                                        {(field.plantingDate || field.currentStage) && (
-                                            <div className="flex gap-4 pt-2 border-t border-white/5">
-                                                {field.plantingDate && (
-                                                    <div>
-                                                        <p className="text-[7px] text-stone-500 uppercase font-bold">Ekim</p>
-                                                        <p className="text-[10px] text-stone-300">{new Date(field.plantingDate).toLocaleDateString('tr-TR')}</p>
-                                                    </div>
-                                                )}
-                                                {field.currentStage && (
-                                                    <div>
-                                                        <p className="text-[7px] text-stone-500 uppercase font-bold">Evre</p>
-                                                        <p className="text-[10px] text-stone-300">{field.currentStage}</p>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        )}
-                                        <div className="flex flex-wrap gap-2 pt-2.5 mt-2 border-t border-white/5">
-                                            <button
-                                                type="button"
-                                                onClick={() => setDirectPolygonEditField(field)}
-                                                className="flex-1 py-2 px-3 rounded-xl bg-stone-900 hover:bg-stone-800 text-sky-300 border border-sky-500/25 text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all"
-                                            >
-                                                <MapPin size={12} />
-                                                <span>{field.polygonGeoJson ? 'Parsel Sınırını Düzenle' : 'Parsel Sınırı Çiz'}</span>
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    if (!field.polygonGeoJson) {
-                                                        setDirectPolygonEditField(field);
-                                                        showToast('Uydu analizi için önce tarlanın sınır poligonunu çizin.', 'info');
-                                                    } else {
-                                                        setSatelliteTargetField(field);
-                                                    }
-                                                }}
-                                                className="flex-1 py-2 px-3 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/35 text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all"
-                                            >
-                                                <Satellite size={12} />
-                                                <span>Uydu Analizi (NDVI / Sulama / Çamur)</span>
-                                            </button>
-                                        </div>
-                                    </div>
-                                ))}
-                                <div className="pt-2 border-t border-white/5 flex justify-between items-center">
-                                    <span className="text-[9px] font-bold text-stone-500 uppercase">Toplam Arazi</span>
-                                    <span className="text-xs font-black text-stone-200">{(selectedFarmer.fields || []).reduce((acc, f) => acc + f.size, 0)} da</span>
+                    <div className="space-y-4">
+                        <div className="v22-bento-card p-4 sm:p-5 space-y-3.5">
+                            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b" style={{ borderColor: 'var(--mks-card-border)' }}>
+                                <h3 className="text-sm font-extrabold flex items-center gap-2" style={{ color: 'var(--mks-text)' }}>
+                                    <Wheat size={16} className="text-amber-500" />
+                                    <span>Kayıtlı Tarla &amp; Parsel Bilgileri ({(selectedFarmer.fields || []).length})</span>
+                                </h3>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-xs font-extrabold px-2.5 py-1 rounded-xl border" style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-text)' }}>
+                                        Toplam: {totalFarmerDekar} da
+                                    </span>
+                                    {canEditFarmer && (
+                                        <button
+                                            type="button"
+                                            onClick={() => onNavigateToPrescription(selectedFarmer.id)}
+                                            className="px-3 py-1.5 rounded-xl text-xs font-extrabold text-white flex items-center gap-1.5"
+                                            style={{ background: 'var(--mks-accent-primary)' }}
+                                        >
+                                            <Plus size={14} /> Yeni {prescriptionLabel}
+                                        </button>
+                                    )}
                                 </div>
                             </div>
+
+                            {(selectedFarmer.fields || []).length === 0 ? (
+                                <div className="p-6 rounded-2xl border border-dashed text-center text-xs" style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-muted)' }}>
+                                    Bu çiftçiye ait kayıtlı tarla bilgisi bulunmuyor. Düzenle menüsünden tarla ekleyebilirsiniz.
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    {(selectedFarmer.fields || []).map((field, idx) => (
+                                        <div key={field.id} className="p-3.5 rounded-2xl border space-y-2.5" style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)' }}>
+                                            <div className="flex items-center justify-between gap-2">
+                                                <div className="min-w-0 flex-1">
+                                                    <p className="text-[10px] uppercase font-bold truncate" style={{ color: 'var(--mks-muted)' }}>
+                                                        {field.name || `Tarla ${idx + 1}`}
+                                                    </p>
+                                                    <p className="text-sm font-extrabold truncate" style={{ color: 'var(--mks-text)' }}>
+                                                        {field.crop || 'Ürün Belirtilmedi'}
+                                                    </p>
+                                                </div>
+                                                <div className="text-right shrink-0">
+                                                    <p className="text-[10px] uppercase font-bold" style={{ color: 'var(--mks-muted)' }}>Alan</p>
+                                                    <p className="text-sm font-black font-mono tabular-nums text-emerald-500">
+                                                        {field.size} <span className="text-[11px] font-semibold" style={{ color: 'var(--mks-muted)' }}>da</span>
+                                                    </p>
+                                                </div>
+                                            </div>
+
+                                            {(field.plantingDate || field.currentStage) && (
+                                                <div className="flex gap-4 pt-2 border-t" style={{ borderColor: 'var(--mks-card-border)' }}>
+                                                    {field.plantingDate && (
+                                                        <div>
+                                                            <p className="text-[10px] uppercase font-bold" style={{ color: 'var(--mks-muted)' }}>Ekim</p>
+                                                            <p className="text-xs font-semibold" style={{ color: 'var(--mks-text)' }}>{new Date(field.plantingDate).toLocaleDateString('tr-TR')}</p>
+                                                        </div>
+                                                    )}
+                                                    {field.currentStage && (
+                                                        <div>
+                                                            <p className="text-[10px] uppercase font-bold" style={{ color: 'var(--mks-muted)' }}>Evre</p>
+                                                            <p className="text-xs font-semibold" style={{ color: 'var(--mks-text)' }}>{field.currentStage}</p>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+
+                                            <div className="flex flex-wrap gap-2 pt-2 border-t" style={{ borderColor: 'var(--mks-card-border)' }}>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setDirectPolygonEditField(field)}
+                                                    className="flex-1 min-h-[34px] py-1.5 px-3 rounded-xl border text-[11px] font-extrabold flex items-center justify-center gap-1.5 transition-colors"
+                                                    style={{ background: 'var(--mks-card)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-text)' }}
+                                                >
+                                                    <MapPin size={12} className="text-sky-500" />
+                                                    <span>{field.polygonGeoJson ? 'Parsel Sınırını Düzenle' : 'Parsel Sınırı Çiz'}</span>
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        if (!field.polygonGeoJson) {
+                                                            setDirectPolygonEditField(field);
+                                                            showToast('Uydu analizi için önce tarlanın sınır poligonunu çizin.', 'info');
+                                                        } else {
+                                                            setSatelliteTargetField(field);
+                                                        }
+                                                    }}
+                                                    className="flex-1 min-h-[34px] py-1.5 px-3 rounded-xl border text-[11px] font-extrabold flex items-center justify-center gap-1.5 transition-colors"
+                                                    style={{ background: 'var(--mks-accent-soft)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-accent-soft-text)' }}
+                                                >
+                                                    <Satellite size={12} />
+                                                    <span>Uydu Analizi (NDVI)</span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
-                        {canEditFarmer && (
-                            <div className="flex gap-2">
-                                <button onClick={() => onNavigateToPrescription(selectedFarmer.id)} className="flex-1 py-3.5 bg-emerald-700 text-white rounded-2xl font-bold shadow-lg hover:bg-emerald-600 active:scale-95 transition-all flex items-center justify-center text-xs uppercase tracking-wider">
-                                    <FileText className="mr-2" size={16}/> Yeni {prescriptionLabel} Yaz
-                                </button>
-                            </div>
-                        )}
                     </div>
                 )}
 
                 {activeTab === 'DEBT' && (
-                    <div className="space-y-3">
-                        {/* Balance Card */}
-                        <div className="bg-stone-900/80 backdrop-blur p-4 rounded-2xl border border-white/5 shadow-sm">
-                            <div className="mb-4">
-                                <div className="flex flex-wrap gap-1.5 w-full">
-                                    <button onClick={() => setIsReportModalOpen(true)} className="flex-1 min-w-[68px] bg-blue-600 text-white px-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-wider shadow-md active:scale-95 transition-all flex items-center justify-center">
-                                        <Download size={10} className="mr-1"/> Rapor
-                                    </button>
-                                    <button onClick={handleGenerateFarmerReconciliationPdf} className="flex-1 min-w-[78px] bg-indigo-600 text-white px-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-wider shadow-md active:scale-95 transition-all flex items-center justify-center" title="Resmi Cari Hesap Mutabakat Mektubu (PDF)">
-                                        <Scale size={10} className="mr-1"/> Mutabakat
-                                    </button>
-                                    {canEditFarmer && (
-                                        <>
-                                            <button onClick={() => setIsManualDebtModalOpen(true)} className="flex-1 bg-rose-600 text-white px-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-wider shadow-md active:scale-95 transition-all flex items-center justify-center">
-                                                <Plus size={10} className="mr-1"/> Borç
-                                            </button>
-                                            <button onClick={() => setIsPaymentModalOpen(true)} className="flex-1 bg-emerald-600 text-white px-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-wider shadow-md active:scale-95 transition-all flex items-center justify-center">
-                                                <CreditCard size={10} className="mr-1"/> Tahsilat
-                                            </button>
-                                            <button onClick={() => setIsReturnModalOpen(true)} className="flex-1 bg-amber-600 text-white px-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-wider shadow-md active:scale-95 transition-all flex items-center justify-center">
-                                                <RefreshCcw size={10} className="mr-1"/> İade Al
-                                            </button>
-                                        </>
-                                    )}
+                    <div className="space-y-4">
+                        {/* 4 Sütunlu Finansal Özet Kartları */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                            <div className="v22-bento-card p-4">
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-[11px] font-extrabold uppercase tracking-wider" style={{ color: 'var(--mks-muted)' }}>
+                                        01.01.{selectedYear} Devir
+                                    </span>
+                                    <RefreshCw size={14} style={{ color: 'var(--mks-muted)' }} />
                                 </div>
-                            </div>
-                            
-                            <div className="grid grid-cols-2 gap-3 mb-4">
-                                <div className="bg-stone-950/50 p-3 rounded-xl border border-white/5">
-                                    <p className="text-[8px] text-stone-500 uppercase font-black mb-1">{selectedYear} Toplam Borç</p>
-                                    <p className="text-lg font-black text-rose-500">{formatCurrency((yearTotalDebt + (openingBalance < 0 ? Math.abs(openingBalance) : 0)), userProfile?.currency || 'TRY')}</p>
+                                <div className={`text-xl font-extrabold font-mono tabular-nums truncate mt-2 ${openingBalance > 0.01 ? 'text-emerald-500' : openingBalance < -0.01 ? 'text-rose-500' : ''}`} style={Math.abs(openingBalance) <= 0.01 ? { color: 'var(--mks-text)' } : undefined}>
+                                    {openingBalance > 0.01 ? '+' : ''}{formatCurrency(openingBalance, currency)}
                                 </div>
-                                <div className="bg-stone-950/50 p-3 rounded-xl border border-white/5">
-                                    <p className="text-[8px] text-stone-500 uppercase font-black mb-1">{selectedYear} Toplam Ödeme</p>
-                                    <p className="text-lg font-black text-emerald-500">{formatCurrency((yearTotalPaid + (openingBalance > 0 ? openingBalance : 0)), userProfile?.currency || 'TRY')}</p>
-                                </div>
+                                <p className="text-[11px] font-semibold mt-1 truncate" style={{ color: 'var(--mks-muted)' }}>
+                                    {openingBalance > 0.01 ? 'Alacak Devri' : openingBalance < -0.01 ? 'Borç Devri' : 'Geçmiş Yıl Devri Sıfır'}
+                                </p>
                             </div>
 
-                            {/* Yıl Seçimi ve Devir Alanı */}
-                            <div className="p-3 bg-stone-950/60 rounded-xl border border-white/10 space-y-2.5">
-                                <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-2">
-                                    <div className="flex items-center gap-2">
-                                        <Calendar size={16} className="text-emerald-400 shrink-0" />
-                                        <span className="text-xs font-black text-stone-200 uppercase tracking-wide">Yıl Seçimi & Devir</span>
-                                    </div>
-
-                                    <div className="flex items-center gap-1.5 bg-stone-900 border border-white/10 rounded-xl px-2.5 py-1.5 text-stone-300 text-xs font-bold shadow-sm">
-                                        <Calendar size={14} className="text-emerald-400 shrink-0" />
-                                        <select 
-                                            value={selectedYear}
-                                            onChange={(e) => setSelectedYear(Number(e.target.value))}
-                                            className="bg-transparent text-stone-200 text-xs font-bold outline-none cursor-pointer pr-1"
-                                        >
-                                            {availableYears.map(y => (
-                                                <option key={y} value={y} className="bg-stone-900 text-stone-200">
-                                                    {y} Yılı {y < currentYear ? '(Devir)' : '(Güncel)'}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    </div>
+                            <div className="v22-bento-card p-4">
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-[11px] font-extrabold uppercase tracking-wider" style={{ color: 'var(--mks-muted)' }}>
+                                        {selectedYear} Dönem Borç / Satış
+                                    </span>
+                                    <TrendingDown size={14} className="text-rose-500" />
                                 </div>
+                                <div className="text-xl font-extrabold font-mono tabular-nums text-rose-500 truncate mt-2">
+                                    {formatCurrency((yearTotalDebt + (openingBalance < 0 ? Math.abs(openingBalance) : 0)), currency)}
+                                </div>
+                                <p className="text-[11px] font-semibold mt-1 truncate" style={{ color: 'var(--mks-muted)' }}>
+                                    Dönem satış &amp; manuel borçlar
+                                </p>
+                            </div>
 
-                                <div className="pt-2 border-t border-white/5 flex items-center justify-between">
-                                    <div>
-                                        <span className="text-[10px] text-stone-400 font-bold block uppercase tracking-wider">
-                                            01.01.{selectedYear} Devir Bakiyesi
-                                        </span>
-                                        <span className="text-[9px] text-stone-500 block">Geçmiş yıllardan aktarılan açılış bakiyesi</span>
-                                    </div>
-                                    <span className={`text-sm font-black font-mono ${openingBalance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                        {openingBalance >= 0 ? '+' : ''}{formatCurrency(openingBalance, userProfile?.currency || 'TRY')}
+                            <div className="v22-bento-card p-4">
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-[11px] font-extrabold uppercase tracking-wider" style={{ color: 'var(--mks-muted)' }}>
+                                        {selectedYear} Dönem Tahsilat
+                                    </span>
+                                    <CreditCard size={14} className="text-emerald-500" />
+                                </div>
+                                <div className="text-xl font-extrabold font-mono tabular-nums text-emerald-500 truncate mt-2">
+                                    {formatCurrency((yearTotalPaid + (openingBalance > 0 ? openingBalance : 0)), currency)}
+                                </div>
+                                <p className="text-[11px] font-semibold mt-1 truncate" style={{ color: 'var(--mks-muted)' }}>
+                                    Nakit, kart, çek &amp; iadeler
+                                </p>
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={() => setIsFinancialAnalysisOpen(true)}
+                                className="v22-bento-card p-4 text-left flex flex-col justify-between group"
+                            >
+                                <div className="flex items-center justify-between gap-2 w-full">
+                                    <span className="text-[11px] font-extrabold uppercase tracking-wider" style={{ color: 'var(--mks-muted)' }}>
+                                        Net Güncel Cari Bakiye
+                                    </span>
+                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${overallBalance < -0.01 ? 'bg-rose-500/15 text-rose-500' : overallBalance > 0.01 ? 'bg-emerald-500/15 text-emerald-500' : 'bg-sky-500/15 text-sky-500'}`}>
+                                        {overallBalance < -0.01 ? 'BORÇLU' : overallBalance > 0.01 ? 'ALACAKLI' : 'MUTABIK'}
                                     </span>
                                 </div>
-
-                                {selectedYear < currentYear && (
-                                    <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-2 flex items-center gap-2 text-amber-300 text-[11px] font-medium">
-                                        <Calendar size={14} className="text-amber-400 shrink-0" />
-                                        <span>{selectedYear} Yılı devir kaydı ve geçmiş cari dökümü gösteriliyor.</span>
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Detailed Financial & Profitability Analysis Action Button (Küçültülmüş) */}
-                            <button
-                                onClick={() => setIsFinancialAnalysisOpen(true)}
-                                className="w-full mt-2.5 px-3 py-2 bg-emerald-950/40 hover:bg-emerald-900/50 border border-emerald-500/20 rounded-xl flex items-center justify-between text-emerald-400 transition-all active:scale-[0.98] group shadow-sm"
-                            >
-                                <div className="flex items-center gap-2">
-                                    <TrendingUpIcon size={14} className="text-emerald-400 shrink-0 group-hover:scale-110 transition-transform" />
-                                    <span className="text-xs font-bold">Detaylı Finansal Analiz & Kârlılık</span>
+                                <div className={`text-xl font-extrabold font-mono tabular-nums truncate mt-2 ${overallBalance < -0.01 ? 'text-rose-500' : overallBalance > 0.01 ? 'text-emerald-500' : ''}`} style={Math.abs(overallBalance) <= 0.01 ? { color: 'var(--mks-text)' } : undefined}>
+                                    {formatCurrency(Math.abs(overallBalance), currency)}
                                 </div>
-                                <ChevronRight size={14} className="text-emerald-400/70 group-hover:translate-x-0.5 transition-transform" />
+                                <p className="text-[11px] font-bold mt-1 flex items-center justify-between w-full" style={{ color: 'var(--mks-accent-primary)' }}>
+                                    <span>Tüm zamanlar net durum</span>
+                                    <span>Finansal Analiz →</span>
+                                </p>
                             </button>
                         </div>
 
-                        {/* History */}
-                        <div className="bg-stone-900/80 backdrop-blur p-4 rounded-2xl border border-white/5 shadow-sm">
-                            <div className="flex justify-between items-center mb-4">
-                                <h3 className="font-bold text-stone-200 text-xs flex items-center uppercase tracking-wider opacity-70"><History size={14} className="mr-1.5 text-blue-500"/> İşlem Geçmişi</h3>
+                        {/* Kurumsal Cari Hareketler & İşlem Çubuğu */}
+                        <div className="v22-bento-card p-4 sm:p-5 space-y-3.5">
+                            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3 border-b" style={{ borderColor: 'var(--mks-card-border)' }}>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'var(--mks-accent-soft)', color: 'var(--mks-accent-soft-text)' }}>
+                                        <History size={16} />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-sm font-extrabold" style={{ color: 'var(--mks-text)' }}>
+                                            Cari Hesap Hareketleri ({selectedYear})
+                                        </h3>
+                                        <p className="text-[11px]" style={{ color: 'var(--mks-muted)' }}>
+                                            {yearHistoryItems.length} dönem hareketi kayıtlı
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-2">
+                                    {canEditFarmer && (
+                                        <>
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsPaymentModalOpen(true)}
+                                                className="px-3.5 py-2 min-h-[36px] rounded-xl text-xs font-extrabold text-white flex items-center gap-1.5 shadow-sm active:scale-95 transition-all"
+                                                style={{ background: 'var(--mks-accent-primary)' }}
+                                            >
+                                                <Plus size={14} />
+                                                <span>Tahsilat Al</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsManualDebtModalOpen(true)}
+                                                className="px-3 py-2 min-h-[36px] rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-500 border border-rose-500/30 text-xs font-extrabold flex items-center gap-1.5 active:scale-95 transition-all"
+                                            >
+                                                <Plus size={14} />
+                                                <span>Borç Ekle</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsReturnModalOpen(true)}
+                                                className="px-3 py-2 min-h-[36px] rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-500 border border-amber-500/30 text-xs font-extrabold flex items-center gap-1.5 active:scale-95 transition-all"
+                                            >
+                                                <RefreshCcw size={13} />
+                                                <span>İade Al</span>
+                                            </button>
+                                        </>
+                                    )}
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsReportModalOpen(true)}
+                                        className="px-3 py-2 min-h-[36px] rounded-xl border text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all"
+                                        style={{ background: 'var(--mks-subcard)', color: 'var(--mks-text)', borderColor: 'var(--mks-card-border)' }}
+                                    >
+                                        <Download size={13} />
+                                        <span>Ekstre / Rapor</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={handleGenerateFarmerReconciliationPdf}
+                                        title="Resmi Cari Hesap Mutabakat Mektubu (PDF)"
+                                        className="px-3 py-2 min-h-[36px] rounded-xl border text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all"
+                                        style={{ background: 'var(--mks-accent-soft)', color: 'var(--mks-accent-soft-text)', borderColor: 'var(--mks-card-border)' }}
+                                    >
+                                        <Scale size={13} />
+                                        <span>Mutabakat PDF</span>
+                                    </button>
+                                </div>
                             </div>
 
-                            <div className="space-y-2 max-h-[400px] overflow-y-auto custom-scrollbar pr-1">
-                                {/* Opening Balance Row */}
+                            {selectedYear < currentYear && (
+                                <div className="bg-amber-500/10 border border-amber-500/25 rounded-2xl p-2.5 flex items-center gap-2 text-amber-500 text-xs font-semibold">
+                                    <Calendar size={14} className="shrink-0" />
+                                    <span>{selectedYear} Yılı devir kaydı ve geçmiş cari dökümü görüntüleniyor.</span>
+                                </div>
+                            )}
+
+                            <div className="space-y-2 max-h-[460px] overflow-y-auto custom-scrollbar pr-1">
                                 {openingBalance !== 0 && (
-                                    <div className="p-3 bg-emerald-900/10 rounded-xl border border-emerald-500/10 flex items-center justify-between">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-8 h-8 rounded-lg bg-emerald-900/20 text-emerald-500 flex items-center justify-center">
-                                                <RefreshCw size={14} />
+                                    <div className="p-3 rounded-2xl border flex items-center justify-between gap-3" style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)' }}>
+                                        <div className="flex items-center gap-3 min-w-0">
+                                            <div className="w-9 h-9 rounded-xl bg-emerald-500/15 text-emerald-500 flex items-center justify-center shrink-0">
+                                                <RefreshCw size={15} />
                                             </div>
-                                            <div>
-                                                <p className="text-[10px] font-bold text-stone-200">{selectedYear} Devir Bakiyesi</p>
-                                                <p className="text-[8px] text-stone-500">01.01.{selectedYear}</p>
+                                            <div className="min-w-0">
+                                                <p className="text-xs font-extrabold truncate" style={{ color: 'var(--mks-text)' }}>{selectedYear} Devir Bakiyesi</p>
+                                                <p className="text-[11px]" style={{ color: 'var(--mks-muted)' }}>01.01.{selectedYear} Açılış</p>
                                             </div>
                                         </div>
-                                        <div className="text-right">
-                                            <p className={`text-xs font-black ${openingBalance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                                {openingBalance >= 0 ? '+' : ''}{formatCurrency(openingBalance, userProfile?.currency || 'TRY')}
-                                            </p>
-                                        </div>
+                                        <p className={`text-sm font-black font-mono tabular-nums shrink-0 ${openingBalance >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                                            {openingBalance >= 0 ? '+' : ''}{formatCurrency(openingBalance, currency)}
+                                        </p>
                                     </div>
                                 )}
 
-                                {[
-                                    ...filteredPrescriptions.map(p => {
-                                        const isReturn = p.type === 'RETURN' || (p.totalAmount || 0) < 0;
-                                        return { 
-                                            ...p, 
-                                            type: p.priceType === 'CASH' ? 'CASH' : 'DEBT', 
-                                            label: p.priceType === 'CASH' ? 'Peşin Satış' : (isReturn ? 'İade Makbuzu' : `${prescriptionLabel} Satışı`) 
-                                        };
-                                    }), 
-                                    ...filteredPayments.map(p => ({ ...p, type: 'PAYMENT', label: 'Tahsilat' })),
-                                    ...filteredManualDebts.filter(d => !d.id.startsWith('turnover-')).map(d => ({ ...d, type: 'DEBT', label: 'Manuel Borç/Alacak' }))
-                                ]
-                                    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                                    .map((item, idx) => {
+                                {yearHistoryItems.length === 0 && openingBalance === 0 ? (
+                                    <div className="p-8 rounded-2xl border border-dashed text-center text-xs" style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-muted)' }}>
+                                        {selectedYear} yılına ait cari hareket kaydı bulunmuyor.
+                                    </div>
+                                ) : (
+                                    yearHistoryItems.map((item, idx) => {
                                         const dueDate = getDueDate(item);
                                         const isOverdue = dueDate && new Date() > new Date(dueDate.replace('Haz', 'Jun').replace('Kas', 'Nov'));
-                                        
+                                        const rawAmt = (item as any).amount ?? (item as any).totalAmount;
+                                        const parsedAmt = Number(rawAmt);
+                                        const safeAmt = Number.isFinite(parsedAmt) ? Math.abs(parsedAmt) : 0;
+                                        const isNegativeDebt =
+                                            item.type === 'DEBT' &&
+                                            (((item as any).totalAmount !== undefined
+                                                ? (Number((item as any).totalAmount) || 0) < 0
+                                                : (Number((item as any).amount) || 0) < 0) ||
+                                                item.label === 'İade Makbuzu');
+
                                         return (
-                                            <div 
-                                                key={idx} 
-                                                className={`p-3 ${item.label === 'İade Makbuzu' ? 'bg-emerald-900/10 border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.05)]' : 'bg-stone-950/50 border-white/5'} rounded-xl border flex items-center justify-between group relative cursor-pointer hover:bg-stone-900/80 active:scale-[0.98] transition-all`}
+                                            <div
+                                                key={`${item.id}-${idx}`}
                                                 onClick={() => {
                                                     if (item.label === `${prescriptionLabel} Satışı` || item.label === 'İade Makbuzu') {
                                                         const prescription = farmerPrescriptions.find(p => p.id === item.id);
@@ -2256,56 +2461,110 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                                         if (payment) handleEditPayment(payment);
                                                     }
                                                 }}
+                                                className="p-3 rounded-2xl border flex items-center justify-between gap-3 cursor-pointer hover:opacity-95 active:scale-[0.99] transition-all"
+                                                style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)' }}
                                             >
-                                                <div className="flex items-center gap-3">
-                                                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${item.type === 'DEBT' ? (((item as any).totalAmount !== undefined ? (item as any).totalAmount < 0 : (item as any).amount < 0) || item.label === 'İade Makbuzu' ? 'bg-emerald-900/40 text-emerald-400 border border-emerald-500/30' : 'bg-rose-900/20 text-rose-500') : item.type === 'CASH' ? 'bg-blue-900/20 text-blue-500' : 'bg-emerald-900/20 text-emerald-500'}`}>
-                                                        {item.label === 'İade Makbuzu' ? <RefreshCcw size={14} /> : (item.type === 'DEBT' || item.type === 'CASH' ? <FileText size={14} /> : <CreditCard size={14} />)}
+                                                <div className="flex items-center gap-3 min-w-0 flex-1">
+                                                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                                                        item.type === 'DEBT'
+                                                            ? (isNegativeDebt ? 'bg-emerald-500/15 text-emerald-500' : 'bg-rose-500/15 text-rose-500')
+                                                            : item.type === 'CASH'
+                                                                ? 'bg-sky-500/15 text-sky-500'
+                                                                : 'bg-emerald-500/15 text-emerald-500'
+                                                    }`}>
+                                                        {item.label === 'İade Makbuzu'
+                                                            ? <RefreshCcw size={15} />
+                                                            : (item.type === 'DEBT' || item.type === 'CASH' ? <FileText size={15} /> : <CreditCard size={15} />)}
                                                     </div>
-                                                    <div>
-                                                        <p className="text-[10px] font-bold text-stone-200">{item.label}</p>
-                                                        <div className="flex items-center gap-2 mt-0.5">
-                                                            <p className="text-[8px] text-stone-500">{new Date(item.date).toLocaleDateString('tr-TR')}</p>
-                                                            <span className="text-[7px] text-stone-400 font-bold flex items-center bg-stone-800/50 px-1 py-0.5 rounded">
-                                                                <User size={8} className="mr-0.5" />
+                                                    <div className="min-w-0 flex-1">
+                                                        <p className="text-xs font-extrabold truncate" style={{ color: 'var(--mks-text)' }}>{item.label}</p>
+                                                        <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                                                            <span className="text-[11px]" style={{ color: 'var(--mks-muted)' }}>
+                                                                {new Date(item.date).toLocaleDateString('tr-TR')}
+                                                            </span>
+                                                            <span className="text-[10px] font-bold flex items-center px-1.5 py-0.5 rounded-md border" style={{ background: 'var(--mks-card)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-muted)' }}>
+                                                                <User size={9} className="mr-1" />
                                                                 {(item as any).createdById ? (teamMembers.find(m => m.id === (item as any).createdById)?.fullName || 'Yönetici') : 'Yönetici'}
                                                             </span>
+                                                            {dueDate && (
+                                                                <span className={`text-[10px] font-bold ${isOverdue ? 'text-rose-500' : 'text-amber-500'}`}>
+                                                                    Vade: {dueDate}
+                                                                </span>
+                                                            )}
                                                         </div>
-                                                        {dueDate && (
-                                                            <p className={`text-[7px] font-bold mt-0.5 ${isOverdue ? 'text-rose-500 animate-pulse' : 'text-amber-500'}`}>
-                                                                Vade: {dueDate}
+                                                    </div>
+                                                </div>
+
+                                                <div className="text-right flex items-center gap-2 shrink-0">
+                                                    <div>
+                                                        <p className={`text-sm font-black font-mono tabular-nums ${
+                                                            item.type === 'DEBT'
+                                                                ? (isNegativeDebt ? 'text-emerald-500' : 'text-rose-500')
+                                                                : item.type === 'CASH'
+                                                                    ? 'text-sky-500'
+                                                                    : 'text-emerald-500'
+                                                        }`}>
+                                                            {item.type === 'DEBT' ? (isNegativeDebt ? '+' : '-') : item.type === 'CASH' ? '' : '+'}{formatCurrency(safeAmt, currency)}
+                                                        </p>
+                                                        {(item as any).note && (
+                                                            <p className="text-[10px] italic truncate max-w-[110px]" style={{ color: 'var(--mks-muted)' }}>
+                                                                {(item as any).note}
                                                             </p>
                                                         )}
                                                     </div>
-                                                </div>
-                                                <div className="text-right flex items-center gap-3">
-                                                    <div>
-                                                        <p className={`text-xs font-black ${item.type === 'DEBT' ? (((item as any).totalAmount !== undefined ? (item as any).totalAmount < 0 : (item as any).amount < 0) || item.label === 'İade Makbuzu' ? 'text-emerald-400' : 'text-rose-400') : item.type === 'CASH' ? 'text-blue-400' : 'text-emerald-400'}`}>
-                                                            {item.type === 'DEBT' ? (((item as any).totalAmount !== undefined ? (item as any).totalAmount < 0 : (item as any).amount < 0) || item.label === 'İade Makbuzu' ? '+' : '-') : item.type === 'CASH' ? '' : '+'}{formatCurrency(Math.abs((item as any).amount || (item as any).totalAmount), userProfile?.currency || 'TRY')}
-                                                        </p>
-                                                        {(item as any).note && <p className="text-[7px] text-stone-500 italic truncate max-w-[60px]">{(item as any).note}</p>}
-                                                    </div>
+
                                                     {item.type === 'PAYMENT' ? (
-                                                        <div className="flex gap-2 items-center">
-                                                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                                                                <button onClick={(e) => { e.stopPropagation(); handleEditPayment(item as any); }} className="p-1 text-stone-500 hover:text-emerald-500">
-                                                                    <Edit2 size={12}/>
-                                                                </button>
-                                                                <button onClick={(e) => { e.stopPropagation(); handleDeletePayment(item.id); }} className="p-1 text-stone-500 hover:text-rose-500 transition-all">
-                                                                    <Trash2 size={12}/>
-                                                                </button>
-                                                            </div>
-                                                            <button onClick={(e) => { e.stopPropagation(); handleSendReceipt(item as any); }} className="px-2 py-0.5 text-[9px] font-black uppercase text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 rounded hover:bg-emerald-500/20 transition-all flex items-center justify-center">
+                                                        <div className="flex items-center gap-1">
+                                                            <button
+                                                                type="button"
+                                                                onClick={(e) => { e.stopPropagation(); handleEditPayment(item as any); }}
+                                                                title="Tahsilatı Düzenle"
+                                                                aria-label="Tahsilatı Düzenle"
+                                                                className="p-1.5 rounded-lg border transition-colors"
+                                                                style={{ background: 'var(--mks-card)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-muted)' }}
+                                                            >
+                                                                <Edit2 size={12} />
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={(e) => { e.stopPropagation(); handleDeletePayment(item.id); }}
+                                                                title="Tahsilatı Sil"
+                                                                aria-label="Tahsilatı Sil"
+                                                                className="p-1.5 rounded-lg border text-rose-500 transition-colors"
+                                                                style={{ background: 'var(--mks-card)', borderColor: 'var(--mks-card-border)' }}
+                                                            >
+                                                                <Trash2 size={12} />
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={(e) => { e.stopPropagation(); handleSendReceipt(item as any); }}
+                                                                className="px-2.5 py-1.5 text-[10px] font-black uppercase text-emerald-500 bg-emerald-500/10 border border-emerald-500/25 rounded-lg hover:bg-emerald-500/20 transition-all"
+                                                            >
                                                                 MAKBUZ
                                                             </button>
                                                         </div>
                                                     ) : (
                                                         (item.label === 'Manuel Borç' || item.label === 'Manuel Borç/Alacak') && (
-                                                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                                                                <button onClick={(e) => { e.stopPropagation(); handleEditManualDebt(item as any); }} className="p-1 text-stone-500 hover:text-emerald-500">
-                                                                    <Edit2 size={12}/>
+                                                            <div className="flex items-center gap-1">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => { e.stopPropagation(); handleEditManualDebt(item as any); }}
+                                                                    title="Borç Kaydını Düzenle"
+                                                                    aria-label="Borç Kaydını Düzenle"
+                                                                    className="p-1.5 rounded-lg border transition-colors"
+                                                                    style={{ background: 'var(--mks-card)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-muted)' }}
+                                                                >
+                                                                    <Edit2 size={12} />
                                                                 </button>
-                                                                <button onClick={(e) => { e.stopPropagation(); handleDeleteManualDebt(item.id); }} className="p-1 text-stone-500 hover:text-rose-500">
-                                                                    <Trash2 size={12}/>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => { e.stopPropagation(); handleDeleteManualDebt(item.id); }}
+                                                                    title="Borç Kaydını Sil"
+                                                                    aria-label="Borç Kaydını Sil"
+                                                                    className="p-1.5 rounded-lg border text-rose-500 transition-colors"
+                                                                    style={{ background: 'var(--mks-card)', borderColor: 'var(--mks-card-border)' }}
+                                                                >
+                                                                    <Trash2 size={12} />
                                                                 </button>
                                                             </div>
                                                         )
@@ -2313,48 +2572,85 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                                 </div>
                                             </div>
                                         );
-                                    })}
+                                    })
+                                )}
                             </div>
                         </div>
                     </div>
                 )}
 
                 {activeTab === 'VISITS' && (
-                    <div className="space-y-2">
-                        {isDataLoading ? <Loader2 size={20} className="animate-spin text-emerald-500 mx-auto"/> : farmerVisits.length > 0 ? farmerVisits.map(visit => (
-                            <div key={visit.id} className="bg-stone-900/80 p-3 rounded-xl border border-white/5 hover:bg-stone-900 transition-colors">
-                                <div className="flex justify-between items-start mb-1.5">
-                                    <span className="text-[9px] font-bold text-stone-400 flex items-center bg-stone-950/50 px-1.5 py-0.5 rounded border border-white/5"><Calendar size={9} className="mr-1 text-emerald-500" />{new Date(visit.date).toLocaleDateString('tr-TR')}</span>
-                                    <span className="text-[9px] text-stone-600 flex items-center"><Clock size={9} className="mr-1" />{new Date(visit.date).toLocaleTimeString('tr-TR', {hour:'2-digit', minute:'2-digit'})}</span>
+                    <div className="v22-bento-card p-4 sm:p-5 space-y-2.5">
+                        {isDataLoading ? (
+                            <Loader2 size={20} className="animate-spin text-emerald-500 mx-auto" />
+                        ) : farmerVisits.length > 0 ? (
+                            farmerVisits.map(visit => (
+                                <div key={visit.id} className="p-3.5 rounded-2xl border transition-colors" style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)' }}>
+                                    <div className="flex justify-between items-start mb-1.5">
+                                        <span className="text-[11px] font-bold flex items-center px-2 py-0.5 rounded-lg border" style={{ background: 'var(--mks-card)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-text)' }}>
+                                            <Calendar size={11} className="mr-1.5 text-emerald-500" />{new Date(visit.date).toLocaleDateString('tr-TR')}
+                                        </span>
+                                        <span className="text-[11px] flex items-center" style={{ color: 'var(--mks-muted)' }}>
+                                            <Clock size={11} className="mr-1" />{new Date(visit.date).toLocaleTimeString('tr-TR', {hour:'2-digit', minute:'2-digit'})}
+                                        </span>
+                                    </div>
+                                    <p className="text-xs italic mb-2 leading-relaxed line-clamp-3" style={{ color: 'var(--mks-text)' }}>"{visit.note}"</p>
+                                    <div className="flex justify-between items-center pt-2 border-t" style={{ borderColor: 'var(--mks-card-border)' }}>
+                                        <div className="flex gap-1.5">{visit.photoUri && <ImageIcon size={13} className="text-sky-500" />}</div>
+                                        <div className="flex gap-1.5">
+                                            <button type="button" onClick={() => onEditVisit(visit.id)} className="p-1.5 rounded-lg border" style={{ background: 'var(--mks-card)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-muted)' }}><Edit2 size={12} /></button>
+                                            <button type="button" onClick={() => handleDeleteVisit(visit.id)} className="p-1.5 rounded-lg border text-rose-500" style={{ background: 'var(--mks-card)', borderColor: 'var(--mks-card-border)' }}><Trash2 size={12} /></button>
+                                        </div>
+                                    </div>
                                 </div>
-                                <p className="text-[11px] text-stone-300 italic mb-1.5 leading-relaxed line-clamp-3">"{visit.note}"</p>
-                                <div className="flex justify-between items-center pt-1.5 border-t border-white/5">
-                                    <div className="flex gap-1.5">{visit.photoUri && <ImageIcon size={12} className="text-blue-400"/>}</div>
-                                    <div className="flex gap-1.5"><button onClick={() => onEditVisit(visit.id)} className="text-stone-500 hover:text-emerald-400"><Edit2 size={12}/></button><button onClick={() => handleDeleteVisit(visit.id)} className="text-stone-500 hover:text-red-400"><Trash2 size={12}/></button></div>
-                                </div>
-                            </div>
-                        )) : <div className="text-center py-6 text-stone-600 text-[10px]">Kayıt yok.</div>}
+                            ))
+                        ) : (
+                            <div className="text-center py-8 text-xs" style={{ color: 'var(--mks-muted)' }}>Kayıtlı tarla ziyareti / reçete bulunmuyor.</div>
+                        )}
                     </div>
                 )}
-                
+
                 {activeTab === 'PRESCRIPTIONS' && (
-                    <div className="space-y-2">
-                         {isDataLoading ? <Loader2 size={20} className="animate-spin text-amber-500 mx-auto"/> : filteredPrescriptions.length > 0 ? filteredPrescriptions.map(p => {
-                            const isReturn = p.type === 'RETURN' || (p.totalAmount || 0) < 0;
-                            return (
-                            <div key={p.id} onClick={() => setSelectedPrescription(p)} className="bg-stone-900/80 p-3 rounded-xl border border-white/5 hover:bg-stone-800 transition-colors cursor-pointer active:scale-98">
-                                <div className="flex justify-between items-start mb-1.5">
-                                    <div className="flex flex-col gap-0.5">
-                                        <span className="text-[8px] font-mono text-stone-500 block uppercase">No: {p.prescriptionNo}</span>
-                                        {isReturn && (
-                                            <span className="text-[7px] font-black text-emerald-500 bg-emerald-900/30 px-1 border border-emerald-500/30 rounded uppercase tracking-tighter w-fit">İADE</span>
-                                        )}
+                    <div className="v22-bento-card p-4 sm:p-5 space-y-2.5">
+                        {isDataLoading ? (
+                            <Loader2 size={20} className="animate-spin text-amber-500 mx-auto" />
+                        ) : filteredPrescriptions.length > 0 ? (
+                            filteredPrescriptions.map(p => {
+                                const isReturn = p.type === 'RETURN' || (Number(p.totalAmount) || 0) < 0;
+                                const pAmt = Number(p.totalAmount);
+                                const safePAmt = Number.isFinite(pAmt) ? Math.abs(pAmt) : 0;
+                                return (
+                                    <div key={p.id} onClick={() => setSelectedPrescription(p)} className="p-3.5 rounded-2xl border transition-all cursor-pointer hover:opacity-95 active:scale-[0.99]" style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)' }}>
+                                        <div className="flex justify-between items-start gap-2 mb-2">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <span className="text-xs font-mono font-bold uppercase" style={{ color: 'var(--mks-text)' }}>
+                                                    No: {p.prescriptionNo || '-'}
+                                                </span>
+                                                {isReturn && (
+                                                    <span className="text-[10px] font-black text-emerald-500 bg-emerald-500/15 px-1.5 py-0.5 border border-emerald-500/30 rounded-md uppercase">İADE</span>
+                                                )}
+                                                <span className="text-xs font-black font-mono tabular-nums" style={{ color: isReturn ? '#10b981' : 'var(--mks-text)' }}>
+                                                    {formatCurrency(safePAmt, currency)}
+                                                </span>
+                                            </div>
+                                            <span className={`text-[11px] font-bold px-2 py-0.5 rounded-lg border ${isReturn ? 'text-emerald-500 bg-emerald-500/10 border-emerald-500/25' : 'text-amber-500 bg-amber-500/10 border-amber-500/25'}`}>
+                                                {new Date(p.date).toLocaleDateString('tr-TR')}
+                                            </span>
+                                        </div>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {p.items.map((item, idx) => (
+                                                <span key={idx} className="text-[11px] px-2 py-0.5 rounded-lg border flex items-center" style={{ background: 'var(--mks-card)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-muted)' }}>
+                                                    <FlaskConical size={10} className="mr-1 text-emerald-500" />
+                                                    {item.pesticideName}
+                                                </span>
+                                            ))}
+                                        </div>
                                     </div>
-                                    <span className={`text-[9px] font-bold ${isReturn ? 'text-emerald-400 bg-emerald-900/20 border-emerald-800/30' : 'text-amber-400 bg-amber-900/20 border-amber-800/30'} px-1.5 py-0.5 rounded border`}>{new Date(p.date).toLocaleDateString('tr-TR')}</span>
-                                </div>
-                                <div className="flex flex-wrap gap-1">{p.items.map((item, idx) => (<span key={idx} className="text-[8px] bg-stone-800 text-stone-400 px-1.5 py-0.5 rounded flex items-center"><FlaskConical size={8} className="mr-1 text-stone-500"/>{item.pesticideName}</span>))}</div>
-                            </div>
-                        )}) : <div className="text-center py-6 text-stone-600 text-[10px]">{prescriptionLabel} yok.</div>}
+                                );
+                            })
+                        ) : (
+                            <div className="text-center py-8 text-xs" style={{ color: 'var(--mks-muted)' }}>{selectedYear} yılına ait {prescriptionLabel.toLowerCase()} kaydı yok.</div>
+                        )}
                     </div>
                 )}
             </div>
@@ -2493,7 +2789,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
                                             onClick={() =>
                                                 setFarmerSplitRows(prev => [
                                                     ...prev,
-                                                    { id: `fsp-${Date.now()}`, method: 'CHECK', amount: '', accountId: '', dueDate: new Date().toISOString().split('T')[0], cardOption: 'UNBLOCKED' }
+                                                    { id: `fsp-${Date.now()}`, method: 'CHECK', amount: '', accountId: '', dueDate: getLocalDateString(), cardOption: 'UNBLOCKED' }
                                                 ])
                                             }
                                             className="px-3 py-1.5 rounded-xl bg-stone-800 text-stone-300 text-[10px] font-black uppercase flex items-center gap-1"
@@ -2900,145 +3196,318 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
 }
 
   // --- LIST VIEW ---
+  const listCurrency = userProfile?.currency || 'TRY';
   return (
-    <div className="pb-24 relative min-h-[80vh]">
+    <div className="pb-24 relative min-h-[80vh] max-w-7xl mx-auto">
       <input type="file" accept=".vcf" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
 
-      <div className="flex items-center justify-between gap-2 mb-3 mt-2 px-1">
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0 overflow-x-auto no-scrollbar">
-              <button onClick={onBack} className="hidden sm:flex items-center shrink-0 text-stone-400 hover:text-stone-200 font-medium py-1 rounded-lg transition-colors text-xs"><ArrowLeft size={16} className="mr-1"/> Geri</button>
-              <button 
-                  onClick={() => {
-                      setIsRepairModalOpen(true);
-                      handleAnalyzeFarmers();
-                  }}
-                  className="shrink-0 whitespace-nowrap min-h-[36px] py-1.5 px-3 bg-red-600/20 border border-red-500/30 rounded-lg text-red-500 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 hover:bg-red-600/30 transition-colors shadow-lg shadow-red-900/20"
-              >
-                  <RefreshCw size={14} />
-                  Cari Onar
-              </button>
-              <button 
-                  onClick={downloadFarmersPdf}
-                  className="shrink-0 whitespace-nowrap min-h-[36px] py-1.5 px-3 bg-amber-600 rounded-lg text-white text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 hover:bg-amber-500 transition-colors shadow-lg shadow-amber-900/20"
-              >
-                  <FileText size={14} />
-                  Raporla
-              </button>
-              <button
-                  onClick={() => {
-                      setAnnounceTemplate(userProfile?.whatsappTemplates?.announcement || DEFAULT_WHATSAPP_TEMPLATES.announcement);
-                      setSentAnnouncementFarmerIds(new Set());
-                      setIsAnnouncementModalOpen(true);
-                  }}
-                  className="shrink-0 whitespace-nowrap min-h-[36px] py-1.5 px-3 bg-emerald-600/20 border border-emerald-500/30 rounded-lg text-emerald-400 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 hover:bg-emerald-600/30 transition-colors"
-                  title="Köy ve Mahsul Bazlı Toplu WhatsApp Zirai Duyuru"
-              >
-                  <Megaphone size={13} />
-                  Toplu Duyuru
-              </button>
-          </div>
-          <div className="hidden sm:block text-right shrink-0">
-              <span className="text-[9px] font-bold text-stone-500 uppercase tracking-widest block">{farmers.length} {farmerLabel}</span>
-              {userProfile.lastSyncTime && (
-                  <span className="text-[8px] text-emerald-500/80 flex items-center justify-end mt-0.5">
-                      <Check size={8} className="mr-0.5" />
-                      Son Yedek: {new Date(userProfile.lastSyncTime).toLocaleTimeString('tr-TR', {hour: '2-digit', minute:'2-digit'})}
+      {/* Kurumsal Komuta Kartı */}
+      <section className="v22-bento-card p-4 sm:p-5 mb-4 space-y-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div className="flex items-start gap-2.5 min-w-0">
+            <button
+              type="button"
+              onClick={onBack}
+              aria-label="Ana panele dön"
+              className="hidden sm:flex items-center justify-center w-9 h-9 rounded-xl border shrink-0 transition-colors"
+              style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-muted)' }}
+            >
+              <ArrowLeft size={16} />
+            </button>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-base sm:text-xl font-black tracking-tight" style={{ color: 'var(--mks-text)' }}>
+                  Çiftçi Cari &amp; Arazi Merkezi
+                </h2>
+                {userProfile?.lastSyncTime && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-500">
+                    <Check size={10} />
+                    Son Yedek: {new Date(userProfile.lastSyncTime).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
                   </span>
-              )}
-          </div>
-      </div>
-
-      <div className="sticky top-0 z-10 bg-stone-950/80 backdrop-blur-md pb-2 pt-0">
-         <div className="bg-stone-900 rounded-xl shadow-sm border border-white/5 flex items-center p-0.5">
-             <Search className="text-stone-500 ml-2" size={14} />
-             <input type="text" placeholder={`${farmers.length} ${farmerLabel.toLocaleLowerCase('tr-TR')} içinde ad veya köy ara...`} className="w-full p-2.5 bg-transparent outline-none font-medium text-stone-200 placeholder-stone-600 text-[13px]" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-         </div>
-      </div>
-
-      <div className="space-y-1">
-        {isLoading ? (
-            <ListSkeleton count={8} />
-        ) : filteredFarmers.length === 0 ? (
-            <EmptyState
-                icon={User}
-                title={searchTerm ? t('farmer.empty_search', { label: farmerLabel.toLowerCase() }) : t('farmer.empty_list', { label: farmerLabel.toLowerCase() })}
-                description={!searchTerm ? t('farmer.empty_hint', { label: farmerLabel.toLowerCase() }) : ''}
-                actionLabel={canCreateFarmer && !searchTerm ? `Yeni ${farmerLabel} Ekle` : undefined}
-                onAction={canCreateFarmer && !searchTerm ? () => toggleModal(true) : undefined}
-                actionIcon={Plus}
-            />
-        ) : filteredFarmers.map(farmer => (
-            <div key={farmer.id} onClick={() => changeFarmerSelection(farmer)} className="bg-stone-900/80 backdrop-blur rounded-xl p-2 shadow-sm border border-white/5 flex items-center justify-between hover:bg-stone-800/80 transition-all cursor-pointer group active:scale-[0.98]">
-                <div className="flex items-center space-x-2">
-                    <div className="w-8 h-8 rounded-lg bg-stone-800 text-stone-500 flex items-center justify-center font-bold text-xs group-hover:bg-emerald-900/30 group-hover:text-emerald-400 transition-colors border border-white/5 shadow-inner">{farmer.fullName.charAt(0)}</div>
-                    <div>
-                        <h3 className="font-bold text-stone-200 text-xs tracking-tight">{farmer.fullName}</h3>
-                        <div className="flex items-center space-x-1.5 mt-0.5 flex-wrap">
-                             <span className="text-[8px] text-stone-500 flex items-center bg-stone-950/50 px-1 py-0.5 rounded border border-white/5 font-medium"><MapPin size={7} className="mr-1 text-emerald-500/70"/> {farmer.village}</span>
-                             {farmer.tcNo && (
-                                <span className="text-[8px] text-stone-400 bg-stone-950/50 px-1 py-0.5 rounded border border-white/5 font-mono">
-                                    TC: {farmer.tcNo}
-                                </span>
-                             )}
-                             {farmer.fields && farmer.fields.length > 0 && (
-                                <span className="text-[8px] text-amber-500/80 bg-amber-900/10 px-1 py-0.5 rounded border border-amber-800/20 font-bold">
-                                    {farmer.fields.length} Tarla
-                                </span>
-                             )}
-                             {(farmer as any).effectiveRiskGrade && (
-                                <span className={`text-[8px] px-1.5 py-0.5 rounded border font-black ${
-                                    (farmer as any).effectiveRiskGrade === 'A' ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' :
-                                    (farmer as any).effectiveRiskGrade === 'B' ? 'bg-sky-500/15 text-sky-400 border-sky-500/30' :
-                                    (farmer as any).effectiveRiskGrade === 'C' ? 'bg-amber-500/15 text-amber-400 border-amber-500/30' :
-                                    'bg-rose-500/20 text-rose-400 border-rose-500/40'
-                                }`}>
-                                    Not: {(farmer as any).effectiveRiskGrade}
-                                </span>
-                             )}
-                        </div>
-                    </div>
-                </div>
-                <div className="flex items-center space-x-3">
-                    <div className="text-right">
-                        <div className={`text-xs font-bold ${farmer.overallBalance && farmer.overallBalance < 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
-                            {formatCurrency(Math.abs(farmer.overallBalance || 0), userProfile?.currency || 'TRY')}
-                        </div>
-                        <div className="text-[8px] text-stone-500 uppercase tracking-wider">
-                            {farmer.overallBalance && farmer.overallBalance < 0 ? 'Borç' : 'Alacak'}
-                        </div>
-                    </div>
-                    <button 
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            changeFarmerSelection(farmer);
-                            setIsFinancialAnalysisOpen(true);
-                        }}
-                        title="Finansal Analiz & Kârlılık"
-                        className="p-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 rounded-lg transition-all border border-emerald-500/20 active:scale-95 flex items-center gap-1"
-                    >
-                        <TrendingUpIcon size={12} />
-                        <span className="text-[9px] font-bold hidden sm:inline">Finans</span>
-                    </button>
-                    <button 
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            window.open(`tel:${farmer.phoneNumber}`);
-                        }}
-                        className="p-1.5 bg-stone-800/50 hover:bg-emerald-900/30 text-stone-400 hover:text-emerald-400 rounded-lg transition-colors border border-white/5"
-                    >
-                        <Phone size={12} />
-                    </button>
-                    <div className="bg-stone-800/50 p-1 rounded-lg text-stone-600 group-hover:text-emerald-400 transition-colors"><ChevronRight size={12} /></div>
-                </div>
+                )}
+              </div>
+              <p className="text-xs font-semibold mt-1" style={{ color: 'var(--mks-muted)' }}>
+                {farmerPortfolioSummary.totalCount} kayıtlı çiftçi · {farmerPortfolioSummary.debtorCount} borçlu cari · Toplam Alacak:{' '}
+                <span className="font-mono font-extrabold" style={{ color: 'var(--mks-text)' }}>
+                  {formatCurrency(farmerPortfolioSummary.totalReceivable, listCurrency)}
+                </span>{' '}
+                · {farmerPortfolioSummary.totalFieldsCount} Tarla ({farmerPortfolioSummary.totalDekar} da)
+              </p>
             </div>
-        ))}
-        {filteredFarmers.length === 0 && <div className="text-center py-10"><User size={28} className="mx-auto mb-2 text-stone-700"/><p className="text-stone-500 text-[10px]">Kayıt yok.</p></div>}
-      </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {canCreateFarmer && (
+              <button
+                type="button"
+                onClick={() => { setModalMode('ADD'); toggleModal(true); }}
+                className="min-h-[38px] px-3.5 py-2 rounded-xl text-xs font-black text-white flex items-center gap-1.5 shadow-sm active:scale-95 transition-all"
+                style={{ background: 'var(--mks-accent-primary)' }}
+              >
+                <Plus size={15} />
+                <span>Yeni Çiftçi Ekle</span>
+              </button>
+            )}
+            {canCreateFarmer && (
+              <button
+                type="button"
+                onClick={handleContactImport}
+                disabled={isImporting}
+                className="min-h-[38px] px-3 py-2 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-text)' }}
+              >
+                {isImporting ? <Loader2 size={14} className="animate-spin" /> : <Contact size={14} className="text-sky-500" />}
+                <span>Rehberden Aktar</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setAnnounceTemplate(userProfile?.whatsappTemplates?.announcement || DEFAULT_WHATSAPP_TEMPLATES.announcement);
+                setSentAnnouncementFarmerIds(new Set());
+                setIsAnnouncementModalOpen(true);
+              }}
+              title="Köy ve Mahsul Bazlı Toplu WhatsApp Zirai Duyuru"
+              className="min-h-[38px] px-3 py-2 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-colors"
+              style={{ background: 'var(--mks-accent-soft)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-accent-soft-text)' }}
+            >
+              <Megaphone size={14} />
+              <span>Toplu Duyuru</span>
+            </button>
+            <button
+              type="button"
+              onClick={downloadFarmersPdf}
+              disabled={isGeneratingReport}
+              className="min-h-[38px] px-3 py-2 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+              style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-text)' }}
+            >
+              {isGeneratingReport ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} className="text-amber-500" />}
+              <span>PDF Liste</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setIsRepairModalOpen(true);
+                handleAnalyzeFarmers();
+              }}
+              className="min-h-[38px] px-3 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/25 text-rose-500 text-xs font-bold flex items-center gap-1.5 transition-colors"
+            >
+              <RefreshCw size={13} />
+              <span>Cari Onar</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Arama ve Hızlı Filtre Sekmeleri */}
+        <div className="flex flex-col md:flex-row md:items-center gap-2.5 pt-3 border-t" style={{ borderColor: 'var(--mks-card-border)' }}>
+          <div className="relative flex-1">
+            <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--mks-muted)' }} />
+            <input
+              type="text"
+              placeholder="Ad, soyad, köy, T.C. No veya telefon ile çiftçi ara..."
+              aria-label="Çiftçi ara"
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              className="w-full h-11 pl-10 pr-9 rounded-xl border text-xs font-semibold outline-none transition-colors"
+              style={{
+                background: 'var(--mks-subcard)',
+                borderColor: 'var(--mks-card-border)',
+                color: 'var(--mks-text)'
+              }}
+            />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => setSearchTerm('')}
+                aria-label="Aramayı temizle"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-lg"
+                style={{ color: 'var(--mks-muted)' }}
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+            {[
+              { id: 'ALL', label: `Tümü (${farmerPortfolioSummary.totalCount})` },
+              { id: 'DEBT', label: `Borçlu Cariler (${farmerPortfolioSummary.debtorCount})` },
+              { id: 'CREDIT', label: `Alacaklı Cariler (${farmerPortfolioSummary.creditCount})` },
+              { id: 'ZERO', label: `Bakiyesi Kapalı (${farmerPortfolioSummary.zeroCount})` }
+            ].map(flt => {
+              const isSelected = listFilter === flt.id;
+              return (
+                <button
+                  type="button"
+                  key={flt.id}
+                  onClick={() => setListFilter(flt.id as any)}
+                  className="min-h-[38px] px-3 py-1.5 rounded-xl border text-[11px] font-extrabold whitespace-nowrap shrink-0 transition-all"
+                  style={
+                    isSelected
+                      ? { background: 'var(--mks-accent-primary)', color: '#ffffff', borderColor: 'var(--mks-accent-primary)' }
+                      : { background: 'var(--mks-subcard)', color: 'var(--mks-muted)', borderColor: 'var(--mks-card-border)' }
+                  }
+                >
+                  {flt.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      {/* Çiftçi Kartları Grid Yapısı */}
+      {isLoading ? (
+        <ListSkeleton count={8} />
+      ) : filteredFarmers.length === 0 ? (
+        <EmptyState
+          icon={Users}
+          title={searchTerm || listFilter !== 'ALL' ? 'Filtreye uygun çiftçi bulunamadı' : t('farmer.empty_list', { label: farmerLabel.toLowerCase() })}
+          description={searchTerm || listFilter !== 'ALL' ? 'Arama kelimesini veya cari filtre seçimini değiştirerek tekrar deneyebilirsiniz.' : t('farmer.empty_hint', { label: farmerLabel.toLowerCase() })}
+          actionLabel={
+            searchTerm || listFilter !== 'ALL'
+              ? 'Filtreyi Temizle'
+              : (canCreateFarmer ? `Yeni ${farmerLabel} Ekle` : undefined)
+          }
+          onAction={
+            searchTerm || listFilter !== 'ALL'
+              ? () => { setSearchTerm(''); setListFilter('ALL'); }
+              : (canCreateFarmer ? () => { setModalMode('ADD'); toggleModal(true); } : undefined)
+          }
+          actionIcon={searchTerm || listFilter !== 'ALL' ? RefreshCw : Plus}
+        />
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+          {filteredFarmers.map(farmer => {
+            const fFields = farmer.fields || [];
+            const fDekar = Math.round(fFields.reduce((acc, fl) => acc + (Number(fl.size) || 0), 0) * 10) / 10;
+            const bal = Number(farmer.overallBalance) || 0;
+            const isDebtor = bal < -0.01;
+            const isCreditor = bal > 0.01;
+            const grade = (farmer as any).effectiveRiskGrade as 'A' | 'B' | 'C' | 'D' | undefined;
+
+            return (
+              <div
+                key={farmer.id}
+                onClick={() => changeFarmerSelection(farmer)}
+                className="v22-bento-card p-3.5 sm:p-4 flex items-center justify-between gap-3 cursor-pointer group active:scale-[0.99] transition-all"
+              >
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <div
+                    className="w-10 h-10 rounded-2xl flex items-center justify-center font-black text-sm shrink-0 border"
+                    style={{
+                      background: 'var(--mks-accent-soft)',
+                      color: 'var(--mks-accent-soft-text)',
+                      borderColor: 'var(--mks-card-border)'
+                    }}
+                  >
+                    {farmer.fullName.charAt(0).toUpperCase()}
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <h3 className="font-extrabold text-sm truncate" style={{ color: 'var(--mks-text)' }}>
+                      {farmer.fullName}
+                    </h3>
+                    <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                      <span
+                        className="text-[11px] flex items-center px-1.5 py-0.5 rounded-md border font-semibold"
+                        style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-muted)' }}
+                      >
+                        <MapPin size={10} className="mr-1 text-emerald-500 shrink-0" />
+                        {farmer.village || 'Merkez'}
+                      </span>
+                      {fFields.length > 0 && (
+                        <span className="text-[10px] text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded-md border border-amber-500/20 font-bold">
+                          {fFields.length} Tarla{fDekar > 0 ? ` · ${fDekar} da` : ''}
+                        </span>
+                      )}
+                      {farmer.tcNo && (
+                        <span
+                          className="text-[10px] px-1.5 py-0.5 rounded-md border font-mono"
+                          style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-muted)' }}
+                        >
+                          TC: {farmer.tcNo}
+                        </span>
+                      )}
+                      {grade && (
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-md border font-black ${
+                          grade === 'A' ? 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30' :
+                          grade === 'B' ? 'bg-sky-500/15 text-sky-500 border-sky-500/30' :
+                          grade === 'C' ? 'bg-amber-500/15 text-amber-500 border-amber-500/30' :
+                          'bg-rose-500/15 text-rose-500 border-rose-500/30'
+                        }`}>
+                          Not: {grade}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="text-right">
+                    <div className={`text-sm font-black font-mono tabular-nums ${
+                      isDebtor ? 'text-rose-500' : isCreditor ? 'text-emerald-500' : ''
+                    }`} style={!isDebtor && !isCreditor ? { color: 'var(--mks-text)' } : undefined}>
+                      {formatCurrency(Math.abs(bal), listCurrency)}
+                    </div>
+                    <div className="text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--mks-muted)' }}>
+                      {isDebtor ? 'Borçlu' : isCreditor ? 'Alacaklı' : 'Mutabık'}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      changeFarmerSelection(farmer);
+                      setIsFinancialAnalysisOpen(true);
+                    }}
+                    title="Finansal Analiz & Kârlılık"
+                    aria-label="Finansal Analiz"
+                    className="p-2 rounded-xl border transition-all active:scale-95 hidden sm:flex items-center gap-1 text-emerald-500 bg-emerald-500/10 border-emerald-500/20 hover:bg-emerald-500/20"
+                  >
+                    <TrendingUpIcon size={13} />
+                    <span className="text-[10px] font-extrabold">Finans</span>
+                  </button>
+
+                  {farmer.phoneNumber && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        window.open(`tel:${farmer.phoneNumber}`);
+                      }}
+                      title="Ara"
+                      aria-label="Çiftçiyi Ara"
+                      className="p-2 rounded-xl border transition-colors"
+                      style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-muted)' }}
+                    >
+                      <Phone size={13} />
+                    </button>
+                  )}
+
+                  <div
+                    className="p-1.5 rounded-xl border group-hover:text-emerald-500 transition-colors"
+                    style={{ background: 'var(--mks-subcard)', borderColor: 'var(--mks-card-border)', color: 'var(--mks-muted)' }}
+                  >
+                    <ChevronRight size={14} />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {canCreateFarmer && (
-          <button onClick={() => { setModalMode('ADD'); toggleModal(true); }} className="fixed bottom-32 right-5 bg-emerald-600 text-white px-6 py-3 rounded-full shadow-lg shadow-emerald-900/50 hover:bg-emerald-500 transition-all transform hover:scale-105 z-50 flex items-center justify-center gap-2 font-bold text-sm">
-            <Plus size={22} /> Yeni Cari
-          </button>
+        <button
+          type="button"
+          onClick={() => { setModalMode('ADD'); toggleModal(true); }}
+          className="md:hidden fixed bottom-24 right-4 text-white px-4 py-3 rounded-full shadow-xl transition-all active:scale-95 z-40 flex items-center justify-center gap-1.5 font-extrabold text-xs"
+          style={{ background: 'var(--mks-accent-primary)' }}
+        >
+          <Plus size={18} /> Yeni Çiftçi
+        </button>
       )}
 
       <FarmerContactImportModal

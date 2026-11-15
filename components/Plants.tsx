@@ -31,6 +31,7 @@ export const Plants: React.FC<{ onNavigate: (view: any) => void }> = ({ onNaviga
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPlant, setEditingPlant] = useState<Plant | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
 
   useBackHandler(isModalOpen, () => setIsModalOpen(false), 'Plants_form', 50);
@@ -77,6 +78,8 @@ export const Plants: React.FC<{ onNavigate: (view: any) => void }> = ({ onNaviga
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
+    setIsSubmitting(true);
     try {
       if (editingPlant) {
         await updatePlant({ ...formData, id: editingPlant.id });
@@ -88,6 +91,8 @@ export const Plants: React.FC<{ onNavigate: (view: any) => void }> = ({ onNaviga
       setIsModalOpen(false);
     } catch (error) {
       showToast('Bir hata oluştu', 'error');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -451,10 +456,11 @@ export const Plants: React.FC<{ onNavigate: (view: any) => void }> = ({ onNaviga
                       {!isDeleting && (
                         <button
                           type="submit"
-                          className="flex-[2] bg-emerald-600 text-white py-4 rounded-2xl font-black uppercase tracking-[0.15em] text-[11px] shadow-lg shadow-emerald-900/40 border border-emerald-500/20 active:scale-95 transition-all flex items-center justify-center gap-2"
+                          disabled={isSubmitting}
+                          className="flex-[2] bg-emerald-600 text-white py-4 rounded-2xl font-black uppercase tracking-[0.15em] text-[11px] shadow-lg shadow-emerald-900/40 border border-emerald-500/20 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                         >
                           <Save size={14} />
-                          {editingPlant ? 'Güncelle' : 'Bitkiyi Kaydet'}
+                          {isSubmitting ? 'Kaydediliyor...' : (editingPlant ? 'Güncelle' : 'Bitkiyi Kaydet')}
                         </button>
                       )}
                     </div>

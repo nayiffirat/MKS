@@ -1,7 +1,7 @@
 
 import { safeStringify } from '../utils/json';
-import { useState, useEffect, useCallback } from 'react';
-import { WeatherService, WeatherResponse, AGRI_CITIES } from '../services/weather';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { WeatherService, WeatherResponse, AGRI_CITIES, evaluateSprayingConditions, SPRAY_THRESHOLDS, isWetWeatherCode } from '../services/weather';
 import { AgriCity } from '../types';
 import { useAppViewModel } from '../context/AppContext';
 
@@ -35,7 +35,17 @@ export const useWeatherViewModel = () => {
   const [searchResults, setSearchResults] = useState<AgriCity[]>([]);
   const [isSearching, setIsSearching] = useState(false);
 
+  const weatherAbortRef = useRef<AbortController | null>(null);
+  const weatherSeqRef = useRef(0);
+  const searchAbortRef = useRef<AbortController | null>(null);
+  const searchSeqRef = useRef(0);
+
   const refreshWeather = useCallback(async (force = false) => {
+    weatherAbortRef.current?.abort();
+    const controller = new AbortController();
+    weatherAbortRef.current = controller;
+    const mySeq = ++weatherSeqRef.current;
+
     setIsLoading(true);
     setError(null);
     try {
@@ -43,19 +53,23 @@ export const useWeatherViewModel = () => {
       const now = Date.now();
 
       if (!force && weatherCache[cacheKey] && (now - weatherCache[cacheKey].timestamp < CACHE_DURATION)) {
+          if (controller.signal.aborted || mySeq !== weatherSeqRef.current) return;
           setWeather(weatherCache[cacheKey].data);
-          setIsLoading(false);
           return;
       }
 
-      const data = await WeatherService.getForecast(selectedCity.lat, selectedCity.lon);
+      const data = await WeatherService.getForecast(selectedCity.lat, selectedCity.lon, controller.signal);
+      if (controller.signal.aborted || mySeq !== weatherSeqRef.current) return;
       weatherCache[cacheKey] = { data, timestamp: now };
       setWeather(data);
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.name === 'AbortError' || controller.signal.aborted || mySeq !== weatherSeqRef.current) return;
       setError(t('weather.error.fetch'));
       console.error(err);
     } finally {
-      setIsLoading(false);
+      if (mySeq === weatherSeqRef.current) {
+        setIsLoading(false);
+      }
     }
   }, [selectedCity]);
 
@@ -68,18 +82,43 @@ export const useWeatherViewModel = () => {
 
   useEffect(() => {
     refreshWeather();
+    return () => {
+      weatherAbortRef.current?.abort();
+      weatherSeqRef.current++;
+    };
   }, [refreshWeather]);
 
-  const searchLocations = async (query: string) => {
+  useEffect(() => {
+    return () => {
+      searchAbortRef.current?.abort();
+      searchSeqRef.current++;
+    };
+  }, []);
+
+  const searchLocations = useCallback(async (query: string) => {
+      searchAbortRef.current?.abort();
+      const mySeq = ++searchSeqRef.current;
       if (query.length < 3) {
           setSearchResults([]);
+          setIsSearching(false);
           return;
       }
+      const controller = new AbortController();
+      searchAbortRef.current = controller;
       setIsSearching(true);
-      const results = await WeatherService.searchLocations(query);
-      setSearchResults(results);
-      setIsSearching(false);
-  };
+      try {
+        const results = await WeatherService.searchLocations(query, controller.signal);
+        if (controller.signal.aborted || mySeq !== searchSeqRef.current) return;
+        setSearchResults(results);
+      } catch (err: any) {
+        if (err?.name === 'AbortError' || controller.signal.aborted || mySeq !== searchSeqRef.current) return;
+        setSearchResults([]);
+      } finally {
+        if (mySeq === searchSeqRef.current) {
+          setIsSearching(false);
+        }
+      }
+  }, []);
 
   const changeCity = (city: AgriCity) => {
     setSelectedCity(city);
@@ -109,83 +148,89 @@ export const useWeatherViewModel = () => {
       });
   };
 
-  const getSprayingAdvice = (windSpeed: number, temperature: number, weatherCode: number) => {
+  const getSprayingAdvice = (windSpeed: number, temperature: number, weatherCode: number, humidity?: number, gustSpeed?: number) => {
     const now = new Date();
     const month = now.getMonth();
     const hour = now.getHours();
 
-    const isRainyOrSnowy = (weatherCode >= 51 && weatherCode <= 67) || (weatherCode >= 71 && weatherCode <= 77) || (weatherCode >= 80 && weatherCode <= 86) || (weatherCode >= 95);
+    const evalRes = evaluateSprayingConditions({
+      tempC: temperature,
+      humidity,
+      windKmh: windSpeed,
+      gustKmh: gustSpeed,
+      weatherCode,
+    });
 
-    if (isRainyOrSnowy) {
-      return { 
-          status: 'İlaçlamaya uygun değil', 
-          message: 'Yağışlı veya fırtınalı hava. Atılan ilaç yıkanıp gideceği veya tehlikeli olacağı için ilaçlama yapılamaz.', 
-          color: 'text-red-400', 
+    if (evalRes.level === 'UYGUNSUZ') {
+      if (isWetWeatherCode(weatherCode)) {
+        return {
+          status: 'İlaçlamaya uygun değil',
+          message: 'Yağışlı veya fırtınalı hava. Atılan ilaç yıkanıp gideceği veya tehlikeli olacağı için ilaçlama yapılamaz.',
+          color: 'text-red-400',
           bg: 'bg-red-500/10',
           border: 'border-red-500/20',
           iconColor: 'text-red-500',
           isSuitable: false
-      };
-    }
-
-    if (windSpeed > 15) {
-      return { 
-          status: 'İlaçlamaya uygun değil', 
-          message: 'Şiddetli rüzgar! İlaç savrulacağı için ilaçlama kesinlikle yapılamaz.', 
-          color: 'text-red-400', 
+        };
+      }
+      if (windSpeed > SPRAY_THRESHOLDS.maxWindKmh || (gustSpeed ?? windSpeed) > SPRAY_THRESHOLDS.maxGustKmh) {
+        return {
+          status: 'İlaçlamaya uygun değil',
+          message: 'Şiddetli rüzgar! İlaç savrulacağı için ilaçlama kesinlikle yapılamaz.',
+          color: 'text-red-400',
           bg: 'bg-red-500/10',
           border: 'border-red-500/20',
           iconColor: 'text-red-500',
           isSuitable: false
-      };
-    }
-
-    if (temperature < 5 || temperature > 35) {
-      return { 
-          status: 'İlaçlamaya uygun değil', 
-          message: 'Ekstrem sıcaklık! İlaç etkisini kaybedebilir veya bitkiyi yakabilir.', 
-          color: 'text-rose-400', 
-          bg: 'bg-rose-500/10',
-          border: 'border-rose-500/20',
-          iconColor: 'text-rose-500',
-          isSuitable: false
+        };
+      }
+      return {
+        status: 'İlaçlamaya uygun değil',
+        message: 'Ekstrem sıcaklık! İlaç etkisini kaybedebilir veya bitkiyi yakabilir.',
+        color: 'text-rose-400',
+        bg: 'bg-rose-500/10',
+        border: 'border-rose-500/20',
+        iconColor: 'text-rose-500',
+        isSuitable: false
       };
     }
 
     const isSummer = month >= 5 && month <= 7;
     // In summer, mid day (11 to 17) is usually very hot and sunny, stomatas close, evaporation is high
     if (isSummer && (hour >= 11 && hour <= 17)) {
-      return { 
-          status: 'Şu an uygun değil', 
-          message: 'Yaz sıcağında güneş tepedeyken ilaçlama yapılmaz. Sabah erken veya akşam serinliğini bekleyin.', 
-          color: 'text-orange-400', 
-          bg: 'bg-orange-500/10',
-          border: 'border-orange-500/20',
-          iconColor: 'text-orange-500',
-          isSuitable: false
+      return {
+        status: 'Şu an uygun değil',
+        message: 'Yaz sıcağında güneş tepedeyken ilaçlama yapılmaz. Sabah erken veya akşam serinliğini bekleyin.',
+        color: 'text-orange-400',
+        bg: 'bg-orange-500/10',
+        border: 'border-orange-500/20',
+        iconColor: 'text-orange-500',
+        isSuitable: false
       };
     }
 
-    if (windSpeed > 10) {
-      return { 
-          status: 'Dikkatli ilaçlama', 
-          message: 'Rüzgar hızı sınırda. İlaçlama yapılabilir ancak damla çapını büyütün ve sürüklenmeye dikkat edin.', 
-          color: 'text-yellow-400', 
-          bg: 'bg-yellow-500/10',
-          border: 'border-yellow-500/20',
-          iconColor: 'text-yellow-500',
-          isSuitable: true
-      };
-    }
-
-    return { 
-        status: 'İlaçlamaya uygun', 
-        message: 'Hava koşulları (rüzgar, sıcaklık ve yağış durumu) ilaçlama için mükemmel.', 
-        color: 'text-emerald-300 font-extrabold', 
-        bg: 'bg-emerald-500/20',
-        border: 'border-emerald-400/40',
-        iconColor: 'text-emerald-300',
+    if (evalRes.level === 'DIKKAT') {
+      return {
+        status: 'Dikkatli ilaçlama',
+        message: windSpeed > SPRAY_THRESHOLDS.cautionWindKmh
+          ? 'Rüzgar hızı sınırda. İlaçlama yapılabilir ancak damla çapını büyütün ve sürüklenmeye dikkat edin.'
+          : evalRes.reason,
+        color: 'text-yellow-400',
+        bg: 'bg-yellow-500/10',
+        border: 'border-yellow-500/20',
+        iconColor: 'text-yellow-500',
         isSuitable: true
+      };
+    }
+
+    return {
+      status: 'İlaçlamaya uygun',
+      message: 'Hava koşulları (rüzgar, sıcaklık ve yağış durumu) ilaçlama için mükemmel.',
+      color: 'text-emerald-300 font-extrabold',
+      bg: 'bg-emerald-500/20',
+      border: 'border-emerald-400/40',
+      iconColor: 'text-emerald-300',
+      isSuitable: true
     };
   };
 

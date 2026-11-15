@@ -2,6 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useAppViewModel } from '../context/AppContext';
 import { Account, Transaction } from '../types';
 import { roundAmount } from '../utils/currency';
+import { getLocalDateTimeInputValue } from '../utils/dateUtils';
 import { turkishMatchesAny } from '../utils/search';
 import { 
   Wallet, 
@@ -69,7 +70,7 @@ export const Kasa: React.FC<KasaProps> = ({ onBack }) => {
   const [moneyDescription, setMoneyDescription] = useState('');
   const [moneyAccountId, setMoneyAccountId] = useState('');
   const [moneyCategory, setMoneyCategory] = useState('Diğer');
-  const [moneyDate, setMoneyDate] = useState(() => new Date().toISOString().slice(0, 16));
+  const [moneyDate, setMoneyDate] = useState(() => getLocalDateTimeInputValue());
   const [isSubmittingMoney, setIsSubmittingMoney] = useState(false);
 
   // Account Detail View States

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, Users, Shield, Calendar, Search, Save, Loader2, Edit3, X, Trash2, KeyRound, ChevronRight, Mail, Clock, LogIn, Newspaper, Plus, Image as ImageIcon, FileText, Link as LinkIcon, RefreshCw, AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { ChevronLeft, Users, Shield, Search, Save, Loader2, Edit3, X, Trash2, KeyRound, ChevronRight, Mail, Clock, LogIn, Newspaper, Plus, Image as ImageIcon, FileText, Link as LinkIcon, RefreshCw, AlertCircle } from 'lucide-react';
 import { useAppViewModel } from '../context/AppContext';
 import { UserProfile, News } from '../types';
 import { ConfirmationModal } from './ConfirmationModal';
@@ -44,7 +44,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     const fileInputRef = React.useRef<HTMLInputElement>(null);
     const [isSaving, setIsSaving] = useState(false);
     const [isSyncing, setIsSyncing] = useState(false);
-    const [isPasswordVisible, setIsPasswordVisible] = useState(false);
     const [featureMatrix, setFeatureMatrix] = useState<TierFeatureMatrix>(() => getFeatureMatrix());
     const [editablePlans, setEditablePlans] = useState<SubscriptionPlanDefinition[]>(() => getSubscriptionPlans());
     const [isSavingMatrix, setIsSavingMatrix] = useState(false);

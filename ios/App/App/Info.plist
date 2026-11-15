@@ -53,11 +53,11 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>com.nayiffirat.muhendiskayitsistemi</string>
+			<string>firattarim.muhendiskayitsistemiv2</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>mks</string>
-				<string>com.nayiffirat.muhendiskayitsistemi</string>
+				<string>firattarim.muhendiskayitsistemiv2</string>
 			</array>
 		</dict>
 	</array>

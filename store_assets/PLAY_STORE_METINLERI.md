@@ -1,47 +1,56 @@
-# MKS — Google Play Store Kurumsal Mağaza Metinleri
+# MKS — Google Play Store Kurumsal Mağaza Metinleri (v8.3.0)
 
 ## Uygulama Adı (En fazla 30 karakter)
 Mühendis Kayıt Sistemi - MKS
 
 ## Kısa Açıklama (En fazla 80 karakter)
-Ziraat mühendisleri ve bayiler için çiftçi cari, BKTS, depo ve reçete yönetimi.
+Ziraat mühendisleri ve bayiler için cari, BKTS, GTS, B-Reçete ve stok yönetimi.
 
 ## Tam Açıklama (En fazla 4000 karakter)
-Mühendis Kayıt Sistemi (MKS); ziraat mühendisleri, zirai ilaç ve gübre bayileri ile tarımsal işletmeler için özel olarak geliştirilmiş yeni nesil kurumsal yönetim, cari hesap ve saha takip platformudur.
+Mühendis Kayıt Sistemi (MKS); ziraat mühendisleri, zirai ilaç ve gübre bayileri ile tarımsal işletmeler için geliştirilmiş yeni nesil kurumsal ERP, cari hesap, stok ve akıllı saha yönetim platformudur.
 
-Artık dağınık defterler, karışık evraklar ve kaybolan alacaklar geride kaldı. Sahada, ofiste veya depoda; internet olsun ya da olmasın tüm zirai operasyonunuz MKS ile parmaklarınızın ucunda.
+Dağınık defterler, karışık evraklar ve kaybolan alacaklar artık geride kaldı. Sahada, ofiste veya depoda; internetiniz olsun ya da olmasın tüm zirai operasyonunuz MKS ile güvende.
 
-🌾 1. MÜSTAHSİL & ÇİFTÇİ CARİ HESAP YÖNETİMİ
-• Çiftçilerin vadeli ve peşin alacak/borç takibi.
-• Sezon sonu tek tıkla otomatik yıllık bakiye devri (çift sayım ve veri kaybı riski olmadan).
-• Parçalı tahsilat, çek/senet ve POS kart tahsilatı girişi.
-• Çiftçilere tek tıkla detaylı WhatsApp hesap ekstresi ve ödeme bilgilendirme mesajı gönderimi.
-• Geciken ödemeler için akıllı borç hatırlatma bildirimleri.
+🌾 1. ÇİFTÇİ & MÜSTAHSİL CARİ HESAP YÖNETİMİ VE ÜRETİCİ PORTALI
+• Vadeli ve peşin satış/tahsilat, çek/senet portföyü, karşılıksız işlem ve POS kasa takibi.
+• Parçalı tahsilat girişi ve kuruşu kuruşuna tutarlı canlı cari mutabakat.
+• Sezon sonu tek tıkla güvenli bakiye devri.
+• Çiftçilere özel Üretici Portalı bağlantısı üzerinden fotoğraf paylaşımı ve ödeme bildirimi takibi.
+• Tek tıkla WhatsApp hesap ekstresi ve vade hatırlatma bildirimleri.
 
-📦 2. DEPO, STOK & ONAYLI SAYIM SİSTEMİ
-• Zirai ilaç, tohum ve gübre stoklarının anlık takibi.
-• FEFO (İlk Sona Erecek İlk Çıkar) kuralı ile parti (lot), son kullanma tarihi (SKT) ve seri numarası kontrolü.
-• Kritik stok ve yaklaşan SKT uyarıları.
-• Onaylı dijital stok sayımı ile depo kayıplarına son.
-• Emanet (konsinye) stok ve hasarlı/iade karantina modülü.
+🏛️ 2. RESMİ BAKANLIK SERVİSLERİ (BKTS / GTS / B-REÇETE)
+• Birbirinden tamamen ayrıştırılmış BKTS (İlaç Takip), GTS (Gübre Takip) ve B-Reçete ekranları.
+• TCKN/VKN ve resmi servis kimlik bilgileri ile otomatik giriş hatırlama.
+• 2D GS1 DataMatrix (Karekod) kamera ve USB/Bluetooth el barkod okuyucu desteği.
+• Resmi XML, CSV ve PDF denetim defteri dışa aktarımı ve mal kabul/satış bildirimi.
 
-🏛️ 3. BAKANLIK ENTEGRASYONU (BKTS / GTS / B-REÇETE)
-• Tarım ve Orman Bakanlığı standartlarında 2D GS1 DataMatrix (Karekod) ve barkod okuma.
-• Süpermarket tipi USB/Bluetooth el barkod okuyucuları ve kamera ile saniyeler içinde mal kabul.
-• Resmi B-Reçete yazımı, karekod dökümü ve XML/CSV/PDF dışa aktarım desteği.
+📦 3. DEPO, STOK, BARKODLU HIZLI SATIŞ & SİLO KANTAR
+• Zirai ilaç, tohum ve gübre stoklarının anlık takibi, kritik stok ve SKT uyarıları.
+• FEFO (İlk Sona Erecek İlk Çıkar) parti/lot ve seri numarası kontrolü.
+• Barkodlu hızlı POS satışı, onaylı dijital stok sayımı ve emanet/karantina takibi.
+• Silo/kantar tartım, rutubet/fire ve takas (barter) mahsuplaşma yönetimi.
 
-🧾 4. EDM e-FATURA & KASA MUTABAKATI
-• Çiftçi ve tedarikçi faturalarını tek merkezden yönetin.
-• Çoklu kasa ve banka hesabı takibi, hesaplar arası virman transferi.
+🧾 4. EDM e-FATURA / e-ARŞİV VE KASA MUTABAKATI
+• Çiftçi ve tedarikçi faturalarını tek merkezden düzenleme ve gönderme.
+• Çoklu kasa, banka hesabı ve POS blokesi takibi, hesaplar arası virman transferi.
 • Günlük gelir/gider analizi, kârlılık raporları ve kurumsal PDF bilanço dökümleri.
 
-📍 5. AKILLI SAHA, TKGM HARİTA & HAVA RADARI
-• Parsel sorgulama, TKGM tapu-kadastro uydu sınırları.
-• İlaçlama uygunluk saati, rüzgar hızı ve yerel zirai hava tahmini.
-• Tarla ziyaret notları, zirai fotoğraf arşivi ve saha keşif kayıtları.
+🛰️ 5. TKGM PARSEL, SENTINEL-2 UYDU ANALİZİ & MKS MÜHENDİSİM AI
+• Harita üzerinden anlık TKGM ada/parsel sorgulama ve parsel sınırı çizimi.
+• Copernicus Sentinel-2 uydu verileriyle çok katmanlı tarla analizi (NDVI, NDMI ve Yüzey Islaklığı).
+• Rüzgar hızı, Delta-T ve yağış parametrelerine göre anlık ilaçlama uygunluk hava radarı.
+• Resmî BKÜ (Bitki Koruma Ürünleri) veri tabanıyla desteklenen MKS Mühendisim yapay zeka teşhis ve danışmanlık asistanı.
 
 🔒 ÇEVRİMDIŞI ÇALIŞMA & SIFIR VERİ KAYBI GÜVENCESİ
-MKS, arazide internetiniz kesilse bile çalışmaya devam eder. Cihaz hafızasına anlık yerel yedekleme yapar ve internete bağlandığınız anda bulutla pürüzsüzce senkronize olur. Verileriniz %100 güvendedir.
+MKS, arazide internetiniz kesilse bile çalışmaya devam eder. Verileri cihazda yerel olarak güvenceye alır ve internete bağlandığınız anda bulutla otomatik senkronize eder.
 
 Tarıma değer katan tüm ziraat mühendislerimiz ve bayilerimiz için üretildi.
-Bereket her zaman birlikte büyür!
+
+## Sürüm Notları (<tr-TR> | En fazla 500 karakter)
+<tr-TR>
+v8.3.0 (Yapı 30):
+• BKTS, GTS ve B-Reçete ekranları ayrıştırıldı; TCKN/VKN otomatik giriş hatırlama ve canlı köprü eklendi.
+• BKÜ veri tabanı ve MKS Mühendisim yapay zeka teşhis motoru güçlendirildi.
+• Çiftçi/tedarikçi cari mutabakatı, POS kasa, çek/senet ve silo hesaplamaları yenilendi.
+• Android 16 (API 36) uyumu ve harita/uydu hız optimizasyonu yapıldı.
+</tr-TR>

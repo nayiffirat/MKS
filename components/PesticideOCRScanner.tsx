@@ -1,7 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { Camera, Loader2 } from 'lucide-react';
 import { PesticideCategory } from '../types';
-import { API_BASE } from '../utils/api';
 import { generateAIContent } from '../utils/gemini';
 
 interface ScannedData {

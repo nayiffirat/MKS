@@ -2,8 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAppViewModel } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
-import { dbService } from '../services/db';
-import { User, Save, Briefcase, Phone, CheckCircle, Loader2, ArrowLeft, Stamp, Sparkles, Circle, Square, Check, Mail, Link2, ShieldCheck } from 'lucide-react';
+import { User, Save, Briefcase, Phone, Loader2, ArrowLeft, Stamp, Sparkles, Circle, Square, Check, Mail, Link2, ShieldCheck } from 'lucide-react';
 import { linkWithPopup } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../services/firebase';

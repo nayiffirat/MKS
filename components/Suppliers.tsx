@@ -4,8 +4,8 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
     Truck, Plus, Trash2, Edit2, ChevronRight, ChevronLeft, 
     Package, CreditCard, ArrowUpRight, ArrowDownRight, ArrowLeft, 
-    Search, Phone, MapPin, Calendar, DollarSign, 
-    AlertCircle, CheckCircle2, FlaskConical, Info, X, User, RefreshCcw,
+    Search, Phone, Calendar, 
+    AlertCircle, CheckCircle2, FlaskConical, X, User, RefreshCcw,
     Receipt, Save, Barcode, Download, ArrowDownLeft, FileText, Wallet, AlertTriangle
 } from 'lucide-react';
 import BarcodeScanner from './LazyBarcodeScanner';
@@ -14,6 +14,7 @@ import { useAppViewModel } from '../context/AppContext';
 import { dbService } from '../services/db';
 import { Supplier, SupplierPurchase, SupplierPayment, PesticideCategory, InventoryItem } from '../types';
 import { formatCurrency, getCurrencySuffix } from '../utils/currency';
+import { getLocalDateString } from '../utils/dateUtils';
 import { validateTcOrVkn } from '../utils/tcNoValidator';
 import { ConfirmationModal } from './ConfirmationModal';
 import { ListSkeleton } from './Skeleton';
@@ -25,6 +26,8 @@ import { playScanBeep, playErrorBeep } from '../utils/hardwareBarcodeScanner';
 import { toTelHref } from '../utils/whatsappTemplates';
 import { round2 } from '../utils/dateUtils';
 import { supplierDocKind, checkPurchaseReturn, ReturnViolation } from '../utils/tradeCore';
+import { getBouncedRelatedPaymentIds } from '../utils/ledger';
+import { escapeHtml } from '../utils/html';
 
 const trToEn = (str: string) => {
     return str.replace(/Ğ/g, 'G')
@@ -41,25 +44,16 @@ const trToEn = (str: string) => {
         .replace(/ç/g, 'c');
 };
 
-const pdfCurrency = (amount: number) => {
-    return new Intl.NumberFormat('tr-TR', {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-    }).format(amount) + ' TL';
-};
-
 export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: string | null; }> = ({ onBack, initialSupplierId }) => {
     const { 
         suppliers, addSupplier, updateSupplier, 
         addSupplierPurchase, updateSupplierPurchase, softDeleteSupplierPurchase,
         addSupplierPayment, updateSupplierPayment, softDeleteSupplierPayment,
         softDeleteSupplier,
-        inventory, addInventoryItem, showToast, hapticFeedback,
+        inventory, showToast,
         prescriptions, supplierPurchases,
         accounts, userProfile,
         activeTeamMember,
-        teamMembers,
-        visits,
         isInitialized,
         myPayments
     } = useAppViewModel();
@@ -123,7 +117,7 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
 
     // Form States
     const [newSupplier, setNewSupplier] = useState({ name: '', phoneNumber: '', tcNo: '', address: '' });
-    const [newPayment, setNewPayment] = useState({ amount: '', method: 'CASH' as any, note: '', dueDate: new Date().toISOString().split('T')[0], accountId: '', installments: 1, producerCardMonths: 0, type: 'PAY' as 'PAY' | 'RECEIVE' });
+    const [newPayment, setNewPayment] = useState({ amount: '', method: 'CASH' as any, note: '', dueDate: getLocalDateString(), accountId: '', installments: 1, producerCardMonths: 0, type: 'PAY' as 'PAY' | 'RECEIVE' });
     const [newPurchase, setNewPurchase] = useState<{
         items: { pesticideId: string, pesticideName: string, quantity: number, unit: string, buyingPrice: number, sellingPrice?: number }[],
         note: string,
@@ -247,11 +241,11 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
                 let htmlContent = `
                     <div style="margin-bottom: 30px;">
                         <h1 style="font-size: 26px; font-weight: 800; margin: 0 0 8px 0; color: #10b981; text-transform: uppercase;">
-                            ${userProfile?.companyName || "BAYİ"}
+                            ${escapeHtml(userProfile?.companyName || "BAYİ")}
                         </h1>
                         <h2 style="font-size: 18px; font-weight: 700; margin: 0 0 4px 0; color: #1c1917;">Tedarikçi İşlem Raporu</h2>
                         <p style="font-size: 13px; margin: 0; color: #78716c;">
-                            Tarih Aralığı: ${dateStr} &nbsp;&bull;&nbsp; Oluşturulma: ${format(new Date(), 'dd.MM.yyyy HH:mm')}
+                            Tarih Aralığı: ${escapeHtml(dateStr)} &nbsp;&bull;&nbsp; Oluşturulma: ${format(new Date(), 'dd.MM.yyyy HH:mm')}
                         </p>
                     </div>
                 `;
@@ -299,7 +293,9 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
                         });
                     });
 
-                    allSupplierPayments.filter(p => !p.deletedAt && p.supplierId === supplier.id).forEach(p => {
+                    const bouncedRelatedIds = getBouncedRelatedPaymentIds(myPayments);
+
+                    allSupplierPayments.filter(p => !p.deletedAt && p.supplierId === supplier.id && !bouncedRelatedIds.has(p.id)).forEach(p => {
                         const pDate = new Date(p.date);
                         if (pDate < start || pDate > end) return;
                         const isReceive = p.type === 'RECEIVE';
@@ -313,7 +309,7 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
                         });
                     });
 
-                    myPayments.filter(p => !p.deletedAt && p.status !== 'CANCELLED' && !p.relatedId && p.supplierId === supplier.id).forEach(p => {
+                    myPayments.filter(p => !p.deletedAt && p.status !== 'CANCELLED' && p.portfolioStatus !== 'BOUNCED' && !p.relatedId && p.supplierId === supplier.id).forEach(p => {
                         const pDate = new Date(p.issueDate);
                         if (pDate < start || pDate > end) return;
 
@@ -331,7 +327,7 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
                     htmlContent += `
                         <div style="margin-bottom: 30px; page-break-inside: avoid;">
                             <h3 style="font-size: 15px; font-weight: 700; margin: 0 0 10px 0; color: #1c1917; padding-bottom: 5px; border-bottom: 2px solid #e7e5e4;">
-                                ${index + 1}. Tedarikçi: ${supplier.name} <span style="color: #78716c; font-weight: 400; font-size: 13px; margin-left: 10px;">Tel: ${supplier.phoneNumber || '-'}</span>
+                                ${index + 1}. Tedarikçi: ${escapeHtml(supplier.name)} <span style="color: #78716c; font-weight: 400; font-size: 13px; margin-left: 10px;">Tel: ${escapeHtml(supplier.phoneNumber || '-')}</span>
                             </h3>
                             <table style="width: 100%; border-collapse: collapse; font-size: 11px; text-align: left;">
                                 <thead>
@@ -362,16 +358,20 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
                             
                             const bg = i % 2 === 0 ? '#fafaf9' : '#ffffff';
                             const balanceStr = formatCurrency(Math.abs(currentBalance), userProfile?.currency || 'TRY');
-                            const statusStr = currentBalance < 0 ? '<span style="color:#ef4444;font-size:10px;margin-left:4px;">(Bize Borçlu)</span>' : '<span style="color:#10b981;font-size:10px;margin-left:4px;">(Hesap Alacaklı)</span>';
+                            const statusStr = currentBalance < 0
+                                ? '<span style="color:#ef4444;font-size:10px;margin-left:4px;">(Borcumuz / Alacaklı)</span>'
+                                : currentBalance > 0
+                                    ? '<span style="color:#10b981;font-size:10px;margin-left:4px;">(Bize Borçlu)</span>'
+                                    : '<span style="color:#6b7280;font-size:10px;margin-left:4px;">(Hesap Mutabık)</span>';
                             
                             htmlContent += `
                                 <tr style="background-color: ${bg}; border-bottom: 1px solid #e7e5e4;">
                                     <td style="padding: 8px 10px; white-space: nowrap;">${format(l.date, 'dd.MM.yyyy')}</td>
-                                    <td style="padding: 8px 10px;">${l.type}</td>
-                                    <td style="padding: 8px 10px;">${l.docNo}</td>
+                                    <td style="padding: 8px 10px;">${escapeHtml(l.type)}</td>
+                                    <td style="padding: 8px 10px;">${escapeHtml(l.docNo)}</td>
                                     <td style="padding: 8px 10px; text-align: right; color: #ef4444; font-family: monospace;">${l.isDebtToUs ? formatCurrency(l.amount, userProfile?.currency || 'TRY') : '-'}</td>
                                     <td style="padding: 8px 10px; text-align: right; color: #10b981; font-family: monospace;">${!l.isDebtToUs ? formatCurrency(l.amount, userProfile?.currency || 'TRY') : '-'}</td>
-                                    <td style="padding: 8px 10px; text-align: right; font-weight: bold; font-family: monospace;">${balanceStr} ${statusStr}</td>
+                                    <td style="padding: 8px 10px; text-align: right; font-weight: bold; font-family: monospace;">${escapeHtml(balanceStr)} ${statusStr}</td>
                                 </tr>
                             `;
                         });
@@ -386,14 +386,16 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
 
                 container.innerHTML = htmlContent;
                 document.body.appendChild(container);
-
-                const canvas = await renderElementToCanvas(container, {
-                    scale: 2,
-                    backgroundColor: '#ffffff',
-                    logging: false
-                });
-
-                document.body.removeChild(container);
+                let canvas: HTMLCanvasElement;
+                try {
+                    canvas = await renderElementToCanvas(container, {
+                        scale: 2,
+                        backgroundColor: '#ffffff',
+                        logging: false
+                    });
+                } finally {
+                    if (container.parentNode) container.parentNode.removeChild(container);
+                }
                 
                 const pdf = await createMultiPagePdf(canvas);
                 pdf.save(`Tedarikci_Raporu_${format(new Date(), 'yyyyMMdd_HHmm')}.pdf`);
@@ -506,7 +508,7 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
             
             setIsPaymentModalOpen(false);
             setEditingPayment(null);
-            setNewPayment({ amount: '', method: 'CASH', note: '', dueDate: new Date().toISOString().split('T')[0], accountId: '', installments: 1, producerCardMonths: 0, type: 'PAY' });
+            setNewPayment({ amount: '', method: 'CASH', note: '', dueDate: getLocalDateString(), accountId: '', installments: 1, producerCardMonths: 0, type: 'PAY' });
         } finally {
             isSavingPaymentRef.current = false;
             setIsSavingPayment(false);
@@ -519,7 +521,7 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
             amount: payment.amount.toString(),
             method: payment.method,
             note: payment.note || '',
-            dueDate: payment.dueDate || new Date().toISOString().split('T')[0],
+            dueDate: payment.dueDate || getLocalDateString(),
             accountId: payment.accountId || '',
             installments: payment.installments || 1,
             producerCardMonths: payment.producerCardMonths || 0,
@@ -578,7 +580,7 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
     const handleClosePayment = () => {
         setIsPaymentModalOpen(false);
         setEditingPayment(null);
-        setNewPayment({ amount: '', method: 'CASH', note: '', dueDate: new Date().toISOString().split('T')[0], accountId: '', installments: 1, producerCardMonths: 0, type: 'PAY' });
+        setNewPayment({ amount: '', method: 'CASH', note: '', dueDate: getLocalDateString(), accountId: '', installments: 1, producerCardMonths: 0, type: 'PAY' });
     };
 
     if (selectedSupplier) {
@@ -589,7 +591,7 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
                 onOpenPurchase={() => setIsPurchaseModalOpen(true)}
                 onOpenPayment={(type: 'PAY' | 'RECEIVE' = 'PAY') => {
                     setEditingPayment(null);
-                    setNewPayment({ amount: '', method: 'CASH', note: '', dueDate: new Date().toISOString().split('T')[0], accountId: '', installments: 1, producerCardMonths: 0, type });
+                    setNewPayment({ amount: '', method: 'CASH', note: '', dueDate: getLocalDateString(), accountId: '', installments: 1, producerCardMonths: 0, type });
                     setIsPaymentModalOpen(true);
                 }}
                 onOpenDebt={() => setIsDebtModalOpen(true)}
@@ -1020,7 +1022,7 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
 };
 
 const DebtModal = ({ supplier, onClose, onSave }: any) => {
-    const { userProfile, teamMembers, hapticFeedback } = useAppViewModel();
+    const { userProfile } = useAppViewModel();
     const [amount, setAmount] = useState('');
     const [note, setNote] = useState('');
     const [isSaving, setIsSaving] = useState(false);
@@ -1108,11 +1110,12 @@ const SupplierDetailView = ({
     const [payments, setPayments] = useState<SupplierPayment[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [editingPurchase, setEditingPurchase] = useState<SupplierPurchase | null>(null);
+    const [isUpdatingPurchase, setIsUpdatingPurchase] = useState(false);
     const [isReportModalOpen, setIsReportModalOpen] = useState(false);
     const [reportOptions, setReportOptions] = useState({
         type: 'SUMMARY' as 'SUMMARY' | 'DETAILED',
-        startDate: new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0],
-        endDate: new Date().toISOString().split('T')[0]
+        startDate: getLocalDateString(new Date(new Date().getFullYear(), 0, 1)),
+        endDate: getLocalDateString()
     });
     const [confirmModal, setConfirmModal] = useState<{
         isOpen: boolean;
@@ -1153,17 +1156,18 @@ const SupplierDetailView = ({
             dbService.getSupplierPurchases(supplier.id),
             dbService.getSupplierPayments(supplier.id)
         ]);
+        const bouncedRelatedIds = getBouncedRelatedPaymentIds(myPayments);
         const activePurchases = purchList.filter(p => !p.deletedAt);
-        const activePayments = payList.filter(p => !p.deletedAt);
-        // Only include checks that are standalone (no relatedId linking them back to a SupplierPayment)
-        const activeMyPayments = myPayments.filter((p: any) => p.supplierId === supplier.id && !p.deletedAt && p.status !== 'CANCELLED' && !p.relatedId);
+        const activePayments = payList.filter(p => !p.deletedAt && !bouncedRelatedIds.has(p.id));
+        // Only include checks that are standalone (no relatedId linking them back to a SupplierPayment) and not BOUNCED
+        const activeMyPayments = myPayments.filter((p: any) => p.supplierId === supplier.id && !p.deletedAt && p.status !== 'CANCELLED' && p.portfolioStatus !== 'BOUNCED' && !p.relatedId);
         
         setPurchases(activePurchases.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()));
         
-        // Combine regular payments and checks/notes
+        // Combine regular payments and checks/notes (preserve original MyPayment type for reporting)
         const allPayments = [
             ...activePayments,
-            ...activeMyPayments.map((p: any) => ({ ...p, type: 'MY_PAYMENT', date: p.issueDate }))
+            ...activeMyPayments.map((p: any) => ({ ...p, originalType: p.type, type: 'MY_PAYMENT', date: p.issueDate }))
         ].sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
         
         setPayments(allPayments);
@@ -1190,30 +1194,32 @@ const SupplierDetailView = ({
                     return date >= start && date <= end;
                 });
 
-                const totalDebt = filteredPurchases.reduce((acc, p) => acc + (p.totalAmount > 0 ? p.totalAmount : 0), 0)
+                const totalDebt = filteredPurchases.reduce((acc, p) => acc + (supplierDocKind(p) === 'PURCHASE' ? Math.abs(Number(p.totalAmount) || 0) : 0), 0)
                     + filteredPayments.filter((p: any) => p.type === 'RECEIVE').reduce((acc: any, p: any) => acc + (Number(p.amount) || 0), 0);
-                const totalCredit = filteredPurchases.reduce((acc, p) => acc + (p.totalAmount < 0 ? Math.abs(p.totalAmount) : 0), 0)
+                const totalCredit = filteredPurchases.reduce((acc, p) => acc + (supplierDocKind(p) !== 'PURCHASE' ? Math.abs(Number(p.totalAmount) || 0) : 0), 0)
                     + filteredPayments.filter((p: any) => p.type !== 'RECEIVE').reduce((acc: any, p: any) => acc + (Number(p.amount) || 0), 0);
                 const periodBalance = totalCredit - totalDebt;
 
                 const allTransactions = [
                     ...filteredPurchases.map(p => {
-                        const receiptBadge = p.receiptNo ? `<span style="background-color: #18181b; color: #ffffff; font-family: monospace; font-weight: 800; padding: 2px 7px; border-radius: 4px; font-size: 11px; display: inline-block; margin-bottom: 3px;">Fatura/Fiş No: ${p.receiptNo}</span>` : '';
-                        const itemsStr = (p.items || []).map(i => `${i.pesticideName} <b style="background-color: #fef3c7; color: #78350f; border: 1px solid #fde68a; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-family: monospace;">(${i.quantity} ${i.unit})</b>`).join(', ');
+                        const docKind = supplierDocKind(p);
+                        const docAmt = Math.abs(Number(p.totalAmount) || 0);
+                        const receiptBadge = p.receiptNo ? `<span style="background-color: #18181b; color: #ffffff; font-family: monospace; font-weight: 800; padding: 2px 7px; border-radius: 4px; font-size: 11px; display: inline-block; margin-bottom: 3px;">Fatura/Fiş No: ${escapeHtml(p.receiptNo)}</span>` : '';
+                        const itemsStr = (p.items || []).map(i => `${escapeHtml(i.pesticideName)} <b style="background-color: #fef3c7; color: #78350f; border: 1px solid #fde68a; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-family: monospace;">(${escapeHtml(i.quantity)} ${escapeHtml(i.unit)})</b>`).join(', ');
                         
                         let descHtml = '';
                         if (reportOptions.type === 'DETAILED') {
-                            descHtml = `${receiptBadge ? receiptBadge + '<br/>' : ''}${itemsStr}${p.note ? ` <span style="color:#71717a;">(${p.note})</span>` : ''}`;
+                            descHtml = `${receiptBadge ? receiptBadge + '<br/>' : ''}${itemsStr}${p.note ? ` <span style="color:#71717a;">(${escapeHtml(p.note)})</span>` : ''}`;
                         } else {
-                            descHtml = receiptBadge || p.note || '-';
+                            descHtml = receiptBadge || escapeHtml(p.note) || '-';
                         }
 
                         return {
                             date: new Date(p.date),
-                            type: (supplierDocKind(p) === 'SALE') ? 'Tedarikçiye Satış' : ((supplierDocKind(p) === 'RETURN') ? 'Ürün İadesi' : 'Ürün Alımı'),
+                            type: docKind === 'SALE' ? 'Tedarikçiye Satış' : (docKind === 'RETURN' ? 'Ürün İadesi' : 'Ürün Alımı'),
                             desc: descHtml,
-                            debt: p.totalAmount > 0 ? p.totalAmount : 0,
-                            credit: p.totalAmount < 0 ? Math.abs(p.totalAmount) : 0
+                            debt: docKind === 'PURCHASE' ? docAmt : 0,
+                            credit: docKind !== 'PURCHASE' ? docAmt : 0
                         };
                     }),
                     ...filteredPayments.map((p: any) => {
@@ -1222,19 +1228,19 @@ const SupplierDetailView = ({
                         if (p.type === 'CHECK') {
                             type = 'Çek';
                             method = 'Çek';
-                        } else if (p.type === 'PROMISSORY') {
+                        } else if (p.type === 'PROMISSORY' || p.type === 'PROMISSORY_NOTE') {
                             type = 'Senet';
                             method = 'Senet';
                         } else if (p.type === 'MY_PAYMENT') {
-                            type = 'Ödeme';
-                            method = p.type === 'CHECK' ? 'Müşteri Çeki' : (p.type === 'PROMISSORY_NOTE' ? 'Müşteri Senedi' : 'Cari Ödemesi');
+                            type = p.originalType === 'CHECK' ? 'Çek' : (p.originalType === 'PROMISSORY_NOTE' || p.originalType === 'PROMISSORY' ? 'Senet' : 'Ödeme');
+                            method = p.originalType === 'CHECK' ? 'Çek Ödemesi' : ((p.originalType === 'PROMISSORY_NOTE' || p.originalType === 'PROMISSORY') ? 'Senet Ödemesi' : 'Cari Ödemesi');
                         }
                         
                         const isReceive = p.type === 'RECEIVE';
                         return {
                             date: new Date(p.date),
                             type: isReceive ? 'Tahsilat' : type,
-                            desc: `${method}${p.note ? ` - ${p.note}` : ''}`,
+                            desc: `${escapeHtml(method)}${p.note ? ` - ${escapeHtml(p.note)}` : ''}`,
                             debt: isReceive ? p.amount : 0,
                             credit: isReceive ? 0 : p.amount
                         };
@@ -1257,22 +1263,22 @@ const SupplierDetailView = ({
                         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px;">
                             <div>
                                 <h1 style="font-size: 26px; font-weight: 800; margin: 0 0 8px 0; color: #10b981; text-transform: uppercase;">
-                                    ${userProfile?.companyName || "MKS SİSTEMİ"}
+                                    ${escapeHtml(userProfile?.companyName || "MKS SİSTEMİ")}
                                 </h1>
                                 <h2 style="font-size: 18px; font-weight: 700; margin: 0 0 4px 0; color: #1c1917;">Tedarikçi Cari Hesap Ekstresi</h2>
                             </div>
                             <div style="text-align: right; color: #78716c; font-size: 11px;">
                                 <p style="margin: 0 0 4px 0;"><strong>Tarih:</strong> ${format(new Date(), 'dd.MM.yyyy HH:mm')}</p>
-                                <p style="margin: 0;"><strong>Sorumlu:</strong> ${userProfile?.fullName || 'Sistem'}</p>
+                                <p style="margin: 0;"><strong>Sorumlu:</strong> ${escapeHtml(userProfile?.fullName || 'Sistem')}</p>
                             </div>
                         </div>
 
                         <div style="background-color: #fafaf9; border: 1px solid #e7e5e4; border-radius: 8px; padding: 16px; margin-bottom: 24px; display: flex; justify-content: space-between;">
                             <div>
-                                <h3 style="font-size: 16px; font-weight: 700; margin: 0 0 8px 0; color: #1c1917;">${supplier.name}</h3>
-                                ${supplier.tcNo ? `<p style="margin: 0 0 4px 0; font-size: 12px; color: #57534e;"><strong>T.C. No:</strong> ${supplier.tcNo}</p>` : ''}
-                                ${supplier.phoneNumber ? `<p style="margin: 0 0 4px 0; font-size: 12px; color: #57534e;"><strong>Tel:</strong> ${supplier.phoneNumber}</p>` : ''}
-                                ${supplier.address ? `<p style="margin: 0; font-size: 12px; color: #57534e;"><strong>Adres:</strong> ${supplier.address}</p>` : ''}
+                                <h3 style="font-size: 16px; font-weight: 700; margin: 0 0 8px 0; color: #1c1917;">${escapeHtml(supplier.name)}</h3>
+                                ${supplier.tcNo ? `<p style="margin: 0 0 4px 0; font-size: 12px; color: #57534e;"><strong>T.C. No:</strong> ${escapeHtml(supplier.tcNo)}</p>` : ''}
+                                ${supplier.phoneNumber ? `<p style="margin: 0 0 4px 0; font-size: 12px; color: #57534e;"><strong>Tel:</strong> ${escapeHtml(supplier.phoneNumber)}</p>` : ''}
+                                ${supplier.address ? `<p style="margin: 0; font-size: 12px; color: #57534e;"><strong>Adres:</strong> ${escapeHtml(supplier.address)}</p>` : ''}
                             </div>
                             <div style="text-align: right; font-size: 12px; color: #57534e;">
                                 <p style="margin: 0 0 4px 0;"><strong>Rapor Aralığı:</strong> ${format(start, 'dd.MM.yyyy')} - ${format(end, 'dd.MM.yyyy')}</p>
@@ -1289,14 +1295,14 @@ const SupplierDetailView = ({
                                 <div style="font-size: 10px; font-weight: 700; color: #059669; text-transform: uppercase; margin-bottom: 4px;">Dönem Ödenen / İade / Satış</div>
                                 <div style="font-size: 18px; font-weight: 800; color: #047857; font-family: monospace;">${formatCurrency(totalCredit, currency)}</div>
                             </div>
-                            <div style="flex: 1; padding: 16px; background-color: ${periodBalance < 0 ? '#ecfdf5' : (periodBalance > 0 ? '#fef2f2' : '#f3f4f6')}; border: 1px solid ${periodBalance < 0 ? '#a7f3d0' : (periodBalance > 0 ? '#fecaca' : '#e5e7eb')}; border-radius: 8px;">
-                                <div style="font-size: 10px; font-weight: 700; color: ${periodBalance < 0 ? '#059669' : (periodBalance > 0 ? '#dc2626' : '#4b5563')}; text-transform: uppercase; margin-bottom: 4px;">Dönem Bakiyesi</div>
+                            <div style="flex: 1; padding: 16px; background-color: ${periodBalance < 0 ? '#fef2f2' : (periodBalance > 0 ? '#ecfdf5' : '#f3f4f6')}; border: 1px solid ${periodBalance < 0 ? '#fecaca' : (periodBalance > 0 ? '#a7f3d0' : '#e5e7eb')}; border-radius: 8px;">
+                                <div style="font-size: 10px; font-weight: 700; color: ${periodBalance < 0 ? '#dc2626' : (periodBalance > 0 ? '#059669' : '#4b5563')}; text-transform: uppercase; margin-bottom: 4px;">Dönem Bakiyesi</div>
                                 <div style="display: flex; justify-content: space-between; align-items: flex-end;">
-                                    <div style="font-size: 18px; font-weight: 800; color: ${periodBalance < 0 ? '#047857' : (periodBalance > 0 ? '#b91c1c' : '#374151')}; font-family: monospace;">
+                                    <div style="font-size: 18px; font-weight: 800; color: ${periodBalance < 0 ? '#b91c1c' : (periodBalance > 0 ? '#047857' : '#374151')}; font-family: monospace;">
                                         ${formatCurrency(Math.abs(periodBalance), currency)}
                                     </div>
-                                    <div style="font-size: 11px; font-weight: 700; color: ${periodBalance < 0 ? '#059669' : (periodBalance > 0 ? '#dc2626' : '#4b5563')};">
-                                        ${periodBalance < 0 ? '(Alacaklı Geçiş)' : (periodBalance > 0 ? '(Borçlu Geçiş)' : '(Bakiye Yok)')}
+                                    <div style="font-size: 11px; font-weight: 700; color: ${periodBalance < 0 ? '#dc2626' : (periodBalance > 0 ? '#059669' : '#4b5563')};">
+                                        ${periodBalance < 0 ? '(Borcumuz)' : (periodBalance > 0 ? '(Alacaklıyız)' : '(Bakiye Yok)')}
                                     </div>
                                 </div>
                             </div>
@@ -1346,14 +1352,16 @@ const SupplierDetailView = ({
 
                 container.innerHTML = htmlContent;
                 document.body.appendChild(container);
-
-                const canvas = await renderElementToCanvas(container, {
-                    scale: 2,
-                    backgroundColor: '#ffffff',
-                    logging: false
-                });
-
-                document.body.removeChild(container);
+                let canvas: HTMLCanvasElement;
+                try {
+                    canvas = await renderElementToCanvas(container, {
+                        scale: 2,
+                        backgroundColor: '#ffffff',
+                        logging: false
+                    });
+                } finally {
+                    if (container.parentNode) container.parentNode.removeChild(container);
+                }
                 
                 const doc = await createMultiPagePdf(canvas);
                 doc.save(`${supplier.name.replace(/\s+/g, '_')}_Ekstre_${reportOptions.type}.pdf`);
@@ -1373,7 +1381,6 @@ const SupplierDetailView = ({
     }, [supplier]);
 
     const handleDeletePurchase = async (id: string) => {
-        console.log('Tedarikçi alımı siliniyor:', id);
         setConfirmModal({
             isOpen: true,
             title: 'Alım Kaydı Silinecek',
@@ -1392,7 +1399,6 @@ const SupplierDetailView = ({
     };
 
     const handleDeletePayment = async (id: string) => {
-        console.log('Tedarikçi ödemesi siliniyor:', id);
         setConfirmModal({
             isOpen: true,
             title: 'Ödeme Kaydı Silinecek',
@@ -1411,8 +1417,9 @@ const SupplierDetailView = ({
     };
 
     const handleUpdatePurchase = async (manualId?: string) => {
-        if (!editingPurchase) return;
+        if (isUpdatingPurchase || !editingPurchase) return;
         
+        setIsUpdatingPurchase(true);
         try {
             // If manualId is provided and different from current supplierId (though unlikely in edit)
             const updatedPurchase = {
@@ -1427,6 +1434,8 @@ const SupplierDetailView = ({
         } catch (error) {
             console.error('Update purchase error:', error);
             showToast('Güncelleme sırasında bir hata oluştu', 'error');
+        } finally {
+            setIsUpdatingPurchase(false);
         }
     };
 
@@ -1589,16 +1598,20 @@ const SupplierDetailView = ({
                 </div>
             `;
             document.body.appendChild(container);
-            const canvas = await renderElementToCanvas(container.firstElementChild as HTMLElement, {
-                scale: 3,
-                backgroundColor: '#ffffff',
-                useCORS: true,
-                logging: false,
-            });
-            document.body.removeChild(container);
+            let canvas: HTMLCanvasElement;
+            try {
+                canvas = await renderElementToCanvas(container.firstElementChild as HTMLElement, {
+                    scale: 3,
+                    backgroundColor: '#ffffff',
+                    useCORS: true,
+                    logging: false,
+                });
+            } finally {
+                if (container.parentNode) container.parentNode.removeChild(container);
+            }
             const pdf = await createMultiPagePdf(canvas);
             const safeName = trToEn(supplier.name).replace(/[^a-zA-Z0-9]/g, '_');
-            const fileName = `${safeName}_Cari_Mutabakat_${new Date().toISOString().split('T')[0]}.pdf`;
+            const fileName = `${safeName}_Cari_Mutabakat_${getLocalDateString()}.pdf`;
             pdf.save(fileName);
             showToast('Cari Mutabakat Mektubu (PDF) indirildi', 'success');
         } catch (err) {
@@ -2137,8 +2150,8 @@ const SupplierDetailView = ({
                                     <button 
                                         onClick={() => setReportOptions({
                                             ...reportOptions, 
-                                            startDate: new Date(new Date().setMonth(new Date().getMonth() - 1)).toISOString().split('T')[0],
-                                            endDate: new Date().toISOString().split('T')[0]
+                                            startDate: getLocalDateString(new Date(new Date().setMonth(new Date().getMonth() - 1))),
+                                            endDate: getLocalDateString()
                                         })}
                                         className="px-3 py-1.5 bg-stone-800 border border-white/5 rounded-lg text-[10px] font-bold text-stone-400 hover:bg-stone-700 hover:text-white transition-all"
                                     >
@@ -2148,7 +2161,7 @@ const SupplierDetailView = ({
                                         onClick={() => setReportOptions({
                                             ...reportOptions, 
                                             startDate: '2020-01-01',
-                                            endDate: new Date().toISOString().split('T')[0]
+                                            endDate: getLocalDateString()
                                         })}
                                         className="px-3 py-1.5 bg-stone-800 border border-white/5 rounded-lg text-[10px] font-bold text-stone-400 hover:bg-stone-700 hover:text-white transition-all"
                                     >
@@ -2205,7 +2218,7 @@ const PurchaseModal = ({
     isAddingNewPesticide, setIsAddingNewPesticide, newPesticide, setNewPesticide, handleAddNewPesticideToPurchase,
     isEdit = false, isReturn = false, isSale = false, showToast
 }: any) => {
-    const { userProfile, teamMembers, suppliers } = useAppViewModel();
+    const { userProfile, suppliers } = useAppViewModel();
     const [searchTerm, setSearchTerm] = useState('');
     const [isScanning, setIsScanning] = useState(false);
     const [isSaving, setIsSaving] = useState(false);

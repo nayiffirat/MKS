@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Home, Users, BookOpen, FileText, ClipboardList, Menu, X, LogOut,
-  Settings, Bell, Phone, Plus, PieChart, Sprout, CalendarCheck,
+  Settings, Bell, Phone, PieChart, Sprout, CalendarCheck,
   ChevronLeft, Package, Truck, CreditCard, Receipt, Wallet,
   History as HistoryIcon, Printer, Shield, Clock, Trash2,
-  TrendingDown, Map, Sparkles, LineChart, Sun, Moon, FlaskConical, Calculator,
-  LayoutGrid, Bookmark, Cloud, QrCode, Download, MessageSquare, Crown, ShieldCheck
+  TrendingDown, Map, Sparkles, LineChart, FlaskConical, Calculator,
+  QrCode, MessageSquare, Crown, ShieldCheck, User
 } from 'lucide-react';
 import { ViewState } from '../types';
 import { MksBrandLogo } from './MksBrandLogo';
@@ -15,6 +15,7 @@ import { QuickActions } from './QuickActions';
 import { NotificationPermissionBanner } from './NotificationPermissionBanner';
 import { useBackHandler } from '../utils/navigationManager';
 import { PdfQuickAccessModal } from './PdfQuickAccessModal';
+import { listArchivedPdfs, PDF_ARCHIVE_EVENT } from '../utils/pdfArchive';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -24,8 +25,8 @@ interface LayoutProps {
 
 // UI-31: Başlıklar menü/ray etiketleriyle aynı sözlüğü kullanır (bkz. translations.ts `nav.*`).
 const VIEW_TITLES: Record<string, { title: string; subtitle: string }> = {
-  DASHBOARD: { title: 'Ana Panel', subtitle: 'Finans, müstahsil, stok ve saha özeti' },
-  FARMERS: { title: 'Müstahsiller', subtitle: 'Çiftçi kayıtları, arazi ve cari bakiye' },
+  DASHBOARD: { title: 'Ana Panel', subtitle: 'Finans, çiftçi, stok ve saha özeti' },
+  FARMERS: { title: 'Çiftçiler', subtitle: 'Çiftçi kayıtları, arazi ve cari bakiye' },
   PRESCRIPTIONS: { title: 'Satış ve Reçeteler', subtitle: 'Faturalar, vadeli/peşin satışlar ve iadeler' },
   PRESCRIPTION_NEW: { title: 'Yeni Satış / Reçete', subtitle: 'Stoktan otomatik düşümlü satış kaydı' },
   PRESCRIPTION_LIST: { title: 'Satış Listesi', subtitle: 'Kesilen tüm reçete ve faturalar' },
@@ -72,9 +73,29 @@ const THEME_CANVAS_BG: Record<LayoutTheme, string> = {
 export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigate }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
-  const [hoveredRailId, setHoveredRailId] = useState<string | null>(null);
+  const [archivedPdfCount, setArchivedPdfCount] = useState(0);
+  const [pdfJustArchived, setPdfJustArchived] = useState(false);
   const headerRef = useRef<HTMLElement>(null);
   const drawerCloseRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    let highlightTimer: number | undefined;
+    const refreshPdfCount = (e?: Event) => {
+      void listArchivedPdfs().then(list => setArchivedPdfCount(list.length)).catch(() => {});
+      const detail = (e as CustomEvent | undefined)?.detail;
+      if (detail?.name) {
+        setPdfJustArchived(true);
+        if (highlightTimer) window.clearTimeout(highlightTimer);
+        highlightTimer = window.setTimeout(() => setPdfJustArchived(false), 1800);
+      }
+    };
+    refreshPdfCount();
+    window.addEventListener(PDF_ARCHIVE_EVENT, refreshPdfCount);
+    return () => {
+      window.removeEventListener(PDF_ARCHIVE_EVENT, refreshPdfCount);
+      if (highlightTimer) window.clearTimeout(highlightTimer);
+    };
+  }, []);
 
   useEffect(() => {
     (window as any).mks_open_pdf_modal = () => setIsPdfModalOpen(true);
@@ -148,30 +169,13 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
     return () => window.clearTimeout(timer);
   }, [isMobileMenuOpen]);
 
-  // Vertical Pill Rail Items — Sticky across ALL screens on Web/Desktop (md..lg kompakt ikon rayı)
-  const pillRailItems = [
-    { id: 'DASHBOARD', icon: LayoutGrid, label: t('nav.dashboard') || 'Ana Panel' },
-    { id: 'FARMERS', icon: Users, label: t('nav.farmers') || 'Müstahsiller' },
-    { id: 'PRESCRIPTIONS', icon: FileText, label: t('nav.prescriptions') || 'Satış ve Reçeteler' },
-    { id: 'INVENTORY', icon: Package, label: t('nav.inventory') || 'Depo ve Stok' },
-    { id: 'MAP', icon: Map, label: 'Parsel ve Uydu Haritası' },
-    { id: 'KASA', icon: Wallet, label: t('nav.kasa') || 'Kasa ve Banka' },
-    { id: 'PAYMENTS', icon: CreditCard, label: t('nav.payments') || 'Tahsilat ve Çekler' },
-    { id: 'SUPPLIERS', icon: Truck, label: t('nav.suppliers') || 'Tedarikçiler' },
-    { id: 'SILO', icon: Sprout, label: 'Silo ve Tüccar' },
-    { id: 'AI_ASSISTANT', icon: Sparkles, label: 'Zirai Asistan' },
-    { id: 'STATISTICS', icon: PieChart, label: t('nav.statistics') || 'İstatistikler' },
-    { id: 'SETTINGS', icon: Settings, label: t('nav.settings') || 'Ayarlar' }
-  ];
-
   const navGroups = [
     {
       title: 'Komuta ve Finans',
       items: [
         { id: 'DASHBOARD', icon: Home, label: t('nav.dashboard') || 'Ana Panel' },
-        { id: 'FARMERS', icon: Users, label: t('nav.farmers') || 'Müstahsiller' },
+        { id: 'FARMERS', icon: Users, label: t('nav.farmers') || 'Çiftçiler' },
         { id: 'PRESCRIPTIONS', icon: FileText, label: t('nav.prescriptions') || 'Satış ve Reçeteler' },
-        { id: 'EDM_EFATURA', icon: Receipt, label: 'e-Fatura İşlemleri' },
         { id: 'DEBT_TRACKING', icon: TrendingDown, label: 'Alacak ve Risk Takibi' },
         { id: 'KASA', icon: Wallet, label: t('nav.kasa') || 'Kasa ve Banka' },
         { id: 'PAYMENTS', icon: CreditCard, label: t('nav.payments') || 'Tahsilat ve Çekler' },
@@ -185,6 +189,15 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
         { id: 'SUPPLIERS', icon: Truck, label: t('nav.suppliers') || 'Tedarikçiler' },
         { id: 'SILO', icon: Sprout, label: 'Silo ve Tüccar' },
         { id: 'PESTICIDES', icon: BookOpen, label: t('nav.pesticides') || 'İlaç Kütüphanesi' }
+      ]
+    },
+    {
+      title: 'Resmi Servisler',
+      items: [
+        { id: 'RESMI_GTS', icon: Sprout, label: 'GTS (Yakında)' },
+        { id: 'RESMI_BKTS', icon: QrCode, label: 'BKTS (Yakında)' },
+        { id: 'RESMI_BRECETE', icon: ShieldCheck, label: 'B-Reçete (Yakında)' },
+        { id: 'EDM_EFATURA', icon: Receipt, label: 'E-Fatura İşlemleri' }
       ]
     },
     {
@@ -209,6 +222,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
         { id: 'TRASH', icon: Trash2, label: t('nav.trash') || 'Çöp Kutusu' },
         { id: 'USER_GUIDE', icon: BookOpen, label: 'Kullanım Kılavuzu' },
         { id: 'CONTACT', icon: Phone, label: t('nav.contact') || 'Destek Hattı' },
+        { id: 'PROFILE', icon: User, label: 'Kurumsal Profil' },
         { id: 'SETTINGS', icon: Settings, label: t('nav.settings') || 'Ayarlar' }
       ]
     }
@@ -240,8 +254,24 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
       ((currentView as string) === 'PRESCRIPTION_NEW' || (currentView as string) === 'PRESCRIPTION_LIST'));
 
   const handleNavClick = (view: ViewState) => {
-    // e-Fatura bir sayfa değil pencere: menüden doğrudan fatura kesme sekmesiyle açılır
-    if ((view as string) === 'EDM_EFATURA') {
+    const viewKey = view as string;
+    // Resmi servisler pencere olarak doğrudan ilgili sekmede açılır
+    if (viewKey === 'RESMI_GTS') {
+      setIsMobileMenuOpen(false);
+      (window as any).mks_open_ministry?.('gts');
+      return;
+    }
+    if (viewKey === 'RESMI_BKTS') {
+      setIsMobileMenuOpen(false);
+      (window as any).mks_open_ministry?.('bkts');
+      return;
+    }
+    if (viewKey === 'RESMI_BRECETE') {
+      setIsMobileMenuOpen(false);
+      (window as any).mks_open_ministry?.('brecete');
+      return;
+    }
+    if (viewKey === 'EDM_EFATURA') {
       setIsMobileMenuOpen(false);
       (window as any).mks_open_efatura?.('issue');
       return;
@@ -435,55 +465,8 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
               </div>
             </div>
 
-            {/* Center: Desktop Capsule Dock (xl+ kalıcı kenar çubuğu zaten tüm modülleri gösterdiği için 2xl+) */}
-            {!(currentTheme === 'GLASSY_V30' && currentView === 'DASHBOARD') && (
-              <div className="hidden 2xl:flex items-center cxr-capsule-dock px-2 py-1.5 gap-1 shrink-0">
-                {[
-                  { id: 'DASHBOARD', label: 'Ana Panel', icon: Home },
-                  { id: 'FARMERS', label: 'Müstahsiller', icon: Users },
-                  { id: 'PRESCRIPTIONS', label: 'Reçeteler', icon: FileText },
-                  { id: 'INVENTORY', label: 'Depo', icon: Package },
-                  { id: 'KASA', label: 'Kasa', icon: Wallet },
-                  { id: 'STATISTICS', label: 'Analitik', icon: PieChart }
-                ]
-                  .filter(it => !(isSales && ['KASA'].includes(it.id)))
-                  .map(tab => {
-                    const active = isViewActive(tab.id);
-                    return (
-                      <button
-                        type="button"
-                        key={tab.id}
-                        onClick={() => handleNavClick(tab.id as ViewState)}
-                        aria-current={active ? 'page' : undefined}
-                        className={`px-3.5 py-1.5 min-h-[36px] rounded-full text-xs font-semibold flex items-center gap-1.5 transition-colors ${
-                          active
-                            ? currentTheme === 'LIGHT'
-                              ? 'cxr-pill-active'
-                              : 'v22-dark-pill shadow-sm'
-                            : 'v22-dock-tab'
-                        }`}
-                      >
-                        <tab.icon size={14} />
-                        <span>{tab.label}</span>
-                      </button>
-                    );
-                  })}
-              </div>
-            )}
-
-            {/* Right: Mobile keeps 3 clean 44px controls (BKTS, Bildirim, Menü); Desktop shows full bar */}
+            {/* Right: Crisp, Non-Overflowing Command Actions */}
             <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => handleNavClick('USER_GUIDE')}
-                title="Görselli Kullanım Kılavuzu"
-                aria-label="Kullanım kılavuzu"
-                className="hidden sm:flex v22-surface-pill min-h-[44px] min-w-[44px] px-3 py-2 rounded-full shadow-sm items-center justify-center gap-1.5 text-xs font-semibold active:scale-95 transition-colors"
-              >
-                <BookOpen size={16} className="text-sky-500" />
-                <span className="hidden md:inline">Kılavuz</span>
-              </button>
-
               <button
                 type="button"
                 onClick={() => (window as any).mks_open_ministry?.('malkabul')}
@@ -492,12 +475,12 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
                 className="v22-surface-pill min-h-[44px] min-w-[44px] px-2.5 sm:px-3 py-2 rounded-xl sm:rounded-full shadow-sm flex items-center justify-center gap-1.5 text-xs font-semibold active:scale-95 transition-colors"
               >
                 <QrCode size={17} className="text-emerald-500" />
-                <span className="hidden sm:inline">BKTS / GTS</span>
+                <span className="hidden sm:inline">BKTS / GTS (Yakında)</span>
               </button>
 
               <button
                 type="button"
-                onClick={() => (window as any).mks_open_edm?.('incoming')}
+                onClick={() => (window as any).mks_open_efatura?.('incoming')}
                 title="EDM e-Fatura Deposu"
                 aria-label="EDM e-Fatura deposu"
                 className="hidden sm:flex v22-surface-pill min-h-[44px] min-w-[44px] px-3 py-2 rounded-full shadow-sm items-center justify-center gap-1.5 text-xs font-semibold active:scale-95 transition-colors"
@@ -506,27 +489,24 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
                 <span className="hidden md:inline">EDM e-Fatura</span>
               </button>
 
-              {/* Kalıcı PDF İndirilenler Butonu - Her zaman görünür ve dikkat çekici */}
+              {/* Kalıcı PDF İndirilenler Butonu */}
               <button
                 type="button"
                 onClick={() => setIsPdfModalOpen(true)}
                 title="İndirilen PDF Belgeleri, Faturalar ve Raporlar (Tarih Sırasıyla)"
-                aria-label="İndirilen PDF Belgeleri"
-                className="min-h-[44px] min-w-[44px] px-3 sm:px-3.5 py-2 rounded-xl sm:rounded-full shadow-md flex items-center justify-center gap-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 active:scale-95 transition-all cursor-pointer border border-rose-400/50"
+                aria-label={archivedPdfCount > 0 ? `İndirilen PDF Belgeleri (${archivedPdfCount} belge)` : 'İndirilen PDF Belgeleri'}
+                className={`min-h-[44px] min-w-[44px] px-3 sm:px-3.5 py-2 rounded-xl sm:rounded-full shadow-md flex items-center justify-center gap-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 active:scale-95 transition-all cursor-pointer border border-rose-400/50 ${
+                  pdfJustArchived ? 'ring-2 ring-emerald-300 scale-[1.03]' : ''
+                }`}
               >
                 <FileText size={16} className="text-white shrink-0" />
                 <span className="hidden min-[420px]:inline font-extrabold text-white text-xs">PDF</span>
                 <span className="hidden md:inline text-[11px] text-rose-100 font-semibold">İndirilenler</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => (window as any).mks_open_web_portal?.('download')}
-                title="Uygulamayı İndir ve Paketler"
-                className="hidden xl:flex v22-surface-pill min-h-[44px] px-3 py-2 rounded-full shadow-sm items-center gap-1.5 text-xs font-semibold active:scale-95 transition-colors"
-              >
-                <Crown size={16} className="text-amber-500" />
-                <span>Paketler</span>
+                {archivedPdfCount > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full bg-white text-rose-700 text-[10px] font-black tabular-nums leading-none shadow-xs">
+                    {archivedPdfCount > 99 ? '99+' : archivedPdfCount}
+                  </span>
+                )}
               </button>
 
               <button
@@ -548,11 +528,25 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
 
               <button
                 type="button"
+                onClick={() => handleNavClick('PROFILE')}
+                title={`Kurumsal Profil — ${userProfile.fullName || userProfile.companyName || 'Hesabım'}`}
+                aria-label="Kurumsal Profil"
+                aria-current={currentView === 'PROFILE' ? 'page' : undefined}
+                className={`v22-surface-pill min-h-[44px] min-w-[44px] px-2.5 sm:px-3 py-2 rounded-xl sm:rounded-full shadow-sm flex items-center justify-center gap-1.5 text-xs font-semibold active:scale-95 transition-colors ${
+                  currentView === 'PROFILE' ? 'ring-2 ring-emerald-400/60 text-emerald-500' : ''
+                }`}
+              >
+                <User size={18} />
+                <span className="hidden lg:inline">Profil</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setIsMobileMenuOpen(true)}
                 aria-label="Tüm modüller"
                 aria-haspopup="dialog"
                 aria-expanded={isMobileMenuOpen}
-                className="v22-dark-pill xl:hidden min-h-[44px] min-w-[44px] px-3 sm:px-3.5 py-2 rounded-xl sm:rounded-full text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-colors"
+                className="v22-dark-pill md:hidden min-h-[44px] min-w-[44px] px-3 sm:px-3.5 py-2 rounded-xl sm:rounded-full text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-colors"
               >
                 <Menu size={17} />
                 <span className="hidden sm:inline">Modüller</span>
@@ -640,7 +634,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
               className="v22-drawer-item min-h-[46px] px-3 py-2 rounded-2xl flex items-center gap-2 text-left font-semibold text-xs"
             >
               <QrCode size={16} className="text-emerald-500 shrink-0" />
-              <span className="truncate">BKTS / GTS</span>
+              <span className="truncate">BKTS / GTS (Yakında)</span>
             </button>
             <button
               type="button"
@@ -751,7 +745,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
             active={currentView === 'FARMERS'}
             onClick={() => onNavigate('FARMERS')}
             icon={Users}
-            label="Müstahsil"
+            label="Çiftçi"
             isBlueCover={currentTheme === 'LIGHT'}
           />
           <QuickActions />

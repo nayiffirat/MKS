@@ -129,7 +129,7 @@ export interface Payment {
   farmerId: string;
   amount: number;
   date: string;
-  method: 'CASH' | 'CARD' | 'CHECK' | 'TEDYE' | 'OTHER';
+  method: 'CASH' | 'CARD' | 'CHECK' | 'TEDYE' | 'PROMISSORY_NOTE' | 'OTHER';
   dueDate?: string;
   note?: string;
   accountId?: string; // Linked account (Cash or Bank)
@@ -270,6 +270,15 @@ export enum PesticideCategory {
   OTHER = 'Diğer'
 }
 
+export interface BkuUsageRecommendation {
+  crop: string;
+  pest: string;
+  dosage: string;
+  phi?: string;
+  group?: string;
+  recommendationDate?: string;
+}
+
 export interface Pesticide {
   id: string;
   name: string;
@@ -279,6 +288,12 @@ export interface Pesticide {
   description?: string;
   barcode?: string;
   deletedAt?: string;
+  targetCrops?: string[];
+  targetPests?: string[];
+  phi?: string;
+  bkuGroup?: string;
+  bkuRuhsatId?: string;
+  usages?: BkuUsageRecommendation[];
 }
 
 export interface VisitLog {
@@ -467,12 +482,19 @@ export interface UserProfile {
     prescriptionShare?: string;
     announcement?: string;
   };
-  // Tarım Bakanlığı BKTS / GTS / B-Reçete Senkron Yapılandırması
+  // Tarım Bakanlığı BKTS / GTS / B-Reçete Senkron Yapılandırması (şifre ve KeyNo buluta kaydedilmez)
   ministryConfig?: {
     gln?: string;
     bktsEnabled?: boolean;
     gtsEnabled?: boolean;
     bReceteEnabled?: boolean;
+    bktsUsername?: string;
+    gtsUsername?: string;
+    bReceteUsername?: string;
+    environment?: 'LIVE' | 'TEST';
+    bktsEndpoint?: string;
+    gtsEndpoint?: string;
+    bReceteEndpoint?: string;
   };
 }
 
@@ -648,6 +670,8 @@ export interface SavedMapFeature {
   type: 'AREA' | 'DISTANCE' | 'COORDINATE';
   points: { lat: number; lng: number }[];
   farmerId?: string;
+  farmerName?: string;
+  crop?: string;
   fieldId?: string;
   areaDaa?: number;
   dekar?: number;
@@ -784,7 +808,7 @@ export interface Plant {
   deletedAt?: string;
 }
 
-export type ViewState = 'DASHBOARD' | 'FARMERS' | 'PESTICIDES' | 'PRESCRIPTIONS' | 'VISITS' | 'CONTACT' | 'SETTINGS' | 'NOTIFICATIONS' | 'PROFILE' | 'STATISTICS' | 'REMINDERS' | 'INVENTORY' | 'DEBT_TRACKING' | 'MAP' | 'PRODUCER_PORTAL' | 'COMPATIBILITY_CHECK' | 'SUPPLIERS' | 'PAYMENTS' | 'EXPENSES' | 'KASA' | 'CALCULATOR' | 'RECENT_TRANSACTIONS' | 'REPORTS' | 'ADMIN_PANEL' | 'TEAM' | 'MESSAGES' | 'PERFORMANCE' | 'TRASH' | 'LAND_DETAIL' | 'NEWS_DETAIL' | 'NEWS' | 'FINDEKS' | 'PLANTS' | 'AI_ASSISTANT' | 'SMART_STOCK' | 'SILO' | 'MKS_MUHENDISIM' | 'USER_GUIDE';
+export type ViewState = 'DASHBOARD' | 'FARMERS' | 'PESTICIDES' | 'PRESCRIPTIONS' | 'VISITS' | 'CONTACT' | 'SETTINGS' | 'NOTIFICATIONS' | 'PROFILE' | 'STATISTICS' | 'REMINDERS' | 'INVENTORY' | 'DEBT_TRACKING' | 'MAP' | 'PRODUCER_PORTAL' | 'SUPPLIERS' | 'PAYMENTS' | 'EXPENSES' | 'KASA' | 'CALCULATOR' | 'RECENT_TRANSACTIONS' | 'REPORTS' | 'ADMIN_PANEL' | 'TEAM' | 'MESSAGES' | 'PERFORMANCE' | 'TRASH' | 'LAND_DETAIL' | 'NEWS' | 'PLANTS' | 'AI_ASSISTANT' | 'SMART_STOCK' | 'SILO' | 'MKS_MUHENDISIM' | 'REGIONAL_ALERTS' | 'USER_GUIDE';
 
 export type UIScale = 'SMALL' | 'MEDIUM' | 'LARGE';
 
@@ -795,6 +819,7 @@ export interface MinistryShipmentLine {
   expiry?: string;
   serial?: string;
   qty: number;
+  unit?: string;
 }
 
 export interface MinistryShipmentRecord {
@@ -820,6 +845,8 @@ export interface MinistryRecord {
   documentNo: string;
   prescriptionId?: string;
   bReceteCode?: string;
+  senderGln?: string;
+  receiverGln?: string;
   farmerId?: string;
   farmerName?: string;
   farmerTcNo?: string;
@@ -834,7 +861,9 @@ export interface MinistryRecord {
   expiryDate?: string;
   quantity: number;
   unit?: string;
-  status: 'Dışa Aktarıma Hazır' | 'Kuyrukta' | 'Kayıtsız Serbest Satış';
+  status: 'Dışa Aktarıma Hazır' | 'Bakanlığa Bildirildi' | 'Kuyrukta' | 'Kayıtsız Serbest Satış';
+  ministryRefNo?: string;
+  reportedAt?: string;
   lastUpdated?: string;
   deletedAt?: string;
 }

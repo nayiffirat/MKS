@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Plus, Trash2, Send, Search, Loader2, CheckCircle2, RefreshCw, Eye, Settings as SettingsIcon, FileText, Inbox, ArrowLeft, Warehouse, Undo2, ShoppingBag, AlertTriangle, Check, ChevronRight, UserCheck } from 'lucide-react';
+import { X, Plus, Trash2, Send, Search, Loader2, CheckCircle2, RefreshCw, Eye, Settings as SettingsIcon, FileText, Inbox, ArrowLeft, Warehouse, Undo2, ShoppingBag, AlertTriangle, Check, ChevronRight, UserCheck, Download, Printer } from 'lucide-react';
 import { auth } from '../services/firebase';
 import { API_BASE } from '../utils/api';
+import { getLocalDateString } from '../utils/dateUtils';
 import { dbService } from '../services/db';
 import { useAppViewModel } from '../context/AppContext';
-import { EdmConfig, getEdmConfig, saveEdmConfig } from '../utils/edmWarehouseManager';
+import { EdmConfig, EInvoiceProviderId, EINVOICE_PROVIDERS, getEdmConfig, saveEdmConfig } from '../utils/edmWarehouseManager';
+import { createMultiPagePdf, renderElementToCanvas } from '../utils/pdfHelper';
 import { Prescription } from '../types';
 
 type TabId = 'issue' | 'out' | 'in' | 'settings';
@@ -42,7 +44,7 @@ async function edmPost(path: string, cfg: EdmConfig, body: Record<string, unknow
   const resp = await fetch(`${API_BASE}/api/edm/${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
-    body: JSON.stringify({ username: cfg.username.trim(), password: cfg.password, environment: cfg.edmEnv === 'LIVE' ? 'LIVE' : 'TEST', ...body })
+    body: JSON.stringify({ provider: cfg.provider || 'EDM', username: cfg.username.trim(), password: cfg.password, environment: cfg.edmEnv === 'LIVE' ? 'LIVE' : 'TEST', ...body })
   });
   return resp.json().catch(() => ({ ok: false, error: 'Sunucudan geçersiz yanıt alındı.' }));
 }
@@ -80,6 +82,12 @@ export const EFaturaPanel: React.FC<{ isOpen: boolean; initialTab?: TabId; prefi
   const { farmers, inventory, prescriptions, addPrescription, refreshPrescriptions, userProfile, showToast } = useAppViewModel();
   const [tab, setTab] = useState<TabId>(initialTab);
   const [cfg, setCfg] = useState<EdmConfig>(getEdmConfig);
+  const selectedProvider = useMemo(
+    () => EINVOICE_PROVIDERS.find(p => p.id === (cfg.provider || 'EDM')) || EINVOICE_PROVIDERS[0],
+    [cfg.provider]
+  );
+  const isEdmProvider = selectedProvider.id === 'EDM';
+  const providerShortName = isEdmProvider ? 'EDM' : selectedProvider.name.split(' (')[0];
   const isLive = cfg.edmEnv === 'LIVE';
   const hasCreds = Boolean(cfg.username.trim() && (cfg.password || '').trim());
   const hasCompany = Boolean((digits(cfg.companyVknOrTc).length === 10 || digits(cfg.companyVknOrTc).length === 11) && cfg.companyTitle.trim());
@@ -301,11 +309,110 @@ export const EFaturaPanel: React.FC<{ isOpen: boolean; initialTab?: TabId; prefi
   const [viewer, setViewer] = useState<{ state: 'busy' | 'done' | 'fail'; html?: string; title: string; message?: string; inv?: RemoteInvoice; direction?: 'IN' | 'OUT' } | null>(null);
   const [action, setAction] = useState<{ kind: 'cancel' | 'accept' | 'reject' | null; busy?: boolean; message?: string; ok?: boolean }>({ kind: null });
   const [returnBusy, setReturnBusy] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
+
+  const sanitizeInvoiceHtml = (rawHtml: string): string => {
+    try {
+      const parser = new DOMParser();
+      const parsed = parser.parseFromString(rawHtml, 'text/html');
+      parsed.querySelectorAll('script, iframe, object, embed, base, meta[http-equiv="refresh" i]').forEach(el => el.remove());
+      const dangerousUri = /^(?:javascript|vbscript|data\s*:\s*text\/html)/i;
+      parsed.querySelectorAll('*').forEach(el => {
+        for (const attr of Array.from(el.attributes)) {
+          const nameLower = attr.name.toLowerCase();
+          if (nameLower.startsWith('on')) {
+            el.removeAttribute(attr.name);
+            continue;
+          }
+          if (
+            nameLower === 'href' ||
+            nameLower === 'src' ||
+            nameLower === 'xlink:href' ||
+            nameLower === 'formaction' ||
+            nameLower === 'action'
+          ) {
+            const normalizedVal = attr.value.replace(/[\u0000-\u0020\u007f]+/g, '');
+            if (dangerousUri.test(normalizedVal)) {
+              el.removeAttribute(attr.name);
+            }
+          }
+        }
+      });
+      const styles = Array.from(parsed.querySelectorAll('style')).map(s => s.outerHTML).join('\n');
+      return `${styles}\n${parsed.body?.innerHTML || ''}`;
+    } catch {
+      return '';
+    }
+  };
+
+  const downloadViewerPdf = async () => {
+    if (!viewer?.html || pdfBusy) return;
+    setPdfBusy(true);
+    let container: HTMLDivElement | null = null;
+    try {
+      const cleanHtml = sanitizeInvoiceHtml(viewer.html);
+      container = document.createElement('div');
+      container.style.position = 'fixed';
+      container.style.left = '-99999px';
+      container.style.top = '0';
+      container.style.width = '820px';
+      container.style.padding = '20px';
+      container.style.backgroundColor = '#ffffff';
+      container.style.color = '#111827';
+      container.innerHTML = cleanHtml;
+      document.body.appendChild(container);
+
+      const canvas = await renderElementToCanvas(container, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+        logging: false,
+        useCORS: true
+      });
+      const pdf = await createMultiPagePdf(canvas);
+      const rawTitle = (viewer.inv?.id || viewer.title || 'eFatura').replace(/[^a-zA-Z0-9_-]+/g, '_');
+      const fileName = `eFatura_${rawTitle}.pdf`;
+      pdf.save(fileName);
+      showToast(`${fileName} indirildi ve PDF Belgelerine eklendi`, 'success');
+    } catch (e) {
+      console.error('e-Fatura PDF error:', e);
+      showToast('e-Fatura PDF oluşturulamadı', 'error');
+    } finally {
+      if (container && container.parentNode) {
+        container.parentNode.removeChild(container);
+      }
+      setPdfBusy(false);
+    }
+  };
+
+  const printViewerHtml = () => {
+    if (!viewer?.html) return;
+    try {
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.right = '0';
+      iframe.style.bottom = '0';
+      iframe.style.width = '1px';
+      iframe.style.height = '1px';
+      iframe.style.opacity = '0';
+      iframe.style.border = '0';
+      iframe.srcdoc = sanitizeInvoiceHtml(viewer.html);
+      iframe.onload = () => {
+        try {
+          iframe.contentWindow?.focus();
+          iframe.contentWindow?.print();
+        } catch {}
+        setTimeout(() => iframe.remove(), 60_000);
+      };
+      document.body.appendChild(iframe);
+    } catch {
+      window.print();
+    }
+  };
 
   const loadList = async (direction: 'IN' | 'OUT') => {
-    if (!hasCreds) return setList({ state: 'fail', items: [], message: 'Önce Ayarlar sekmesinden EDM kullanıcı bilgilerini girin.' });
+    if (!hasCreds) return setList({ state: 'fail', items: [], message: 'Önce Ayarlar sekmesinden e-Fatura kullanıcı bilgilerini girin.' });
     setList({ state: 'busy', items: [] });
-    const startDate = new Date(Date.now() - (days - 1) * 86_400_000 + 3 * 3_600_000).toISOString().slice(0, 10);
+    const startDate = getLocalDateString(Date.now() - (days - 1) * 86_400_000);
     const data = await edmPost('invoices', cfg, { direction, startDate }).catch(offline);
     if (!data?.ok) return setList({ state: 'fail', items: [], message: data?.error || 'Liste alınamadı.' });
     const items = (data.invoices as RemoteInvoice[]).slice().sort((a, b) => (b.issueDate || '').localeCompare(a.issueDate || '') || (b.id || '').localeCompare(a.id || ''));
@@ -395,7 +502,7 @@ export const EFaturaPanel: React.FC<{ isOpen: boolean; initialTab?: TabId; prefi
             <div className="w-10 h-10 rounded-xl bg-emerald-600/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-center shrink-0"><FileText size={19} /></div>
             <div className="min-w-0">
               <h2 className="text-base font-extrabold text-stone-100 leading-tight">e-Fatura</h2>
-              <p className={`text-[11px] font-bold ${isLive ? 'text-emerald-400' : 'text-amber-400'}`}>{isLive ? 'Canlı · resmî fatura' : 'Test ortamı · deneme'}</p>
+              <p className={`text-[11px] font-bold ${isLive ? 'text-emerald-400' : 'text-amber-400'}`}>{providerShortName} · {isLive ? 'Canlı · resmî fatura' : 'Test ortamı · deneme'}</p>
             </div>
           </div>
           <button type="button" onClick={onClose} aria-label="Kapat" className="shrink-0 w-10 h-10 rounded-xl bg-stone-800 text-stone-300 flex items-center justify-center">
@@ -746,7 +853,28 @@ export const EFaturaPanel: React.FC<{ isOpen: boolean; initialTab?: TabId; prefi
                 );
               })()}
               {viewer.state === 'done' && (
-                <iframe title="Fatura görüntüsü" sandbox="" srcDoc={viewer.html} className="v22-x w-full h-[68dvh] rounded-xl bg-white border border-white/10" />
+                <>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={pdfBusy}
+                      onClick={() => void downloadViewerPdf()}
+                      className="flex-1 min-h-[42px] px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 disabled:opacity-60 transition-colors"
+                    >
+                      {pdfBusy ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                      <span>{pdfBusy ? 'PDF Hazırlanıyor...' : 'PDF İndir & Arşivle'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={printViewerHtml}
+                      className="min-h-[42px] px-3.5 rounded-xl bg-stone-800 hover:bg-stone-700 border border-white/10 text-stone-100 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
+                    >
+                      <Printer size={14} />
+                      <span>Yazdır</span>
+                    </button>
+                  </div>
+                  <iframe title="Fatura görüntüsü" sandbox="" srcDoc={viewer.html} className="v22-x w-full h-[64dvh] rounded-xl bg-white border border-white/10" />
+                </>
               )}
             </div>
           )}
@@ -758,14 +886,47 @@ export const EFaturaPanel: React.FC<{ isOpen: boolean; initialTab?: TabId; prefi
                 <p className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-400">Fatura kesebilmek için aşağıdaki bilgileri bir kez doldurun.</p>
               )}
               <section className={cardCls}>
-                <h3 className="text-sm font-extrabold text-stone-100">EDM hesabı</h3>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-extrabold text-stone-100">{providerShortName} hesabı</h3>
+                  {isEdmProvider ? (
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                      ✓ Doğrudan Canlı API Aktif (Tek Tuşla Kesim)
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                      İş Ortaklığı / Web Servis Aktivasyonu Bekleniyor
+                    </span>
+                  )}
+                </div>
+                <div>
+                  <label className={labelCls}>e-Fatura Özel Entegratörü</label>
+                  <select
+                    value={selectedProvider.id}
+                    onChange={e => {
+                      updateCfg({ provider: e.target.value as EInvoiceProviderId });
+                      setConn({ state: 'idle' });
+                    }}
+                    className={inputCls}
+                  >
+                    {EINVOICE_PROVIDERS.map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} ({p.endpointHint})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {!isEdmProvider && (
+                  <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300 leading-relaxed">
+                    <b>{providerShortName}</b> için web servis / iş ortaklığı aktivasyon süreci devam etmektedir. Doğrudan tek tuşla resmi fatura kesimi şu an <b>EDM Bilişim</b> üzerinden aktiftir; diğer entegratörler API onayı tamamlandığında aynı ekrandan otomatik açılacaktır.
+                  </p>
+                )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>
-                    <label className={labelCls}>EDM kullanıcı adı</label>
+                    <label className={labelCls}>{providerShortName} kullanıcı adı</label>
                     <input value={cfg.username} onChange={e => updateCfg({ username: e.target.value })} autoCapitalize="none" className={inputCls} />
                   </div>
                   <div>
-                    <label className={labelCls}>EDM şifresi</label>
+                    <label className={labelCls}>{providerShortName} şifresi</label>
                     <input type="password" value={cfg.password || ''} onChange={e => updateCfg({ password: e.target.value })} className={inputCls} />
                   </div>
                 </div>

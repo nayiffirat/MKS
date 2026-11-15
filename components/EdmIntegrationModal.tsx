@@ -1,24 +1,15 @@
 import { auth } from '../services/firebase';
 import { API_BASE } from '../utils/api';
+import { getLocalDateString } from '../utils/dateUtils';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
-  X,
-  FileText,
   Receipt,
-  Package,
-  ArrowRightLeft,
   CheckCircle2,
   AlertTriangle,
   ShieldCheck,
   Plus,
   Trash2,
-  Printer,
-  Download,
   Search,
-  Building2,
-  Landmark,
-  Sprout,
-  Settings,
   Layers,
   Send
 } from 'lucide-react';
@@ -173,7 +164,6 @@ export const EdmIntegrationModal: React.FC<EdmIntegrationModalProps> = ({
     suppliers,
     addSupplier,
     addSupplierPurchase,
-    farmers,
     showToast
   } = useAppViewModel();
 
@@ -862,7 +852,7 @@ export const EdmIntegrationModal: React.FC<EdmIntegrationModalProps> = ({
       invoiceNo: typedInvoiceNo || `EDM${curYear}${String(Date.now()).slice(-9)}`,
       supplierName: newSupplierName.trim(),
       supplierVkn,
-      issueDate: new Date().toISOString().slice(0, 10),
+      issueDate: getLocalDateString(),
       invoiceType: 'SATIS',
       status: 'PENDING',
       lines: [
@@ -1057,7 +1047,7 @@ export const EdmIntegrationModal: React.FC<EdmIntegrationModalProps> = ({
         documentType: selectedDocType,
         customerName: customerName.trim(),
         customerTaxOrTcNo: cleanTaxId(customerTaxNo),
-        issueDate: new Date().toISOString().slice(0, 10),
+        issueDate: getLocalDateString(),
         totalNet,
         totalAmount: round2(totalNet + totalVat),
         totalVat,

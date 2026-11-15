@@ -50,7 +50,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'nav.kasa': 'Kasa ve Banka',
     'nav.expenses': 'Giderler',
     'nav.statistics': 'İstatistikler',
-    'nav.farmers': 'Müstahsiller',
+    'nav.farmers': 'Çiftçiler',
     'nav.dealers': 'Bayiler',
     'nav.pesticides': 'İlaç Kütüphanesi',
     'nav.inventory': 'Depo ve Stok',
@@ -165,9 +165,9 @@ export const translations: Record<Language, Record<string, string>> = {
     // Labels
     'label.prescription': 'Fatura',
     'label.order': 'Sipariş',
-    'label.farmer': 'Üretici',
+    'label.farmer': 'Çiftçi',
     'label.customer': 'Müşteri',
-    'label.farmers': 'Üreticiler',
+    'label.farmers': 'Çiftçiler',
     'label.customers': 'Müşteriler',
 
     // Dashboard

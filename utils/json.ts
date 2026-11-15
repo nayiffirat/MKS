@@ -1,6 +1,16 @@
 
 import stringify from 'json-stringify-safe';
 
+export function safeJsonParse<T>(raw: string | null | undefined, fallback: T): T {
+  if (!raw || typeof raw !== 'string') return fallback;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed === null || parsed === undefined ? fallback : (parsed as T);
+  } catch {
+    return fallback;
+  }
+}
+
 /**
  * Safely stringifies an object, handling circular references by omitting them.
  * This implementation uses json-stringify-safe to handle circular references.

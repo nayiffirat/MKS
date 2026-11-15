@@ -4,16 +4,12 @@ import {
   Send,
   X,
   ShieldCheck,
-  Sparkles,
   Phone,
   Mail,
-  CheckCircle2,
-  Clock,
-  User as UserIcon,
   KeyRound,
   Crown
 } from 'lucide-react';
-import { collection, doc, setDoc, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { collection, doc, setDoc, onSnapshot, query } from 'firebase/firestore';
 import { db, auth } from '../services/firebase';
 import { getUserSubscriptionTier, SubscriptionTierId } from '../utils/subscriptionManager';
 import { useBackHandler, useScrollLock } from '../utils/navigationManager';

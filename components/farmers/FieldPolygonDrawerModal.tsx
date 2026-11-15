@@ -33,6 +33,7 @@ import {
 } from '../../utils/fieldPolygon';
 import { useBackHandler } from '../../utils/navigationManager';
 import { API_BASE } from '../../utils/api';
+import { auth } from '../../services/firebase';
 
 export interface FieldPolygonSavePayload {
   polygonGeoJson: string;
@@ -84,18 +85,20 @@ const DrawClickHandler: React.FC<{
   return null;
 };
 
-const FitInitialBounds: React.FC<{ points: LatLngLiteral[] }> = ({ points }) => {
+const FitInitialBounds: React.FC<{ initialGeoJson?: string }> = ({ initialGeoJson }) => {
   const map = useMap();
-  const fittedRef = useRef(false);
+  const fittedGeoRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
-    if (fittedRef.current || points.length < 3) return;
-    fittedRef.current = true;
-    const bounds = L.latLngBounds(points.map((p) => [p.lat, p.lng] as [number, number]));
+    if (!initialGeoJson || fittedGeoRef.current === initialGeoJson) return;
+    const initialPts = geoJsonToLatLngs(initialGeoJson);
+    if (initialPts.length < 3) return;
+    fittedGeoRef.current = initialGeoJson;
+    const bounds = L.latLngBounds(initialPts.map((p) => [p.lat, p.lng] as [number, number]));
     if (bounds.isValid()) {
       map.fitBounds(bounds, { padding: [48, 48], maxZoom: 18 });
     }
-  }, [map, points]);
+  }, [map, initialGeoJson]);
 
   return null;
 };
@@ -128,14 +131,24 @@ export const FieldPolygonDrawerModal: React.FC<FieldPolygonDrawerModalProps> = (
   } | null>(null);
 
   const mapRef = useRef<L.Map | null>(null);
+  const tkgmAbortRef = useRef<AbortController | null>(null);
+  const tkgmSeqRef = useRef(0);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      tkgmAbortRef.current?.abort();
+      tkgmSeqRef.current++;
+      return;
+    }
     const parsed = geoJsonToLatLngs(initialGeoJson);
     setPoints(parsed);
     setTkgmMeta(null);
     setSearchQuery('');
     setSearchResults([]);
+    return () => {
+      tkgmAbortRef.current?.abort();
+      tkgmSeqRef.current++;
+    };
   }, [isOpen, initialGeoJson]);
 
   useEffect(() => {
@@ -143,22 +156,31 @@ export const FieldPolygonDrawerModal: React.FC<FieldPolygonDrawerModalProps> = (
       setSearchResults([]);
       return;
     }
+    const controller = new AbortController();
     const timer = setTimeout(async () => {
       try {
         const res = await fetch(
           `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
             searchQuery.trim()
-          )}&countrycodes=tr&limit=5`
+          )}&countrycodes=tr&limit=5`,
+          { signal: controller.signal }
         );
+        if (controller.signal.aborted) return;
         if (res.ok) {
           const data = await res.json();
-          setSearchResults(Array.isArray(data) ? data : []);
+          if (!controller.signal.aborted) {
+            setSearchResults(Array.isArray(data) ? data : []);
+          }
         }
-      } catch {
+      } catch (err: any) {
+        if (err?.name === 'AbortError' || controller.signal.aborted) return;
         setSearchResults([]);
       }
     }, 450);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, [isOpen, searchQuery]);
 
   const metrics = useMemo(() => computePolygonMetrics(points), [points]);
@@ -202,15 +224,28 @@ export const FieldPolygonDrawerModal: React.FC<FieldPolygonDrawerModalProps> = (
         : null;
 
     if (!center) return;
+    tkgmAbortRef.current?.abort();
+    const controller = new AbortController();
+    tkgmAbortRef.current = controller;
+    const mySeq = ++tkgmSeqRef.current;
+    const isStale = () => controller.signal.aborted || mySeq !== tkgmSeqRef.current;
+
     setIsQueryingTkgm(true);
     try {
+      const token = await auth.currentUser?.getIdToken().catch(() => null);
+      if (isStale()) return;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
       const res = await fetch(`${API_BASE}/api/tkgm/parcel`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ lat: center.lat, lng: center.lng }),
+        signal: controller.signal,
       });
+      if (isStale()) return;
       if (res.ok) {
         const data = await res.json();
+        if (isStale()) return;
         setTkgmMeta({
           il: data.il,
           ilce: data.ilce,
@@ -233,14 +268,18 @@ export const FieldPolygonDrawerModal: React.FC<FieldPolygonDrawerModalProps> = (
         return;
       }
       throw new Error('TKGM endpoint unavailable');
-    } catch {
+    } catch (err: any) {
+      if (err?.name === 'AbortError' || isStale()) return;
       // İstemci tarafı idari konum yedeği (statik barındırma veya geçici ağ kesintisi için)
       try {
         const nomRes = await fetch(
-          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${center.lat.toFixed(6)}&lon=${center.lng.toFixed(6)}&zoom=18&addressdetails=1&accept-language=tr`
+          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${center.lat.toFixed(6)}&lon=${center.lng.toFixed(6)}&zoom=18&addressdetails=1&accept-language=tr`,
+          { signal: controller.signal }
         );
+        if (isStale()) return;
         if (nomRes.ok) {
           const nom = await nomRes.json();
+          if (isStale()) return;
           const addr = nom?.address || {};
           setTkgmMeta({
             il: addr.province || addr.state || '',
@@ -250,10 +289,12 @@ export const FieldPolygonDrawerModal: React.FC<FieldPolygonDrawerModalProps> = (
           });
         }
       } catch {
-        // ignore offline
+        // ignore offline or aborted
       }
     } finally {
-      setIsQueryingTkgm(false);
+      if (mySeq === tkgmSeqRef.current) {
+        setIsQueryingTkgm(false);
+      }
     }
   };
 
@@ -399,7 +440,7 @@ export const FieldPolygonDrawerModal: React.FC<FieldPolygonDrawerModalProps> = (
             />
           )}
 
-          <FitInitialBounds points={points} />
+          <FitInitialBounds initialGeoJson={initialGeoJson} />
           <DrawClickHandler
             isDrawingEnabled={true}
             onAddVertex={(pt) => setPoints((prev) => [...prev, pt])}

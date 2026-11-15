@@ -5,6 +5,7 @@ import { Expense } from '../types';
 import { Plus, Trash2, Receipt, Calendar, Tag, ChevronLeft, AlertCircle, TrendingDown, User, Edit2, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { formatCurrency, getCurrencySymbol } from '../utils/currency';
+import { getLocalDateString } from '../utils/dateUtils';
 import { ConfirmationModal } from './ConfirmationModal';
 import { EmptyState } from './EmptyState';
 import { ModalCloseButton } from './ModalCloseButton';
@@ -39,7 +40,7 @@ export const ExpensesScreen: React.FC<ExpensesProps> = ({ onBack }) => {
   const [newExpense, setNewExpense] = useState<Omit<Expense, 'id'>>({
     title: '',
     amount: 0,
-    date: new Date().toISOString().split('T')[0],
+    date: getLocalDateString(),
     category: 'OTHER',
     note: '',
     accountId: ''
@@ -69,7 +70,7 @@ export const ExpensesScreen: React.FC<ExpensesProps> = ({ onBack }) => {
     setNewExpense({
       title: '',
       amount: 0,
-      date: new Date().toISOString().split('T')[0],
+      date: getLocalDateString(),
       category: (selectedCategory as any) || 'OTHER',
       note: '',
       accountId: ''
@@ -92,7 +93,7 @@ export const ExpensesScreen: React.FC<ExpensesProps> = ({ onBack }) => {
       setNewExpense({
         title: '',
         amount: 0,
-        date: new Date().toISOString().split('T')[0],
+        date: getLocalDateString(),
         category: 'OTHER',
         note: '',
         accountId: ''

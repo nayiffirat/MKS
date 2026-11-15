@@ -3,13 +3,15 @@ import React, { useState } from 'react';
 import { useAppViewModel } from '../context/AppContext';
 import { MyPayment } from '../types';
 import { 
-    CreditCard, Calendar, CheckCircle2, AlertCircle, 
-    Search, Filter, Plus, Trash2, Clock, 
-    ArrowLeft, ChevronRight, Check, X, DollarSign,
-    TrendingDown, TrendingUp, CalendarClock, Wallet, Share2
+    CreditCard, CheckCircle2, AlertCircle, 
+    Search, Plus, Trash2, Clock, 
+    ArrowLeft, Check, X, DollarSign,
+    TrendingDown, TrendingUp, CalendarClock, Wallet
 } from 'lucide-react';
 import { formatCurrency } from '../utils/currency';
 import { ConfirmationModal } from './ConfirmationModal';
+import { buildWaUrl } from '../utils/whatsappTemplates';
+import { getLocalDateString } from '../utils/dateUtils';
 
 interface PaymentsProps {
     onBack?: () => void;
@@ -20,7 +22,7 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
         myPayments, updateMyPayment, deleteMyPayment, addMyPayment,
         addSupplierPayment,
         showToast, hapticFeedback, userProfile, stats,
-        farmers, suppliers, t
+        farmers, suppliers, accounts
     } = useAppViewModel();
     const [searchTerm, setSearchTerm] = useState('');
     const [filter, setFilter] = useState<'ALL' | 'PENDING' | 'PAID'>('ALL');
@@ -36,7 +38,7 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
     const [newPayment, setNewPayment] = useState({
         type: 'CHECK' as MyPayment['type'],
         amount: '',
-        dueDate: new Date().toISOString().split('T')[0],
+        dueDate: getLocalDateString(),
         note: '',
         targetId: '', // farmerId or supplierId
         targetName: '', // custom name if not selected from list
@@ -99,7 +101,7 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
             setNewPayment({
                 type: 'CHECK',
                 amount: '',
-                dueDate: new Date().toISOString().split('T')[0],
+                dueDate: getLocalDateString(),
                 note: '',
                 targetId: '',
                 targetName: '',
@@ -150,8 +152,7 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
             navigator.share({
                 title: 'Tahsilat Makbuzu',
                 text: message
-            }).catch((err) => {
-                console.log('Ekran paylaşımı iptal edildi veya desteklenmiyor', err);
+            }).catch(() => {
                 fallbackToWhatsApp(farmerObj?.phoneNumber, message);
             });
         } else {
@@ -160,20 +161,9 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
     };
 
     const fallbackToWhatsApp = (phone: string | undefined, message: string) => {
-        const encodedMessage = encodeURIComponent(message);
-        let phoneParam = '';
-        if (phone) {
-            let cleanPhone = phone.replace(/[^0-9+]/g, '');
-            if (cleanPhone.startsWith('0')) {
-                cleanPhone = '9' + cleanPhone;
-            } else if (!cleanPhone.startsWith('+') && cleanPhone.length === 10) {
-                cleanPhone = '90' + cleanPhone;
-            }
-            phoneParam = cleanPhone.replace('+', ''); // wa.me needs number without +
-        }
-        const whatsappUrl = phoneParam 
-            ? `https://wa.me/${phoneParam}?text=${encodedMessage}` 
-            : `https://wa.me/?text=${encodedMessage}`;
+        const whatsappUrl =
+            buildWaUrl(phone, message) ||
+            `https://wa.me/?text=${encodeURIComponent(message)}`;
         window.open(whatsappUrl, '_blank');
     };
 
@@ -195,15 +185,34 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
     };
 
     const handleTogglePaid = async (payment: MyPayment) => {
+        if (payment.portfolioStatus === 'ENDORSED') {
+            showToast('Ciro edilmiş çek/senet tahsil veya iade olarak doğrudan değiştirilemez.', 'error');
+            return;
+        }
+        if (payment.portfolioStatus === 'BOUNCED') {
+            showToast('Karşılıksız çek/senet doğrudan tahsil edildi yapılamaz; önce portföye geri alın.', 'error');
+            return;
+        }
         const newStatus = payment.status === 'PAID' ? 'PENDING' : 'PAID';
         const isReceivable = !!payment.farmerId || !!payment.farmerName;
         const nextPortfolioStatus =
-            payment.portfolioStatus === 'ENDORSED'
-                ? 'ENDORSED'
-                : newStatus === 'PAID'
-                    ? (isReceivable ? 'COLLECTED' : 'ISSUED')
-                    : (isReceivable ? 'PORTFOLIO' : 'ISSUED');
-        await updateMyPayment({ ...payment, status: newStatus, portfolioStatus: nextPortfolioStatus });
+            newStatus === 'PAID'
+                ? (isReceivable ? 'COLLECTED' : 'ISSUED')
+                : (isReceivable ? 'PORTFOLIO' : 'ISSUED');
+        const defaultAccount =
+            accounts.find(a => !a.deletedAt && a.type === 'BANK') ||
+            accounts.find(a => !a.deletedAt && a.type === 'CASH') ||
+            accounts.find(a => !a.deletedAt);
+        const nextAccountId =
+            newStatus === 'PAID'
+                ? (payment.accountId || defaultAccount?.id)
+                : payment.accountId;
+        await updateMyPayment({
+            ...payment,
+            status: newStatus,
+            portfolioStatus: nextPortfolioStatus,
+            accountId: nextAccountId
+        });
         const msg = newStatus === 'PAID' 
             ? (isReceivable ? 'Tahsil edildi olarak işaretlendi' : 'Ödeme ödendi olarak işaretlendi')
             : 'Bekliyor olarak işaretlendi';
@@ -577,8 +586,10 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
 
                                 <div className="flex flex-wrap items-center gap-2 pt-2.5 border-t border-white/5">
                                     <button 
+                                        type="button"
+                                        disabled={payment.portfolioStatus === 'ENDORSED' || payment.portfolioStatus === 'BOUNCED'}
                                         onClick={() => handleTogglePaid(payment)}
-                                        className={`flex-1 min-w-[140px] min-h-[40px] px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                                        className={`flex-1 min-w-[140px] min-h-[40px] px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed ${
                                             payment.status === 'PAID'
                                             ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
                                             : 'bg-stone-800 text-stone-200 border border-white/10 hover:bg-stone-700'
@@ -587,9 +598,11 @@ export const Payments: React.FC<PaymentsProps> = ({ onBack }) => {
                                         {payment.status === 'PAID' ? <CheckCircle2 size={14} /> : <Check size={14} />}
                                         {payment.portfolioStatus === 'ENDORSED'
                                             ? 'Ciro edildi'
-                                            : payment.status === 'PAID' 
-                                                ? (payment.farmerId || payment.farmerName ? 'Tahsil edildi' : 'Ödendi') 
-                                                : (payment.farmerId || payment.farmerName ? 'Tahsil edildi işaretle' : 'Ödendi işaretle')}
+                                            : payment.portfolioStatus === 'BOUNCED'
+                                                ? 'Karşılıksız'
+                                                : payment.status === 'PAID' 
+                                                    ? (payment.farmerId || payment.farmerName ? 'Tahsil edildi' : 'Ödendi') 
+                                                    : (payment.farmerId || payment.farmerName ? 'Tahsil edildi işaretle' : 'Ödendi işaretle')}
                                     </button>
                                     {(payment.farmerId || payment.farmerName) && (payment.type === 'CHECK' || payment.type === 'PROMISSORY_NOTE') && payment.status === 'PENDING' && payment.portfolioStatus !== 'ENDORSED' && payment.portfolioStatus !== 'BOUNCED' && payment.portfolioStatus !== 'COLLECTED' && (
                                         <button

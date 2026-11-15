@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAppViewModel } from '../context/AppContext';
-import { ArrowLeft, Trash2, RotateCcw, Search, Calendar, User, Package, AlertCircle, FileText, Users, ClipboardList, CreditCard, Truck, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Trash2, RotateCcw, Search, Package, AlertCircle, FileText, Users, ClipboardList, CreditCard, Truck, AlertTriangle } from 'lucide-react';
 import { ConfirmationModal } from './ConfirmationModal';
 
 interface DeletedPrescriptionsProps {

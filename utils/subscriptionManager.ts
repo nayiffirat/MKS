@@ -3,7 +3,6 @@ import { AdMob } from '@capacitor-community/admob';
 import { isDesktopOrWebEnvironment } from './navigationManager';
 import { db as firestore } from '../services/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { API_BASE } from './api';
 
 export type SubscriptionTierId = 'PRO' | 'ULTRA' | 'MAX';
 export type BillingPeriod = 'MONTHLY' | 'YEARLY';

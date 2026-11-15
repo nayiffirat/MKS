@@ -79,6 +79,136 @@ export function validateGLN(gln: string): boolean {
 /** A valid example GLN for placeholders (passes validateGLN). */
 export const EXAMPLE_GLN = '8680000000006';
 
+/** Masks the middle digits of a 13-digit GLN for privacy-safe UI display and logs. */
+export function maskGLN(gln: string): string {
+  const digits = String(gln ?? '').replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.length <= 8) return '*'.repeat(digits.length);
+  return `${digits.slice(0, 4)}${'*'.repeat(digits.length - 8)}${digits.slice(-4)}`;
+}
+
+const TR_PROVINCES: Record<string, string> = {
+  '01': 'Adana', '02': 'Adıyaman', '03': 'Afyonkarahisar', '04': 'Ağrı', '05': 'Amasya',
+  '06': 'Ankara', '07': 'Antalya', '08': 'Artvin', '09': 'Aydın', '10': 'Balıkesir',
+  '11': 'Bilecik', '12': 'Bingöl', '13': 'Bitlis', '14': 'Bolu', '15': 'Burdur',
+  '16': 'Bursa', '17': 'Çanakkale', '18': 'Çankırı', '19': 'Çorum', '20': 'Denizli',
+  '21': 'Diyarbakır', '22': 'Edirne', '23': 'Elazığ', '24': 'Erzincan', '25': 'Erzurum',
+  '26': 'Eskişehir', '27': 'Gaziantep', '28': 'Giresun', '29': 'Gümüşhane', '30': 'Hakkâri',
+  '31': 'Hatay', '32': 'Isparta', '33': 'Mersin', '34': 'İstanbul', '35': 'İzmir',
+  '36': 'Kars', '37': 'Kastamonu', '38': 'Kayseri', '39': 'Kırklareli', '40': 'Kırşehir',
+  '41': 'Kocaeli', '42': 'Konya', '43': 'Kütahya', '44': 'Malatya', '45': 'Manisa',
+  '46': 'Kahramanmaraş', '47': 'Mardin', '48': 'Muğla', '49': 'Muş', '50': 'Nevşehir',
+  '51': 'Niğde', '52': 'Ordu', '53': 'Rize', '54': 'Sakarya', '55': 'Samsun',
+  '56': 'Siirt', '57': 'Sinop', '58': 'Sivas', '59': 'Tekirdağ', '60': 'Tokat',
+  '61': 'Trabzon', '62': 'Tunceli', '63': 'Şanlıurfa', '64': 'Uşak', '65': 'Van',
+  '66': 'Yozgat', '67': 'Zonguldak', '68': 'Aksaray', '69': 'Bayburt', '70': 'Karaman',
+  '71': 'Kırıkkale', '72': 'Batman', '73': 'Şırnak', '74': 'Bartın', '75': 'Ardahan',
+  '76': 'Iğdır', '77': 'Yalova', '78': 'Karabük', '79': 'Kilis', '80': 'Osmaniye', '81': 'Düzce',
+};
+
+export type GLNPrefixType = 'MINISTRY_PROVINCE' | 'GS1_TURKEY' | 'GS1_GLOBAL' | 'INVALID';
+
+export interface GLNInspectionResult {
+  raw: string;
+  normalized: string;
+  valid: boolean;
+  length: number;
+  expectedCheckDigit: number | null;
+  actualCheckDigit: number | null;
+  prefixType: GLNPrefixType;
+  provinceCode?: string;
+  provinceName?: string;
+  masked: string;
+  summary: string;
+}
+
+/**
+ * Inspects a GLN structurally and mathematically (GS1 Modulo-10 check digit,
+ * Tarım Bakanlığı provincial BKTS prefix 001..081, or GS1 Turkey 868/869 prefix).
+ */
+export function inspectGLN(gln: string): GLNInspectionResult {
+  const raw = String(gln ?? '');
+  const normalized = raw.replace(/\D/g, '');
+  const length = normalized.length;
+  const masked = maskGLN(normalized);
+
+  if (length !== 13) {
+    return {
+      raw,
+      normalized,
+      valid: false,
+      length,
+      expectedCheckDigit: null,
+      actualCheckDigit: length > 0 ? Number(normalized[length - 1]) : null,
+      prefixType: 'INVALID',
+      masked,
+      summary: length === 0 ? 'GLN boş' : `GLN 13 hane olmalıdır (girilen: ${length} hane)`,
+    };
+  }
+
+  const expectedCheckDigit = calcGS1CheckDigit(normalized.slice(0, 12));
+  const actualCheckDigit = Number(normalized[12]);
+  const valid = expectedCheckDigit === actualCheckDigit;
+
+  if (!valid) {
+    return {
+      raw,
+      normalized,
+      valid: false,
+      length,
+      expectedCheckDigit,
+      actualCheckDigit,
+      prefixType: 'INVALID',
+      masked,
+      summary: `Modulo-10 kontrol hanesi hatalı (beklenen: ${expectedCheckDigit}, mevcut: ${actualCheckDigit})`,
+    };
+  }
+
+  const maybeProvinceCode = normalized.startsWith('0') ? normalized.slice(1, 3) : '';
+  const provinceName = maybeProvinceCode ? TR_PROVINCES[maybeProvinceCode] : undefined;
+  if (provinceName) {
+    return {
+      raw,
+      normalized,
+      valid: true,
+      length,
+      expectedCheckDigit,
+      actualCheckDigit,
+      prefixType: 'MINISTRY_PROVINCE',
+      provinceCode: maybeProvinceCode,
+      provinceName,
+      masked,
+      summary: `Geçerli (Modulo-10 = ${expectedCheckDigit}) · Tarım Bakanlığı İl Öneki: ${maybeProvinceCode} (${provinceName})`,
+    };
+  }
+
+  if (normalized.startsWith('868') || normalized.startsWith('869')) {
+    return {
+      raw,
+      normalized,
+      valid: true,
+      length,
+      expectedCheckDigit,
+      actualCheckDigit,
+      prefixType: 'GS1_TURKEY',
+      masked,
+      summary: `Geçerli (Modulo-10 = ${expectedCheckDigit}) · GS1 Türkiye Ticari Önek (${normalized.slice(0, 3)})`,
+    };
+  }
+
+  return {
+    raw,
+    normalized,
+    valid: true,
+    length,
+    expectedCheckDigit,
+    actualCheckDigit,
+    prefixType: 'GS1_GLOBAL',
+    masked,
+    summary: `Geçerli (Modulo-10 = ${expectedCheckDigit}) · Uluslararası GS1 Önek (${normalized.slice(0, 3)})`,
+  };
+}
+
 /** YYMMDD -> YYYY-MM-DD. DD=00 means last day of month (GS1 spec). */
 export function gs1DateToISO(yymmdd: string): string | null {
   if (!/^\d{6}$/.test(yymmdd)) return null;

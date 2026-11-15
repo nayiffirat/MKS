@@ -22,7 +22,7 @@ import { API_BASE } from './api';
 import { safeStringify } from './json';
 
 export const MKS_CLIENT_VERSION = '8.2.1';
-export const MKS_CLIENT_BUILD = 28;
+export const MKS_CLIENT_BUILD = 35;
 export const MKS_ALERT_CHANNEL_ID = 'mks_smart_alerts';
 /** Android bildirim simgeleri: durum çubuğu için tek renk silüet, bildirim gövdesi için renkli logo (android/app/src/main/res/drawable-*) */
 export const MKS_NOTIF_ICONS = { smallIcon: 'ic_stat_mks', largeIcon: 'mks_notif_logo', iconColor: '#10B981' } as const;
@@ -42,6 +42,8 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPreferences = {
 };
 
 let listenersInitialized = false;
+let swListenerInitialized = false;
+let latestOnNavigate: ((view: ViewState) => void) | undefined;
 
 export function getEffectiveNotificationPrefs(profile?: UserProfile | null): NotificationPreferences {
   if (profile?.notificationPrefs) {
@@ -82,6 +84,7 @@ export async function initNotificationInfrastructure(
   onNavigate?: (view: ViewState) => void
 ): Promise<void> {
   if (typeof window === 'undefined') return;
+  if (onNavigate) latestOnNavigate = onNavigate;
 
   // 1. Register Web / Desktop Service Worker (/sw.js)
   if (!Capacitor.isNativePlatform() && 'serviceWorker' in navigator) {
@@ -89,12 +92,15 @@ export async function initNotificationInfrastructure(
       const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
       reg.update().catch(() => {});
 
-      navigator.serviceWorker.addEventListener('message', (event) => {
-        const data = event.data || {};
-        if (data.type === 'MKS_NOTIFICATION_CLICK' && data.targetView && onNavigate) {
-          onNavigate(data.targetView as ViewState);
-        }
-      });
+      if (!swListenerInitialized) {
+        swListenerInitialized = true;
+        navigator.serviceWorker.addEventListener('message', (event) => {
+          const data = event.data || {};
+          if (data.type === 'MKS_NOTIFICATION_CLICK' && data.targetView && latestOnNavigate) {
+            latestOnNavigate(data.targetView as ViewState);
+          }
+        });
+      }
     } catch (err) {
       console.warn('Service Worker kaydı atlandı:', err);
     }
@@ -117,8 +123,8 @@ export async function initNotificationInfrastructure(
     try {
       await LocalNotifications.addListener('localNotificationActionPerformed', (action) => {
         const targetView = action?.notification?.extra?.targetView as ViewState | undefined;
-        if (targetView && onNavigate) {
-          onNavigate(targetView);
+        if (targetView && latestOnNavigate) {
+          latestOnNavigate(targetView);
         }
       });
     } catch {}

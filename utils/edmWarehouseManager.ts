@@ -115,26 +115,54 @@ export const EDM_DRAFT_LABEL = 'TASLAK BELGE — Resmi GİB Entegrasyonu Aktif D
 
 export type EInvoiceProviderId =
   | 'EDM'
-  | 'QNB_EFINANS'
   | 'UYUMSOFT'
+  | 'QNB_EFINANS'
   | 'ELOGO'
+  | 'IZIBIZ'
   | 'MIKRO_ZIRVE'
   | 'SOVOS_FORIBA'
-  | 'IZIBIZ'
-  | 'DIGITAL_PLANET'
+  | 'HIZLI_BILISIM'
+  | 'NES_BILGI'
+  | 'BIEN_TEKNOLOJI'
+  | 'NILVERA'
+  | 'VERIBAN'
+  | 'MYSOFT'
+  | 'EDOKSIS'
+  | 'ISNET'
+  | 'KOCSISTEM'
+  | 'TURKCELL'
+  | 'VODAFONE'
   | 'TURKKEP'
+  | 'DIGITAL_PLANET'
+  | 'PARK_ENTEGRASYON'
+  | 'RAHAT_FATURA'
+  | 'DIA_AKINSOFT_VEGA'
   | 'GIB_PORTAL';
 
 export const EINVOICE_PROVIDERS: { id: EInvoiceProviderId; name: string; endpointHint: string }[] = [
-  { id: 'EDM', name: 'EDM Bilişim (E-Dönüşüm Merkezi)', endpointHint: 'portal.edmbilisim.com.tr' },
-  { id: 'QNB_EFINANS', name: 'QNB eFinans (QNB Finansbank)', endpointHint: 'portal.efinans.com.tr' },
+  { id: 'EDM', name: 'EDM Bilişim (E-Dönüşüm Merkezi)', endpointHint: 'portal2.edmbilisim.com.tr' },
   { id: 'UYUMSOFT', name: 'Uyumsoft e-Uyum (İdea)', endpointHint: 'efatura.uyumsoft.com.tr' },
+  { id: 'QNB_EFINANS', name: 'QNB eSolutions (QNB eFinans)', endpointHint: 'portal.efinans.com.tr' },
   { id: 'ELOGO', name: 'Logo Yazılım (e-Logo)', endpointHint: 'pb.elogo.com.tr' },
-  { id: 'MIKRO_ZIRVE', name: 'Zirve / Mikro / Paraşüt (e-Mikro)', endpointHint: 'emikro.com.tr' },
-  { id: 'SOVOS_FORIBA', name: 'Sovos Foriba (FIT Solutions)', endpointHint: 'bulut.foriba.com' },
   { id: 'IZIBIZ', name: 'İzibiz Bilişim Özel Entegratör', endpointHint: 'portal.izibiz.com.tr' },
-  { id: 'DIGITAL_PLANET', name: 'Digital Planet (Netbt)', endpointHint: 'efatura.digitalplanet.com.tr' },
+  { id: 'MIKRO_ZIRVE', name: 'Mikro / Zirve / Paraşüt (e-Mikro)', endpointHint: 'emikro.com.tr' },
+  { id: 'SOVOS_FORIBA', name: 'Sovos Foriba (FIT Solutions)', endpointHint: 'bulut.foriba.com' },
+  { id: 'HIZLI_BILISIM', name: 'Hızlı Bilişim Teknolojileri', endpointHint: 'econnect.hizliteknoloji.com.tr' },
+  { id: 'NES_BILGI', name: 'NES Bilgi (NES E-Dönüşüm)', endpointHint: 'api.nes.com.tr' },
+  { id: 'BIEN_TEKNOLOJI', name: 'Bien Teknoloji Özel Entegratör', endpointHint: 'bienteknoloji.com.tr' },
+  { id: 'NILVERA', name: 'Nilvera E-Dönüşüm', endpointHint: 'apitest.nilvera.com' },
+  { id: 'VERIBAN', name: 'Veriban E-Fatura', endpointHint: 'efatura.veriban.com.tr' },
+  { id: 'MYSOFT', name: 'Mysoft E-Belge', endpointHint: 'edonusumapi.mysoft.com.tr' },
+  { id: 'EDOKSIS', name: 'Edoksis (SabancıDx)', endpointHint: 'efatura.edoksis.net' },
+  { id: 'ISNET', name: 'İşNet (NetteFatura)', endpointHint: 'nettefatura.isnet.net.tr' },
+  { id: 'KOCSISTEM', name: 'KoçSistem E-Dönüşüm', endpointHint: 'efatura.kocsistem.com.tr' },
+  { id: 'TURKCELL', name: 'Turkcell E-Şirket', endpointHint: 'efatura.turkcellesirket.com' },
+  { id: 'VODAFONE', name: 'Vodafone E-Fatura / E-Dönüşüm', endpointHint: 'vodafone.com.tr' },
   { id: 'TURKKEP', name: 'TürkKep E-Dönüşüm', endpointHint: 'efatura.turkkep.com.tr' },
+  { id: 'DIGITAL_PLANET', name: 'Digital Planet (Sovos Netbt)', endpointHint: 'efatura.digitalplanet.com.tr' },
+  { id: 'PARK_ENTEGRASYON', name: 'Park Entegrasyon', endpointHint: 'efatura.parkentegrasyon.com.tr' },
+  { id: 'RAHAT_FATURA', name: 'Rahat Fatura / RahatKobi', endpointHint: 'rahatfatura.com.tr' },
+  { id: 'DIA_AKINSOFT_VEGA', name: 'DİA / Akınsoft / Vega / BirFatura', endpointHint: 'diayazilim.com' },
   { id: 'GIB_PORTAL', name: 'GİB e-Arşiv Portal & Evrensel UBL-TR XML', endpointHint: 'earsivportal.efatura.gov.tr' }
 ];
 

@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppViewModel } from '../context/AppContext';
 import { Farmer, Expense, Payment } from '../types';
-import { Plus, MessageSquare, Wallet, Receipt, CreditCard, AlertCircle, Send, Loader2, Save, MessageCircle, ChevronRight } from 'lucide-react';
+import { Plus, MessageSquare, Wallet, Receipt, CreditCard, AlertCircle, Send, Save, MessageCircle, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { formatCurrency, getCurrencySymbol } from '../utils/currency';
 import { useBackHandler } from '../utils/navigationManager';
@@ -23,7 +23,6 @@ export const QuickActions: React.FC = () => {
         userProfile,
         farmerLabel,
         farmerPluralLabel,
-        prescriptionLabel,
         activeTeamMember,
         t,
         language

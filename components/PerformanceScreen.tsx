@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAppViewModel } from '../context/AppContext';
-import { ChevronLeft, TrendingUp, Package, Users, DollarSign, X, FileText, ClipboardList, Calendar, User as UserIcon, ArrowRight } from 'lucide-react';
+import { ChevronLeft, TrendingUp, Package, X, FileText, ClipboardList, Calendar, User as UserIcon, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { formatCurrency } from '../utils/currency';
 

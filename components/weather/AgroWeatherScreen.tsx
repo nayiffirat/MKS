@@ -12,11 +12,12 @@ import { useAppViewModel } from '../../context/AppContext';
 import { useBackHandler } from '../../utils/navigationManager';
 import { AGRI_CITIES, WeatherService, computeGddPestAlerts } from '../../services/weather';
 import {
-  AgroWeather, AgroWeatherService, AgroHour, bestSprayWindow, compassShort, driftVerdict, frostInfo, hhmm, leafWetness, localParts, nextRain, soilInfo,
+  AgroWeather, AgroWeatherService, bestSprayWindow, compassShort, driftVerdict, frostInfo, hhmm, leafWetness, localParts, nextRain, soilInfo,
   sprayVerdict, SprayLevel, waterBalance, wmoLabel
 } from '../../services/agroWeather';
 import { AtmosphericStage } from './AtmosphericStage';
 import { LiveRadarMap } from './LiveRadarMap';
+import { computePolygonMetrics, geoJsonToLatLngs } from '../../utils/fieldPolygon';
 
 interface Loc { id: string; name: string; sub?: string; lat: number; lon: number; polygon?: Array<{ lat: number; lng: number }> }
 const LOC_KEY = 'mks_agro_wx_loc';
@@ -81,11 +82,41 @@ const tempColor = (t: number) => {
   return `rgb(${ca.map((v, j) => Math.round(v + (cb[j] - v) * k)).join(',')})`;
 };
 
+const toFiniteCoord = (v: unknown): number | null => {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+const fieldPolygonPts = (f: any): Array<{ lat: number; lng: number }> => {
+  if (Array.isArray(f?.polygonPoints) && f.polygonPoints.length >= 3) {
+    return f.polygonPoints;
+  }
+  if (f?.polygonGeoJson) {
+    const parsed = geoJsonToLatLngs(f.polygonGeoJson);
+    if (parsed.length >= 3) return parsed;
+  }
+  return [];
+};
+
 const fieldCenter = (f: any): { lat: number; lon: number } | null => {
-  const lat = f?.centroid?.lat ?? f?.centroidLat ?? f?.lat, lon = f?.centroid?.lon ?? f?.centroidLng ?? f?.lng;
-  if (Number.isFinite(lat) && Number.isFinite(lon)) return { lat, lon };
-  const pts = f?.polygonPoints;
-  if (Array.isArray(pts) && pts.length) return { lat: pts.reduce((a: number, p: any) => a + p.lat, 0) / pts.length, lon: pts.reduce((a: number, p: any) => a + p.lng, 0) / pts.length };
+  const lat = toFiniteCoord(f?.centroid?.lat ?? f?.centroidLat ?? f?.lat);
+  const lon = toFiniteCoord(f?.centroid?.lon ?? f?.centroidLng ?? f?.lng);
+  if (lat !== null && lon !== null && (Math.abs(lat) > 0.0001 || Math.abs(lon) > 0.0001)) {
+    return { lat, lon };
+  }
+  const pts = fieldPolygonPts(f);
+  if (pts.length >= 3) {
+    const c = computePolygonMetrics(pts).centroid;
+    return { lat: c.lat, lon: c.lng };
+  }
+  if (Array.isArray(f?.polygonPoints) && f.polygonPoints.length > 0) {
+    const rawPts = f.polygonPoints;
+    return {
+      lat: rawPts.reduce((a: number, p: any) => a + Number(p.lat || 0), 0) / rawPts.length,
+      lon: rawPts.reduce((a: number, p: any) => a + Number(p.lng || 0), 0) / rawPts.length,
+    };
+  }
   return null;
 };
 
@@ -111,7 +142,17 @@ export const AgroWeatherScreen: React.FC<{ isOpen: boolean; onClose: () => void 
     const out: Loc[] = [];
     for (const f of farmers || []) for (const fl of f.fields || []) {
       const c = fieldCenter(fl);
-      if (c) out.push({ id: `field:${fl.id}`, name: fl.name || 'Parsel', sub: `${f.fullName}${fl.crop ? ` · ${fl.crop}` : ''}`, lat: c.lat, lon: c.lon, polygon: fl.polygonPoints });
+      if (c) {
+        const poly = fieldPolygonPts(fl);
+        out.push({
+          id: `field:${fl.id}`,
+          name: fl.name || 'Parsel',
+          sub: `${f.fullName}${fl.crop ? ` · ${fl.crop}` : ''}`,
+          lat: c.lat,
+          lon: c.lon,
+          polygon: poly.length >= 3 ? poly : undefined
+        });
+      }
     }
     return out;
   }, [farmers]);

@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { useAppViewModel } from '../context/AppContext';
-import { FileText, CreditCard, Plus, Receipt, History as HistoryIcon, Calendar, User, ArrowUpRight, ArrowDownLeft, Tag, ShoppingBag, Search, Filter } from 'lucide-react';
+import { FileText, CreditCard, Plus, Receipt, History as HistoryIcon, Calendar, ArrowUpRight, ArrowDownLeft, ShoppingBag, Search } from 'lucide-react';
 import { format } from 'date-fns';
 import { tr } from 'date-fns/locale';
 import { formatCurrency } from '../utils/currency';

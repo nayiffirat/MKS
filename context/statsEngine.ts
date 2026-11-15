@@ -1,6 +1,6 @@
 import { Capacitor } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
-import { dbService } from '../services/db';
+import { dbService, isSubscriptionBlocked } from '../services/db';
 import {
   Account,
   CollectionLog,
@@ -20,7 +20,9 @@ import {
   Transaction,
   VisitLog
 } from '../types';
-import { getPrescriptionCreditImpact, isTurnoverDebtRecord } from '../utils/ledger';
+import { getBouncedRelatedPaymentIds, getPrescriptionCreditImpact, isTurnoverDebtRecord } from '../utils/ledger';
+import { supplierDocKind } from '../utils/tradeCore';
+import { getLocalDateString } from '../utils/dateUtils';
 import {
   hashReminderNumericId,
   scheduleDailyBriefing,
@@ -179,10 +181,12 @@ export async function computeFullAppSnapshot(syncedReminders?: Reminder[]): Prom
   const prescriptions: Prescription[] = [];
   const trashedPrescriptions: Prescription[] = [];
 
+  const subscriptionBlocked = isSubscriptionBlocked();
+
   for (const p of allPrescriptionsRaw) {
     if (p.deletedAt) {
       const deletedTime = new Date(p.deletedAt).getTime();
-      if (now.getTime() - deletedTime > thirtyDaysInMs) {
+      if (!subscriptionBlocked && now.getTime() - deletedTime > thirtyDaysInMs) {
         dbService.deletePrescription(p.id).catch(() => {});
       } else {
         trashedPrescriptions.push(p);
@@ -226,7 +230,7 @@ export async function computeFullAppSnapshot(syncedReminders?: Reminder[]): Prom
   ) => {
     const kept: T[] = [];
     for (const item of arr) {
-      if (item.deletedAt && now.getTime() - new Date(item.deletedAt).getTime() > thirtyDaysInMs) {
+      if (!subscriptionBlocked && item.deletedAt && now.getTime() - new Date(item.deletedAt).getTime() > thirtyDaysInMs) {
         deletePromises.push(fn(item.id));
       } else {
         kept.push(item);
@@ -252,23 +256,26 @@ export async function computeFullAppSnapshot(syncedReminders?: Reminder[]): Prom
 
   const finalReminders = [...(syncedReminders || reminderListFromDB)];
 
+  const bouncedRelatedPaymentIds = getBouncedRelatedPaymentIds(myPaymentList);
+
   // --- SUPPLIER BALANCES ---
   const updatedSupplierList = supplierList.map(s => {
     const purchasesForSupplier = flatPurchases.filter(p => p.supplierId === s.id);
-    const paymentsForSupplier = flatPayments.filter(p => p.supplierId === s.id);
+    const paymentsForSupplier = flatPayments.filter(
+      p => p.supplierId === s.id && !bouncedRelatedPaymentIds.has(p.id)
+    );
     const checks = myPaymentList.filter(
-      p => p.supplierId === s.id && !p.deletedAt && p.status !== 'CANCELLED' && !p.relatedId
+      p =>
+        p.supplierId === s.id &&
+        !p.deletedAt &&
+        p.status !== 'CANCELLED' &&
+        p.portfolioStatus !== 'BOUNCED' &&
+        !p.relatedId
     );
 
     const totalPurchased = purchasesForSupplier.reduce((acc, p) => {
       const amt = Math.abs(Number(p.totalAmount) || 0);
-      const isReturnOrSale =
-        p.type === 'RETURN' ||
-        p.type === 'SALE' ||
-        p.note?.includes('SATIŞ') ||
-        p.note?.includes('İADE') ||
-        (p.totalAmount !== undefined && Number(p.totalAmount) < 0);
-      return acc + (isReturnOrSale ? -amt : amt);
+      return acc + (supplierDocKind(p) === 'PURCHASE' ? amt : -amt);
     }, 0);
 
     const totalPaid =
@@ -280,22 +287,14 @@ export async function computeFullAppSnapshot(syncedReminders?: Reminder[]): Prom
     return {
       ...s,
       totalDebt: purchasesForSupplier
-        .filter(p => {
-          const isReturnOrSale =
-            p.type === 'RETURN' ||
-            p.type === 'SALE' ||
-            p.note?.includes('SATIŞ') ||
-            p.note?.includes('İADE') ||
-            (p.totalAmount !== undefined && Number(p.totalAmount) < 0);
-          return !isReturnOrSale;
-        })
+        .filter(p => supplierDocKind(p) === 'PURCHASE')
         .reduce((acc, p) => acc + (Math.abs(Number(p.totalAmount)) || 0), 0),
       balance: Math.round(((totalPaid || 0) - (totalPurchased || 0) + Number.EPSILON) * 100) / 100
     };
   });
 
   // --- SMART CROP CALENDAR REMINDERS ---
-  const todayStr = now.toISOString().split('T')[0];
+  const todayStr = getLocalDateString(now);
   farmerList.forEach(farmer => {
     (farmer.fields || []).forEach(field => {
       if (field.crop && field.plantingDate) {
@@ -384,6 +383,7 @@ export async function computeFullAppSnapshot(syncedReminders?: Reminder[]): Prom
   });
 
   paymentList.forEach(pay => {
+    if (bouncedRelatedPaymentIds.has(pay.id)) return;
     const amt =
       typeof pay.amount === 'string'
         ? parseFloat((pay.amount as string).replace(',', '.')) || 0
@@ -392,7 +392,13 @@ export async function computeFullAppSnapshot(syncedReminders?: Reminder[]): Prom
   });
 
   myPaymentList.forEach(pay => {
-    if (pay.farmerId && !pay.deletedAt && pay.status !== 'CANCELLED' && !pay.relatedId) {
+    if (
+      pay.farmerId &&
+      !pay.deletedAt &&
+      pay.status !== 'CANCELLED' &&
+      pay.portfolioStatus !== 'BOUNCED' &&
+      !pay.relatedId
+    ) {
       const amt =
         typeof pay.amount === 'string'
           ? parseFloat((pay.amount as string).replace(',', '.')) || 0
@@ -431,7 +437,7 @@ export async function computeFullAppSnapshot(syncedReminders?: Reminder[]): Prom
 
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowStr = tomorrow.toISOString().split('T')[0];
+  const tomorrowStr = getLocalDateString(tomorrow);
 
   const todaysPrescriptionsCount = prescriptions.filter(p => (p.date || '').startsWith(todayStr)).length;
   const tomorrowRemindersCount = finalReminders.filter(r => r.date === tomorrowStr && !r.isCompleted).length;
@@ -482,42 +488,46 @@ export async function computeFullAppSnapshot(syncedReminders?: Reminder[]): Prom
     .sort((a, b) => b.area - a.area);
 
   // Reconcile accounts & default Nakit Kasam
-  await dbService.reconcileAccountBalances();
+  if (!subscriptionBlocked) {
+    await dbService.reconcileAccountBalances();
+  }
   let accountList = await dbService.getAccounts();
 
-  const nakitKasamAccounts = accountList.filter(a => a.name === 'Nakit Kasam');
-  if (nakitKasamAccounts.length > 1) {
-    for (let i = 1; i < nakitKasamAccounts.length; i++) {
-      if (nakitKasamAccounts[i].balance === 0) {
-        try {
-          await dbService.deleteAccount(nakitKasamAccounts[i].id);
-          accountList = accountList.filter(a => a.id !== nakitKasamAccounts[i].id);
-        } catch {}
+  if (!subscriptionBlocked) {
+    const nakitKasamAccounts = accountList.filter(a => a.name === 'Nakit Kasam');
+    if (nakitKasamAccounts.length > 1) {
+      for (let i = 1; i < nakitKasamAccounts.length; i++) {
+        if (nakitKasamAccounts[i].balance === 0) {
+          try {
+            await dbService.deleteAccount(nakitKasamAccounts[i].id);
+            accountList = accountList.filter(a => a.id !== nakitKasamAccounts[i].id);
+          } catch {}
+        }
       }
     }
-  }
 
-  if (accountList.length === 0 && !isCreatingDefaultAccount) {
-    isCreatingDefaultAccount = true;
-    try {
-      const currentAccounts = await dbService.getAccounts();
-      if (currentAccounts.length === 0) {
-        const defaultAccount: Account = {
-          id: crypto.randomUUID(),
-          name: 'Nakit Kasam',
-          type: 'CASH',
-          balance: 0,
-          bankLogo: '💸'
-        };
-        try {
-          await dbService.addAccount(defaultAccount);
-        } catch {}
-        accountList = [defaultAccount];
-      } else {
-        accountList = currentAccounts;
+    if (accountList.length === 0 && !isCreatingDefaultAccount) {
+      isCreatingDefaultAccount = true;
+      try {
+        const currentAccounts = await dbService.getAccounts();
+        if (currentAccounts.length === 0) {
+          const defaultAccount: Account = {
+            id: crypto.randomUUID(),
+            name: 'Nakit Kasam',
+            type: 'CASH',
+            balance: 0,
+            bankLogo: '💸'
+          };
+          try {
+            await dbService.addAccount(defaultAccount);
+          } catch {}
+          accountList = [defaultAccount];
+        } else {
+          accountList = currentAccounts;
+        }
+      } finally {
+        isCreatingDefaultAccount = false;
       }
-    } finally {
-      isCreatingDefaultAccount = false;
     }
   }
 

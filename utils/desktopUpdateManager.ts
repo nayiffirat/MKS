@@ -4,6 +4,7 @@ import { flushSyncOutboxNow } from '../services/db';
 import { ensurePreUpdateSafetySnapshot } from './subscriptionManager';
 import { MKS_CLIENT_BUILD, MKS_CLIENT_VERSION } from './smartNotificationEngine';
 import { API_BASE } from './api';
+import { getLocalDateString } from './dateUtils';
 
 export interface MksReleaseManifest {
   version: string;
@@ -57,7 +58,9 @@ const listeners = new Set<(snap: DesktopUpdateSnapshot) => void>();
 let managerStarted = false;
 let pollIntervalId: number | null = null;
 let firestoreUnsub: (() => void) | null = null;
-let waitingSwRegistration: ServiceWorkerRegistration | null = null;
+let boundFocusHandler: (() => void) | null = null;
+let boundOnlineHandler: (() => void) | null = null;
+let boundWcoHandler: (() => void) | null = null;
 
 function emitSnapshot(partial: Partial<DesktopUpdateSnapshot>) {
   currentSnapshot = { ...currentSnapshot, ...partial };
@@ -122,7 +125,7 @@ function detectEnvironmentFromUrlAndBrowser() {
         desktopVersion: '8.2.2.0',
         desktopBuild: MKS_CLIENT_BUILD + 1,
         desktopDownloadUrl: '/downloads/MKS_Masaustu_Kurulum.exe',
-        releasedAt: new Date().toISOString().slice(0, 10),
+        releasedAt: getLocalDateString(),
         title: 'Yeni Masaüstü Güncellemesi Hazır',
         notes: 'Performans iyileştirmeleri ve yeni modül güncellemeleri hazır.'
       };
@@ -242,7 +245,6 @@ export async function checkForMksUpdatesNow(): Promise<boolean> {
         if (reg) {
           await reg.update().catch(() => {});
           if (reg.waiting) {
-            waitingSwRegistration = reg;
             if (!currentSnapshot.updateAvailable) {
               const swManifest: MksReleaseManifest = {
                 version: MKS_CLIENT_VERSION,
@@ -554,7 +556,7 @@ export async function publishCloudReleaseToAllDevices(payload: {
       desktopBuild: Math.max(MKS_CLIENT_BUILD, Number(payload.build) || MKS_CLIENT_BUILD + 1),
       desktopDownloadUrl: '/downloads/MKS_Masaustu_Kurulum.exe',
       androidDownloadUrl: '/downloads/MKS_Android.apk',
-      releasedAt: new Date().toISOString().slice(0, 10),
+      releasedAt: getLocalDateString(),
       title: `MKS v${payload.version.trim() || MKS_CLIENT_VERSION} Güncellemesi`,
       notes: payload.notes.trim() || 'Yeni özellikler ve sistem iyileştirmeleri yayınlandı.',
       updatedAtIso: new Date().toISOString()
@@ -578,6 +580,33 @@ export async function getCloudReleaseManifest(): Promise<MksReleaseManifest | nu
   return null;
 }
 
+export function stopDesktopUpdateManager(): void {
+  if (pollIntervalId !== null) {
+    window.clearInterval(pollIntervalId);
+    pollIntervalId = null;
+  }
+  if (firestoreUnsub) {
+    try { firestoreUnsub(); } catch {}
+    firestoreUnsub = null;
+  }
+  if (typeof window !== 'undefined') {
+    if (boundFocusHandler) {
+      window.removeEventListener('focus', boundFocusHandler);
+      boundFocusHandler = null;
+    }
+    if (boundOnlineHandler) {
+      window.removeEventListener('online', boundOnlineHandler);
+      boundOnlineHandler = null;
+    }
+    const wco = (navigator as any).windowControlsOverlay;
+    if (wco && typeof wco.removeEventListener === 'function' && boundWcoHandler) {
+      wco.removeEventListener('geometrychange', boundWcoHandler);
+      boundWcoHandler = null;
+    }
+  }
+  managerStarted = false;
+}
+
 export function initDesktopUpdateManager(): void {
   if (managerStarted || typeof window === 'undefined') return;
   managerStarted = true;
@@ -587,17 +616,17 @@ export function initDesktopUpdateManager(): void {
   // Window Controls Overlay geometry change listener (Edge / Chrome PWA)
   const wco = (navigator as any).windowControlsOverlay;
   if (wco && typeof wco.addEventListener === 'function') {
-    wco.addEventListener('geometrychange', () => {
+    boundWcoHandler = () => {
       detectEnvironmentFromUrlAndBrowser();
-    });
+    };
+    wco.addEventListener('geometrychange', boundWcoHandler);
   }
 
   // Service Worker controller / update listener
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.getRegistration().then(reg => {
-      if (!reg) return;
+      if (!reg || !managerStarted) return;
       if (reg.waiting) {
-        waitingSwRegistration = reg;
         evaluateCandidateManifest({
           version: MKS_CLIENT_VERSION,
           build: getEffectiveLocalBaselineBuild() + 1,
@@ -609,7 +638,6 @@ export function initDesktopUpdateManager(): void {
         if (!installing) return;
         installing.addEventListener('statechange', () => {
           if (installing.state === 'installed' && navigator.serviceWorker.controller) {
-            waitingSwRegistration = reg;
             evaluateCandidateManifest({
               version: MKS_CLIENT_VERSION,
               build: getEffectiveLocalBaselineBuild() + 1,
@@ -643,12 +671,14 @@ export function initDesktopUpdateManager(): void {
     void checkForMksUpdatesNow();
   }, 45_000);
 
-  window.addEventListener('focus', () => {
+  boundFocusHandler = () => {
     void checkForMksUpdatesNow();
-  });
-  window.addEventListener('online', () => {
+  };
+  boundOnlineHandler = () => {
     void checkForMksUpdatesNow();
-  });
+  };
+  window.addEventListener('focus', boundFocusHandler);
+  window.addEventListener('online', boundOnlineHandler);
 
   // Allow native C# bridge or console to trigger pre-update sync flush before restart
   (window as any).mks_trigger_desktop_update = () => applyMksDesktopUpdate();

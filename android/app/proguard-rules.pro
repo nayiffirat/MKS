@@ -15,6 +15,16 @@
 # Uncomment this to preserve the line number information for
 # debugging stack traces.
 #-keepattributes SourceFile,LineNumberTable
+-keepattributes SourceFile,LineNumberTable
+-keep class com.getcapacitor.** { *; }
+-keep class * extends com.getcapacitor.Plugin { *; }
+-keepclassmembers class * {
+    @com.getcapacitor.PluginMethod public *;
+    @com.getcapacitor.annotation.CapacitorPlugin *;
+}
+-keep class com.revenuecat.purchases.** { *; }
+-keep class com.google.android.gms.ads.** { *; }
+-dontwarn com.google.errorprone.annotations.**
 
 # If you keep the line number information, uncomment this to
 # hide the original source file name.

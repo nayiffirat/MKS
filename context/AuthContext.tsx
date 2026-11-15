@@ -3,13 +3,10 @@ import {
     User, 
     onAuthStateChanged, 
     signOut, 
-    setPersistence, 
-    browserLocalPersistence,
     getRedirectResult 
 } from 'firebase/auth';
-import { auth, db } from '../services/firebase';
+import { auth } from '../services/firebase';
 import { dbService } from '../services/db';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 interface AuthContextType {
     currentUser: User | null;
@@ -38,7 +35,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             try {
                 const result = await getRedirectResult(auth);
                 if (result) {
-                    console.log("Redirect result captured globally!");
                     await syncUserToFirestore(result.user);
                 }
             } catch (error: any) {
@@ -54,7 +50,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 // Track user ID for IndexedDB isolation
                 const lastUid = localStorage.getItem('lastUserId');
                 if (lastUid && lastUid !== user.uid) {
-                    console.log("Farklı bir kullanıcı algılandı. Bekleyen senkronizasyon kuyruğu aktarılıyor...");
                     await dbService.flushSyncOutboxNow().catch(e => console.warn("Kullanıcı değişimi outbox flush uyarısı:", e));
                     const remainingOldOutbox = await dbService.getPendingOutboxCount(lastUid).catch(() => 0);
                     if (remainingOldOutbox === 0) {

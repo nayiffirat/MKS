@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   MapContainer,
   TileLayer,
@@ -230,6 +230,9 @@ export const FieldSatelliteAnalyzerModal: React.FC<FieldSatelliteAnalyzerModalPr
     hasSignificantRain: boolean;
   } | null>(null);
 
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const loadSeqRef = useRef(0);
+
   useEffect(() => {
     const onOnline = () => setIsOnline(true);
     const onOffline = () => setIsOnline(false);
@@ -252,9 +255,10 @@ export const FieldSatelliteAnalyzerModal: React.FC<FieldSatelliteAnalyzerModalPr
   );
 
   const runRainCrossCheck = useCallback(
-    async (captureIso: string, lat: number, lng: number) => {
+    async (captureIso: string, lat: number, lng: number, signal?: AbortSignal, seq?: number) => {
       try {
-        const res = await WeatherService.getPrecipitationSinceCapture(lat, lng, captureIso);
+        const res = await WeatherService.getPrecipitationSinceCapture(lat, lng, captureIso, signal);
+        if (signal?.aborted || (seq !== undefined && seq !== loadSeqRef.current)) return;
         if (res.fetchFailed) {
           setRainCrossCheck(null);
           return;
@@ -264,8 +268,11 @@ export const FieldSatelliteAnalyzerModal: React.FC<FieldSatelliteAnalyzerModalPr
           rainyHours: res.rainyHoursCount,
           hasSignificantRain: res.totalMm >= 2.0,
         });
-      } catch {
-        setRainCrossCheck(null);
+      } catch (err: any) {
+        if (err?.name === 'AbortError' || signal?.aborted) return;
+        if (seq === undefined || seq === loadSeqRef.current) {
+          setRainCrossCheck(null);
+        }
       }
     },
     []
@@ -275,6 +282,12 @@ export const FieldSatelliteAnalyzerModal: React.FC<FieldSatelliteAnalyzerModalPr
     async (forceRefresh = false) => {
       if (!field || !field.polygonGeoJson || polygonPoints.length < 3) return;
 
+      abortControllerRef.current?.abort();
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+      const mySeq = ++loadSeqRef.current;
+      const isStale = () => controller.signal.aborted || mySeq !== loadSeqRef.current;
+
       const cacheKey = `${field.id}_${polygonHash}`;
       setErrorMsg(null);
       setErrorCode(null);
@@ -282,6 +295,7 @@ export const FieldSatelliteAnalyzerModal: React.FC<FieldSatelliteAnalyzerModalPr
       // 1. Check 5-day local IndexedDB cache first (or always if offline)
       if (!forceRefresh) {
         const cached = await dbService.getSatelliteCache(cacheKey, !navigator.onLine);
+        if (isStale()) return;
         if (cached) {
           const cachedTimeStr = cached.fetchedAt || cached.cachedAt || new Date().toISOString();
           const ageMs = Date.now() - new Date(cachedTimeStr).getTime();
@@ -290,10 +304,12 @@ export const FieldSatelliteAnalyzerModal: React.FC<FieldSatelliteAnalyzerModalPr
             setCacheRecord(cached);
             setIsFromOfflineCache(!navigator.onLine || ageMs > 60_000);
             if (navigator.onLine) {
-              runRainCrossCheck(
+              void runRainCrossCheck(
                 capIso,
                 metrics.centroid.lat,
-                metrics.centroid.lng
+                metrics.centroid.lng,
+                controller.signal,
+                mySeq
               );
             } else {
               const rainMm = cached.postCaptureRainMm ?? cached.rainSinceCaptureMm;
@@ -312,6 +328,7 @@ export const FieldSatelliteAnalyzerModal: React.FC<FieldSatelliteAnalyzerModalPr
 
       if (!navigator.onLine) {
         const fallbackCached = await dbService.getSatelliteCache(cacheKey, true);
+        if (isStale()) return;
         if (fallbackCached) {
           setCacheRecord(fallbackCached);
           setIsFromOfflineCache(true);
@@ -334,6 +351,7 @@ export const FieldSatelliteAnalyzerModal: React.FC<FieldSatelliteAnalyzerModalPr
         } catch {
           idToken = '';
         }
+        if (isStale()) return;
 
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
@@ -347,7 +365,9 @@ export const FieldSatelliteAnalyzerModal: React.FC<FieldSatelliteAnalyzerModalPr
           method: 'POST',
           headers,
           body: JSON.stringify({ polygonGeoJson: parsedGeo }),
+          signal: controller.signal,
         });
+        if (isStale()) return;
 
         // Sunucu JSON yerine HTML (ör. eski sunucu sürümünde olmayan yol / index.html) dönerse
         // ham "Unexpected token '<'" hatası yerine anlaşılır Türkçe mesaj göster.
@@ -362,9 +382,11 @@ export const FieldSatelliteAnalyzerModal: React.FC<FieldSatelliteAnalyzerModalPr
         try {
           data = await resp.json();
         } catch {
+          if (isStale()) return;
           setErrorCode('SATELLITE_INVALID_JSON');
           throw new Error(SATELLITE_UNREACHABLE_MSG);
         }
+        if (isStale()) return;
         if (!resp.ok) {
           setErrorCode(data?.code || null);
           throw new Error(data?.error || 'Uydu analizi alınamadı.');
@@ -373,8 +395,10 @@ export const FieldSatelliteAnalyzerModal: React.FC<FieldSatelliteAnalyzerModalPr
         const rainInfo = await WeatherService.getPrecipitationSinceCapture(
           metrics.centroid.lat,
           metrics.centroid.lng,
-          data.captureDatetime
+          data.captureDatetime,
+          controller.signal
         );
+        if (isStale()) return;
         if (rainInfo.fetchFailed) {
           setRainCrossCheck(null);
         } else {
@@ -414,18 +438,23 @@ export const FieldSatelliteAnalyzerModal: React.FC<FieldSatelliteAnalyzerModalPr
         };
 
         await dbService.saveSatelliteCache(newRecord);
+        if (isStale()) return;
         setCacheRecord(newRecord);
         setIsFromOfflineCache(false);
       } catch (err: any) {
+        if (err?.name === 'AbortError' || isStale()) return;
         // Fallback to older cache if network/API failed
         const oldCache = await dbService.getSatelliteCache(cacheKey, true);
+        if (isStale()) return;
         if (oldCache) {
           setCacheRecord(oldCache);
           setIsFromOfflineCache(true);
         }
         setErrorMsg(err?.message || 'Uydu görüntüsü alınırken hata oluştu.');
       } finally {
-        setIsLoading(false);
+        if (mySeq === loadSeqRef.current) {
+          setIsLoading(false);
+        }
       }
     },
     [field, polygonPoints.length, polygonHash, metrics.centroid.lat, metrics.centroid.lng, runRainCrossCheck]
@@ -435,6 +464,10 @@ export const FieldSatelliteAnalyzerModal: React.FC<FieldSatelliteAnalyzerModalPr
     if (isOpen && field?.polygonGeoJson) {
       loadAnalysis(false);
     }
+    return () => {
+      abortControllerRef.current?.abort();
+      loadSeqRef.current++;
+    };
   }, [isOpen, field?.id, field?.polygonGeoJson, loadAnalysis]);
 
   if (!isOpen || !field) return null;
@@ -585,14 +618,16 @@ export const FieldSatelliteAnalyzerModal: React.FC<FieldSatelliteAnalyzerModalPr
             <MapContainer
               center={[metrics.centroid.lat, metrics.centroid.lng]}
               zoom={16}
-              maxZoom={19}
+              maxZoom={20}
               zoomControl={false}
               className="h-full w-full"
             >
               <TileLayer
-                url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                maxZoom={19}
-                attribution="Tiles &copy; Esri"
+                url="https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}&hl=tr"
+                subdomains={['mt0', 'mt1', 'mt2', 'mt3']}
+                maxNativeZoom={19}
+                maxZoom={20}
+                attribution="&copy; Google Maps"
               />
               <FitPolygonBounds bboxCoords={activeBbox} />
 

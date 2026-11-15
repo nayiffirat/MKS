@@ -1,9 +1,8 @@
 import { createMultiPagePdf, renderElementToCanvas } from '../utils/pdfHelper';
 import React, { useState, useMemo } from 'react';
 import { useAppViewModel } from '../context/AppContext';
-import { Printer, FileText, Download, Users, Package, Receipt, Loader2, ChevronRight, Calendar, Store, BarChart3, LayoutGrid } from 'lucide-react';
+import { Printer, FileText, Download, Users, Package, Receipt, Loader2, Calendar, Store, BarChart3, LayoutGrid } from 'lucide-react';
 import { format } from 'date-fns';
-import { tr } from 'date-fns/locale';
 import { formatCurrency } from '../utils/currency';
 import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
 import { ModalCloseButton } from './ModalCloseButton';
@@ -39,7 +38,6 @@ export const Reports: React.FC = () => {
     activeTeamMember,
     farmerLabel,
     farmerPluralLabel,
-    prescriptionLabel,
     suppliers,
     supplierPurchases
   } = useAppViewModel();
@@ -92,17 +90,6 @@ export const Reports: React.FC = () => {
     }
   };
 
-  // Helper to replace Turkish chars for standard PDF fonts if needed
-  const trToEn = (text: string) => {
-    return text
-      .replace(/Ğ/g, 'G').replace(/ğ/g, 'g')
-      .replace(/Ü/g, 'U').replace(/ü/g, 'u')
-      .replace(/Ş/g, 'S').replace(/ş/g, 's')
-      .replace(/İ/g, 'I').replace(/ı/g, 'i')
-      .replace(/Ö/g, 'O').replace(/ö/g, 'o')
-      .replace(/Ç/g, 'C').replace(/ç/g, 'c');
-  };
-
   const isWithinRange = (dateStr: string) => {
     const date = new Date(dateStr);
     const start = new Date(startDate);
@@ -112,14 +99,6 @@ export const Reports: React.FC = () => {
     start.setHours(0, 0, 0, 0);
     end.setHours(23, 59, 59, 999);
     return date >= start && date <= end;
-  };
-
-  // Helper for safe number rendering on standard jsPDF fonts (no currency symbol)
-  const pdfCurrency = (amount: number) => {
-    return new Intl.NumberFormat('tr-TR', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    }).format(amount);
   };
 
   const generateTableHtml = (title: string, headers: string[], rows: any[][], footers?: any[][], headerColor = '#1f2937') => {
@@ -246,35 +225,24 @@ export const Reports: React.FC = () => {
 
           container.innerHTML = baseHtml;
           document.body.appendChild(container);
-
-          const canvas = await renderElementToCanvas(container, {
-              scale: 3,
-              backgroundColor: '#ffffff',
-              logging: false
-          });
-
-          document.body.removeChild(container);
+          let canvas;
+          try {
+              canvas = await renderElementToCanvas(container, {
+                  scale: 3,
+                  backgroundColor: '#ffffff',
+                  logging: false
+              });
+          } finally {
+              if (container.parentNode) {
+                  container.parentNode.removeChild(container);
+              }
+          }
           
           const doc = await createMultiPagePdf(canvas);
           doc.save(fileName);
       } catch(e) {
           console.error("PDF Oluşturma Hatası", e);
       }
-  };
-
-  const addCorporateHeader = (doc: any, title: string) => {
-    doc.setFillColor(16, 185, 129);
-    doc.rect(0, 0, 210, 40, 'F');
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(22);
-    doc.setFont("helvetica", "bold");
-    doc.text(trToEn(userProfile?.companyName || "MKS SISTEMI"), 14, 22);
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "normal");
-    doc.text(trToEn(title), 14, 30);
-    doc.text(trToEn(`Tarih: ${format(new Date(), 'dd.MM.yyyy HH:mm')}`), 196, 22, { align: 'right' });
-    doc.text(trToEn(`Sorumlu: ${userProfile?.fullName || 'Ziraat Muhendisi'}`), 196, 30, { align: 'right' });
-    doc.setTextColor(0, 0, 0);
   };
 
   const generateBayiRaporuPDF = () => {

@@ -296,6 +296,15 @@ export function registerEdmRoutes(app: Express, deps: EdmRouteDeps) {
       res.status(429).json({ ok: false, error: "Çok fazla istek gönderildi, bir dakika bekleyin." });
       return null;
     }
+    const provider = String(req.body?.provider || "EDM").trim().toUpperCase();
+    if (provider !== "EDM") {
+      res.status(400).json({
+        ok: false,
+        error: `${provider} web servis bağlantısı iş ortaklığı / test hesabı onayı aşamasındadır. Şu an doğrudan API kesimi yalnızca EDM Bilişim üzerinden aktiftir.`,
+        code: "PROVIDER_NOT_ACTIVE"
+      });
+      return null;
+    }
     const username = String(req.body?.username || "").trim();
     const password = String(req.body?.password || "");
     if (!username || !password || username.length > 120 || password.length > 200) {

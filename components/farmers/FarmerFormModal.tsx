@@ -2,9 +2,6 @@ import React, { useState } from 'react';
 import { X, Plus, Trash2, Loader2, CheckCircle2, AlertTriangle, MapPin, Satellite } from 'lucide-react';
 import { COMMON_CROPS } from '../../constants';
 import { validateTcOrVkn } from '../../utils/tcNoValidator';
-import { generateUUID } from '../../utils/uuid';
-import { useBackHandler } from '../../utils/navigationManager';
-import { ModalCloseButton } from '../ModalCloseButton';
 import { FieldPolygonDrawerModal } from './FieldPolygonDrawerModal';
 
 export interface FarmerModalProps {
@@ -23,7 +20,7 @@ export interface FarmerModalProps {
         fields: {
             id: string;
             name: string;
-            size: string;
+            size: string | number;
             crop: string;
             plantingDate?: string;
             currentStage?: string;
@@ -304,7 +301,7 @@ export const FarmerModal: React.FC<FarmerModalProps> = React.memo(({
                                   f.id === drawingFieldId
                                       ? {
                                             ...f,
-                                            size: String(payload.dekar),
+                                            size: Number(payload.dekar) || 0,
                                             name:
                                                 f.name ||
                                                 [payload.tkgmMahalle, payload.tkgmAda ? `Ada ${payload.tkgmAda}` : '', payload.tkgmParsel ? `Parsel ${payload.tkgmParsel}` : '']

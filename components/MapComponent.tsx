@@ -7,7 +7,6 @@ import {
   Marker,
   useMapEvents,
   useMap,
-  WMSTileLayer,
   CircleMarker,
   Tooltip,
 } from "react-leaflet";
@@ -34,6 +33,7 @@ import {
   Flame,
   Loader2,
   Check,
+  User,
 } from "lucide-react";
 import { useAppViewModel } from "../context/AppContext";
 import { dbService } from "../services/db";
@@ -45,6 +45,7 @@ import {
 } from "../utils/fieldPolygon";
 import { FieldSatelliteAnalyzerModal } from "./farmers/FieldSatelliteAnalyzerModal";
 import { API_BASE } from "../utils/api";
+import { auth } from "../services/firebase";
 
 // Fix Leaflet default marker icon URLs
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -64,13 +65,32 @@ const userLocationIcon = new L.DivIcon({
   iconAnchor: [8, 8],
 });
 
-const LocateButton = () => {
+/** TKGM alan değerini ("30,634.00" veya "30.634,00") güvenle m² sayısına çevirir. */
+function parseTkgmClientAreaM2(raw: unknown): number {
+  const s = String(raw ?? "").trim().replace(/\s+/g, "");
+  if (!s) return 0;
+  let normalized = s;
+  const lastComma = s.lastIndexOf(",");
+  const lastDot = s.lastIndexOf(".");
+  if (lastComma !== -1 && lastDot !== -1) {
+    normalized = lastComma < lastDot ? s.replace(/,/g, "") : s.replace(/\./g, "").replace(",", ".");
+  } else if (lastComma !== -1) {
+    normalized = /,\d{3}$/.test(s) ? s.replace(/,/g, "") : s.replace(",", ".");
+  }
+  const n = Number(normalized);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+const LocateButton = ({ onLocate }: { onLocate?: (latlng: L.LatLng) => void }) => {
   const map = useMap();
   const [position, setPosition] = useState<L.LatLng | null>(null);
+  const onLocateRef = useRef(onLocate);
+  onLocateRef.current = onLocate;
 
   useEffect(() => {
     const handleLocationFound = (e: L.LocationEvent) => {
       setPosition(e.latlng);
+      onLocateRef.current?.(e.latlng);
     };
     map.on("locationfound", handleLocationFound);
     map.locate({ setView: true, maxZoom: 16 });
@@ -97,10 +117,12 @@ const LocateButton = () => {
 
 const SavedFeatureRenderer: React.FC<{
   feature: SavedMapFeature;
+  farmerName?: string;
+  crop?: string;
   onRemove: (id: string) => void;
   onEdit: (id: string) => void;
   onOpenSatellite?: (feature: SavedMapFeature) => void;
-}> = ({ feature, onRemove, onEdit, onOpenSatellite }) => {
+}> = ({ feature, farmerName, crop, onRemove, onEdit, onOpenSatellite }) => {
   const [showMenu, setShowMenu] = useState(false);
 
   if (!Array.isArray(feature.points) || feature.points.length === 0) return null;
@@ -172,6 +194,35 @@ const SavedFeatureRenderer: React.FC<{
       );
     }
 
+    if (farmerName) {
+      return (
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            setShowMenu(true);
+          }}
+          className="bg-stone-950/92 px-3 py-1.5 rounded-2xl border border-emerald-400/55 shadow-xl flex flex-col gap-0.5 pointer-events-auto backdrop-blur-md cursor-pointer hover:bg-stone-900 transition-all active:scale-95 max-w-[230px]"
+        >
+          <div className="flex items-center gap-1.5 min-w-0">
+            <User size={11} className="text-emerald-400 shrink-0" />
+            <span className="font-black text-[11px] sm:text-xs text-emerald-300 tracking-tight truncate">
+              {farmerName}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 min-w-0">
+            {feature.type === "AREA" && (
+              <Satellite size={10} className="text-sky-400 shrink-0" />
+            )}
+            <span className="font-bold text-[10px] text-stone-200 truncate">
+              {feature.name}
+              {crop && crop !== "Belirtilmedi" ? ` • ${crop}` : ""}
+            </span>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div
         onClick={(e) => {
@@ -179,12 +230,12 @@ const SavedFeatureRenderer: React.FC<{
           e.preventDefault();
           setShowMenu(true);
         }}
-        className="bg-stone-950/85 px-3 py-1.5 rounded-full border border-emerald-500/30 shadow-xl flex items-center gap-1.5 pointer-events-auto backdrop-blur-md cursor-pointer hover:bg-stone-900 transition-all active:scale-95"
+        className="bg-stone-950/85 px-3 py-1.5 rounded-full border border-sky-400/40 shadow-xl flex items-center gap-1.5 pointer-events-auto backdrop-blur-md cursor-pointer hover:bg-stone-900 transition-all active:scale-95"
       >
         {feature.type === "AREA" && (
-          <Satellite size={11} className="text-emerald-400 shrink-0" />
+          <Satellite size={11} className="text-sky-400 shrink-0" />
         )}
-        <span className="font-bold text-[11px] text-white max-w-[180px] truncate">
+        <span className="font-bold text-[11px] text-white max-w-[200px] truncate">
           {feature.name}
         </span>
       </div>
@@ -195,10 +246,10 @@ const SavedFeatureRenderer: React.FC<{
     return (
       <CircleMarker
         center={[feature.points[0].lat, feature.points[0].lng]}
-        radius={6}
+        radius={farmerName ? 8 : 6}
         pathOptions={{
-          color: "#f59e0b",
-          fillColor: "#f59e0b",
+          color: farmerName ? "#10b981" : "#f59e0b",
+          fillColor: farmerName ? "#10b981" : "#f59e0b",
           fillOpacity: 0.9,
           weight: 2,
         }}
@@ -221,9 +272,9 @@ const SavedFeatureRenderer: React.FC<{
       <Polygon
         positions={feature.points.map((p) => [p.lat, p.lng] as [number, number])}
         pathOptions={{
-          color: "#10b981",
-          fillColor: "#10b981",
-          fillOpacity: 0.28,
+          color: farmerName ? "#10b981" : "#38bdf8",
+          fillColor: farmerName ? "#10b981" : "#38bdf8",
+          fillOpacity: 0.32,
           weight: 3,
         }}
       >
@@ -285,6 +336,7 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
   const [savedFeatures, setSavedFeatures] = useState<SavedMapFeature[]>([]);
   const [isQueryingTkgm, setIsQueryingTkgm] = useState(false);
   const [tkgmResult, setTkgmResult] = useState<any | null>(null);
+  const [queriedTkgmParcels, setQueriedTkgmParcels] = useState<any[]>([]);
   const [tkgmAssignFarmerId, setTkgmAssignFarmerId] = useState<string>("");
   const [tkgmAssignCrop, setTkgmAssignCrop] = useState<string>("");
   const [activeSatelliteTarget, setActiveSatelliteTarget] = useState<{
@@ -294,6 +346,16 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
 
   const isSelecting = useRef(false);
   const mapRef = useRef<L.Map>(null);
+  const userLocationRef = useRef<L.LatLng | null>(null);
+  const tkgmAbortRef = useRef<AbortController | null>(null);
+  const tkgmSeqRef = useRef(0);
+
+  useEffect(() => {
+    return () => {
+      tkgmAbortRef.current?.abort();
+      tkgmSeqRef.current++;
+    };
+  }, []);
 
   // Escape tuşu ile haritadan güvenli ve anında çıkış (Web + Masaüstü)
   useEffect(() => {
@@ -395,6 +457,14 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
       if (farmer.deletedAt || !Array.isArray(farmer.fields)) continue;
       for (const fld of farmer.fields) {
         if (!fld.polygonGeoJson) continue;
+        const alreadyInSaved = savedFeatures.some(
+          (sf) =>
+            sf.fieldId === fld.id ||
+            (sf.farmerId === farmer.id &&
+              Boolean(sf.polygonGeoJson) &&
+              sf.polygonGeoJson === fld.polygonGeoJson)
+        );
+        if (alreadyInSaved) continue;
         const pts = geoJsonToLatLngs(fld.polygonGeoJson);
         if (pts.length >= 3) {
           list.push({
@@ -407,7 +477,7 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
       }
     }
     return list;
-  }, [farmers]);
+  }, [farmers, savedFeatures]);
 
   // Faz 4 #6: Köy Bazlı Salgın & Zararlı Isı Haritası noktaları
   const outbreakClusters = useMemo(() => {
@@ -459,20 +529,29 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
       setSuggestions([]);
       return;
     }
+    const controller = new AbortController();
     const timeout = setTimeout(async () => {
       try {
         const res = await fetch(
           `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
             search
-          )}&countrycodes=tr&limit=5`
+          )}&countrycodes=tr&limit=5`,
+          { signal: controller.signal }
         );
+        if (controller.signal.aborted) return;
         const data = await res.json();
-        setSuggestions(Array.isArray(data) ? data : []);
-      } catch (err) {
+        if (!controller.signal.aborted) {
+          setSuggestions(Array.isArray(data) ? data : []);
+        }
+      } catch (err: any) {
+        if (err?.name === 'AbortError' || controller.signal.aborted) return;
         console.error("Arama hatası:", err);
       }
     }, 500);
-    return () => clearTimeout(timeout);
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
   }, [search]);
 
   const handleSelectSuggestion = (sug: any) => {
@@ -487,11 +566,15 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
   const MapEvents = () => {
     useMapEvents({
       click: (e) => {
-        if (mode === "COORDINATE") {
+        if (mode === "AREA" || mode === "DISTANCE") {
+          setPoints([...points, e.latlng]);
+        } else if (mode === "COORDINATE" || showParsel) {
+          if (mode !== "COORDINATE") {
+            setMode("COORDINATE");
+          }
           setPoints([e.latlng]);
           setTkgmResult(null);
-        } else if (mode) {
-          setPoints([...points, e.latlng]);
+          void handleInAppTkgmQuery(e.latlng);
         }
       },
     });
@@ -529,6 +612,8 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
     if (!cleanName || !mode) return;
 
     const farmerId = saveDialog.selectedFarmerId || undefined;
+    const farmer = farmerId ? farmers.find((f) => f.id === farmerId) : undefined;
+    const cleanCrop = saveDialog.cropName.trim();
     let finalName = cleanName;
     if (mode === "AREA") {
       finalName = `${cleanName} (${polygonMetrics.dekar.toFixed(2)} daa)`;
@@ -538,34 +623,31 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
 
     let linkedFieldId: string | undefined;
 
-    if (farmerId) {
-      const farmer = farmers.find((f) => f.id === farmerId);
-      if (farmer) {
-        if (mode === "COORDINATE" && points[0]) {
-          await updateFarmer({
-            ...farmer,
-            latitude: points[0].lat,
-            longitude: points[0].lng,
-          });
-        } else if (mode === "AREA" && polygonMetrics.feature) {
-          linkedFieldId = crypto.randomUUID();
-          const newField: Field = {
-            id: linkedFieldId,
-            name: cleanName,
-            size: polygonMetrics.dekar,
-            crop: saveDialog.cropName.trim() || "Belirtilmedi",
-            polygonGeoJson: JSON.stringify(polygonMetrics.feature),
-            polygonBbox: polygonMetrics.bbox,
-            centroidLat: polygonMetrics.centroid.lat,
-            centroidLng: polygonMetrics.centroid.lng,
-          };
-          await updateFarmer({
-            ...farmer,
-            latitude: farmer.latitude || polygonMetrics.centroid.lat,
-            longitude: farmer.longitude || polygonMetrics.centroid.lng,
-            fields: [...(farmer.fields || []), newField],
-          });
-        }
+    if (farmer) {
+      if (mode === "COORDINATE" && points[0]) {
+        await updateFarmer({
+          ...farmer,
+          latitude: points[0].lat,
+          longitude: points[0].lng,
+        });
+      } else if (mode === "AREA" && polygonMetrics.feature) {
+        linkedFieldId = crypto.randomUUID();
+        const newField: Field = {
+          id: linkedFieldId,
+          name: cleanName,
+          size: polygonMetrics.dekar,
+          crop: cleanCrop || "Belirtilmedi",
+          polygonGeoJson: JSON.stringify(polygonMetrics.feature),
+          polygonBbox: polygonMetrics.bbox,
+          centroidLat: polygonMetrics.centroid.lat,
+          centroidLng: polygonMetrics.centroid.lng,
+        };
+        await updateFarmer({
+          ...farmer,
+          latitude: farmer.latitude || polygonMetrics.centroid.lat,
+          longitude: farmer.longitude || polygonMetrics.centroid.lng,
+          fields: [...(farmer.fields || []), newField],
+        });
       }
     }
 
@@ -575,6 +657,8 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
       type: mode,
       points: points.map((p) => ({ lat: p.lat, lng: p.lng })),
       farmerId,
+      farmerName: farmer?.fullName,
+      crop: cleanCrop || undefined,
       fieldId: linkedFieldId,
       dekar: mode === "AREA" ? polygonMetrics.dekar : undefined,
       polygonGeoJson:
@@ -600,7 +684,21 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
 
   const handleRemoveFeature = async (id: string) => {
     if (window.confirm("Bu parsel kaydını haritadan silmek istediğinize emin misiniz?")) {
+      const feature = savedFeatures.find((f) => f.id === id);
       await dbService.deleteMapFeature(id);
+      if (feature?.farmerId && feature?.fieldId) {
+        const linkedFarmer = farmers.find((f) => f.id === feature.farmerId);
+        if (linkedFarmer && Array.isArray(linkedFarmer.fields)) {
+          const remainingFields = linkedFarmer.fields.filter((fld) => fld.id !== feature.fieldId);
+          if (remainingFields.length !== linkedFarmer.fields.length) {
+            await updateFarmer({
+              ...linkedFarmer,
+              fields: remainingFields,
+            });
+          }
+        }
+        await dbService.clearSatelliteCacheForField(feature.fieldId).catch(() => {});
+      }
       setSavedFeatures((prev) => prev.filter((f) => f.id !== id));
       showToast("Parsel kaydı silindi.", "info");
     }
@@ -622,14 +720,16 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
   };
 
   const handleOpenSatelliteFromSaved = (feature: SavedMapFeature) => {
-    const geoJson =
-      feature.polygonGeoJson ||
-      JSON.stringify(latLngsToGeoJsonPolygon(feature.points));
+    const polyObj = feature.polygonGeoJson
+      ? null
+      : latLngsToGeoJsonPolygon(feature.points);
+    const geoJson = feature.polygonGeoJson || (polyObj ? JSON.stringify(polyObj) : null);
     if (!geoJson) return;
     const metrics = computePolygonMetrics(feature.points);
     const farmer = feature.farmerId
       ? farmers.find((f) => f.id === feature.farmerId)
       : undefined;
+    const farmerField = farmer?.fields?.find((fld) => fld.id === feature.fieldId);
 
     setActiveSatelliteTarget({
       farmerName: farmer?.fullName,
@@ -637,7 +737,7 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
         id: feature.fieldId || `map_${feature.id}`,
         name: feature.name,
         size: feature.dekar || metrics.dekar,
-        crop: "",
+        crop: feature.crop || farmerField?.crop || "",
         polygonGeoJson: geoJson,
         polygonBbox: metrics.bbox,
         centroidLat: metrics.centroid.lat,
@@ -646,27 +746,128 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
     });
   };
 
-  // Uygulama İçi Canlı TKGM Sorgusu (Dış sayfaya yönlendirmeden doğrudan sonuç verir)
-  const handleInAppTkgmQuery = async () => {
-    if (!points[0]) return;
-    const cleanLat = Number(points[0].lat.toFixed(6));
-    const cleanLng = Number(points[0].lng.toFixed(6));
+  // Uygulama İçi Canlı TKGM Sorgusu (Önce sunucu, statik/hata durumunda doğrudan TKGM CBS REST, komşu tarama ve idari konum yedeği)
+  const handleInAppTkgmQuery = async (targetLatLng?: L.LatLng) => {
+    const target =
+      targetLatLng || points[0] || userLocationRef.current || mapRef.current?.getCenter();
+    if (!target) return;
+    tkgmAbortRef.current?.abort();
+    const controller = new AbortController();
+    tkgmAbortRef.current = controller;
+    const mySeq = ++tkgmSeqRef.current;
+    const isStale = () => controller.signal.aborted || mySeq !== tkgmSeqRef.current;
+
+    const cleanLat = Number(target.lat.toFixed(6));
+    const cleanLng = Number(target.lng.toFixed(6));
     setIsQueryingTkgm(true);
     setTkgmResult(null);
-    try {
-      const res = await fetch(`${API_BASE}/api/tkgm/parcel`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lat: cleanLat, lng: cleanLng }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.error || "TKGM sorgusu başarısız oldu.");
+
+    const parseCbsResponse = (raw: any, qLat: number, qLng: number) => {
+      const props = raw?.properties || raw;
+      const rawAda = String(props?.adaNo ?? props?.Ada ?? "").trim();
+      const ada = rawAda || "0";
+      const parsel = String(props?.parselNo ?? props?.ParselNo ?? "").trim();
+      if (!props || !(parsel || rawAda)) return null;
+
+      let alanM2 = parseTkgmClientAreaM2(props.alan ?? props.Alan);
+      if ((!alanM2 || isNaN(alanM2)) && raw?.geometry) {
+        const pts = geoJsonToLatLngs(raw.geometry);
+        if (pts.length >= 3) {
+          alanM2 = computePolygonMetrics(pts).areaM2;
+        }
       }
+      return {
+        source: "TKGM_CBS",
+        il: props.ilAd || props.Il || "",
+        ilce: props.ilceAd || props.Ilce || "",
+        mahalle: props.mahalleAd || props.Mahalle || "",
+        ada,
+        parsel,
+        alanM2: Math.round(alanM2 * 100) / 100,
+        alanDekar: Math.round((alanM2 / 1000) * 100) / 100,
+        nitelik: props.nitelik || props.Nitelik || "Tarla / Arazi",
+        mevkii: props.mevkii || props.Mevkii || "",
+        pafta: props.pafta || props.Pafta || "",
+        ozet: props.ozet || "",
+        lat: qLat,
+        lng: qLng,
+        geometry: raw?.geometry || null,
+      };
+    };
+
+    const fetchTkgmCbsAt = async (lat: number, lng: number) => {
+      if (isStale()) return null;
+      const qLat = Number(lat.toFixed(6));
+      const qLng = Number(lng.toFixed(6));
+      const v31Url = `https://cbsapi.tkgm.gov.tr/megsiswebapi.v3.1/api/parsel/${qLat}/${qLng}/`;
+      try {
+        const res = await fetch(v31Url, {
+          headers: { Accept: "application/json" },
+          referrerPolicy: "no-referrer",
+          signal: controller.signal,
+        });
+        if (isStale()) return null;
+        if (res.status === 404) return null;
+        if (res.ok) {
+          return parseCbsResponse(await res.json(), qLat, qLng);
+        }
+      } catch (err: any) {
+        if (err?.name === "AbortError" || isStale()) return null;
+        // Ağ veya CORS kesintisinde v3 yedeğine geç
+      }
+
+      try {
+        const v3Url = `https://cbsapi.tkgm.gov.tr/megsiswebapi.v3/api/parsel/${qLat}/${qLng}/`;
+        const resV3 = await fetch(v3Url, {
+          headers: { Accept: "application/json" },
+          referrerPolicy: "no-referrer",
+          signal: controller.signal,
+        });
+        if (isStale()) return null;
+        if (resV3.ok) {
+          return parseCbsResponse(await resV3.json(), qLat, qLng);
+        }
+      } catch (err: any) {
+        if (err?.name === "AbortError" || isStale()) return null;
+        // Yedek de erişilemedi
+      }
+      return null;
+    };
+
+    const mergeParcelsIntoState = (parcels: any[]) => {
+      if (isStale()) return;
+      const valid = parcels.filter((p) => p?.geometry && (p?.parsel || p?.ada));
+      if (valid.length === 0) return;
+      setQueriedTkgmParcels((prev) => {
+        const toKey = (p: any) =>
+          `${p.il || ""}-${p.ilce || ""}-${p.mahalle || ""}-${p.ada || "0"}-${p.parsel || ""}`;
+        const replacedKeys = new Set(valid.map(toKey));
+        const kept = prev.filter((item) => !replacedKeys.has(item._key));
+        const enriched: any[] = [];
+        const seen = new Set<string>();
+        for (const p of valid) {
+          const key = toKey(p);
+          if (!seen.has(key)) {
+            seen.add(key);
+            enriched.push({ ...p, _key: key });
+          }
+        }
+        return [...enriched, ...kept].slice(0, 30);
+      });
+    };
+
+    const recordParcel = (data: any, fitToParcel = true) => {
+      if (isStale()) return;
       setTkgmResult(data);
-      if (data.geometry) {
+      mergeParcelsIntoState([data]);
+      if (data?.geometry) {
         const polyPts = geoJsonToLatLngs(data.geometry);
-        if (polyPts.length >= 3 && mapRef.current) {
+        if (
+          polyPts.length >= 3 &&
+          fitToParcel &&
+          (data.alanDekar <= 200 || !data._fromNearbyOffset) &&
+          mapRef.current
+        ) {
           const bounds = L.latLngBounds(
             polyPts.map((p) => [p.lat, p.lng] as [number, number])
           );
@@ -675,118 +876,246 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
           }
         }
       }
-    } catch (err: any) {
-      // İstemci tarafı idari konum yedeği (statik barındırma veya geçici ağ kesintisi için)
+    };
+
+    try {
+      let resolved: any = null;
+
+      // 1. MKS sunucu uç noktası (/api/tkgm/parcel) — JSON dönen sunucularda
       try {
-        const nomRes = await fetch(
-          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${cleanLat}&lon=${cleanLng}&zoom=18&addressdetails=1&accept-language=tr`
-        );
-        if (nomRes.ok) {
-          const nom = await nomRes.json();
-          const addr = nom?.address || {};
-          setTkgmResult({
-            source: "KONUM_IDARI",
-            il: addr.province || addr.state || "",
-            ilce: addr.town || addr.county || addr.city_district || addr.municipality || "",
-            mahalle: addr.village || addr.suburb || addr.neighbourhood || addr.hamlet || "",
-            ada: "",
-            parsel: "",
-            alanM2: 0,
-            alanDekar: 0,
-            nitelik: "Tarım Alanı (İdari Konum Doğrulandı)",
-            lat: cleanLat,
-            lng: cleanLng,
-            geometry: null,
-            note: "İdari mahalle/köy bilgisi doğrulandı. 'Parselleri Çiz' (TKGM WMS) katmanını açarak sınırları harita üstünde görebilir ve kaydedebilirsiniz.",
-          });
-          return;
+        const token = await auth.currentUser?.getIdToken().catch(() => null);
+        if (isStale()) return;
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+        const res = await fetch(`${API_BASE}/api/tkgm/parcel`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ lat: cleanLat, lng: cleanLng }),
+          signal: controller.signal,
+        });
+        if (isStale()) return;
+        const ct = res.headers.get("content-type") || "";
+        if (res.ok && ct.includes("json")) {
+          const data = await res.json();
+          if (isStale()) return;
+          if (data?.geometry && (data?.parsel || data?.ada)) {
+            resolved = data;
+          }
         }
-      } catch {
-        // ignore fallback error
+      } catch (err: any) {
+        if (err?.name === "AbortError" || isStale()) return;
+        // İstemci CBS REST yedeğine geç
       }
+
+      if (isStale()) return;
+      // 2. Doğrudan resmi TKGM CBS REST API v3.1 / v3 (CORS destekli — Firebase static hosting'de de çalışır)
+      if (!resolved) {
+        resolved = await fetchTkgmCbsAt(cleanLat, cleanLng);
+        if (isStale()) return;
+      }
+
+      // Tam nokta kadastro yolu/sınır boşluğundaysa veya TKGM Sınır katmanı açıksa çevredeki komşu parselleri tara
+      const ringOffsets: [number, number][] = [
+        [0.00045, 0],
+        [-0.00045, 0],
+        [0, 0.00045],
+        [0, -0.00045],
+        [-0.0006, -0.0006],
+        [0.0006, 0.0006],
+        [-0.0006, 0.0006],
+        [0.0006, -0.0006],
+      ];
+      const nearbyHits: any[] = [];
+      if (!resolved) {
+        for (let i = 0; i < ringOffsets.length; i += 4) {
+          if (isStale()) return;
+          const batch = ringOffsets.slice(i, i + 4);
+          const batchResults = await Promise.all(
+            batch.map(([dlat, dlng]) => fetchTkgmCbsAt(cleanLat + dlat, cleanLng + dlng))
+          );
+          if (isStale()) return;
+          for (const item of batchResults) {
+            if (item) nearbyHits.push(item);
+          }
+        }
+
+        if (!resolved && nearbyHits.length === 0) {
+          const outerRing: [number, number][] = [
+            [0.0014, 0],
+            [-0.0014, 0],
+            [0, 0.0014],
+            [0, -0.0014],
+          ];
+          const outerResults = await Promise.all(
+            outerRing.map(([dlat, dlng]) => fetchTkgmCbsAt(cleanLat + dlat, cleanLng + dlng))
+          );
+          if (isStale()) return;
+          for (const item of outerResults) {
+            if (item) nearbyHits.push(item);
+          }
+        }
+
+        if (nearbyHits.length > 0) {
+          mergeParcelsIntoState(nearbyHits);
+        }
+      }
+
+      if (!resolved && nearbyHits.length > 0) {
+        const preferred =
+          nearbyHits.find(
+            (h) => !String(h.nitelik || "").toLowerCase().includes("mera")
+          ) || nearbyHits[0];
+        resolved = {
+          ...preferred,
+          _fromNearbyOffset: true,
+          note: `Seçilen nokta kadastro yolu/sınır boşluğunda kaldığı için en yakın resmi parsel (${preferred.mahalle} Ada ${preferred.ada} / Parsel ${preferred.parsel}) yüklendi. Haritadaki diğer parsellere dokunarak geçiş yapabilirsiniz.`,
+        };
+      }
+
+      if (resolved) {
+        recordParcel(resolved);
+        return;
+      }
+
+      // 3. Bu noktada ve çevresinde kayıtlı parsel yoksa idari mahalle/köy bilgisini getir ve yakınlaş
+      const nomRes = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${cleanLat}&lon=${cleanLng}&zoom=18&addressdetails=1&accept-language=tr`,
+        { signal: controller.signal }
+      );
+      if (isStale()) return;
+      if (nomRes.ok) {
+        const nom = await nomRes.json();
+        if (isStale()) return;
+        const addr = nom?.address || {};
+        setTkgmResult({
+          source: "KONUM_IDARI",
+          il: addr.province || addr.state || "",
+          ilce: addr.town || addr.county || addr.city_district || addr.municipality || "",
+          mahalle: addr.village || addr.suburb || addr.neighbourhood || addr.hamlet || "",
+          ada: "",
+          parsel: "",
+          alanM2: 0,
+          alanDekar: 0,
+          nitelik: "Tarım Alanı (İdari Konum Doğrulandı)",
+          lat: cleanLat,
+          lng: cleanLng,
+          geometry: null,
+          note: "Bu tam noktada kayıtlı TKGM parseli dönmedi. Haritadan görmek istediğiniz tarlanın içine dokunun; resmi sınır ve ada/parsel otomatik çizilir.",
+        });
+        if (mapRef.current && mapRef.current.getZoom() < 15) {
+          mapRef.current.flyTo([cleanLat, cleanLng], 15);
+        }
+        return;
+      }
+
+      throw new Error("TKGM parsel sorgusu başarısız oldu.");
+    } catch (err: any) {
+      if (err?.name === "AbortError" || isStale()) return;
       showToast(err?.message || "TKGM parsel sorgusu yapılamadı.", "error");
     } finally {
-      setIsQueryingTkgm(false);
+      if (mySeq === tkgmSeqRef.current) {
+        setIsQueryingTkgm(false);
+      }
     }
   };
 
   const handleSaveTkgmParcelToFarmer = async () => {
     if (!tkgmResult) return;
-    const polyPts = tkgmResult.geometry
+    const rawPts = tkgmResult.geometry
       ? geoJsonToLatLngs(tkgmResult.geometry)
       : [];
-    const metrics = polyPts.length >= 3 ? computePolygonMetrics(polyPts) : null;
-    const dekar = tkgmResult.alanDekar || metrics?.dekar || 0;
-    const label = [
-      tkgmResult.mahalle,
-      tkgmResult.ada ? `Ada ${tkgmResult.ada}` : "",
-      tkgmResult.parsel ? `Parsel ${tkgmResult.parsel}` : "",
-    ]
-      .filter(Boolean)
-      .join(" ");
+    const effectivePts =
+      rawPts.length >= 3
+        ? rawPts
+        : [
+            { lat: tkgmResult.lat - 0.0012, lng: tkgmResult.lng - 0.0015 },
+            { lat: tkgmResult.lat - 0.0012, lng: tkgmResult.lng + 0.0015 },
+            { lat: tkgmResult.lat + 0.0012, lng: tkgmResult.lng + 0.0015 },
+            { lat: tkgmResult.lat + 0.0012, lng: tkgmResult.lng - 0.0015 },
+          ];
+    const metrics = computePolygonMetrics(effectivePts);
+    const dekar = tkgmResult.alanDekar || metrics.dekar || 0;
+    const label =
+      [
+        tkgmResult.mahalle,
+        tkgmResult.ada ? `Ada ${tkgmResult.ada}` : "",
+        tkgmResult.parsel ? `Parsel ${tkgmResult.parsel}` : "",
+      ]
+        .filter(Boolean)
+        .join(" ") ||
+      tkgmResult.ilce ||
+      "Tarla Parseli";
 
+    const farmer = tkgmAssignFarmerId
+      ? farmers.find((f) => f.id === tkgmAssignFarmerId)
+      : undefined;
+    const cleanCrop = tkgmAssignCrop.trim();
     let fieldId: string | undefined;
-    if (tkgmAssignFarmerId) {
-      const farmer = farmers.find((f) => f.id === tkgmAssignFarmerId);
-      if (farmer) {
-        fieldId = crypto.randomUUID();
-        const newField: Field = {
-          id: fieldId,
-          name: label || "TKGM Parseli",
-          size: dekar,
-          crop: tkgmAssignCrop.trim() || "Belirtilmedi",
-          polygonGeoJson: metrics?.feature
-            ? JSON.stringify(metrics.feature)
-            : undefined,
-          polygonBbox: metrics?.bbox,
-          centroidLat: tkgmResult.lat,
-          centroidLng: tkgmResult.lng,
-          tkgmIl: tkgmResult.il,
-          tkgmIlce: tkgmResult.ilce,
-          tkgmMahalle: tkgmResult.mahalle,
-          tkgmAda: tkgmResult.ada,
-          tkgmParsel: tkgmResult.parsel,
-        };
-        await updateFarmer({
-          ...farmer,
-          latitude: farmer.latitude || tkgmResult.lat,
-          longitude: farmer.longitude || tkgmResult.lng,
-          fields: [...(farmer.fields || []), newField],
-        });
-      }
+    if (farmer) {
+      fieldId = crypto.randomUUID();
+      const newField: Field = {
+        id: fieldId,
+        name: label,
+        size: dekar,
+        crop: cleanCrop || "Belirtilmedi",
+        polygonGeoJson: metrics.feature
+          ? JSON.stringify(metrics.feature)
+          : undefined,
+        polygonBbox: metrics.bbox,
+        centroidLat: tkgmResult.lat,
+        centroidLng: tkgmResult.lng,
+        ...(tkgmResult.il ? { tkgmIl: tkgmResult.il } : {}),
+        ...(tkgmResult.ilce ? { tkgmIlce: tkgmResult.ilce } : {}),
+        ...(tkgmResult.mahalle ? { tkgmMahalle: tkgmResult.mahalle } : {}),
+        ...(tkgmResult.ada ? { tkgmAda: tkgmResult.ada } : {}),
+        ...(tkgmResult.parsel ? { tkgmParsel: tkgmResult.parsel } : {}),
+      };
+      await updateFarmer({
+        ...farmer,
+        latitude: farmer.latitude || tkgmResult.lat,
+        longitude: farmer.longitude || tkgmResult.lng,
+        fields: [...(farmer.fields || []), newField],
+      });
     }
 
     const newSaved: SavedMapFeature = {
       id: crypto.randomUUID(),
-      name: `${label || "TKGM Parseli"}${dekar ? ` (${dekar} daa)` : ""}`,
-      type: polyPts.length >= 3 ? "AREA" : "COORDINATE",
-      points:
-        polyPts.length >= 3
-          ? polyPts
-          : [{ lat: tkgmResult.lat, lng: tkgmResult.lng }],
-      farmerId: tkgmAssignFarmerId || undefined,
+      name: `${label}${dekar ? ` (${dekar} daa)` : ""}`,
+      type: "AREA",
+      points: effectivePts,
+      farmerId: farmer?.id || undefined,
+      farmerName: farmer?.fullName,
+      crop: cleanCrop || undefined,
       fieldId,
       dekar: dekar || undefined,
-      polygonGeoJson: metrics?.feature ? JSON.stringify(metrics.feature) : undefined,
+      polygonGeoJson: metrics.feature
+        ? JSON.stringify(metrics.feature)
+        : undefined,
       tkgmInfo: {
-        il: tkgmResult.il,
-        ilce: tkgmResult.ilce,
-        mahalle: tkgmResult.mahalle,
-        ada: tkgmResult.ada,
-        parsel: tkgmResult.parsel,
-        nitelik: tkgmResult.nitelik,
-        alanM2: tkgmResult.alanM2,
+        il: tkgmResult.il || "",
+        ilce: tkgmResult.ilce || "",
+        mahalle: tkgmResult.mahalle || "",
+        ada: tkgmResult.ada || "",
+        parsel: tkgmResult.parsel || "",
+        nitelik: tkgmResult.nitelik || "",
+        alanM2: tkgmResult.alanM2 || 0,
       },
       createdAt: new Date().toISOString(),
       lastUpdated: new Date().toISOString(),
     };
 
-    await dbService.saveMapFeature(newSaved);
     setSavedFeatures((prev) => [...prev, newSaved]);
+    await dbService.saveMapFeature(newSaved);
     setTkgmResult(null);
     setPoints([]);
+    setTkgmAssignCrop("");
     setMode(null);
-    showToast("TKGM parseli başarıyla kaydedildi.", "success");
+    showToast(
+      farmer
+        ? `${farmer.fullName} adına parsel haritaya kalıcı olarak kaydedildi.`
+        : "TKGM parseli haritaya kalıcı olarak kaydedildi.",
+      "success"
+    );
   };
 
   return (
@@ -850,9 +1179,25 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
           <button
             type="button"
             onClick={() => {
-              setShowParsel((p) => !p);
-              if (!showParsel) {
-                showToast("TKGM kadastro parsel sınırları açıldı.", "info");
+              const next = !showParsel;
+              setShowParsel(next);
+              if (next) {
+                setMode("COORDINATE");
+                const target =
+                  points[0] || userLocationRef.current || mapRef.current?.getCenter();
+                if (target) {
+                  if (!points[0]) {
+                    setPoints([target]);
+                  }
+                  if (mapRef.current && mapRef.current.getZoom() < 14) {
+                    mapRef.current.flyTo(target, 15);
+                  }
+                  void handleInAppTkgmQuery(target);
+                }
+                showToast(
+                  "TKGM sınır modu açıldı — tarlaya dokunun, resmi parsel sınırı çizilsin.",
+                  "info"
+                );
               }
             }}
             className={`min-h-[48px] flex flex-col items-center justify-center gap-1 px-1 py-2 rounded-xl text-xs font-bold transition-colors border ${
@@ -1176,7 +1521,7 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
             <button
               type="button"
               disabled={isQueryingTkgm}
-              onClick={handleInAppTkgmQuery}
+              onClick={() => void handleInAppTkgmQuery()}
               className="bg-indigo-600/25 hover:bg-indigo-600/40 text-indigo-200 text-[11px] font-black py-3 rounded-2xl flex flex-col items-center justify-center gap-1.5 transition-all border border-indigo-500/35 active:scale-95"
             >
               {isQueryingTkgm ? (
@@ -1235,45 +1580,83 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
         ref={mapRef}
         center={[38.5, 36.5]}
         zoom={7}
-        maxZoom={19}
+        maxZoom={20}
         zoomControl={false}
         className="h-full w-full"
       >
-        <TileLayer
-          url={
-            mapType === "satellite"
-              ? "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-              : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          }
-          maxZoom={19}
-          attribution={
-            mapType === "satellite"
-              ? "Tiles &copy; Esri"
-              : "&copy; OpenStreetMap contributors"
-          }
-        />
-        {mapType === "satellite" && (
+        {mapType === "satellite" ? (
           <TileLayer
-            url="https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
-            maxZoom={19}
-            opacity={0.75}
+            key="google-hybrid"
+            url="https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}&hl=tr"
+            subdomains={["mt0", "mt1", "mt2", "mt3"]}
+            maxNativeZoom={19}
+            maxZoom={20}
+            attribution="&copy; Google Maps"
+          />
+        ) : (
+          <TileLayer
+            key="osm-street"
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            maxNativeZoom={19}
+            maxZoom={20}
+            attribution="&copy; OpenStreetMap contributors"
           />
         )}
 
-        {showParsel && (
-          <WMSTileLayer
-            url="https://megsiswms.tkgm.gov.tr/tkgm.mahalli/wms"
-            layers="TKGM.MAHALLI.PARSEL"
-            transparent={true}
-            format="image/png"
-            version="1.1.1"
-            maxZoom={20}
-            opacity={0.65}
-          />
-        )}
+        {(showParsel || mode === "COORDINATE") &&
+          queriedTkgmParcels
+            .filter(
+              (parcel) =>
+                parcel.geometry &&
+                !(
+                  tkgmResult &&
+                  (tkgmResult.ada || "0") === (parcel.ada || "0") &&
+                  tkgmResult.parsel === parcel.parsel &&
+                  tkgmResult.alanDekar === parcel.alanDekar
+                ) &&
+                !savedFeatures.some(
+                  (sf) =>
+                    sf.tkgmInfo &&
+                    (sf.tkgmInfo.ada || "0") === (parcel.ada || "0") &&
+                    sf.tkgmInfo.parsel === parcel.parsel &&
+                    (!parcel.mahalle || sf.tkgmInfo.mahalle === parcel.mahalle)
+                )
+            )
+            .map((parcel, idx) => (
+              <Polygon
+                key={`tkgm-parcel-${parcel.ada || "0"}-${parcel.parsel}-${idx}`}
+                positions={geoJsonToLatLngs(parcel.geometry).map(
+                  (p) => [p.lat, p.lng] as [number, number]
+                )}
+                pathOptions={{
+                  color: "#6366f1",
+                  weight: 2.5,
+                  fillColor: "#6366f1",
+                  fillOpacity: 0.22,
+                }}
+                eventHandlers={{
+                  click: () => {
+                    setTkgmResult(parcel);
+                    setMode("COORDINATE");
+                    setPoints([L.latLng(parcel.lat, parcel.lng)]);
+                  },
+                }}
+              >
+                <Tooltip permanent direction="center" opacity={0.9}>
+                  <span className="text-[10px] font-black text-slate-900">
+                    Ada {parcel.ada || "0"} / Parsel {parcel.parsel || "-"}
+                    {parcel.alanDekar > 0 ? ` (${parcel.alanDekar} daa)` : ""}
+                  </span>
+                </Tooltip>
+              </Polygon>
+            ))}
 
         <MapEvents />
-        <LocateButton />
+        <LocateButton
+          onLocate={(ll) => {
+            userLocationRef.current = ll;
+          }}
+        />
 
         {/* Çiftçi Kartlarına Bağlı Arazi Poligonları */}
         {farmerFieldPolygons.map(({ farmerId, farmerName, field, latlngs }) => (
@@ -1281,10 +1664,10 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
             key={`farmer-fld-${farmerId}-${field.id}`}
             positions={latlngs.map((p) => [p.lat, p.lng] as [number, number])}
             pathOptions={{
-              color: "#38bdf8",
-              fillColor: "#38bdf8",
-              fillOpacity: 0.25,
-              weight: 2.5,
+              color: "#10b981",
+              fillColor: "#10b981",
+              fillOpacity: 0.32,
+              weight: 3,
             }}
             eventHandlers={{
               click: () => {
@@ -1292,24 +1675,49 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
               },
             }}
           >
-            <Tooltip permanent direction="center" className="!bg-stone-950/90 !border !border-sky-500/40 !text-white !rounded-full !px-3 !py-1 !text-[10px] !font-bold">
-              <span>
-                {farmerName} • {field.name} ({field.size} daa) — Uydu Analizi
-              </span>
+            <Tooltip
+              permanent
+              direction="center"
+              className="!bg-transparent !border-0 !shadow-none !p-0"
+            >
+              <div className="bg-stone-950/92 px-3 py-1.5 rounded-2xl border border-emerald-400/55 shadow-xl flex flex-col gap-0.5 backdrop-blur-md max-w-[230px]">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <User size={11} className="text-emerald-400 shrink-0" />
+                  <span className="font-black text-[11px] sm:text-xs text-emerald-300 tracking-tight truncate">
+                    {farmerName}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <Satellite size={10} className="text-sky-400 shrink-0" />
+                  <span className="font-bold text-[10px] text-stone-200 truncate">
+                    {field.name} ({field.size} daa)
+                    {field.crop && field.crop !== "Belirtilmedi" ? ` • ${field.crop}` : ""}
+                  </span>
+                </div>
+              </div>
             </Tooltip>
           </Polygon>
         ))}
 
         {/* Kalıcı Kayıtlı Harita Parselleri */}
-        {savedFeatures.map((f) => (
-          <SavedFeatureRenderer
-            key={f.id}
-            feature={f}
-            onRemove={handleRemoveFeature}
-            onEdit={handleEditFeature}
-            onOpenSatellite={handleOpenSatelliteFromSaved}
-          />
-        ))}
+        {savedFeatures.map((f) => {
+          const ownerFarmer = f.farmerId
+            ? farmers.find((fr) => fr.id === f.farmerId)
+            : undefined;
+          const ownerFieldCrop =
+            f.crop || ownerFarmer?.fields?.find((fl) => fl.id === f.fieldId)?.crop;
+          return (
+            <SavedFeatureRenderer
+              key={f.id}
+              feature={f}
+              farmerName={ownerFarmer?.fullName || f.farmerName}
+              crop={ownerFieldCrop}
+              onRemove={handleRemoveFeature}
+              onEdit={handleEditFeature}
+              onOpenSatellite={handleOpenSatelliteFromSaved}
+            />
+          );
+        })}
 
         {/* TKGM Sorgusundan Dönen Resmi Parsel Sınırı Önizlemesi */}
         {tkgmResult?.geometry && (() => {
@@ -1324,7 +1732,14 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
                 fillOpacity: 0.3,
                 weight: 3,
               }}
-            />
+            >
+              <Tooltip permanent direction="center" opacity={0.95}>
+                <span className="text-[11px] font-black text-slate-950">
+                  Ada {tkgmResult.ada || "0"} / Parsel {tkgmResult.parsel || "-"}
+                  {tkgmResult.alanDekar > 0 ? ` (${tkgmResult.alanDekar} daa)` : ""}
+                </span>
+              </Tooltip>
+            </Polygon>
           );
         })()}
 
@@ -1366,6 +1781,9 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
                     next[i] = newPos;
                     return next;
                   });
+                  if (mode === "COORDINATE" && i === 0) {
+                    void handleInAppTkgmQuery(newPos);
+                  }
                 }
               },
             }}

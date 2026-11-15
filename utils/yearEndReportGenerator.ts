@@ -1,6 +1,8 @@
 import { createMultiPagePdf, renderElementToCanvas } from './pdfHelper';
 import { format } from 'date-fns';
 import { formatCurrency } from './currency';
+import { computeFarmerLedgerTotals, computeSupplierLedgerTotals } from './ledger';
+import { escapeHtml } from './html';
 import { 
   Farmer, 
   InventoryItem, 
@@ -10,6 +12,7 @@ import {
   MyPayment, 
   Supplier, 
   SupplierPurchase, 
+  SupplierPayment,
   Account, 
   Expense, 
   UserProfile 
@@ -25,6 +28,7 @@ export interface YearEndReportParams {
   myPayments: MyPayment[];
   suppliers: Supplier[];
   supplierPurchases: SupplierPurchase[];
+  supplierPayments?: SupplierPayment[];
   accounts: Account[];
   expenses: Expense[];
   userProfile?: UserProfile;
@@ -41,6 +45,7 @@ export async function generateYearEndReportPDF(params: YearEndReportParams): Pro
     myPayments,
     suppliers,
     supplierPurchases,
+    supplierPayments = [],
     accounts,
     expenses,
     userProfile
@@ -48,9 +53,15 @@ export async function generateYearEndReportPDF(params: YearEndReportParams): Pro
 
   const currency = userProfile?.currency || 'TRY';
 
+  const isUpToTargetYear = (dateStr?: string) => {
+    if (!dateStr) return false;
+    const y = new Date(dateStr).getFullYear();
+    return !Number.isNaN(y) && y <= targetYear;
+  };
+
   // 1. FILTER DATA FOR TARGET YEAR
   const yearPrescriptions = prescriptions.filter(p => {
-    if (p.deletedAt) return false;
+    if (p.deletedAt || p.isProcessed === false) return false;
     if (p.date) {
       const y = new Date(p.date).getFullYear();
       return !isNaN(y) && y === targetYear;
@@ -92,7 +103,7 @@ export async function generateYearEndReportPDF(params: YearEndReportParams): Pro
       const unitPrice = item.unitPrice || 0;
       const unitBuyingPrice = item.buyingPrice || matchedInventory?.buyingPrice || 0;
 
-      const itemRevenue = item.totalPrice || (qty * unitPrice);
+      const itemRevenue = Math.abs(item.totalPrice || (qty * unitPrice));
       const itemCost = qty * unitBuyingPrice;
 
       const name = item.pesticideName || matchedInventory?.pesticideName || 'İsimsiz Ürün';
@@ -133,95 +144,99 @@ export async function generateYearEndReportPDF(params: YearEndReportParams): Pro
   const totalOperatingExpenses = yearExpenses.reduce((acc, e) => acc + (e.amount || 0), 0);
   const netOperatingProfit = totalGrossProfit - totalOperatingExpenses;
 
-  // 3. FARMER BALANCES AT END OF TARGET YEAR
+  // 3. FARMER BALANCES AT END OF TARGET YEAR (aligned 100% with computeFarmerLedgerTotals)
+  const prevPresc = prescriptions.filter(p => !p.deletedAt && isUpToTargetYear(p.date));
+  const prevDebts = manualDebts.filter(d => !d.deletedAt && isUpToTargetYear(d.date));
+  const prevPays = payments.filter(p => !p.deletedAt && isUpToTargetYear(p.date));
+  const prevMyPays = myPayments.filter(mp => {
+    if (mp.deletedAt) return false;
+    if (mp.relatedId) {
+      const refY = (mp.issueDate || mp.dueDate) ? new Date(mp.issueDate || mp.dueDate).getFullYear() : NaN;
+      return Number.isNaN(refY) || refY <= targetYear;
+    }
+    return isUpToTargetYear(mp.issueDate || mp.dueDate);
+  });
+
+  const farmerMap = new Map<string, Farmer>();
+  const farmerIds = new Set<string>();
+  farmers.forEach(f => {
+    if (!f.deletedAt) {
+      farmerMap.set(f.id, f);
+      farmerIds.add(f.id);
+    }
+  });
+  prevPresc.forEach(p => { if (p.farmerId) farmerIds.add(p.farmerId); });
+  prevDebts.forEach(d => { if (d.farmerId) farmerIds.add(d.farmerId); });
+  prevPays.forEach(p => { if (p.farmerId) farmerIds.add(p.farmerId); });
+  prevMyPays.forEach(mp => { if (mp.farmerId) farmerIds.add(mp.farmerId); });
+
   const farmerBalanceList: { name: string; phone: string; balance: number; status: string }[] = [];
   let totalFarmerReceivables = 0; // Piyasa Alacağımız (Çiftçilerin bize borcu)
   let totalFarmerPayables = 0;    // Çiftçilere borcumuz (Fazla ödemeler)
 
-  farmers.forEach(f => {
-    if (f.deletedAt) return;
-    // Calculate balance up to end of targetYear
-    let sales = 0;
-    let manual = 0;
-    let pays = 0;
-
-    prescriptions.forEach(p => {
-      if (p.farmerId === f.id && !p.deletedAt && p.priceType !== 'CASH') {
-        const y = new Date(p.date).getFullYear();
-        if (y <= targetYear) {
-          sales += (p.totalAmount || 0);
-        }
-      }
+  farmerIds.forEach(farmerId => {
+    const f = farmerMap.get(farmerId);
+    const totals = computeFarmerLedgerTotals({
+      farmerId,
+      prescriptions: prevPresc,
+      manualDebts: prevDebts,
+      payments: prevPays,
+      myPayments: prevMyPays
     });
 
-    manualDebts.forEach(d => {
-      if (d.farmerId === f.id && !d.deletedAt) {
-        const y = new Date(d.date).getFullYear();
-        if (y <= targetYear) {
-          manual += (d.amount || 0);
-        }
-      }
-    });
-
-    payments.forEach(p => {
-      if (p.farmerId === f.id && !p.deletedAt) {
-        const y = new Date(p.date).getFullYear();
-        if (y <= targetYear) {
-          pays += (p.amount || 0);
-        }
-      }
-    });
-
-    const netBal = sales + manual - pays;
-    if (netBal > 0) {
+    const netBal = totals.netDebt;
+    if (netBal >= 0.01) {
       totalFarmerReceivables += netBal;
-      farmerBalanceList.push({ name: f.fullName, phone: f.phoneNumber || '-', balance: netBal, status: 'BORÇLU (ALACAKLIYIZ)' });
-    } else if (netBal < 0) {
+      farmerBalanceList.push({
+        name: f?.fullName || 'Kayıtsız Müstahsil',
+        phone: f?.phoneNumber || '-',
+        balance: netBal,
+        status: 'BORÇLU (ALACAKLIYIZ)'
+      });
+    } else if (netBal <= -0.01) {
       totalFarmerPayables += Math.abs(netBal);
-      farmerBalanceList.push({ name: f.fullName, phone: f.phoneNumber || '-', balance: netBal, status: 'ALACAKLI (BORÇLUYUZ)' });
+      farmerBalanceList.push({
+        name: f?.fullName || 'Kayıtsız Müstahsil',
+        phone: f?.phoneNumber || '-',
+        balance: netBal,
+        status: 'ALACAKLI (BORÇLUYUZ)'
+      });
     }
   });
 
   // Sort farmers by highest debt
   farmerBalanceList.sort((a, b) => b.balance - a.balance);
 
-  // 4. SUPPLIER BALANCES AT END OF TARGET YEAR
-  const supplierBalanceList: { name: string; phone: string; balance: number }[] = [];
+  // 4. SUPPLIER BALANCES AT END OF TARGET YEAR (aligned 100% with computeSupplierLedgerTotals)
+  const prevSupplierPurchases = supplierPurchases.filter(sp => !sp.deletedAt && isUpToTargetYear(sp.date));
+  const prevSupplierPayments = supplierPayments.filter(sp => !sp.deletedAt && isUpToTargetYear(sp.date));
+
+  const supplierBalanceList: { name: string; phone: string; balance: number; isReceivable: boolean }[] = [];
   let totalSupplierDebt = 0;
 
   suppliers.forEach(s => {
     if (s.deletedAt) return;
-    let purchases = 0;
-    let pays = 0;
-
-    supplierPurchases.forEach(sp => {
-      if (sp.supplierId === s.id && !sp.deletedAt) {
-        const y = new Date(sp.date).getFullYear();
-        if (y <= targetYear) {
-          const isSale = sp.type === 'SALE' || sp.note?.includes('SATIŞ');
-          const isReturn = sp.type === 'RETURN' || (sp.note?.includes('İADE') && !isSale);
-          if (isSale || isReturn || (sp.totalAmount && sp.totalAmount < 0)) {
-            pays += Math.abs(sp.totalAmount || 0);
-          } else {
-            purchases += (sp.totalAmount || 0);
-          }
-        }
-      }
+    const totals = computeSupplierLedgerTotals({
+      supplierId: s.id,
+      purchases: prevSupplierPurchases,
+      supplierPayments: prevSupplierPayments,
+      myPayments: prevMyPays
     });
 
-    myPayments.forEach(mp => {
-      if (mp.supplierId === s.id && !mp.deletedAt && mp.status !== 'CANCELLED') {
-        const y = new Date(mp.issueDate).getFullYear();
-        if (y <= targetYear) pays += (mp.amount || 0);
-      }
-    });
-
-    const netDebt = purchases - pays;
-    if (netDebt !== 0) {
-      if (netDebt > 0) totalSupplierDebt += netDebt;
-      supplierBalanceList.push({ name: s.name, phone: s.phoneNumber || '-', balance: netDebt });
+    // signedBalance: negative => we owe supplier; positive => supplier owes us (sale/return excess)
+    if (Math.abs(totals.signedBalance) >= 0.01) {
+      const debtAmount = -totals.signedBalance; // positive means our debt to supplier
+      if (debtAmount > 0) totalSupplierDebt += debtAmount;
+      supplierBalanceList.push({
+        name: s.name,
+        phone: s.phoneNumber || '-',
+        balance: debtAmount,
+        isReceivable: debtAmount < 0
+      });
     }
   });
+
+  supplierBalanceList.sort((a, b) => b.balance - a.balance);
 
   // 5. INVENTORY STOCK & VALUATION
   const inventoryReport: { name: string; category: string; stock: number; unit: string; costValue: number; retailValue: number }[] = [];
@@ -230,7 +245,7 @@ export async function generateYearEndReportPDF(params: YearEndReportParams): Pro
 
   inventory.forEach(item => {
     if (item.deletedAt) return;
-    const stockQty = item.quantity; // current stock
+    const stockQty = Number(item.quantity) || 0; // current stock
     const costVal = stockQty * (item.buyingPrice || 0);
     const retailVal = stockQty * (item.sellingPrice || 0);
 
@@ -249,13 +264,13 @@ export async function generateYearEndReportPDF(params: YearEndReportParams): Pro
 
   // 6. CASH & BANK ACCOUNTS
   let totalLiquidCash = 0;
-  const accountsList = accounts.map(a => {
+  const accountsList = accounts.filter(a => !a.deletedAt).map(a => {
     totalLiquidCash += a.balance || 0;
     return { name: a.name, type: a.type === 'CASH' ? 'Kasa (Nakit)' : 'Banka / POS', balance: a.balance || 0 };
   });
 
   // 7. CHECKS & PROMISSORY NOTES
-  const activeChecks = myPayments.filter(p => !p.deletedAt && p.status !== 'CANCELLED');
+  const activeChecks = prevMyPays.filter(p => !p.deletedAt && p.status !== 'CANCELLED' && p.portfolioStatus !== 'BOUNCED');
   const customerChecks = activeChecks.filter(p => p.farmerId);
   const supplierChecks = activeChecks.filter(p => p.supplierId);
 
@@ -273,19 +288,20 @@ export async function generateYearEndReportPDF(params: YearEndReportParams): Pro
   container.style.color = '#1c1917';
   container.style.fontFamily = 'system-ui, -apple-system, sans-serif';
 
-  const companyTitle = (userProfile?.companyName || 'MKS ZİRAİ SİSTEMLERİ').toLocaleUpperCase('tr-TR');
-  const stampTitle = (userProfile?.stampTitle || userProfile?.companyName || 'MKS SİSTEMİ').toLocaleUpperCase('tr-TR');
-  const stampSubTitle = userProfile?.stampSubTitle || (userProfile?.title ? `${userProfile.title} ${userProfile?.fullName || ''}` : userProfile?.fullName || 'Ziraat Mühendisi');
-  const stampTax = userProfile?.stampTaxInfo || 'Vergi D. - 1234567890';
-  const stampColor = userProfile?.stampColor || '#059669';
+  const companyTitle = escapeHtml((userProfile?.companyName || 'MKS ZİRAİ SİSTEMLERİ').toLocaleUpperCase('tr-TR'));
+  const stampTitle = escapeHtml((userProfile?.stampTitle || userProfile?.companyName || 'MKS SİSTEMİ').toLocaleUpperCase('tr-TR'));
+  const stampSubTitle = escapeHtml(userProfile?.stampSubTitle || (userProfile?.title ? `${userProfile.title} ${userProfile?.fullName || ''}` : userProfile?.fullName || 'Ziraat Mühendisi'));
+  const stampTax = escapeHtml(userProfile?.stampTaxInfo || 'Vergi D. - 1234567890');
+  const rawStampColor = String(userProfile?.stampColor || '#059669');
+  const stampColor = /^#[0-9a-fA-F]{3,8}$/.test(rawStampColor) ? rawStampColor : '#059669';
 
   const productRows = Object.values(productMap)
     .sort((a, b) => b.revenue - a.revenue)
     .map((p, idx) => `
       <tr style="background-color: ${idx % 2 === 0 ? '#fafaf9' : '#ffffff'}; border-bottom: 1px solid #e7e5e4; font-size: 10px;">
-        <td style="padding: 6px 8px; font-weight: 700;">${p.name}</td>
-        <td style="padding: 6px 8px; color: #57534e;">${p.category}</td>
-        <td style="padding: 6px 8px; text-align: right; font-family: monospace;">${p.qtySold} ${p.unit}</td>
+        <td style="padding: 6px 8px; font-weight: 700;">${escapeHtml(p.name)}</td>
+        <td style="padding: 6px 8px; color: #57534e;">${escapeHtml(p.category)}</td>
+        <td style="padding: 6px 8px; text-align: right; font-family: monospace;">${Number(p.qtySold.toFixed(2))} ${escapeHtml(p.unit)}</td>
         <td style="padding: 6px 8px; text-align: right; font-family: monospace; font-weight: 600;">${formatCurrency(p.revenue, currency)}</td>
         <td style="padding: 6px 8px; text-align: right; font-family: monospace; color: #78716c;">${formatCurrency(p.cost, currency)}</td>
         <td style="padding: 6px 8px; text-align: right; font-family: monospace; font-weight: 800; color: ${p.profit >= 0 ? '#059669' : '#dc2626'};">
@@ -294,31 +310,31 @@ export async function generateYearEndReportPDF(params: YearEndReportParams): Pro
       </tr>
     `).join('');
 
-  const farmerRows = farmerBalanceList.slice(0, 30).map((f, idx) => `
+  const farmerRows = farmerBalanceList.map((f, idx) => `
     <tr style="background-color: ${idx % 2 === 0 ? '#fafaf9' : '#ffffff'}; border-bottom: 1px solid #e7e5e4; font-size: 10px;">
-      <td style="padding: 6px 8px; font-weight: 700;">${f.name}</td>
-      <td style="padding: 6px 8px; color: #78716c;">${f.phone}</td>
-      <td style="padding: 6px 8px; text-align: center; font-weight: 700; color: ${f.balance > 0 ? '#059669' : '#dc2626'};">${f.status}</td>
+      <td style="padding: 6px 8px; font-weight: 700;">${escapeHtml(f.name)}</td>
+      <td style="padding: 6px 8px; color: #78716c;">${escapeHtml(f.phone)}</td>
+      <td style="padding: 6px 8px; text-align: center; font-weight: 700; color: ${f.balance > 0 ? '#059669' : '#dc2626'};">${escapeHtml(f.status)}</td>
       <td style="padding: 6px 8px; text-align: right; font-family: monospace; font-weight: 800; color: ${f.balance > 0 ? '#059669' : '#dc2626'};">
-        ${formatCurrency(f.balance, currency)}
+        ${formatCurrency(Math.abs(f.balance), currency)}
       </td>
     </tr>
   `).join('');
 
   const supplierRows = supplierBalanceList.map((s, idx) => `
     <tr style="background-color: ${idx % 2 === 0 ? '#fafaf9' : '#ffffff'}; border-bottom: 1px solid #e7e5e4; font-size: 10px;">
-      <td style="padding: 6px 8px; font-weight: 700;">${s.name}</td>
-      <td style="padding: 6px 8px; color: #78716c;">${s.phone}</td>
-      <td style="padding: 6px 8px; text-align: right; font-family: monospace; font-weight: 800; color: #dc2626;">
-        ${formatCurrency(s.balance, currency)}
+      <td style="padding: 6px 8px; font-weight: 700;">${escapeHtml(s.name)}</td>
+      <td style="padding: 6px 8px; color: #78716c;">${escapeHtml(s.phone)}</td>
+      <td style="padding: 6px 8px; text-align: right; font-family: monospace; font-weight: 800; color: ${s.isReceivable ? '#059669' : '#dc2626'};">
+        ${s.isReceivable ? 'ALACAKLIYIZ: ' : ''}${formatCurrency(Math.abs(s.balance), currency)}
       </td>
     </tr>
   `).join('');
 
   const accountRows = accountsList.map((a, idx) => `
     <tr style="background-color: ${idx % 2 === 0 ? '#fafaf9' : '#ffffff'}; border-bottom: 1px solid #e7e5e4; font-size: 10px;">
-      <td style="padding: 6px 8px; font-weight: 700;">${a.name}</td>
-      <td style="padding: 6px 8px; color: #57534e;">${a.type}</td>
+      <td style="padding: 6px 8px; font-weight: 700;">${escapeHtml(a.name)}</td>
+      <td style="padding: 6px 8px; color: #57534e;">${escapeHtml(a.type)}</td>
       <td style="padding: 6px 8px; text-align: right; font-family: monospace; font-weight: 800; color: ${a.balance >= 0 ? '#059669' : '#dc2626'};">
         ${formatCurrency(a.balance, currency)}
       </td>
@@ -342,7 +358,7 @@ export async function generateYearEndReportPDF(params: YearEndReportParams): Pro
       <div style="text-align: right; font-size: 10px; color: #57534e;">
         <p style="margin: 0;"><strong>Rapor Tarihi:</strong> ${format(new Date(), 'dd.MM.yyyy HH:mm')}</p>
         <p style="margin: 2px 0 0 0;"><strong>Devir Yılı:</strong> ${targetYear}</p>
-        <p style="margin: 2px 0 0 0;"><strong>Yetkili:</strong> ${userProfile?.fullName || 'Ziraat Mühendisi'}</p>
+        <p style="margin: 2px 0 0 0;"><strong>Yetkili:</strong> ${escapeHtml(userProfile?.fullName || 'Ziraat Mühendisi')}</p>
       </div>
     </div>
 

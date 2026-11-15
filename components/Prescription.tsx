@@ -3,14 +3,14 @@ import { createMultiPagePdf, renderElementToCanvas } from '../utils/pdfHelper';
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { dbService } from '../services/db';
-import { Farmer, Pesticide, Prescription, PrescriptionTemplate, PesticideCategory, VisitLog, AppNotification, PrescriptionItem, MinistryRecord, InventoryItem } from '../types';
+import { Farmer, Pesticide, Prescription, PrescriptionTemplate, PesticideCategory, VisitLog, AppNotification, PrescriptionItem, InventoryItem } from '../types';
 import { useAppViewModel } from '../context/AppContext';
-import { safeStringify } from '../utils/json';
-import { Check, Plus, Trash2, FileOutput, Share2, FileText, Calendar, MapPin, X, User, Loader2, Search, FlaskConical, MessageCircle, Edit2, AlertCircle, ArrowLeft, Printer, Package, Download, MessageSquare, RefreshCw, AlertTriangle, Camera, Barcode, TrendingUp, Star, Lightbulb, ChevronRight, CreditCard, Wallet, Landmark, Sprout, Wheat, Sparkles, Mic, ShieldCheck, Droplets, Pause, Play, Bookmark, Save } from 'lucide-react';
+import { safeStringify, safeJsonParse } from '../utils/json';
+import { Check, Plus, Trash2, FileOutput, FileText, Calendar, MapPin, X, User, Loader2, Search, FlaskConical, Edit2, ArrowLeft, Package, AlertTriangle, Barcode, TrendingUp, Star, Lightbulb, ChevronRight, CreditCard, Landmark, Sprout, Mic, Droplets, Pause, Play, Bookmark, Save } from 'lucide-react';
 import { renderWhatsAppTemplate, normalizeWaPhone } from '../utils/whatsappTemplates';
 import LazyBarcodeScanner from './LazyBarcodeScanner';
 import { format } from 'date-fns';
-import { formatCurrency, getCurrencySymbol } from '../utils/currency';
+import { formatCurrency } from '../utils/currency';
 import { ConfirmationModal } from './ConfirmationModal';
 import { ListSkeleton } from './Skeleton';
 import { EmptyState } from './EmptyState';
@@ -18,10 +18,10 @@ import { turkishMatchesAny, normalizeTurkish } from '../utils/search';
 import { checkTankMixCompatibility, parseGS1Barcode, itemMatchesScan, scanKey } from '../utils/gs1Parser';
 import type { GS1ParseResult } from '../utils/gs1Parser';
 import { playScanBeep, playErrorBeep } from '../utils/hardwareBarcodeScanner';
-import { saveMinistryRecords, nextDocumentNumber, loadMinistryRecords } from '../utils/ministryStore';
-import { daysUntilExpiry, isExpiredDate, normalizeGtin, round2 } from '../utils/dateUtils';
+import { nextDocumentNumber, loadMinistryRecords } from '../utils/ministryStore';
+import { daysUntilExpiry, isExpiredDate, normalizeGtin, round2, getLocalDateString } from '../utils/dateUtils';
 import { generateUUID } from '../utils/uuid';
-import { validateTcOrVkn } from '../utils/tcNoValidator';
+import { escapeHtml } from '../utils/html';
 import { useBackHandler } from '../utils/navigationManager';
 import { PrescriptionProfitModal } from './prescription/PrescriptionProfitModal';
 import { PrescriptionReceiptView } from './prescription/PrescriptionReceiptView';
@@ -104,7 +104,6 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     const { 
         userProfile, 
         refreshStats, 
-        updateUserProfile,
         prescriptions: contextPrescriptions,
         togglePrescriptionStatus,
         softDeletePrescription,
@@ -159,7 +158,6 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
             : `${formatCurrency(Math.abs(netDebt), cur)} Alacak`;
     };
     const farmerLabel = 'Çiftçi';
-    const farmerPluralLabel = 'Çiftçiler';
     const prescriptionLabel = 'Fatura';
 
     const canEditPrescription = !isSales;
@@ -239,33 +237,33 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
             container.style.left = '-9999px';
             container.style.top = '0';
             container.innerHTML = `
-                <div id="receipt-print-${payment.id}" style="width: 420px; padding: 36px; background: white; color: #1c1917; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+                <div id="receipt-print-${escapeHtml(payment.id)}" style="width: 420px; padding: 36px; background: white; color: #1c1917; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
                     <div style="text-align: center; margin-bottom: 24px;">
-                        <h2 style="margin: 0; font-size: 24px; font-weight: 900; color: #064e3b; text-transform: uppercase;">${userProfile?.companyName || 'ZİRAİ OTOMASYON'}</h2>
+                        <h2 style="margin: 0; font-size: 24px; font-weight: 900; color: #064e3b; text-transform: uppercase;">${escapeHtml(userProfile?.companyName || 'ZİRAİ OTOMASYON')}</h2>
                         <p style="margin: 5px 0 0; font-size: 13px; font-weight: 700; color: #57534e; letter-spacing: 2px;">TAHSİLAT DEKONTU & MAKBUZU</p>
                     </div>
                     <div style="border-top: 2px dashed #d6d3d1; margin: 16px 0;"></div>
                     <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 14px;">
                         <span style="color: #78716c; font-weight: 600;">Tarih:</span>
-                        <strong style="color: #292524;">${dateStr}</strong>
+                        <strong style="color: #292524;">${escapeHtml(dateStr)}</strong>
                     </div>
                     <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 14px;">
                         <span style="color: #78716c; font-weight: 600;">Müşteri:</span>
-                        <strong style="color: #292524;">${farmerName}</strong>
+                        <strong style="color: #292524;">${escapeHtml(farmerName)}</strong>
                     </div>
                     <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 14px;">
                         <span style="color: #78716c; font-weight: 600;">Ödeme Yöntemi:</span>
-                        <strong style="color: #292524;">${paymentTypeStr}</strong>
+                        <strong style="color: #292524;">${escapeHtml(paymentTypeStr)}</strong>
                     </div>
                     ${payment.dueDate ? `
                     <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 14px;">
                         <span style="color: #78716c; font-weight: 600;">Vade:</span>
-                        <strong style="color: #292524;">${new Date(payment.dueDate).toLocaleDateString('tr-TR')}</strong>
+                        <strong style="color: #292524;">${escapeHtml(new Date(payment.dueDate).toLocaleDateString('tr-TR'))}</strong>
                     </div>` : ''}
                     ${payment.note ? `
                     <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 14px;">
                         <span style="color: #78716c; font-weight: 600;">Açıklama:</span>
-                        <strong style="color: #292524;">${payment.note}</strong>
+                        <strong style="color: #292524;">${escapeHtml(payment.note)}</strong>
                     </div>` : ''}
                     <div style="border-top: 2px dashed #d6d3d1; margin: 16px 0;"></div>
                     <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px; margin-bottom: 14px;">
@@ -289,16 +287,18 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                 </div>
             `;
             document.body.appendChild(container);
-            
-            const elementToCapture = container.firstElementChild as HTMLElement;
-            const canvas = await renderElementToCanvas(elementToCapture, {
-                scale: 3, 
-                backgroundColor: '#ffffff',
-                useCORS: true,
-                logging: false
-            });
-            
-            document.body.removeChild(container);
+            let canvas: HTMLCanvasElement;
+            try {
+                const elementToCapture = container.firstElementChild as HTMLElement;
+                canvas = await renderElementToCanvas(elementToCapture, {
+                    scale: 3, 
+                    backgroundColor: '#ffffff',
+                    useCORS: true,
+                    logging: false
+                });
+            } finally {
+                if (container.parentNode) container.parentNode.removeChild(container);
+            }
             
             const pdf = await createMultiPagePdf(canvas);
             const pdfBlob = pdf.output('blob');
@@ -348,7 +348,6 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                 } catch (shareError) {
                     // WA-07: kullanıcı paylaşımı iptal ettiyse WhatsApp'ı zorla açma.
                     if ((shareError as any)?.name === 'AbortError') return;
-                    console.log('Share failed', shareError);
                     fallbackToWhatsApp(farmer?.phoneNumber, message);
                 }
             } else {
@@ -503,15 +502,11 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
             || (invItem && (!lotNumber || invItem.lotNumber === lotNumber) ? invItem.expiryDate : undefined)
             || undefined;
 
-        // SKT geçmiş: BKTS'de engelle, serbest satışta onay + gerekçe (B-15)
+        // SKT geçmişse onay ve gerekçe iste (depo kontrolü)
         let expiredReason: string | undefined;
         if (prescriptionType !== 'RETURN' && isExpiredDate(expiryDate)) {
-            if (saleRegistryMode === 'BKTS') {
-                fail(`⛔ SKT GEÇMİŞ (${expiryDate}): ${pesticide.name} BKTS kayıtlı satışta satılamaz.`);
-                return;
-            }
             playErrorBeep();
-            const ok = window.confirm(`${pesticide.name} ürününün son kullanma tarihi geçmiş (${expiryDate}).\nKayıtsız serbest satışta yine de eklemek istiyor musunuz?`);
+            const ok = window.confirm(`${pesticide.name} ürününün son kullanma tarihi geçmiş (${expiryDate}).\nYine de eklemek istiyor musunuz?`);
             if (!ok) return;
             const reason = window.prompt('SKT geçmiş ürün satış gerekçesi (zorunlu):', '');
             if (!reason || !reason.trim()) {
@@ -542,24 +537,29 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     };
 
     const [isSavingPrescription, setIsSavingPrescription] = useState(false);
-    const [cutEInvoice, setCutEInvoice] = useState(false); // kaydedince e-Fatura / e-Arşiv kes
     const isSavingPrescriptionRef = useRef(false);
 
-    const changeStep = (newStep: number) => {
+    const changeStep = (
+        newStep: number,
+        overrides?: { farmer?: Farmer | null; crop?: string; itemsCount?: number }
+    ) => {
         if (newStep === step) return;
-        if (newStep > 1 && !selectedFarmer) {
+        const effectiveFarmer = overrides?.farmer !== undefined ? overrides.farmer : selectedFarmer;
+        const effectiveCrop = overrides?.crop !== undefined ? overrides.crop : selectedCrop;
+        const effectiveItemsCount = overrides?.itemsCount !== undefined ? overrides.itemsCount : selectedItems.length;
+        if (newStep > 1 && !effectiveFarmer) {
             showToast("Lütfen önce bir müşteri seçiniz.", 'error');
             hapticFeedback('error');
             setStep(1);
             return;
         }
-        if (newStep > 2 && (!selectedCrop || !selectedCrop.trim())) {
+        if (newStep > 2 && (!effectiveCrop || !effectiveCrop.trim())) {
             showToast("Lütfen satışı yapılan mahsulü (ürünü) seçiniz.", 'error');
             hapticFeedback('error');
             setStep(2);
             return;
         }
-        if (newStep > 3 && selectedItems.length === 0) {
+        if (newStep > 3 && effectiveItemsCount === 0) {
             showToast("Lütfen en az bir ürün ekleyiniz.", 'error');
             hapticFeedback('error');
             setStep(3);
@@ -582,7 +582,6 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     const [selectedPlantId, setSelectedPlantId] = useState('');
     const [selectedCrop, setSelectedCrop] = useState('');
     const [cropSearchTerm, setCropSearchTerm] = useState('');
-    const [customCropInput, setCustomCropInput] = useState('');
     const [farmerSearchTerm, setFarmerSearchTerm] = useState('');
     const [pesticideSearchTerm, setPesticideSearchTerm] = useState('');
     const [prescriptionSearchTerm, setPrescriptionSearchTerm] = useState('');
@@ -590,7 +589,6 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     // Updated state to include quantity and price (+ BKTS/GTS izlenebilirlik: GTIN, Lot, SKT, Seri)
     const [selectedItems, setSelectedItems] = useState<CartItem[]>([]);
     selectedItemsRef.current = selectedItems;
-    const [showPrices, setShowPrices] = useState(true);
     const [customPrescriptionNo, setCustomPrescriptionNo] = useState('');
     const [prescriptionPriceType, setPrescriptionPriceType] = useState<'CASH' | 'TERM'>('TERM');
     const [prescriptionAccountId, setPrescriptionAccountId] = useState<string>('');
@@ -605,6 +603,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     const [templates, setTemplates] = useState<PrescriptionTemplate[]>([]);
     const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
     const [isSaveTemplateOpen, setIsSaveTemplateOpen] = useState(false);
+    const [isSavingTemplate, setIsSavingTemplate] = useState(false);
     const [newTemplateName, setNewTemplateName] = useState('');
     const [newTemplateDisease, setNewTemplateDisease] = useState('');
     
@@ -613,7 +612,8 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     // Recommendations State
     const [recommendedIds, setRecommendedIds] = useState<string[]>(() => {
         const saved = localStorage.getItem('mks_crm_recommended_pesticides_' + userProfile?.id);
-        return saved ? JSON.parse(saved) : [];
+        const parsed = safeJsonParse<string[]>(saved, []);
+        return Array.isArray(parsed) ? parsed : [];
     });
     const [showRecommendations, setShowRecommendations] = useState(false);
 
@@ -659,7 +659,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     const [paymentAmount, setPaymentAmount] = useState('');
     const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CHECK' | 'TEDYE'>('CASH');
     const [selectedAccountId, setSelectedAccountId] = useState('');
-    const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+    const [paymentDate, setPaymentDate] = useState(getLocalDateString());
     const [paymentNote, setPaymentNote] = useState('');
     const [isSavingPayment, setIsSavingPayment] = useState(false);
     const [selectedPaymentFarmerId, setSelectedPaymentFarmerId] = useState('');
@@ -827,6 +827,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     };
 
     const handleSaveAsTemplate = async () => {
+        if (isSavingTemplate) return;
         if (!newTemplateName.trim()) {
             showToast('Lütfen şablon adı giriniz.', 'error');
             return;
@@ -835,29 +836,36 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
             showToast('Şablon kaydetmek için sepette en az 1 ürün olmalıdır.', 'error');
             return;
         }
-        const tpl: PrescriptionTemplate = {
-            id: crypto.randomUUID(),
-            name: newTemplateName.trim(),
-            targetCrop: selectedCrop.trim() || undefined,
-            targetDisease: newTemplateDisease.trim() || undefined,
-            items: selectedItems.map(i => ({
-                pesticideId: i.pesticide.id,
-                pesticideName: i.pesticide.name,
-                dosage: i.dosage,
-                quantity: i.quantity || '1',
-                unitPrice: i.unitPrice ? parseFloat(i.unitPrice.replace(',', '.')) : undefined,
-                totalPrice: i.totalPrice,
-                buyingPrice: i.buyingPrice
-            })),
-            createdAt: new Date().toISOString()
-        };
-        await dbService.savePrescriptionTemplate(tpl);
-        setTemplates(await dbService.getPrescriptionTemplates());
-        setNewTemplateName('');
-        setNewTemplateDisease('');
-        setIsSaveTemplateOpen(false);
-        showToast(`"${tpl.name}" reçete şablonu kaydedildi`, 'success');
-        hapticFeedback('success');
+        setIsSavingTemplate(true);
+        try {
+            const tpl: PrescriptionTemplate = {
+                id: crypto.randomUUID(),
+                name: newTemplateName.trim(),
+                targetCrop: selectedCrop.trim() || undefined,
+                targetDisease: newTemplateDisease.trim() || undefined,
+                items: selectedItems.map(i => ({
+                    pesticideId: i.pesticide.id,
+                    pesticideName: i.pesticide.name,
+                    dosage: i.dosage,
+                    quantity: i.quantity || '1',
+                    unitPrice: i.unitPrice ? parseFloat(i.unitPrice.replace(',', '.')) : undefined,
+                    totalPrice: i.totalPrice,
+                    buyingPrice: i.buyingPrice
+                })),
+                createdAt: new Date().toISOString()
+            };
+            await dbService.savePrescriptionTemplate(tpl);
+            setTemplates(await dbService.getPrescriptionTemplates());
+            setNewTemplateName('');
+            setNewTemplateDisease('');
+            setIsSaveTemplateOpen(false);
+            showToast(`"${tpl.name}" reçete şablonu kaydedildi`, 'success');
+            hapticFeedback('success');
+        } catch {
+            showToast('Şablon kaydedilemedi.', 'error');
+        } finally {
+            setIsSavingTemplate(false);
+        }
     };
 
     const handleApplyTemplate = (tpl: PrescriptionTemplate) => {
@@ -888,10 +896,11 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         });
         setSelectedItems(mapped);
         setIsTemplateModalOpen(false);
-        if (selectedFarmer && (tpl.targetCrop || selectedCrop)) {
-            changeStep(4);
+        const effectiveCrop = selectedCrop || tpl.targetCrop || '';
+        if (selectedFarmer && effectiveCrop) {
+            changeStep(4, { farmer: selectedFarmer, crop: effectiveCrop, itemsCount: mapped.length });
         } else if (selectedFarmer) {
-            changeStep(2);
+            changeStep(2, { farmer: selectedFarmer });
         }
         showToast(`"${tpl.name}" şablonu uygulandı (${mapped.length} kalem)`, 'success');
         hapticFeedback('medium');
@@ -937,13 +946,11 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         setSelectedPlantId('');
         setSelectedCrop('');
         setCropSearchTerm('');
-        setCustomCropInput('');
         setDetailPrescription(null);
         setIsProcessingPdf(false);
         setEditingId(null);
         setHasInitializedEdit(false);
         setHasInitializedFarmer(false);
-        setShowPrices(true);
         setCustomPrescriptionNo('');
         setPrescriptionPriceType('TERM');
         setPrescriptionAccountId(accounts.find(a => a.type === 'CASH')?.id || accounts[0]?.id || '');
@@ -953,7 +960,6 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         setPrescriptionType(type);
         setQuarantineReturnEnabled(false);
         setQuarantineReturnReason('');
-        setBReceteCode('');
         // B-13: yeni form için kimlik baştan üretilir; hata sonrası tekrar denemede aynısı kullanılır.
         draftPrescriptionIdRef.current = generateUUID();
         draftPrescriptionNoRef.current = null;
@@ -1072,10 +1078,6 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         }));
     };
 
-    const updateDosage = (id: string, newDosage: string) => {
-        setSelectedItems(selectedItems.map(i => i.pesticide.id === id ? { ...i, dosage: newDosage } : i));
-    };
-
     const updateQuantity = (id: string, newQuantity: string) => {
         setSelectedItems(selectedItems.map(i => {
             if (i.pesticide.id === id) {
@@ -1148,14 +1150,10 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         handleScanRef.current(pendingPosBarcode, undefined, 'hardware');
     }, [pendingPosBarcode, isLoading]);
 
-    // --- Smart bar: tank mix, BKTS/GTS mode, hold cart, voice, holder tank ---
+    // --- Smart bar: tank mix, hold cart, voice, holder tank ---
     const tankMix = useMemo(() => selectedItems.length >= 2
         ? checkTankMixCompatibility(selectedItems.map(i => ({ name: i.pesticide.name, category: i.pesticide.category, activeIngredient: i.pesticide.activeIngredient })))
         : null, [selectedItems]);
-    const [saleRegistryMode, setSaleRegistryMode] = useState<'BKTS' | 'FREE'>('BKTS');
-    // B-Reçete (opsiyonel) kodu — yalnız ministryConfig.bReceteEnabled açıkken gösterilir
-    const [bReceteCode, setBReceteCode] = useState('');
-    const bReceteEnabled = Boolean(userProfile?.ministryConfig?.bReceteEnabled);
     // B-13: form açılışında üretilen fatura kimliği/numarası ve adım adım kayıt ilerlemesi (idempotent tekrar deneme)
     const draftPrescriptionIdRef = useRef<string | null>(null);
     const draftPrescriptionNoRef = useRef<string | null>(null);
@@ -1316,13 +1314,6 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
             } as CartItem;
         });
 
-        // Eğer en az bir üründe fiyat varsa, fiyat modunu aç
-        if (reconstructedItems.some(i => i.unitPrice)) {
-            setShowPrices(true);
-        } else {
-            setShowPrices(false);
-        }
-
         setCustomPrescriptionNo(p.prescriptionNo || '');
         setPrescriptionDiscount(p.discountAmount ? p.discountAmount.toString() : '');
         setPrescriptionPriceType(p.priceType || 'TERM');
@@ -1337,9 +1328,6 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
             setIsManualDueDate(false);
         }
         setSelectedItems(reconstructedItems);
-        // Eski kayıtlarda mod yoktu: kayıtlı satış olarak işaretlenmemiş eski faturalar serbest satış kabul edilir
-        setSaleRegistryMode(p.saleRegistryMode || 'FREE');
-        setBReceteCode(p.bReceteCode || '');
         saveProgressRef.current = emptySaveProgress();
         setEditingId(p.id);
         changeViewMode('FORM');
@@ -1373,129 +1361,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         }
     };
 
-    const handleStatusChange = async (e: React.MouseEvent, p: Prescription, newStatus: 'PENDING' | 'APPROVED' | 'DELIVERED' | 'INVOICED') => {
-        e.stopPropagation();
-        
-        setConfirmModal({
-            isOpen: true,
-            title: 'Durum Değiştirilecek',
-            message: `Sipariş durumunu '${newStatus}' olarak değiştirmek istiyor musunuz?`,
-            variant: 'info',
-            onConfirm: async () => {
-                try {
-                    const updatedPrescription = { 
-                        ...p, 
-                        status: newStatus,
-                        deliveredById: newStatus === 'DELIVERED' ? (activeTeamMember?.id || p.deliveredById) : p.deliveredById
-                    };
-                    await dbService.updatePrescription(updatedPrescription);
-                    await refreshStats();
-                    
-                    // Update context by triggering a refresh or manual state update
-                    // For now, updating local detail state
-                    if (detailPrescription && detailPrescription.id === p.id) {
-                        setDetailPrescription(updatedPrescription);
-                    }
-                    showToast(`Sipariş durumu güncellendi`, 'success');
-                    hapticFeedback('success');
-                } catch (error) {
-                    console.error("Error updating status:", error);
-                    showToast("İşlem sırasında bir hata oluştu", 'error');
-                    hapticFeedback('error');
-                }
-            }
-        });
-    };
-
-    /** Fatura kalemlerinden BKTS/GTS defter kayıtları üretir (her seri için 1 kayıt; serisiz miktar lot bazında). */
-    const buildMinistryRecords = (p: Prescription, farmer: Farmer): MinistryRecord[] => {
-        const isBkts = p.saleRegistryMode === 'BKTS';
-        const recordType: MinistryRecord['recordType'] = p.type === 'RETURN' ? 'RETURN' : (isBkts ? 'FARMER_SALE' : 'FREE_SALE');
-        const status: MinistryRecord['status'] = isBkts ? 'Dışa Aktarıma Hazır' : 'Kayıtsız Serbest Satış';
-        const now = new Date().toISOString();
-        const out: MinistryRecord[] = [];
-        p.items.forEach((it, idx) => {
-            const qty = Math.abs(parseQty(it.quantity)) || 0;
-            if (!(qty > 0)) return;
-            const unit = contextInventory.find(inv => !inv.deletedAt && inv.pesticideId === it.pesticideId)?.unit;
-            const base = {
-                system: 'BKTS' as const,
-                recordType,
-                date: p.date,
-                documentNo: p.prescriptionNo,
-                prescriptionId: p.id,
-                bReceteCode: p.bReceteCode,
-                farmerId: farmer.id,
-                farmerName: farmer.fullName,
-                farmerTcNo: p.farmerTcNo,
-                pesticideId: it.pesticideId,
-                productName: it.pesticideName,
-                gtin: it.gtin || '',
-                unit,
-                status,
-                lastUpdated: now
-            };
-            const serials = it.serialNumbers || [];
-            serials.forEach(serial => {
-                const alloc = it.batchAllocations?.find(a => a.serialNumbers?.includes(serial));
-                out.push({
-                    ...base,
-                    id: `${p.id}:${idx}:S:${serial}`,
-                    lotNumber: alloc?.lotNumber || it.lotNumber || '',
-                    expiryDate: alloc?.expiryDate || it.expiryDate,
-                    serialNumber: serial,
-                    quantity: 1
-                });
-            });
-            let remaining = round2(qty - serials.length);
-            for (const a of it.batchAllocations || []) {
-                if (remaining <= 0) break;
-                const free = Math.max(0, a.quantity - (a.serialNumbers?.length || 0));
-                if (free <= 0) continue;
-                const q = round2(Math.min(free, remaining));
-                out.push({ ...base, id: `${p.id}:${idx}:L:${a.lotNumber}`, lotNumber: a.lotNumber, expiryDate: a.expiryDate || it.expiryDate, quantity: q });
-                remaining = round2(remaining - q);
-            }
-            if (remaining > 0) {
-                out.push({ ...base, id: `${p.id}:${idx}:R`, lotNumber: it.lotNumber || '', expiryDate: it.expiryDate, quantity: remaining });
-            }
-        });
-        return out;
-    };
-
-    /** Defter kayıtlarını kalıcı yazar; düzenlemede artık geçersiz kayıtları siler. Başarısızsa hata fırlatır (sahte başarı yok). */
-    const writeMinistryLedger = async (p: Prescription, farmer: Farmer) => {
-        const fresh = buildMinistryRecords(p, farmer);
-        let stale: MinistryRecord[] = [];
-        try {
-            const existing = await loadMinistryRecords();
-            const keep = new Set(fresh.map(r => r.id));
-            const now = new Date().toISOString();
-            stale = existing
-                .filter(r => r.prescriptionId === p.id && !r.deletedAt && !keep.has(r.id))
-                .map(r => ({ ...r, deletedAt: now, lastUpdated: now }));
-        } catch (e) {
-            console.warn('[Prescription] Mevcut defter kayıtları okunamadı', e);
-        }
-        const res = await saveMinistryRecords([...fresh, ...stale]);
-        if (!res.ok) throw new Error(res.error || 'Kayıt deposuna yazılamadı');
-        if (res.error) {
-            showToast(`BKTS defter kaydı veritabanına yazılamadı, bu cihazda yerel yedeğe alındı (${res.error}).`, 'info');
-        }
-        stale.forEach(r => {
-            if (!r.serialNumber) return;
-            const k = serialKey(r.gtin, r.serialNumber);
-            if (soldSerialsRef.current.get(k) === p.id) soldSerialsRef.current.delete(k);
-        });
-        fresh.forEach(r => {
-            if (!r.serialNumber) return;
-            const k = serialKey(r.gtin, r.serialNumber);
-            if (r.recordType === 'RETURN') soldSerialsRef.current.delete(k);
-            else soldSerialsRef.current.set(k, p.id);
-        });
-    };
-
-    /** Kaydedilen satışın serilerini oturum listesine işler (defter yazımı başarısız olsa bile tekrar satışı engeller). */
+    /** Kaydedilen satışın serilerini oturum listesine işler (tekrar satışı engeller). */
     const registerSessionSerials = (p: Prescription) => {
         p.items.forEach(it => (it.serialNumbers || []).forEach(s => {
             const k = serialKey(it.gtin, s);
@@ -1506,24 +1372,6 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                 sessionSerialsRef.current.set(k, p.id);
             }
         }));
-    };
-
-    // Satış / iade kaydından e-Fatura ekranını hazır bilgilerle açar (stok ve cari bu kayıtta zaten işlenmiştir)
-    const openEfaturaForSale = (p: Prescription) => {
-        const f = farmerMap[p.farmerId];
-        (window as any).mks_open_efatura?.('issue', {
-            kind: p.type === 'RETURN' ? 'IADE' : 'SATIS',
-            saleId: p.id,
-            farmerId: p.farmerId,
-            name: f?.fullName || '',
-            taxNo: p.farmerTcNo || f?.tcNo || '',
-            district: f?.village || '',
-            note: p.prescriptionNo,
-            lines: p.items.map(it => {
-                const qty = Math.abs(parseFloat(String(it.quantity || '1').replace(',', '.'))) || 1;
-                return { name: it.pesticideName, quantity: qty, price: it.unitPrice || (it.totalPrice ? Math.abs(it.totalPrice) / qty : 0) };
-            })
-        });
     };
 
     const handleSave = async () => {
@@ -1551,9 +1399,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
 
         let stage = 'doğrulama';
         try {
-            const isBkts = saleRegistryMode === 'BKTS';
             const isReturn = prescriptionType === 'RETURN';
-            const farmerFresh = farmerMap[selectedFarmer.id] || selectedFarmer;
             const liveInventory = contextInventory.filter(inv => !inv.deletedAt);
 
             // B-13: kimlik form açılışında üretildi; tekrar denemede aynı kimlik ve tamamlanan adımlar korunur
@@ -1583,24 +1429,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                 }
             }
 
-            // 2) BKTS/GTS kayıtlı satış: çiftçinin TCKN/VKN'si zorunlu ve geçerli olmalı (B-02)
-            let farmerTcNo: string | undefined;
-            if (isBkts) {
-                const tc = validateTcOrVkn(farmerFresh.tcNo);
-                if (tc.status === 'EMPTY' || !tc.isValid) {
-                    showToast(
-                        tc.status === 'EMPTY'
-                            ? `BKTS kayıtlı satış için "${farmerFresh.fullName}" adlı çiftçinin T.C. Kimlik No / VKN bilgisi zorunludur. Çiftçi kartına ekleyin veya "Kayıtsız Serbest Satış" seçin.`
-                            : `"${farmerFresh.fullName}" için kayıtlı T.C. Kimlik No / VKN geçersiz (${tc.message}). Çiftçi kartından düzeltin veya "Kayıtsız Serbest Satış" seçin.`,
-                        'error'
-                    );
-                    hapticFeedback('error');
-                    return;
-                }
-                farmerTcNo = String(farmerFresh.tcNo).trim();
-            }
-
-            // 3) Kalemler + izlenebilirlik verisi (GTIN / Lot / SKT / Seri / parti dağılımı)
+            // 2) Kalemler + depo parti verisi (GTIN / Lot / SKT / Seri)
             const items: (PrescriptionItem & { expiredSaleReason?: string })[] = [];
             const newExpiredReasons = new Map<string, string>();
             for (const i of selectedItems) {
@@ -1618,33 +1447,17 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                 let expiredSaleReason = i.expiredSaleReason;
                 if (!isReturn) {
                     const expiredDate = [expiryDate, ...(i.batchAllocations || []).map(a => a.expiryDate)].find(d => isExpiredDate(d));
-                    if (expiredDate) {
-                        if (isBkts) {
-                            playErrorBeep();
-                            showToast(`⛔ "${i.pesticide.name}" ürününün SKT'si geçmiş (${expiredDate}). BKTS kayıtlı satışta satılamaz; ürünü sepetten çıkarın.`, 'error');
-                            hapticFeedback('error');
-                            setStep(4);
+                    if (expiredDate && !expiredSaleReason) {
+                        const ok = await askConfirm('SKT Geçmiş Ürün', `"${i.pesticide.name}" ürününün son kullanma tarihi geçmiş (${expiredDate}). Yine de satmak istiyor musunuz?`, 'danger');
+                        if (!ok) { setStep(4); return; }
+                        const reason = window.prompt('SKT geçmiş ürün satış gerekçesi (zorunlu):', '');
+                        if (!reason || !reason.trim()) {
+                            showToast('Gerekçe girilmeden SKT geçmiş ürün satılamaz.', 'error');
                             return;
                         }
-                        if (!expiredSaleReason) {
-                            const ok = await askConfirm('SKT Geçmiş Ürün', `"${i.pesticide.name}" ürününün son kullanma tarihi geçmiş (${expiredDate}). Kayıtsız serbest satışta yine de satmak istiyor musunuz?`, 'danger');
-                            if (!ok) { setStep(4); return; }
-                            const reason = window.prompt('SKT geçmiş ürün satış gerekçesi (zorunlu):', '');
-                            if (!reason || !reason.trim()) {
-                                showToast('Gerekçe girilmeden SKT geçmiş ürün satılamaz.', 'error');
-                                return;
-                            }
-                            expiredSaleReason = reason.trim();
-                            newExpiredReasons.set(i.pesticide.id, expiredSaleReason);
-                        }
+                        expiredSaleReason = reason.trim();
+                        newExpiredReasons.set(i.pesticide.id, expiredSaleReason);
                     }
-                }
-
-                if (isBkts && (!gtin || !lotNumber)) {
-                    showToast(`BKTS kayıtlı satış: "${i.pesticide.name}" için ${!gtin ? 'GTIN (ürün barkodu)' : 'Lot / Parti No'} eksik. Ürün karekodunu okutun, depo kartını tamamlayın veya "Kayıtsız Serbest Satış" seçin.`, 'error');
-                    hapticFeedback('error');
-                    setStep(3);
-                    return;
                 }
 
                 const item: PrescriptionItem & { expiredSaleReason?: string } = {
@@ -1719,9 +1532,9 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
             const discountValue = Math.max(0, parseQty(prescriptionDiscount) || 0);
             const totalAmount = round2(Math.max(0, initialTotal - discountValue));
             const registryFields: Pick<Prescription, 'saleRegistryMode' | 'farmerTcNo' | 'bReceteCode'> = {
-                saleRegistryMode,
-                farmerTcNo: isBkts ? farmerTcNo : undefined,
-                bReceteCode: isBkts && bReceteEnabled && bReceteCode.trim() ? bReceteCode.trim() : undefined
+                saleRegistryMode: 'FREE',
+                farmerTcNo: undefined,
+                bReceteCode: undefined
             };
 
             // Kısmi kayıttan sonra sepet değiştiyse yarım kalan adımlar yanlış veriyle tamamlanmasın
@@ -1837,13 +1650,6 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                 progress.steps.add('transaction');
                 }
 
-                // BKTS/GTS defter kaydı (B-02) — başarısızsa hata fırlatır, sahte başarı gösterilmez
-                if (!progress.steps.has('ministry')) {
-                    stage = 'ministry';
-                    await writeMinistryLedger(updatedPrescription, farmerFresh);
-                    progress.steps.add('ministry');
-                }
-
                 await refreshStats();
 
                 const finalUpdated = { ...updatedPrescription, isInventoryProcessed: original.isProcessed !== false };
@@ -1953,33 +1759,21 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                     progress.steps.add('notification');
                 }
 
-                // BKTS/GTS defter kaydı (B-02) — başarısızsa hata fırlatır, sahte başarı gösterilmez
-                if (!progress.steps.has('ministry')) {
-                    stage = 'ministry';
-                    await writeMinistryLedger(newPrescription, farmerFresh);
-                    progress.steps.add('ministry');
-                }
-                
                 const finalNew = { ...newPrescription, isInventoryProcessed: true };
                 draftPrescriptionIdRef.current = null;
                 draftPrescriptionNoRef.current = null;
                 setDetailPrescription(finalNew);
                 changeViewMode('DETAIL', finalNew.id, true);
-                if (cutEInvoice) { setCutEInvoice(false); setTimeout(() => openEfaturaForSale(finalNew), 500); }
             }
 
             saveProgressRef.current = emptySaveProgress();
             await loadData();
             await refreshStats();
-            showToast(`${currentPrescriptionLabel} başarıyla kaydedildi${saleRegistryMode === 'BKTS' ? ' • BKTS defterine işlendi (Dışa Aktarıma Hazır)' : ''}`, 'success');
+            showToast(`${currentPrescriptionLabel} başarıyla kaydedildi (Depo ve Cari işlendi).`, 'success');
             hapticFeedback('success');
         } catch (error: any) {
             console.error("Save prescription error:", error);
-            if (stage === 'ministry') {
-                showToast(`Fatura kaydedildi ancak BKTS/GTS defter kaydı yazılamadı${error?.message ? ` (${error.message})` : ''}. Lütfen "Kaydet"e tekrar basın.`, 'error');
-            } else {
-                showToast(`Kayıt sırasında bir hata oluştu (${stage}). Bilgiler korunuyor; tekrar "Kaydet"e basarak kaldığı yerden devam edebilirsiniz.`, 'error');
-            }
+            showToast(`Kayıt sırasında bir hata oluştu (${stage}). Bilgiler korunuyor; tekrar "Kaydet"e basarak kaldığı yerden devam edebilirsiniz.`, 'error');
             hapticFeedback('error');
         } finally {
             isSavingPrescriptionRef.current = false;
@@ -2069,12 +1863,12 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
 
     const handlePdfAction = async (action: 'SHARE' | 'DOWNLOAD', targetPrescription?: Prescription, targetFarmer?: Farmer) => {
         if (!receiptRef.current) return;
-        setIsProcessingPdf(true);
 
         const currentPrescription = targetPrescription || detailPrescription;
         const currentFarmer = targetFarmer || selectedFarmer;
 
-        if (!currentPrescription || !currentFarmer) return;
+        if (!currentPrescription) return;
+        setIsProcessingPdf(true);
 
         try {
             // Mobile Optimization: Reduced Scale & JPEG
@@ -2092,11 +1886,12 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
             
             // Türkçe karakterleri tamamen ASCII'ye çevir (Android dosya sistemi uyumluluğu için)
             const charMap: {[key: string]: string} = {'Ğ':'G','ğ':'g','Ü':'U','ü':'u','Ş':'S','ş':'s','İ':'I','ı':'i','Ö':'O','ö':'o','Ç':'C','ç':'c'};
-            const safeName = currentFarmer.fullName
-                .replace(/[ĞğÜüŞşİıÖöÇç]/g, match => charMap[match])
+            const rawFarmerName = String(currentFarmer?.fullName || (currentPrescription as any).farmerName || 'Pesin_Satis');
+            const safeName = rawFarmerName
+                .replace(/[ĞğÜüŞşİıÖöÇç]/g, (match: string) => charMap[match])
                 .replace(/[^a-zA-Z0-9]/g, '_')
                 .replace(/_+/g, '_')
-                .replace(/^_|_$/g, '');
+                .replace(/^_|_$/g, '') || 'MKS_Satis';
             const pNo = currentPrescription.prescriptionNo;
             const fileName = `${safeName}_${currentPrescription.type === 'RETURN' ? 'Iade' : 'Satis'}_${pNo}.pdf`;
 
@@ -2173,24 +1968,6 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         return turkishMatchesAny([farmer?.fullName, p.crop, p.note], prescriptionSearchTerm);
     }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()) : [];
 
-    const trToEn = (text: string) => {
-        if (!text) return '';
-        return text
-            .replace(/Ğ/g, 'G').replace(/ğ/g, 'g')
-            .replace(/Ü/g, 'U').replace(/ü/g, 'u')
-            .replace(/Ş/g, 'S').replace(/ş/g, 's')
-            .replace(/İ/g, 'I').replace(/ı/g, 'i')
-            .replace(/Ö/g, 'O').replace(/ö/g, 'o')
-            .replace(/Ç/g, 'C').replace(/ç/g, 'c');
-    };
-
-    const pdfCurrency = (amount: number) => {
-        return new Intl.NumberFormat('tr-TR', {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2
-        }).format(amount);
-    };
-
     const generatePrescriptionReportPDF = async () => {
         setIsGeneratingReport(true);
         setTimeout(async () => {
@@ -2221,7 +1998,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                 let htmlContent = `
                     <div style="margin-bottom: 30px;">
                         <h1 style="font-size: 26px; font-weight: 800; margin: 0 0 8px 0; color: #3b82f6; text-transform: uppercase;">
-                            ${userProfile?.companyName || "FATURA RAPORU"}
+                            ${escapeHtml(userProfile?.companyName || "FATURA RAPORU")}
                         </h1>
                         <h2 style="font-size: 18px; font-weight: 700; margin: 0 0 4px 0; color: #1c1917;">
                             ${reportTypeSelection === 'SUMMARY' ? 'Fatura Listesi (Özet)' : 'Fatura Listesi (Detaylı)'}
@@ -2264,8 +2041,8 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                             htmlContent += `
                                 <tr style="background-color: ${bg}; border-bottom: 1px solid #e7e5e4;">
                                     <td style="padding: 10px;">${format(new Date(p.date || Date.now()), 'dd.MM.yyyy')}</td>
-                                    <td style="padding: 10px; font-weight: 600;">${farmer?.fullName || '-'}</td>
-                                    <td style="padding: 10px; font-family: monospace;">${p.prescriptionNo || '-'}</td>
+                                    <td style="padding: 10px; font-weight: 600;">${escapeHtml(farmer?.fullName || '-')}</td>
+                                    <td style="padding: 10px; font-family: monospace;">${escapeHtml(p.prescriptionNo || '-')}</td>
                                     <td style="padding: 10px; color: ${typeColor}; font-weight: bold;">${p.type === 'RETURN' ? 'İade' : 'Satış'}</td>
                                     <td style="padding: 10px;">${p.dueDate ? format(new Date(p.dueDate), 'dd.MM.yyyy') : '-'}</td>
                                     <td style="padding: 10px; text-align: right; font-family: monospace; font-size: 12px; font-weight: 600;">${formatCurrency(netAmount, userProfile?.currency || 'TRY')}</td>
@@ -2304,7 +2081,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                             htmlContent += `
                                 <tr style="background-color: #f1f5f9; border-top: 2px solid #cbd5e1; border-bottom: 1px solid #cbd5e1;">
                                     <td colspan="3" style="padding: 10px; font-weight: bold; color: #0f172a;">
-                                        ${format(new Date(p.date || Date.now()), 'dd.MM.yyyy')} | ${farmer?.fullName || '-'} | Fatura No: ${p.prescriptionNo || '-'} | Tür: ${typeStr}${vDate}
+                                        ${format(new Date(p.date || Date.now()), 'dd.MM.yyyy')} | ${escapeHtml(farmer?.fullName || '-')} | Fatura No: ${escapeHtml(p.prescriptionNo || '-')} | Tür: ${typeStr}${vDate}
                                     </td>
                                     <td style="padding: 10px; text-align: right; font-weight: bold; font-family: monospace; font-size: 12px; color: #0f172a;">
                                         ${formatCurrency(netAmount, userProfile?.currency || 'TRY')}
@@ -2315,8 +2092,8 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                             p.items.forEach(item => {
                                 htmlContent += `
                                     <tr style="border-bottom: 1px solid #f1f5f9;">
-                                        <td style="padding: 8px 10px 8px 20px;">${item.pesticideName}</td>
-                                        <td style="padding: 8px 10px; text-align: center;">${item.quantity || '-'}</td>
+                                        <td style="padding: 8px 10px 8px 20px;">${escapeHtml(item.pesticideName)}</td>
+                                        <td style="padding: 8px 10px; text-align: center;">${escapeHtml(item.quantity || '-')}</td>
                                         <td style="padding: 8px 10px; text-align: right; font-family: monospace;">${item.unitPrice ? formatCurrency(item.unitPrice, userProfile?.currency || 'TRY') : '-'}</td>
                                         <td style="padding: 8px 10px; text-align: right; font-family: monospace; font-weight: 600;">${item.totalPrice ? formatCurrency(item.totalPrice, userProfile?.currency || 'TRY') : '-'}</td>
                                     </tr>
@@ -2362,14 +2139,16 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
 
                 container.innerHTML = htmlContent;
                 document.body.appendChild(container);
-
-                const canvas = await renderElementToCanvas(container, {
-                    scale: 2,
-                    backgroundColor: '#ffffff',
-                    logging: false
-                });
-
-                document.body.removeChild(container);
+                let canvas: HTMLCanvasElement;
+                try {
+                    canvas = await renderElementToCanvas(container, {
+                        scale: 2,
+                        backgroundColor: '#ffffff',
+                        logging: false
+                    });
+                } finally {
+                    if (container.parentNode) container.parentNode.removeChild(container);
+                }
                 
                 const pdf = await createMultiPagePdf(canvas);
                 pdf.save(`Fatura_Raporu_${format(new Date(), 'yyyyMMdd_HHmm')}.pdf`);
@@ -2386,253 +2165,290 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     };
 
     if (viewMode === 'LIST') {
+        const curCode = userProfile?.currency || 'TRY';
+        const salesTotal = contextPrescriptions.filter(p => p.type !== 'RETURN').reduce((s, p) => s + Math.abs(p.totalAmount || 0), 0);
+        const returnsTotal = contextPrescriptions.filter(p => p.type === 'RETURN').reduce((s, p) => s + Math.abs(p.totalAmount || 0), 0);
+        const unprocessedCount = contextPrescriptions.filter(p => !p.isProcessed).length;
+
         return (
             <div className="relative h-full min-h-[80vh]">
-                <div className="p-1 sm:p-4 max-w-3xl mx-auto pb-28">
-                    <header className="hidden sm:flex mb-4 justify-between items-center py-2">
-                        <div>
-                            <h2 className="text-2xl font-bold text-stone-100">{t('prescription.title', { label: prescriptionLabel })}</h2>
-                            <p className="text-sm text-stone-500">{t('prescription.subtitle', { label: prescriptionLabel.toLowerCase() })}</p>
-                            {userProfile.lastSyncTime && (
-                                <p className="text-[10px] text-emerald-500/80 mt-0.5 flex items-center">
-                                    <Check size={10} className="mr-1" />
-                                    {t('prescription.last_sync')}: {new Date(userProfile.lastSyncTime).toLocaleTimeString(userProfile.language === 'tr' ? 'tr-TR' : userProfile.language === 'ar' ? 'ar-SA' : 'en-US', {hour: '2-digit', minute:'2-digit'})}
+                <div className="p-1 sm:p-3 max-w-4xl mx-auto pb-28 space-y-3">
+                    {/* MKS Kurumsal Kompakt Fatura Defteri Üst Alanı */}
+                    <section className="v22-bento-card p-3 sm:p-4 space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2.5">
+                            <div className="min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                    <h2 className="text-base sm:text-xl font-black text-[color:var(--mks-text)] tracking-tight">
+                                        {t('prescription.title', { label: prescriptionLabel })}
+                                    </h2>
+                                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 border border-emerald-500/25">
+                                        Depo & Cari Takibi
+                                    </span>
+                                </div>
+                                <p className="text-[11px] sm:text-xs text-[color:var(--mks-muted)] font-medium mt-0.5">
+                                    Satış, iade ve tahsilat hareketlerini sade biçimde yönetin.
+                                    {userProfile.lastSyncTime && (
+                                        <span className="ml-2 text-emerald-600 inline-flex items-center">
+                                            <Check size={10} className="mr-0.5" />
+                                            {new Date(userProfile.lastSyncTime).toLocaleTimeString(userProfile.language === 'tr' ? 'tr-TR' : userProfile.language === 'ar' ? 'ar-SA' : 'en-US', { hour: '2-digit', minute: '2-digit' })}
+                                        </span>
+                                    )}
                                 </p>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-1.5">
+                                {canCreatePrescription && (
+                                    <>
+                                        <button
+                                            type="button"
+                                            onClick={() => { resetForm('SALE'); changeViewMode('FORM'); }}
+                                            className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm active:scale-95 transition-all"
+                                        >
+                                            <Plus size={14} strokeWidth={2.5} /> Satış Faturası
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => { resetForm('RETURN'); changeViewMode('FORM'); }}
+                                            className="v22-surface-pill px-3 py-2 rounded-xl text-xs font-bold text-amber-600 flex items-center gap-1.5 active:scale-95 transition-all"
+                                        >
+                                            <ArrowLeft size={14} /> İade Al
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setIsPaymentModalOpen(true);
+                                                setSelectedPaymentFarmerId('');
+                                                setPaymentAmount('');
+                                                setPaymentNote('');
+                                                setPaymentDate(getLocalDateString());
+                                                setPaymentMethod('CASH');
+                                                setEditingPayment(null);
+                                            }}
+                                            className="v22-surface-pill px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all"
+                                        >
+                                            <CreditCard size={14} className="text-emerald-600" /> Tahsilat
+                                        </button>
+                                    </>
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={() => setIsReportModalOpen(true)}
+                                    className="v22-surface-pill px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all"
+                                    title="PDF Rapor Oluştur"
+                                >
+                                    <FileText size={14} /> Rapor
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Kompakt 4 KPI Kartı */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                            <div className="rounded-xl bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] px-3 py-2">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-[color:var(--mks-muted)] block">Toplam Kayıt</span>
+                                <span className="text-sm sm:text-base font-black text-[color:var(--mks-text)] tabular-nums">{contextPrescriptions.length}</span>
+                            </div>
+                            <div className="rounded-xl bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] px-3 py-2">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-[color:var(--mks-muted)] block">Satış Hacmi</span>
+                                <span className="text-sm sm:text-base font-black text-emerald-600 tabular-nums">{formatCurrency(salesTotal, curCode)}</span>
+                            </div>
+                            <div className="rounded-xl bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] px-3 py-2">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-[color:var(--mks-muted)] block">İade Toplamı</span>
+                                <span className="text-sm sm:text-base font-black text-amber-600 tabular-nums">{formatCurrency(returnsTotal, curCode)}</span>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setFilterMode('UNPROCESSED')}
+                                className="rounded-xl bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] px-3 py-2 text-left hover:border-rose-500/40 transition-colors"
+                            >
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-[color:var(--mks-muted)] block">Bekleyen Fatura</span>
+                                <span className={`text-sm sm:text-base font-black tabular-nums ${unprocessedCount > 0 ? 'text-rose-500' : 'text-[color:var(--mks-text)]'}`}>{unprocessedCount}</span>
+                            </button>
+                        </div>
+                    </section>
+
+                    {/* Arama & Kompakt Filtre Şeridi */}
+                    <div className="flex flex-col sm:flex-row gap-2">
+                        <div className="v22-bento-card flex-1 flex items-center px-3 py-1.5">
+                            <Search className="text-[color:var(--mks-muted)] mr-2 shrink-0" size={16} />
+                            <input
+                                type="text"
+                                placeholder={t('prescription.search_placeholder', { farmer: farmerLabel, label: prescriptionLabel.toLowerCase() })}
+                                className="w-full py-1.5 bg-transparent outline-none font-semibold text-[color:var(--mks-text)] placeholder-[color:var(--mks-muted)] text-xs sm:text-sm"
+                                value={prescriptionSearchTerm}
+                                onChange={e => setPrescriptionSearchTerm(e.target.value)}
+                            />
+                            {prescriptionSearchTerm && (
+                                <button onClick={() => setPrescriptionSearchTerm('')} className="p-1 text-[color:var(--mks-muted)] hover:text-[color:var(--mks-text)]">
+                                    <X size={15} />
+                                </button>
                             )}
                         </div>
-                        <button 
-                            onClick={() => setIsReportModalOpen(true)}
-                            className="px-3 py-1.5 bg-stone-900 text-stone-400 rounded-xl border border-white/5 hover:text-emerald-400 hover:bg-stone-800 transition-all active:scale-95 flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider"
-                            title="Rapor Oluştur"
-                        >
-                            <FileText size={14} />
-                            Rapor
-                        </button>
-                    </header>
 
-                    <div className="bg-stone-900 rounded-2xl shadow-sm border border-white/5 flex items-center p-1 mb-2.5 sm:mb-4">
-                        <Search className="text-stone-500 ml-3" size={18} />
-                        <input 
-                            type="text" 
-                            placeholder={t('prescription.search_placeholder', { farmer: farmerLabel, label: prescriptionLabel.toLowerCase() })} 
-                            className="w-full p-2.5 bg-transparent outline-none font-medium text-stone-200 placeholder-stone-600 text-sm"
-                            value={prescriptionSearchTerm}
-                            onChange={e => setPrescriptionSearchTerm(e.target.value)}
-                        />
-                        {prescriptionSearchTerm && (
-                            <button onClick={() => setPrescriptionSearchTerm('')} className="p-2 text-stone-500 hover:text-stone-300">
-                                <X size={16} />
+                        <div className="v22-bento-card p-1 flex items-center gap-1 overflow-x-auto no-scrollbar shrink-0">
+                            <button
+                                onClick={() => setFilterMode('ALL')}
+                                className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all ${filterMode === 'ALL' ? 'v22-dark-pill shadow-xs' : 'text-[color:var(--mks-muted)] hover:text-[color:var(--mks-text)]'}`}
+                            >
+                                {t('prescription.filter_all')}
                             </button>
-                        )}
-                        <button
-                            type="button"
-                            onClick={() => setIsReportModalOpen(true)}
-                            className="sm:hidden shrink-0 min-h-[40px] px-3 mr-0.5 rounded-xl bg-stone-800 text-stone-300 border border-white/5 flex items-center gap-1.5 text-[11px] font-bold active:scale-95"
-                            aria-label="Rapor oluştur"
-                        >
-                            <FileText size={14} />
-                            Rapor
-                        </button>
-                    </div>
-
-                    {/* Filter Buttons */}
-                    <div className="flex gap-0.5 p-1 bg-stone-900/80 rounded-2xl border border-white/5 mb-3 sm:mb-5 max-w-full w-fit overflow-x-auto no-scrollbar">
-                        <button 
-                            onClick={() => setFilterMode('ALL')}
-                            className={`shrink-0 whitespace-nowrap min-h-[36px] px-3 py-1.5 rounded-xl text-[11px] font-extrabold transition-all ${
-                                filterMode === 'ALL' 
-                                ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/20 scale-[1.02]' 
-                                : 'text-stone-500 hover:text-stone-300'
-                            }`}
-                        >
-                            {t('prescription.filter_all')}
-                        </button>
-                        <button 
-                            onClick={() => setFilterMode('UNPROCESSED')}
-                            className={`shrink-0 whitespace-nowrap min-h-[36px] px-3 py-1.5 rounded-xl text-[11px] font-extrabold transition-all flex items-center gap-2 ${
-                                filterMode === 'UNPROCESSED' 
-                                ? 'bg-rose-600 text-white shadow-lg shadow-rose-900/20 scale-[1.02]' 
-                                : 'text-stone-500 hover:text-stone-300'
-                            }`}
-                        >
-                            <div className={`w-1.5 h-1.5 rounded-full ${filterMode === 'UNPROCESSED' ? 'bg-white animate-pulse' : 'bg-rose-500'}`}></div>
-                            {t('prescription.filter_unprocessed')}
-                        </button>
-                        <button 
-                            onClick={() => setFilterMode('PROCESSED')}
-                            className={`shrink-0 whitespace-nowrap min-h-[36px] px-3 py-1.5 rounded-xl text-[11px] font-extrabold transition-all flex items-center gap-2 ${
-                                filterMode === 'PROCESSED' 
-                                ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20 scale-[1.02]' 
-                                : 'text-stone-500 hover:text-stone-300'
-                            }`}
-                        >
-                            <div className={`w-1.5 h-1.5 rounded-full ${filterMode === 'PROCESSED' ? 'bg-white' : 'bg-blue-500'}`}></div>
-                            {t('prescription.filter_processed')}
-                        </button>
-                        <button 
-                            onClick={() => setFilterMode('PAYMENTS')}
-                            className={`shrink-0 whitespace-nowrap min-h-[36px] px-3 py-1.5 rounded-xl text-[11px] font-extrabold transition-all flex items-center gap-2 ${
-                                filterMode === 'PAYMENTS' 
-                                ? 'bg-amber-600 text-white shadow-lg shadow-amber-900/20 scale-[1.02]' 
-                                : 'text-stone-500 hover:text-stone-300'
-                            }`}
-                        >
-                            <div className={`w-1.5 h-1.5 rounded-full ${filterMode === 'PAYMENTS' ? 'bg-white' : 'bg-amber-500'}`}></div>
-                            Tahsilatlar
-                        </button>
+                            <button
+                                onClick={() => setFilterMode('UNPROCESSED')}
+                                className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5 ${filterMode === 'UNPROCESSED' ? 'bg-rose-600 text-white shadow-xs' : 'text-[color:var(--mks-muted)] hover:text-[color:var(--mks-text)]'}`}
+                            >
+                                <span className={`w-1.5 h-1.5 rounded-full ${filterMode === 'UNPROCESSED' ? 'bg-white' : 'bg-rose-500'}`} />
+                                {t('prescription.filter_unprocessed')}
+                            </button>
+                            <button
+                                onClick={() => setFilterMode('PROCESSED')}
+                                className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5 ${filterMode === 'PROCESSED' ? 'bg-emerald-600 text-white shadow-xs' : 'text-[color:var(--mks-muted)] hover:text-[color:var(--mks-text)]'}`}
+                            >
+                                <span className={`w-1.5 h-1.5 rounded-full ${filterMode === 'PROCESSED' ? 'bg-white' : 'bg-emerald-500'}`} />
+                                {t('prescription.filter_processed')}
+                            </button>
+                            <button
+                                onClick={() => setFilterMode('PAYMENTS')}
+                                className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5 ${filterMode === 'PAYMENTS' ? 'bg-amber-600 text-white shadow-xs' : 'text-[color:var(--mks-muted)] hover:text-[color:var(--mks-text)]'}`}
+                            >
+                                <span className={`w-1.5 h-1.5 rounded-full ${filterMode === 'PAYMENTS' ? 'bg-white' : 'bg-amber-500'}`} />
+                                Tahsilatlar
+                            </button>
+                        </div>
                     </div>
 
                     <div className="space-y-2">
                         {isLoading ? (
                             <ListSkeleton count={5} />
-                        ) : filteredPrescriptions.length === 0 ? (
+                        ) : filteredPrescriptions.length === 0 && filterMode !== 'PAYMENTS' ? (
                             <EmptyState
                                 icon={FileText}
                                 title={prescriptionSearchTerm ? t('prescription.empty_search', { label: prescriptionLabel.toLowerCase() }) : t('prescription.empty_list', { label: prescriptionLabel.toLowerCase() })}
                                 description={!prescriptionSearchTerm ? t('prescription.empty_hint', { label: prescriptionLabel.toLowerCase() }) : ''}
                                 actionLabel={canCreatePrescription && !prescriptionSearchTerm ? `Yeni ${prescriptionLabel} Oluştur` : undefined}
-                                onAction={canCreatePrescription && !prescriptionSearchTerm ? () => changeViewMode('FORM') : undefined}
+                                onAction={canCreatePrescription && !prescriptionSearchTerm ? () => { resetForm('SALE'); changeViewMode('FORM'); } : undefined}
                                 actionIcon={Plus}
                             />
                         ) : filterMode === 'PAYMENTS' ? (
-                            filteredPaymentsForList.map(p => {
-                                const farmer = farmerMap[p.farmerId];
-                                const dateObj = new Date(p.date);
-                                const isCheckOrTedye = p.method === 'CHECK' || p.method === 'TEDYE';
-                                return (
-                                    <div 
-                                        key={p.id}
-                                        className="bg-stone-900/80 backdrop-blur-xl p-2.5 rounded-2xl shadow-xl border border-white/10 hover:border-emerald-500/30 transition-all relative overflow-hidden group active:scale-[0.98]"
-                                    >
-                                        <div className="flex justify-between items-start mb-2">
-                                            <div className="flex items-center space-x-3">
-                                                <div className="w-8 h-8 rounded-lg flex items-center justify-center font-bold border shadow-inner shrink-0 bg-emerald-900/20 text-emerald-500 border-emerald-500/20">
-                                                    <CreditCard size={16} />
-                                                </div>
-                                                <div className="min-w-0">
-                                                    <div className="flex items-center gap-1.5">
-                                                        <h3 className="font-black text-stone-100 text-sm leading-tight truncate tracking-tight">{farmer?.fullName || 'Bilinmeyen Çiftçi'}</h3>
+                            filteredPaymentsForList.length === 0 ? (
+                                <EmptyState
+                                    icon={CreditCard}
+                                    title="Tahsilat kaydı bulunamadı"
+                                    description="Seçili arama kriterine uygun tahsilat hareketi yok."
+                                />
+                            ) : (
+                                filteredPaymentsForList.map(p => {
+                                    const farmer = farmerMap[p.farmerId];
+                                    const dateObj = new Date(p.date);
+                                    return (
+                                        <div
+                                            key={p.id}
+                                            className="v22-bento-card p-3 transition-all group"
+                                        >
+                                            <div className="flex items-center justify-between gap-2.5">
+                                                <div className="flex items-center gap-2.5 min-w-0">
+                                                    <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-emerald-500/15 text-emerald-600 border border-emerald-500/25">
+                                                        <CreditCard size={16} />
                                                     </div>
-                                                    <div className="flex items-center gap-2 mt-0.5">
-                                                        <span className="text-[8px] text-stone-400 font-bold flex items-center bg-stone-800/50 px-1.5 py-0.5 rounded">
-                                                            <User size={8} className="mr-1" />
-                                                            {p.createdById ? (teamMembers.find(m => m.id === p.createdById)?.fullName || 'Yönetici') : 'Yönetici'}
-                                                        </span>
-                                                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all items-center">
-                                                            <button onClick={(e) => { e.stopPropagation(); handleEditPayment(p); }} className="p-1 text-stone-500 hover:text-emerald-500">
-                                                                <Edit2 size={12}/>
-                                                            </button>
-                                                            <button onClick={(e) => { e.stopPropagation(); handleDeletePayment(p.id); }} className="p-1 text-stone-500 hover:text-rose-500 transition-all">
-                                                                <Trash2 size={12}/>
+                                                    <div className="min-w-0">
+                                                        <h3 className="font-extrabold text-[color:var(--mks-text)] text-xs sm:text-sm leading-tight truncate">{farmer?.fullName || 'Bilinmeyen Çiftçi'}</h3>
+                                                        <div className="flex items-center flex-wrap gap-1.5 mt-1 text-[10px] text-[color:var(--mks-muted)] font-semibold">
+                                                            <span className="inline-flex items-center gap-1"><Calendar size={10} />{dateObj.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })}</span>
+                                                            <span>·</span>
+                                                            <span>{p.method === 'CASH' ? 'Nakit' : p.method === 'CARD' ? 'Kredi Kartı' : p.method === 'CHECK' ? 'Çek' : p.method === 'TEDYE' ? 'Tediye' : 'Diğer'}</span>
+                                                            <button
+                                                                type="button"
+                                                                onClick={(e) => { e.stopPropagation(); handleSendReceiptButton(p); }}
+                                                                className="px-2 py-0.5 text-[9px] font-black uppercase text-emerald-600 bg-emerald-500/15 border border-emerald-500/25 rounded-md hover:bg-emerald-500/25 transition-all"
+                                                            >
+                                                                MAKBUZ
                                                             </button>
                                                         </div>
-                                                        <button 
-                                                            onClick={(e) => { e.stopPropagation(); handleSendReceiptButton(p); }}
-                                                            className="px-1.5 py-0.5 text-[8px] font-black uppercase text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 rounded hover:bg-emerald-500/20 transition-all shadow-sm flex items-center justify-center cursor-pointer"
-                                                        >
-                                                            MAKBUZ
-                                                        </button>
                                                     </div>
                                                 </div>
-                                            </div>
-                                            <div className="flex flex-col items-end gap-1.5 shrink-0 ml-2">
-                                                <div className="flex items-center gap-1.5">
-                                                    <span className={`text-[9px] font-black font-mono px-1.5 py-0.5 rounded border shadow-sm bg-emerald-950/50 text-emerald-400 border-emerald-500/20`}>
-                                                        {formatCurrency(p.amount, userProfile?.currency || 'TRY')}
+                                                <div className="flex items-center gap-2 shrink-0">
+                                                    <span className="text-sm font-black tabular-nums text-emerald-600">
+                                                        {formatCurrency(p.amount, curCode)}
                                                     </span>
-                                                    <span className="text-[8px] font-black text-stone-400 flex items-center bg-stone-950/50 px-1.5 py-0.5 rounded border border-white/5 shadow-sm uppercase tracking-widest">
-                                                        <Calendar size={8} className="mr-1" />
-                                                        {dateObj.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })}
-                                                    </span>
-                                                </div>
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-[8px] font-black text-stone-400 uppercase tracking-widest">
-                                                        {p.method === 'CASH' ? 'Nakit' : p.method === 'CARD' ? 'Kredi Kartı' : p.method === 'CHECK' ? 'Çek' : p.method === 'TEDYE' ? 'Tediye' : 'Diğer'}
-                                                    </span>
+                                                    <button onClick={(e) => { e.stopPropagation(); handleEditPayment(p); }} className="p-1.5 rounded-lg text-[color:var(--mks-muted)] hover:text-emerald-600" title="Düzenle">
+                                                        <Edit2 size={13} />
+                                                    </button>
+                                                    <button onClick={(e) => { e.stopPropagation(); handleDeletePayment(p.id); }} className="p-1.5 rounded-lg text-[color:var(--mks-muted)] hover:text-rose-500" title="Sil">
+                                                        <Trash2 size={13} />
+                                                    </button>
                                                 </div>
                                             </div>
                                         </div>
-                                    </div>
-                                );
-                            })
+                                    );
+                                })
+                            )
                         ) : (
                             filteredPrescriptions.map(p => {
                                 const farmer = farmerMap[p.farmerId];
                                 const dateObj = new Date(p.date);
+                                const cropTitle = p.crop || p.cropName;
 
                                 return (
-                                    <div 
-                                        key={p.id} 
+                                    <div
+                                        key={p.id}
                                         onClick={() => handleViewDetail(p)}
-                                        className="bg-stone-900/80 p-2.5 sm:p-3 rounded-2xl shadow-sm border border-white/10 hover:border-emerald-500/30 transition-all relative overflow-hidden group cursor-pointer active:scale-[0.99]"
+                                        className="v22-bento-card p-3 hover:border-emerald-500/40 transition-all cursor-pointer active:scale-[0.995]"
                                     >
                                         <div className="flex items-center gap-2.5">
-                                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center border shrink-0 ${p.type === 'RETURN' ? 'bg-amber-900/20 text-amber-500 border-amber-500/20' : 'bg-blue-900/20 text-blue-400 border-blue-500/20'}`}>
+                                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center border shrink-0 ${p.type === 'RETURN' ? 'bg-amber-500/15 text-amber-600 border-amber-500/25' : 'bg-emerald-500/15 text-emerald-600 border-emerald-500/25'}`}>
                                                 {p.type === 'RETURN' ? <ArrowLeft size={16} /> : <FileText size={16} />}
                                             </div>
                                             <div className="min-w-0 flex-1">
-                                                <div className="flex items-center gap-1.5 min-w-0">
-                                                    <h3 className="font-extrabold text-stone-100 text-sm leading-tight truncate">{farmer?.fullName || t('prescription.unknown_farmer', { farmer: farmerLabel })}</h3>
-                                                    {p.type === 'RETURN' && (
-                                                        <span className="shrink-0 text-[10px] font-extrabold bg-amber-500/20 text-amber-500 px-1.5 py-0.5 rounded-md border border-amber-500/30 leading-none">İADE</span>
-                                                    )}
-                                                    {p.priceType === 'CASH' && (
-                                                        <span className="shrink-0 text-[10px] font-extrabold bg-emerald-500/20 text-emerald-500 px-1.5 py-0.5 rounded-md border border-emerald-500/30 leading-none">PEŞİN</span>
+                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                    <h3 className="font-black text-[color:var(--mks-text)] text-xs sm:text-sm leading-tight truncate">{farmer?.fullName || t('prescription.unknown_farmer', { farmer: farmerLabel })}</h3>
+                                                    <span className={`shrink-0 text-[9.5px] font-extrabold px-1.5 py-0.5 rounded-md border leading-none ${p.type === 'RETURN' ? 'bg-amber-500/15 text-amber-600 border-amber-500/30' : 'bg-sky-500/15 text-sky-600 border-sky-500/30'}`}>
+                                                        {p.type === 'RETURN' ? 'İADE' : 'SATIŞ'}
+                                                    </span>
+                                                    <span className={`shrink-0 text-[9.5px] font-extrabold px-1.5 py-0.5 rounded-md border leading-none ${p.priceType === 'CASH' ? 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30' : 'bg-[color:var(--mks-subcard)] text-[color:var(--mks-muted)] border-[color:var(--mks-card-border)]'}`}>
+                                                        {p.priceType === 'CASH' ? 'PEŞİN' : 'VADELİ'}
+                                                    </span>
+                                                    {cropTitle && (
+                                                        <span className="shrink-0 text-[9.5px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 leading-none">
+                                                            {cropTitle}
+                                                        </span>
                                                     )}
                                                 </div>
-                                                <p className="mt-1 text-[11px] text-stone-400 font-semibold truncate flex items-center gap-1.5">
+                                                <p className="mt-1 text-[11px] text-[color:var(--mks-muted)] font-semibold truncate flex items-center gap-1.5">
                                                     <Calendar size={11} className="shrink-0" />
                                                     <span className="shrink-0">{dateObj.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: '2-digit' })}</span>
-                                                    <span className="text-stone-600">·</span>
-                                                    <span className="truncate">{p.prescriptionNo}</span>
+                                                    <span>·</span>
+                                                    <span className="font-mono truncate">{p.prescriptionNo}</span>
                                                 </p>
                                             </div>
-                                            <div className="shrink-0 flex flex-col items-end gap-1">
+                                            <div className="shrink-0 flex flex-col items-end gap-0.5">
                                                 {p.totalAmount !== undefined && p.totalAmount !== null && Math.abs(p.totalAmount) > 0 && (
-                                                    <span className={`text-sm font-black tabular-nums leading-tight ${p.type === 'RETURN' ? 'text-amber-400' : 'text-emerald-400'}`}>
-                                                        {p.type === 'RETURN' ? '-' : ''}{formatCurrency(Math.abs(p.totalAmount), userProfile?.currency || 'TRY')}
+                                                    <span className={`text-sm font-black tabular-nums leading-tight ${p.type === 'RETURN' ? 'text-amber-600' : 'text-emerald-600'}`}>
+                                                        {p.type === 'RETURN' ? '-' : ''}{formatCurrency(Math.abs(p.totalAmount), curCode)}
                                                     </span>
                                                 )}
-                                                <span className="text-[10px] text-stone-500 font-semibold flex items-center gap-1 max-w-[110px] truncate">
+                                                <span className="text-[10px] text-[color:var(--mks-muted)] font-semibold flex items-center gap-1 max-w-[110px] truncate">
                                                     <User size={10} className="shrink-0" />
                                                     <span className="truncate">{p.createdById ? (teamMembers.find(m => m.id === p.createdById)?.fullName || t('prescription.manager')) : t('prescription.manager')}</span>
                                                 </span>
                                             </div>
                                         </div>
-                                        <div className="mt-2 pt-2 border-t border-white/5 flex items-center gap-2">
+
+                                        <div className="mt-2 pt-2 border-t border-[color:var(--mks-card-border)] flex items-center gap-2">
                                             <div className="min-w-0 flex-1 flex items-center gap-1 overflow-hidden">
                                                 {p.items.slice(0, 2).map((item, idx) => (
-                                                    <span key={idx} className="min-w-0 truncate text-[10px] font-bold bg-stone-950/50 text-stone-400 px-1.5 py-1 rounded-md border border-white/5 leading-none">
+                                                    <span key={idx} className="min-w-0 truncate text-[10px] font-bold bg-[color:var(--mks-subcard)] text-[color:var(--mks-text)] px-2 py-1 rounded-lg border border-[color:var(--mks-card-border)] leading-none">
                                                         {item.pesticideName}{item.quantity ? ` ×${item.quantity.toString().replace(/^-/, '')}` : ''}
                                                     </span>
                                                 ))}
                                                 {p.items.length > 2 && (
-                                                    <span className="shrink-0 text-[10px] font-bold bg-stone-950/50 text-stone-500 px-1.5 py-1 rounded-md border border-white/5 leading-none">
+                                                    <span className="shrink-0 text-[10px] font-bold bg-[color:var(--mks-subcard)] text-[color:var(--mks-muted)] px-1.5 py-1 rounded-lg border border-[color:var(--mks-card-border)] leading-none">
                                                         +{p.items.length - 2}
                                                     </span>
                                                 )}
                                             </div>
-                                            {p.eInvoiceNo ? (
-                                                <span className="shrink-0 h-8 px-2 rounded-lg flex items-center gap-1 bg-emerald-600/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold" title={`e-Fatura no: ${p.eInvoiceNo}`}>
-                                                    <FileText size={13} />
-                                                    <span>Kesildi</span>
-                                                </span>
-                                            ) : (
-                                                <button
-                                                    type="button"
-                                                    onClick={(e) => { e.stopPropagation(); openEfaturaForSale(p); }}
-                                                    className="shrink-0 h-8 px-2 rounded-lg flex items-center gap-1 bg-indigo-600/10 border border-indigo-500/30 text-indigo-400 text-[10px] font-bold hover:bg-indigo-600/20 transition-all active:scale-95"
-                                                    title="Bu kayıt için e-Fatura / e-Arşiv kes"
-                                                >
-                                                    <FileText size={13} />
-                                                    <span>{p.type === 'RETURN' ? 'İade e-Fatura' : 'e-Fatura'}</span>
-                                                </button>
-                                            )}
                                             {!hideCostAndProfit && (
                                                 <button
                                                     type="button"
                                                     onClick={(e) => { e.stopPropagation(); setShowProfitId(p.id); }}
-                                                    className="shrink-0 h-8 px-2 rounded-lg flex items-center gap-1 bg-emerald-600/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold hover:bg-emerald-600/20 transition-all active:scale-95"
+                                                    className="shrink-0 h-8 px-2.5 rounded-xl flex items-center gap-1 bg-emerald-500/15 border border-emerald-500/25 text-emerald-600 text-[10px] font-bold hover:bg-emerald-500/25 transition-all active:scale-95"
                                                     title="Kâr/Zarar Analizi"
                                                     aria-label="Kâr/zarar analizi"
                                                 >
@@ -2644,10 +2460,10 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                                 type="button"
                                                 onClick={(e) => toggleProcessed(e, p)}
                                                 title={p.isProcessed ? 'İşlendi — geri almak için dokun' : 'İşlenmedi — işlendi yapmak için dokun'}
-                                                className={`shrink-0 h-8 px-2 rounded-lg flex items-center gap-1 text-[10px] font-bold transition-all border active:scale-95 relative z-30 ${
+                                                className={`shrink-0 h-8 px-2.5 rounded-xl flex items-center gap-1 text-[10px] font-bold transition-all border active:scale-95 relative z-30 ${
                                                     p.isProcessed
-                                                    ? 'bg-blue-600/10 border-blue-500/30 text-blue-400'
-                                                    : 'bg-rose-600/10 border-rose-500/30 text-rose-400'
+                                                    ? 'bg-sky-500/15 border-sky-500/30 text-sky-600'
+                                                    : 'bg-rose-500/15 border-rose-500/30 text-rose-600'
                                                 }`}
                                             >
                                                 {p.isProcessed ? <Check size={13} strokeWidth={3} /> : <X size={13} strokeWidth={3} />}
@@ -2679,7 +2495,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                         setSelectedPaymentFarmerId('');
                                         setPaymentAmount('');
                                         setPaymentNote('');
-                                        setPaymentDate(new Date().toISOString().split('T')[0]);
+                                        setPaymentDate(getLocalDateString());
                                         setPaymentMethod('CASH');
                                         setEditingPayment(null);
                                     }}
@@ -2831,119 +2647,113 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
         );
     }
 
-    return (
-        <div className="p-2.5 sm:p-4 max-w-3xl mx-auto pb-28 sm:pb-24 animate-in slide-in-from-right duration-200">
-            <div className="flex items-center mb-3 sm:mb-6">
-                 <button onClick={handleBackFromForm} className="mr-2 sm:mr-4 text-stone-400 hover:text-stone-200 flex items-center text-xs sm:text-sm font-bold">
-                    <X size={16} className="mr-1" /> İptal
-                 </button>
-                 <div className="flex-1 h-1.5 sm:h-2 bg-stone-800 rounded-full overflow-hidden mx-2 sm:mx-4">
-                     <div className={`h-full bg-emerald-600 transition-all duration-300 ${step === 1 ? 'w-1/5' : (step === 2 ? 'w-2/5' : (step === 3 ? 'w-3/5' : (step === 4 ? 'w-4/5' : 'w-full')))}`}></div>
-                 </div>
-                 <span className="font-black text-emerald-500 text-xs sm:text-sm whitespace-nowrap">Adım {step}/5</span>
-            </div>
+    const wizardSteps = [
+        { num: 1, label: 'Çiftçi' },
+        { num: 2, label: 'Ekili Ürün' },
+        { num: 3, label: 'İlaçlar' },
+        { num: 4, label: 'Fiyat & Adet' },
+        { num: 5, label: 'Onay' }
+    ];
 
-            {/* Smart bar: BKTS/GTS mode, hold cart, voice, tank mix & holder tank summary */}
-            <div className="mb-4 sm:mb-5 space-y-1.5 sm:space-y-2">
-                <div className="flex flex-wrap items-center gap-1 sm:gap-1.5">
-                    <div className="flex bg-stone-900 border border-white/5 rounded-full p-0.5 text-[10px] sm:text-[11px] font-black">
-                        <button
-                            onClick={() => setSaleRegistryMode('BKTS')}
-                            aria-pressed={saleRegistryMode === 'BKTS'}
-                            className={`px-2.5 sm:px-3 py-1 min-h-[30px] sm:min-h-[36px] rounded-full transition-colors ${saleRegistryMode === 'BKTS' ? 'bg-emerald-600 text-stone-950' : 'text-stone-400 hover:text-stone-200'}`}
-                        >BKTS/GTS Kayıtlı Satış</button>
-                        <button
-                            onClick={() => setSaleRegistryMode('FREE')}
-                            aria-pressed={saleRegistryMode === 'FREE'}
-                            className={`px-2.5 sm:px-3 py-1 min-h-[30px] sm:min-h-[36px] rounded-full transition-colors ${saleRegistryMode === 'FREE' ? 'bg-stone-700 text-stone-100' : 'text-stone-400 hover:text-stone-200'}`}
-                        >Kayıtsız Serbest Satış</button>
-                    </div>
-                    {saleRegistryMode === 'BKTS' && (
-                        <button
-                            onClick={() => (window as any).mks_open_ministry?.('satis')}
-                            className="flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] sm:text-[11px] font-black hover:bg-emerald-500/20 transition-colors"
-                        ><ShieldCheck size={12} /> BKTS Defteri</button>
-                    )}
-                    <div className="flex-1" />
-                    <button
-                        type="button"
-                        onClick={() => setIsTemplateModalOpen(true)}
-                        title="Hazır Reçete Şablonları (#12)"
-                        className="flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 text-[9px] sm:text-[10px] font-black hover:bg-indigo-500/20 transition-colors"
-                    >
-                        <Bookmark size={11} /> Şablonlar {templates.length > 0 ? `(${templates.length})` : ''}
-                    </button>
-                    {selectedItems.length > 0 && (
+    return (
+        <div className="p-2.5 sm:p-5 max-w-4xl mx-auto pb-28 sm:pb-24 animate-in slide-in-from-right duration-200">
+            {/* MKS Kurumsal 5 Adımlı Fatura Sihirbazı Üst Paneli */}
+            <div className="v22-bento-card p-3 sm:p-4 mb-3.5 sm:mb-5 border border-[var(--mks-card-border)] space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
                         <button
                             type="button"
-                            onClick={() => setIsSaveTemplateOpen(true)}
-                            title="Mevcut Reçeteyi Şablon Olarak Kaydet (#12)"
-                            className="flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-[9px] sm:text-[10px] font-black hover:bg-emerald-500/20 transition-colors"
+                            onClick={handleBackFromForm}
+                            className="v22-surface-pill px-3 py-1.5 rounded-xl text-xs font-black text-[var(--mks-muted)] hover:text-[var(--mks-text)] flex items-center gap-1.5 transition-colors shrink-0"
                         >
-                            <Save size={11} /> Şablon Kaydet
+                            <X size={14} /> İptal
                         </button>
-                    )}
-                    <button
-                        onClick={toggleHeldCart}
-                        disabled={selectedItems.length === 0 && !hasHeldCart}
-                        title="Müşteri Beklet / Çağır"
-                        className={`flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-full border text-[9px] sm:text-[10px] font-black transition-colors disabled:opacity-40 ${hasHeldCart ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'bg-stone-900 border-white/5 text-stone-300 hover:bg-stone-800'}`}
-                    >
-                        {hasHeldCart && selectedItems.length === 0 ? <Play size={11} /> : <Pause size={11} />}
-                        {hasHeldCart && selectedItems.length === 0 ? 'Müşteri Çağır' : hasHeldCart ? 'Beklet ⇄ Çağır' : 'Müşteri Beklet'}
-                    </button>
-                    <button
-                        onClick={startVoiceCommand}
-                        disabled={isListening}
-                        title="Sesli Komut (çiftçi veya ürün adı söyleyin)"
-                        aria-label="Sesli Komut"
-                        className={`p-1.5 sm:p-2 rounded-full border transition-colors ${isListening ? 'bg-rose-500/20 border-rose-500/40 text-rose-400 animate-pulse' : 'bg-stone-900 border-white/5 text-stone-300 hover:bg-stone-800'}`}
-                    ><Mic size={13} /></button>
-                </div>
-
-                {/* BKTS/GTS kayıtlı satış ön koşulları: çiftçi TCKN/VKN + opsiyonel B-Reçete kodu (B-02) */}
-                {saleRegistryMode === 'BKTS' ? (
-                    <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-2.5 space-y-2">
-                        {selectedFarmer ? (() => {
-                            const fr = farmerMap[selectedFarmer.id] || selectedFarmer;
-                            const tc = validateTcOrVkn(fr.tcNo);
-                            const ok = tc.isValid && tc.status !== 'EMPTY';
-                            return (
-                                <div className={`flex items-start gap-2 text-[11px] leading-snug ${ok ? 'text-emerald-300' : 'text-rose-300'}`}>
-                                    {ok ? <ShieldCheck size={14} className="shrink-0 mt-0.5" /> : <AlertTriangle size={14} className="shrink-0 mt-0.5" />}
-                                    <span>
-                                        {ok
-                                            ? <>Çiftçi {tc.status === 'VALID_VKN' ? 'VKN' : 'TCKN'} doğrulandı: <b className="font-mono">{String(fr.tcNo).trim()}</b></>
-                                            : tc.status === 'EMPTY'
-                                                ? <>BKTS kayıtlı satış için <b>{fr.fullName}</b> adlı çiftçinin T.C. Kimlik No / VKN bilgisi gerekli. Çiftçi kartına ekleyin veya <b>Kayıtsız Serbest Satış</b> seçin.</>
-                                                : <>Çiftçinin T.C. Kimlik No / VKN geçersiz ({tc.message}). Çiftçi kartından düzeltin.</>}
-                                    </span>
-                                </div>
-                            );
-                        })() : (
-                            <p className="text-[11px] text-stone-400">BKTS kayıtlı satış: çiftçinin TCKN/VKN'si doğrulanır, karekoddaki GTIN • Lot • SKT • Seri No faturaya ve BKTS defterine işlenir.</p>
-                        )}
-                        {bReceteEnabled && (
-                            <label className="flex items-center gap-2 bg-stone-900 border border-white/10 rounded-lg px-2.5 min-h-[44px] focus-within:border-emerald-500/50">
-                                <FileText size={14} className="text-emerald-400 shrink-0" />
-                                <span className="text-[11px] font-black text-stone-400 uppercase whitespace-nowrap">B-Reçete Kodu</span>
-                                <input
-                                    type="text"
-                                    value={bReceteCode}
-                                    onChange={e => setBReceteCode(e.target.value)}
-                                    placeholder="Opsiyonel"
-                                    autoComplete="off"
-                                    className="flex-1 min-w-0 bg-transparent outline-none text-sm text-stone-100 font-mono placeholder:text-stone-600"
-                                />
-                            </label>
+                        <span className={`px-2.5 py-1 rounded-full text-[10px] sm:text-[11px] font-black uppercase tracking-wider shrink-0 border ${prescriptionType === 'RETURN' ? 'bg-rose-500/10 text-rose-500 border-rose-500/25' : 'bg-emerald-500/10 text-emerald-600 border-emerald-500/25'}`}>
+                            {editingId ? `${currentPrescriptionLabel} Düzenle` : currentPrescriptionLabel}
+                        </span>
+                        {selectedFarmer && (
+                            <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[var(--mks-subcard)] border border-[var(--mks-card-border)] text-[11px] font-bold text-[var(--mks-text)] truncate max-w-[200px]">
+                                <User size={11} className="text-emerald-600 shrink-0" />
+                                <span className="truncate">{selectedFarmer.fullName}</span>
+                            </span>
                         )}
                     </div>
-                ) : (
-                    <p className="text-[11px] text-stone-400 px-1">Kayıtsız serbest satış: kayıt defterde <b className="text-stone-300">"Kayıtsız Serbest Satış"</b> olarak tutulur ve Bakanlık dışa aktarımına dahil edilmez.</p>
-                )}
 
+                    <div className="flex flex-wrap items-center gap-1.5">
+                        <button
+                            type="button"
+                            onClick={() => setIsTemplateModalOpen(true)}
+                            title="Hazır Reçete Şablonları"
+                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-indigo-500/10 border border-indigo-500/25 text-indigo-600 text-[10px] sm:text-[11px] font-black hover:bg-indigo-500/15 transition-colors"
+                        >
+                            <Bookmark size={12} /> Şablonlar {templates.length > 0 ? `(${templates.length})` : ''}
+                        </button>
+                        {selectedItems.length > 0 && (
+                            <button
+                                type="button"
+                                onClick={() => setIsSaveTemplateOpen(true)}
+                                title="Mevcut Reçeteyi Şablon Olarak Kaydet"
+                                className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-600 text-[10px] sm:text-[11px] font-black hover:bg-emerald-500/15 transition-colors"
+                            >
+                                <Save size={12} /> Şablon Kaydet
+                            </button>
+                        )}
+                        <button
+                            type="button"
+                            onClick={toggleHeldCart}
+                            disabled={selectedItems.length === 0 && !hasHeldCart}
+                            title="Müşteri Beklet / Çağır"
+                            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-[10px] sm:text-[11px] font-black transition-colors disabled:opacity-40 ${hasHeldCart ? 'bg-amber-500/15 border-amber-500/30 text-amber-600' : 'bg-[var(--mks-subcard)] border-[var(--mks-card-border)] text-[var(--mks-muted)] hover:text-[var(--mks-text)]'}`}
+                        >
+                            {hasHeldCart && selectedItems.length === 0 ? <Play size={12} /> : <Pause size={12} />}
+                            {hasHeldCart && selectedItems.length === 0 ? 'Müşteri Çağır' : hasHeldCart ? 'Beklet ⇄ Çağır' : 'Müşteri Beklet'}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={startVoiceCommand}
+                            disabled={isListening}
+                            title="Sesli Komut (çiftçi veya ürün adı söyleyin)"
+                            aria-label="Sesli Komut"
+                            className={`p-2 rounded-xl border transition-colors ${isListening ? 'bg-rose-500/15 border-rose-500/40 text-rose-500 animate-pulse' : 'bg-[var(--mks-subcard)] border-[var(--mks-card-border)] text-[var(--mks-muted)] hover:text-[var(--mks-text)]'}`}
+                        >
+                            <Mic size={13} />
+                        </button>
+                    </div>
+                </div>
+
+                {/* 5 Adımlı İlerleme Göstergesi */}
+                <div className="grid grid-cols-5 gap-1 sm:gap-2 pt-1">
+                    {wizardSteps.map((s) => {
+                        const isDone = s.num < step;
+                        const isCurrent = s.num === step;
+                        return (
+                            <button
+                                key={s.num}
+                                type="button"
+                                disabled={s.num > step}
+                                onClick={() => s.num < step && changeStep(s.num)}
+                                className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 px-1.5 py-1.5 sm:py-2 rounded-xl border text-[9.5px] sm:text-[11px] font-black transition-all ${
+                                    isCurrent
+                                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                                        : isDone
+                                            ? 'bg-emerald-500/10 text-emerald-700 border-emerald-500/25 hover:bg-emerald-500/15 cursor-pointer'
+                                            : 'bg-[var(--mks-subcard)] text-[var(--mks-muted)] border-[var(--mks-card-border)] opacity-70 cursor-default'
+                                }`}
+                            >
+                                <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-black shrink-0 ${
+                                    isCurrent ? 'bg-white/20 text-white' : isDone ? 'bg-emerald-600 text-white' : 'bg-black/10 text-[var(--mks-muted)]'
+                                }`}>
+                                    {isDone ? <Check size={10} /> : s.num}
+                                </span>
+                                <span className="truncate leading-tight">{s.label}</span>
+                            </button>
+                        );
+                    })}
+                </div>
+
+                {/* Tank Karışımı & Holder Özeti (Yalnızca depo içi ziraat takibi) */}
                 {tankMix && (tankMix.warnings.length > 0 ? (
-                    <div className={`rounded-xl border p-2.5 text-xs ${tankMix.compatible ? 'bg-amber-500/10 border-amber-500/30 text-amber-200' : 'bg-rose-500/10 border-rose-500/30 text-rose-200'}`}>
+                    <div className={`rounded-xl border p-2.5 text-xs ${tankMix.compatible ? 'bg-amber-500/10 border-amber-500/30 text-amber-700' : 'bg-rose-500/10 border-rose-500/30 text-rose-700'}`}>
                         <div className="flex items-center gap-1.5 font-black mb-1">
                             <AlertTriangle size={14} /> {tankMix.compatible ? 'Tank Karışımı Dikkat' : 'Tank Karışımı Uyumsuz!'}
                         </div>
@@ -2952,22 +2762,23 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                         ))}
                     </div>
                 ) : (
-                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-black">
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 text-[10px] font-black">
                         <Check size={12} /> Tank Karışımı Uyumlu
                     </span>
                 ))}
 
                 {selectedItems.length > 0 && (
-                    <div className="bg-stone-900/70 border border-white/5 rounded-xl p-2.5 text-[11px] text-stone-300">
+                    <div className="bg-[var(--mks-subcard)] border border-[var(--mks-card-border)] rounded-xl p-2.5 text-[11px] text-[var(--mks-muted)]">
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                            <span><b className="text-stone-100">{selectedItems.length}</b> kalem • <b className="text-stone-100">{cartUnitCount.toLocaleString('tr-TR')}</b> adet • ~<b className="text-stone-100">{cartEstimatedKg.toLocaleString('tr-TR', { maximumFractionDigits: 1 })}</b> kg</span>
+                            <span><b className="text-[var(--mks-text)]">{selectedItems.length}</b> kalem • <b className="text-[var(--mks-text)]">{cartUnitCount.toLocaleString('tr-TR')}</b> adet • ~<b className="text-[var(--mks-text)]">{cartEstimatedKg.toLocaleString('tr-TR', { maximumFractionDigits: 1 })}</b> kg</span>
                             <div className="flex items-center gap-1 ml-auto">
-                                <Droplets size={12} className="text-sky-400" />
+                                <Droplets size={12} className="text-sky-500" />
                                 {HOLDER_TANKS.map(l => (
                                     <button
                                         key={l}
+                                        type="button"
                                         onClick={() => setHolderTankL(l)}
-                                        className={`px-2 py-0.5 rounded-full text-[10px] font-black transition-colors ${holderTankL === l ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30' : 'text-stone-500 hover:text-stone-300'}`}
+                                        className={`px-2 py-0.5 rounded-full text-[10px] font-black transition-colors border ${holderTankL === l ? 'bg-sky-500/15 text-sky-600 border-sky-500/30' : 'border-transparent text-[var(--mks-muted)] hover:text-[var(--mks-text)]'}`}
                                     >{l}L</button>
                                 ))}
                             </div>
@@ -2975,7 +2786,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                         {holderTankDoses.length > 0 && (
                             <div className="mt-1.5 flex flex-wrap gap-1">
                                 {holderTankDoses.map((d, i) => (
-                                    <span key={i} className="px-2 py-0.5 rounded-md bg-sky-500/5 border border-sky-500/10 text-sky-200 text-[10px]">{d.name}: <b>{d.text}</b></span>
+                                    <span key={i} className="px-2 py-0.5 rounded-md bg-sky-500/10 border border-sky-500/20 text-sky-700 text-[10px]">{d.name}: <b>{d.text}</b></span>
                                 ))}
                             </div>
                         )}
@@ -2984,56 +2795,65 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
             </div>
 
             {step === 1 && (
-                <div className="pb-24">
-                    <div className="flex items-center justify-center mb-3 sm:mb-4">
-                        <h2 className="text-base sm:text-xl font-black text-stone-100 text-center tracking-tight">
-                            {editingId ? `${currentPrescriptionLabel} Düzenle: ${farmerLabel}` : `${currentPrescriptionLabel} Oluştur: ${farmerLabel} Seçimi`}
-                        </h2>
-                    </div>
-                    
-                    <div className="bg-stone-900 rounded-xl sm:rounded-2xl shadow-sm border border-white/5 flex items-center p-1 mb-3 sm:mb-4">
-                        <Search className="text-stone-500 ml-2.5 sm:ml-3 shrink-0" size={16} />
-                        <input 
-                            type="text" 
-                            placeholder={`${farmerLabel} adı veya köy ile ara...`} 
-                            className="w-full p-2 sm:p-2.5 bg-transparent outline-none font-medium text-stone-200 placeholder-stone-600 text-xs sm:text-sm"
-                            value={farmerSearchTerm}
-                            onChange={e => setFarmerSearchTerm(e.target.value)}
-                        />
-                        {farmerSearchTerm && (
-                            <button onClick={() => setFarmerSearchTerm('')} className="p-1.5 text-stone-500 hover:text-stone-300">
-                                <X size={14} />
-                            </button>
-                        )}
-                    </div>
+                <div className="pb-20 space-y-3 sm:space-y-4">
+                    <div className="v22-bento-card p-3.5 sm:p-5 border border-[var(--mks-card-border)] space-y-3.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">1. Adım • Çiftçi Cari Seçimi</p>
+                                <h2 className="text-base sm:text-xl font-black text-[var(--mks-text)] tracking-tight">
+                                    {editingId ? `${currentPrescriptionLabel} Düzenle: ${farmerLabel}` : `${currentPrescriptionLabel}: ${farmerLabel} Seçin`}
+                                </h2>
+                            </div>
+                            <span className="px-2.5 py-1 rounded-full bg-[var(--mks-subcard)] border border-[var(--mks-card-border)] text-[10px] font-bold text-[var(--mks-muted)]">
+                                {filteredFarmers.length} {farmerLabel}
+                            </span>
+                        </div>
 
-                    <div className="space-y-3 sm:space-y-4">
-                        <div className="space-y-1.5 sm:space-y-2">
-                            <label className="text-[9px] sm:text-[10px] font-bold text-stone-500 uppercase tracking-widest ml-1 text-center block w-full">{farmerLabel} Listesi</label>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3 max-h-[450px] overflow-y-auto pr-1 no-scrollbar">
-                                {filteredFarmers.map(f => (
-                                    <button 
-                                        key={f.id} 
-                                        onClick={() => { setSelectedFarmer(f); setSelectedFieldId(''); changeStep(2); }}
-                                        className={`w-full text-left p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border flex justify-between items-center group transition-all ${
-                                            selectedFarmer?.id === f.id
-                                            ? 'bg-emerald-900/20 border-emerald-500 shadow-lg shadow-emerald-900/10'
-                                            : 'bg-stone-900 border-white/5 hover:border-emerald-500/50 hover:bg-stone-800/50'
+                        <div className="bg-[var(--mks-input-bg)] rounded-xl border border-[var(--mks-input-border)] flex items-center px-3 py-1 focus-within:border-emerald-500/50 transition-colors">
+                            <Search className="text-[var(--mks-muted)] shrink-0 mr-2" size={16} />
+                            <input
+                                type="text"
+                                placeholder={`${farmerLabel} adı veya köy ile ara...`}
+                                className="w-full py-2 bg-transparent outline-none font-medium text-[var(--mks-text)] placeholder:text-[var(--mks-muted)] text-xs sm:text-sm"
+                                value={farmerSearchTerm}
+                                onChange={e => setFarmerSearchTerm(e.target.value)}
+                            />
+                            {farmerSearchTerm && (
+                                <button type="button" onClick={() => setFarmerSearchTerm('')} className="p-1.5 text-[var(--mks-muted)] hover:text-[var(--mks-text)]">
+                                    <X size={14} />
+                                </button>
+                            )}
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[460px] overflow-y-auto pr-1 no-scrollbar">
+                            {filteredFarmers.map(f => {
+                                const isActiveFarmer = selectedFarmer?.id === f.id;
+                                return (
+                                    <button
+                                        key={f.id}
+                                        type="button"
+                                        onClick={() => { setSelectedFarmer(f); setSelectedFieldId(''); changeStep(2, { farmer: f }); }}
+                                        className={`w-full text-left p-3 rounded-2xl border flex justify-between items-center group transition-all ${
+                                            isActiveFarmer
+                                                ? 'bg-emerald-500/10 border-emerald-500 shadow-sm'
+                                                : 'bg-[var(--mks-subcard)] border-[var(--mks-card-border)] hover:border-emerald-500/50 hover:bg-emerald-500/5'
                                         }`}
                                     >
-                                        <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
-                                            <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl flex items-center justify-center transition-colors shrink-0 ${selectedFarmer?.id === f.id ? 'bg-emerald-600 text-white' : 'bg-stone-800 text-stone-500 group-hover:bg-emerald-900/30 group-hover:text-emerald-500'}`}>
+                                        <div className="flex items-center gap-3 min-w-0">
+                                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors shrink-0 ${isActiveFarmer ? 'bg-emerald-600 text-white' : 'bg-[var(--mks-card)] border border-[var(--mks-card-border)] text-[var(--mks-muted)] group-hover:text-emerald-600 group-hover:border-emerald-500/40'}`}>
                                                 <User size={16} />
                                             </div>
                                             <div className="min-w-0 flex-1">
-                                                <span className="font-bold text-stone-100 block text-xs sm:text-sm group-hover:text-emerald-400 truncate">{f.fullName}</span>
-                                                <span className="text-[9px] sm:text-[10px] text-stone-500 flex items-center mt-0.5 truncate"><MapPin size={9} className="mr-1 shrink-0"/> {f.village}</span>
+                                                <span className={`font-black block text-xs sm:text-sm truncate ${isActiveFarmer ? 'text-emerald-700' : 'text-[var(--mks-text)] group-hover:text-emerald-700'}`}>{f.fullName}</span>
+                                                <span className="text-[10px] sm:text-[11px] text-[var(--mks-muted)] flex items-center mt-0.5 truncate">
+                                                    <MapPin size={10} className="mr-1 shrink-0" /> {f.village || 'Köy belirtilmedi'}
+                                                </span>
                                             </div>
                                         </div>
-                                        <ChevronRight size={16} className={`shrink-0 ml-1 ${selectedFarmer?.id === f.id ? 'text-emerald-500' : 'text-stone-700'}`} />
+                                        <ChevronRight size={16} className={`shrink-0 ml-2 transition-transform group-hover:translate-x-0.5 ${isActiveFarmer ? 'text-emerald-600' : 'text-[var(--mks-muted)]'}`} />
                                     </button>
-                                ))}
-                            </div>
+                                );
+                            })}
                         </div>
                     </div>
                 </div>
@@ -3056,59 +2876,66 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
             )}
 
             {step === 3 && (
-                <div className="pb-28 sm:pb-24">
-                    <h2 className="text-base sm:text-xl font-black mb-3 sm:mb-4 text-stone-100 text-center tracking-tight">
-                        {editingId ? `${currentPrescriptionLabel} Düzenle: İlaçlar` : 'İlaç Seç'}
-                    </h2>
-
-                    <div className="mb-3 sm:mb-4 flex gap-2">
-                        <button
-                            onClick={() => setIsScanning(true)}
-                            className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-stone-950 font-black rounded-xl p-2.5 sm:p-3 flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/20 active:scale-95 transition-all group"
-                        >
-                            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-950 group-hover:scale-110 transition-transform">
-                                <Barcode size={18} />
+                <div className="pb-28 sm:pb-24 space-y-3 sm:space-y-4">
+                    <div className="v22-bento-card p-3.5 sm:p-5 border border-[var(--mks-card-border)] space-y-3.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">3. Adım • Depo & Ürün Seçimi</p>
+                                <h2 className="text-base sm:text-xl font-black text-[var(--mks-text)] tracking-tight">
+                                    {editingId ? `${currentPrescriptionLabel} Düzenle: İlaçlar` : 'İlaç ve Ürün Seçin'}
+                                </h2>
                             </div>
-                            <span className="text-xs sm:text-sm">Kamerayla Hızlı Ekle (POS)</span>
-                        </button>
-                    </div>
-                    
-                    <div className="bg-stone-900 rounded-xl sm:rounded-2xl shadow-sm border border-white/5 flex items-center p-1 mb-3 sm:mb-4">
-                        <Search className="text-stone-500 ml-2.5 sm:ml-3 shrink-0" size={16} />
-                        <input 
-                            type="text" 
-                            placeholder="İlaç adı veya etken madde ara..." 
-                            className="w-full p-2 sm:p-2.5 bg-transparent outline-none font-medium text-stone-200 placeholder-stone-600 text-xs sm:text-sm"
-                            value={pesticideSearchTerm}
-                            onChange={e => setPesticideSearchTerm(e.target.value)}
-                        />
-                        <button 
-                            onClick={() => setShowRecommendations(true)}
-                            className={`p-2 rounded-lg sm:rounded-xl ml-1 transition-colors relative mr-1 hover:scale-105 active:scale-95 ${recommendedIds.length > 0 ? 'bg-amber-500/20 text-amber-500 border border-amber-500/30' : 'bg-stone-800 text-stone-300 hover:bg-stone-700'}`}
-                            title="Ürün Tavsiyeleri"
-                        >
-                            <Lightbulb size={16} />
-                            {recommendedIds.length > 0 && (
-                                <span className="absolute -top-1 -right-1 w-2 h-2 bg-amber-500 rounded-full border border-stone-900"></span>
-                            )}
-                        </button>
-                        <button 
-                            onClick={() => setIsScanning(true)}
-                            className="p-2 bg-stone-800 text-stone-300 rounded-lg sm:rounded-xl mr-1 hover:bg-stone-700 transition-colors"
-                            title="Barkod Okut"
-                        >
-                            <Barcode size={16} />
-                        </button>
-                        {pesticideSearchTerm && (
-                            <button onClick={() => setPesticideSearchTerm('')} className="p-1.5 text-stone-500 hover:text-stone-300">
-                                <X size={14} />
-                            </button>
-                        )}
-                    </div>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                                {selectedCrop && (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/25 text-emerald-700 text-[10px] font-black">
+                                        <Sprout size={11} /> {selectedCrop}
+                                    </span>
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={() => setIsScanning(true)}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-sm active:scale-95 transition-all"
+                                >
+                                    <Barcode size={15} /> Barkod Okut (POS)
+                                </button>
+                            </div>
+                        </div>
 
-                    <div className="mb-4 sm:mb-8">
-                        <label className="text-[9px] sm:text-xs font-bold text-stone-500 mb-2 sm:mb-3 block uppercase tracking-widest">Depodan Seç</label>
-                        <div className="grid grid-cols-1 gap-1.5 sm:gap-2 max-h-[300px] overflow-y-auto pr-1 no-scrollbar">
+                        <div className="flex items-center gap-2">
+                            <div className="flex-1 bg-[var(--mks-input-bg)] rounded-xl border border-[var(--mks-input-border)] flex items-center px-3 py-1 focus-within:border-emerald-500/50 transition-colors">
+                                <Search className="text-[var(--mks-muted)] shrink-0 mr-2" size={16} />
+                                <input
+                                    type="text"
+                                    placeholder="Depoda ilaç adı veya etken madde ara..."
+                                    className="w-full py-2 bg-transparent outline-none font-medium text-[var(--mks-text)] placeholder:text-[var(--mks-muted)] text-xs sm:text-sm"
+                                    value={pesticideSearchTerm}
+                                    onChange={e => setPesticideSearchTerm(e.target.value)}
+                                />
+                                {pesticideSearchTerm && (
+                                    <button type="button" onClick={() => setPesticideSearchTerm('')} className="p-1.5 text-[var(--mks-muted)] hover:text-[var(--mks-text)]">
+                                        <X size={14} />
+                                    </button>
+                                )}
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setShowRecommendations(true)}
+                                className={`p-2.5 rounded-xl border transition-all relative shrink-0 ${recommendedIds.length > 0 ? 'bg-amber-500/15 text-amber-600 border-amber-500/30 hover:bg-amber-500/20' : 'bg-[var(--mks-subcard)] text-[var(--mks-muted)] border-[var(--mks-card-border)] hover:text-[var(--mks-text)]'}`}
+                                title="Ürün Tavsiyeleri & Notlar"
+                            >
+                                <Lightbulb size={17} />
+                                {recommendedIds.length > 0 && (
+                                    <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-amber-500 rounded-full border-2 border-[var(--mks-card)]"></span>
+                                )}
+                            </button>
+                        </div>
+
+                        <div className="flex items-center justify-between text-[10px] font-bold text-[var(--mks-muted)] uppercase tracking-widest px-1">
+                            <span>Depo Stok Listesi ({filteredInventoryItems.length})</span>
+                            {selectedItems.length > 0 && <span className="text-emerald-600">{selectedItems.length} Ürün Sepette</span>}
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[360px] overflow-y-auto pr-1 no-scrollbar">
                             {filteredInventoryItems.length > 0 ? (
                                 filteredInventoryItems.map(inv => {
                                     const p = pesticides.find(pest => pest.id === inv.pesticideId) || {
@@ -3119,67 +2946,63 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                         category: inv.category,
                                         description: 'Depo ürünü'
                                     } as Pesticide;
-                                    
+
                                     const isSelected = selectedItems.some(i => i.pesticide.id === p.id);
+                                    const dLeft = getExpiryDaysLeft(inv.expiryDate);
                                     return (
-                                        <div 
+                                        <div
                                             key={inv.id}
-                                            className={`w-full text-left p-2 sm:p-2.5 rounded-xl border transition-all flex justify-between items-center ${
-                                                isSelected 
-                                                ? 'bg-stone-800/50 border-emerald-900/30' 
-                                                : 'bg-stone-900 border-white/5 hover:border-emerald-500/30 hover:bg-stone-800'
+                                            className={`w-full text-left p-2.5 sm:p-3 rounded-2xl border transition-all flex justify-between items-center gap-2 ${
+                                                isSelected
+                                                    ? 'bg-emerald-500/10 border-emerald-500/40'
+                                                    : 'bg-[var(--mks-subcard)] border-[var(--mks-card-border)] hover:border-emerald-500/40 hover:bg-emerald-500/5'
                                             }`}
                                         >
-                                            <div 
-                                                className="flex items-center space-x-2 sm:space-x-3 flex-1 min-w-0 cursor-pointer"
+                                            <div
+                                                className="flex items-center gap-2.5 flex-1 min-w-0 cursor-pointer"
                                                 onClick={() => !isSelected && addItem(p)}
                                             >
-                                                <div className="p-1.5 sm:p-2 bg-stone-800 rounded-lg text-stone-400 group-hover:text-emerald-400 shrink-0">
-                                                    <Package size={14} />
+                                                <div className={`p-2 rounded-xl border shrink-0 ${isSelected ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-[var(--mks-card)] border-[var(--mks-card-border)] text-[var(--mks-muted)]'}`}>
+                                                    <Package size={15} />
                                                 </div>
                                                 <div className="flex-1 min-w-0">
-                                                    <div className="flex items-center gap-1 sm:gap-1.5 flex-wrap">
-                                                        <span className={`font-bold block text-xs sm:text-sm truncate ${isSelected ? 'text-stone-500' : 'text-stone-200'}`}>{inv.pesticideName}</span>
-                                                        {(() => {
-                                                            const dLeft = getExpiryDaysLeft(inv.expiryDate);
-                                                            if (dLeft === null) return null;
-                                                            if (dLeft < 0) {
-                                                                return (
-                                                                    <span className="text-[7.5px] sm:text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40">
-                                                                        ⛔ SKT GEÇMİŞ
-                                                                    </span>
-                                                                );
-                                                            }
-                                                            if (dLeft <= 90) {
-                                                                return (
-                                                                    <span className="text-[7.5px] sm:text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                                                                        ⏳ FEFO: {dLeft === 0 ? 'Bugün' : `${dLeft}g`}
-                                                                    </span>
-                                                                );
-                                                            }
-                                                            return null;
-                                                        })()}
+                                                    <div className="flex items-center gap-1 flex-wrap">
+                                                        <span className={`font-black block text-xs sm:text-sm truncate ${isSelected ? 'text-emerald-700' : 'text-[var(--mks-text)]'}`}>{inv.pesticideName}</span>
+                                                        {dLeft !== null && dLeft < 0 && (
+                                                            <span className="text-[8.5px] font-black uppercase px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-600 border border-rose-500/30">
+                                                                SKT Geçmiş
+                                                            </span>
+                                                        )}
+                                                        {dLeft !== null && dLeft >= 0 && dLeft <= 90 && (
+                                                            <span className="text-[8.5px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 border border-amber-500/30">
+                                                                FEFO: {dLeft === 0 ? 'Bugün' : `${dLeft}g`}
+                                                            </span>
+                                                        )}
                                                         {inv.lotNumber && (
-                                                            <span className="text-[7.5px] sm:text-[9px] font-mono text-stone-400 bg-stone-800 px-1 py-0.5 rounded">
+                                                            <span className="text-[8.5px] font-mono text-[var(--mks-muted)] bg-[var(--mks-card)] border border-[var(--mks-card-border)] px-1.5 py-0.5 rounded">
                                                                 Lot: {inv.lotNumber}
                                                             </span>
                                                         )}
                                                     </div>
-                                                    <span className="text-[8.5px] sm:text-[10px] text-stone-500 font-mono block truncate">Stok: {inv.quantity} {inv.unit} | Fiyat: {formatCurrency(inv.sellingPrice, userProfile?.currency || 'TRY')}</span>
+                                                    <span className="text-[10px] sm:text-[11px] text-[var(--mks-muted)] font-mono block truncate mt-0.5">
+                                                        Stok: <b className="text-[var(--mks-text)]">{inv.quantity} {inv.unit}</b> • {formatCurrency(inv.sellingPrice, userProfile?.currency || 'TRY')}
+                                                    </span>
                                                 </div>
                                             </div>
-                                            <div className="flex items-center gap-1 shrink-0 ml-1.5">
+                                            <div className="flex items-center gap-1 shrink-0">
                                                 <button
+                                                    type="button"
                                                     onClick={(e) => toggleRecommendation(p.id, e)}
-                                                    className={`p-1.5 sm:p-2 rounded-lg transition-colors active:scale-90 ${recommendedIds.includes(p.id) ? 'text-amber-500 bg-amber-500/10 hover:bg-amber-500/20' : 'text-stone-600 hover:text-amber-400 hover:bg-stone-700/50'}`}
+                                                    className={`p-1.5 sm:p-2 rounded-xl transition-colors active:scale-90 ${recommendedIds.includes(p.id) ? 'text-amber-500 bg-amber-500/10 hover:bg-amber-500/20' : 'text-[var(--mks-muted)] hover:text-amber-500 hover:bg-amber-500/10'}`}
                                                     title={recommendedIds.includes(p.id) ? "Tavsiyelerden Çıkar" : "Tavsiyelere Ekle"}
                                                 >
-                                                    <Star size={15} fill={recommendedIds.includes(p.id) ? "currentColor" : "none"} />
+                                                    <Star size={14} fill={recommendedIds.includes(p.id) ? "currentColor" : "none"} />
                                                 </button>
                                                 <button
+                                                    type="button"
                                                     onClick={() => !isSelected && addItem(p)}
                                                     disabled={isSelected}
-                                                    className={`p-1.5 sm:p-2 rounded-lg transition-colors min-w-[34px] sm:min-w-[44px] flex items-center justify-center ${isSelected ? 'text-emerald-500 bg-emerald-500/10 opacity-50 cursor-not-allowed' : 'text-stone-200 bg-stone-800 hover:bg-emerald-600'}`}
+                                                    className={`p-1.5 sm:p-2 rounded-xl border transition-colors min-w-[34px] flex items-center justify-center ${isSelected ? 'text-emerald-700 bg-emerald-500/15 border-emerald-500/30 cursor-default' : 'text-[var(--mks-text)] bg-[var(--mks-card)] border-[var(--mks-card-border)] hover:bg-emerald-600 hover:text-white hover:border-emerald-600'}`}
                                                 >
                                                     {isSelected ? <Check size={15} /> : <Plus size={15} />}
                                                 </button>
@@ -3188,89 +3011,92 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                     );
                                 })
                             ) : (
-                                <div className="text-center py-6 text-stone-600 border border-dashed border-stone-800 rounded-xl">
-                                    <p className="text-xs">Depoda uygun ilaç bulunamadı.</p>
+                                <div className="sm:col-span-2 text-center py-8 text-[var(--mks-muted)] border border-dashed border-[var(--mks-card-border)] rounded-2xl">
+                                    <p className="text-xs font-medium">Depoda arama kriterine uygun ürün bulunamadı.</p>
                                 </div>
                             )}
                         </div>
                     </div>
 
-                    <div className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] left-0 w-full p-2.5 sm:p-4 md:static md:p-0 md:mt-8 z-30 bg-gradient-to-t from-[var(--mks-canvas-bg)] via-[var(--mks-canvas-bg)] to-transparent pb-4 sm:pb-6">
-                        <div className="max-w-3xl mx-auto">
-                             {selectedItems.length > 0 && (
-                                 <div className="mb-2 sm:mb-4 flex items-center gap-1.5 sm:gap-2 animate-in slide-in-from-bottom-4 duration-300">
-                                     <div className="flex-1 min-w-0 bg-stone-900/90 backdrop-blur-md border border-white/5 rounded-xl p-1 sm:p-1.5 overflow-x-auto no-scrollbar flex items-center gap-1.5">
-                                         <span className="text-[9.5px] sm:text-[11px] font-black text-stone-500 uppercase tracking-widest ml-1 shrink-0">Seçilen:</span>
-                                         {selectedItems.map((item) => (
-                                             <div key={item.pesticide.id} className="bg-emerald-500/10 text-emerald-300 text-[9.5px] sm:text-[11px] font-bold pl-2 rounded-lg border border-emerald-500/20 whitespace-nowrap flex items-center gap-1 min-h-[32px] sm:min-h-[44px] shrink-0">
-                                                 <span className="max-w-[100px] sm:max-w-[140px] truncate">{item.pesticide.name}</span>
-                                                 <span className="text-stone-400 font-mono">×{item.quantity || '0'}</span>
-                                                 <button
-                                                     onClick={() => removeItem(item.pesticide.id)}
-                                                     aria-label={`${item.pesticide.name} ürününü çıkar`}
-                                                     title="Sepetten çıkar"
-                                                     className="w-6 h-6 sm:w-8 sm:h-8 flex items-center justify-center rounded-lg text-stone-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors ml-0.5"
-                                                 ><X size={12} /></button>
-                                             </div>
-                                         ))}
-                                     </div>
-                                 </div>
-                             )}
-                             <button 
+                    <div className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] left-0 w-full p-2.5 sm:p-4 md:static md:p-0 z-30 bg-gradient-to-t from-[var(--mks-canvas-bg)] via-[var(--mks-canvas-bg)] to-transparent pb-4 sm:pb-2">
+                        <div className="max-w-4xl mx-auto space-y-2.5">
+                            {selectedItems.length > 0 && (
+                                <div className="v22-bento-card border border-[var(--mks-card-border)] p-2 flex items-center gap-1.5 overflow-x-auto no-scrollbar animate-in slide-in-from-bottom-4 duration-200">
+                                    <span className="text-[10px] font-black text-[var(--mks-muted)] uppercase tracking-widest px-1.5 shrink-0">Sepet ({selectedItems.length}):</span>
+                                    {selectedItems.map((item) => (
+                                        <div key={item.pesticide.id} className="bg-emerald-500/10 text-emerald-700 text-[11px] font-bold pl-2.5 pr-1 py-1 rounded-xl border border-emerald-500/25 whitespace-nowrap flex items-center gap-1.5 shrink-0">
+                                            <span className="max-w-[130px] truncate">{item.pesticide.name}</span>
+                                            <span className="text-[var(--mks-muted)] font-mono text-[10px]">×{item.quantity || '0'}</span>
+                                            <button
+                                                type="button"
+                                                onClick={() => removeItem(item.pesticide.id)}
+                                                aria-label={`${item.pesticide.name} ürününü çıkar`}
+                                                title="Sepetten çıkar"
+                                                className="w-6 h-6 flex items-center justify-center rounded-lg text-[var(--mks-muted)] hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
+                                            ><X size={12} /></button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                            <button
+                                type="button"
                                 disabled={selectedItems.length === 0}
                                 onClick={() => changeStep(4)}
-                                className="w-full bg-emerald-600 text-white py-3 sm:py-4 rounded-xl font-bold text-sm sm:text-lg shadow-lg shadow-emerald-900/40 disabled:opacity-50 hover:bg-emerald-700 active:scale-95 transition-all flex items-center justify-center border border-emerald-500/20"
-                             >
-                                İlaç Detaylarını Gir <Check size={18} className="ml-1.5" />
-                             </button>
+                                className="w-full bg-emerald-600 text-white py-3.5 sm:py-4 rounded-2xl font-black text-sm sm:text-base shadow-lg shadow-emerald-600/20 disabled:opacity-45 hover:bg-emerald-700 active:scale-95 transition-all flex items-center justify-center gap-2"
+                            >
+                                <span>4. Adım: Fiyat ve Adet Bilgisine Geç</span>
+                                <ChevronRight size={18} />
+                            </button>
                         </div>
                     </div>
 
                     {showRecommendations && (
                         <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-4">
-                            <div className="absolute inset-0 bg-stone-950/80 backdrop-blur-sm" onClick={() => setShowRecommendations(false)}></div>
-                            <div className="bg-stone-900 border border-stone-800 w-full max-w-md rounded-3xl shadow-2xl relative z-10 overflow-hidden animate-in slide-in-from-bottom-10 sm:zoom-in-95 duration-200 flex flex-col max-h-[80vh]">
-                                <div className="p-4 border-b border-stone-800 bg-amber-500/5 flex items-center justify-between shrink-0">
-                                    <div className="flex items-center gap-2 text-amber-500">
+                            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setShowRecommendations(false)}></div>
+                            <div className="v22-bento-card border border-[var(--mks-card-border)] w-full max-w-md rounded-3xl shadow-2xl relative z-10 overflow-hidden animate-in slide-in-from-bottom-10 sm:zoom-in-95 duration-200 flex flex-col max-h-[80vh]">
+                                <div className="p-4 border-b border-[var(--mks-card-border)] bg-amber-500/10 flex items-center justify-between shrink-0">
+                                    <div className="flex items-center gap-2 text-amber-600">
                                         <Lightbulb size={20} />
-                                        <h3 className="font-bold text-stone-100">Ürün Tavsiyeleri & Notlar</h3>
+                                        <h3 className="font-black text-[var(--mks-text)]">Ürün Tavsiyeleri & Notlar</h3>
                                     </div>
-                                    <button onClick={() => setShowRecommendations(false)} className="text-stone-400 hover:text-white p-1 rounded-full"><X size={20}/></button>
+                                    <button type="button" onClick={() => setShowRecommendations(false)} className="text-[var(--mks-muted)] hover:text-[var(--mks-text)] p-1 rounded-full"><X size={20} /></button>
                                 </div>
                                 <div className="p-4 overflow-y-auto flex-1 space-y-2 no-scrollbar">
                                     {recommendedIds.length === 0 ? (
-                                        <div className="text-center py-10 opacity-50 px-4">
-                                            <Star size={32} className="mx-auto mb-4 text-stone-500" />
-                                            <p className="text-sm text-stone-400 font-medium">Henüz notlarına eklediğin bir ürün yok.</p>
-                                            <p className="text-xs text-stone-500 mt-2">Depodan seçerken yıldız (⭐) butonuna basarak unutmamak için ürün ekleyebilirsin.</p>
+                                        <div className="text-center py-10 px-4">
+                                            <Star size={32} className="mx-auto mb-3 text-[var(--mks-muted)] opacity-40" />
+                                            <p className="text-sm text-[var(--mks-text)] font-bold">Henüz notlarına eklediğin bir ürün yok.</p>
+                                            <p className="text-xs text-[var(--mks-muted)] mt-1.5">Depodan seçerken yıldız butonuna basarak sık kullandığın ürünleri ekleyebilirsin.</p>
                                         </div>
                                     ) : (
                                         recommendedIds.map(rid => {
-                                           const pInfo = pesticides.find(p => p.id === rid); 
-                                           if (!pInfo) return null;
-                                           const invItem = contextInventory.find(inv => inv.pesticideId === rid);
-                                           const isSelected = selectedItems.some(i => i.pesticide.id === rid);
+                                            const pInfo = pesticides.find(p => p.id === rid);
+                                            if (!pInfo) return null;
+                                            const invItem = contextInventory.find(inv => inv.pesticideId === rid);
+                                            const isSelected = selectedItems.some(i => i.pesticide.id === rid);
 
                                             return (
-                                                <div key={rid} className="w-full text-left p-3 rounded-xl bg-stone-800/30 border border-stone-800 flex justify-between items-center group">
+                                                <div key={rid} className="w-full text-left p-3 rounded-2xl bg-[var(--mks-subcard)] border border-[var(--mks-card-border)] flex justify-between items-center group">
                                                     <div className="flex-1 min-w-0 pr-2">
-                                                        <span className="font-bold text-stone-200 block text-sm truncate">{pInfo.name}</span>
+                                                        <span className="font-black text-[var(--mks-text)] block text-sm truncate">{pInfo.name}</span>
                                                         {invItem ? (
-                                                            <span className="text-[10px] text-emerald-500 font-mono block truncate">Stokta Var: {invItem.quantity} {invItem.unit}</span>
+                                                            <span className="text-[11px] text-emerald-600 font-mono block truncate">Stokta Var: {invItem.quantity} {invItem.unit}</span>
                                                         ) : (
-                                                            <span className="text-[10px] text-rose-500 font-mono block truncate">Depoda Yok</span>
+                                                            <span className="text-[11px] text-rose-500 font-mono block truncate">Depoda Yok</span>
                                                         )}
                                                     </div>
                                                     <div className="flex items-center gap-2 shrink-0">
-                                                        <button 
+                                                        <button
+                                                            type="button"
                                                             onClick={() => toggleRecommendation(rid)}
-                                                            className="p-2 text-stone-500 hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors"
+                                                            className="p-2 text-[var(--mks-muted)] hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-colors"
                                                             title="Notlardan Sil"
                                                         >
                                                             <Trash2 size={16} />
                                                         </button>
                                                         {invItem && (
                                                             <button
+                                                                type="button"
                                                                 onClick={() => {
                                                                     if (!isSelected) {
                                                                         addItem(pInfo);
@@ -3278,14 +3104,14 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                                                         removeItem(pInfo.id);
                                                                     }
                                                                 }}
-                                                                className={`px-3 py-2 rounded-lg text-xs font-bold transition-colors ${isSelected ? 'bg-rose-500/10 text-rose-500 hover:bg-rose-500/20' : 'bg-emerald-600 text-white hover:bg-emerald-500'}`}
+                                                                className={`px-3 py-2 rounded-xl text-xs font-black transition-colors ${isSelected ? 'bg-rose-500/15 text-rose-600 hover:bg-rose-500/20' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
                                                             >
                                                                 {isSelected ? 'Çıkar' : 'Ekle'}
                                                             </button>
                                                         )}
                                                     </div>
                                                 </div>
-                                            )
+                                            );
                                         })
                                     )}
                                 </div>
@@ -3296,67 +3122,62 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
             )}
 
             {step === 4 && (
-                <div>
-                     <h2 className="text-base sm:text-xl font-black mb-3 sm:mb-4 text-stone-100 text-center tracking-tight">
-                        İlaç Detayları
-                    </h2>
-                    <div className="space-y-2.5 sm:space-y-3 pb-36 sm:pb-40">
-                        {/* Horizontal Controls Row */}
-                        <div className="flex items-center gap-1.5 sm:gap-2">
-                            {/* Invoice No */}
-                            <div className="flex-1 flex items-center space-x-1 bg-stone-900 px-1.5 sm:px-2 py-1.5 sm:py-2 rounded-xl border border-white/5 shadow-inner min-w-0">
-                                <span className="text-[7.5px] sm:text-[8px] text-stone-500 font-black uppercase tracking-tighter whitespace-nowrap">NO:</span>
-                                <input 
-                                    type="text" 
+                <div className="space-y-3 sm:space-y-4">
+                    <div className="v22-bento-card p-3.5 sm:p-5 border border-[var(--mks-card-border)] space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">4. Adım • Fiyat ve Adet Bilgisi</p>
+                                <h2 className="text-base sm:text-xl font-black text-[var(--mks-text)] tracking-tight">
+                                    Miktar, Birim Fiyat ve Ödeme Koşulu
+                                </h2>
+                            </div>
+                            <span className="px-2.5 py-1 rounded-full bg-[var(--mks-subcard)] border border-[var(--mks-card-border)] text-[10px] font-black text-[var(--mks-muted)]">
+                                {selectedItems.length} Ürün Kalemi
+                            </span>
+                        </div>
+
+                        {/* Fatura No, Peşin/Vade & Kasa/Vade Tarihi */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <div className="bg-[var(--mks-subcard)] px-3 py-2 rounded-xl border border-[var(--mks-card-border)] flex flex-col justify-center">
+                                <span className="text-[9px] font-black text-[var(--mks-muted)] uppercase tracking-wider">Fatura / Kayıt No</span>
+                                <input
+                                    type="text"
                                     value={customPrescriptionNo}
                                     onChange={(e) => setCustomPrescriptionNo(e.target.value)}
-                                    placeholder="OTO"
-                                    className="bg-transparent border-none text-[9.5px] sm:text-[10px] text-stone-100 w-full focus:ring-0 p-0 placeholder:text-stone-700 outline-none font-black truncate"
+                                    placeholder="Otomatik"
+                                    className="bg-transparent border-none text-xs sm:text-sm text-[var(--mks-text)] w-full focus:ring-0 p-0 placeholder:text-[var(--mks-muted)] outline-none font-black mt-0.5"
                                 />
                             </div>
 
-                            {/* Kaydedince e-Fatura kes (isteğe bağlı) */}
-                            {!editingId && (
+                            <div className="bg-[var(--mks-subcard)] p-1 rounded-xl border border-[var(--mks-card-border)] flex items-center gap-1">
                                 <button
                                     type="button"
-                                    onClick={() => setCutEInvoice(v => !v)}
-                                    aria-pressed={cutEInvoice}
-                                    title="Kaydedince e-Fatura / e-Arşiv fatura kes"
-                                    className={`shrink-0 px-2 rounded-xl border text-[8px] sm:text-[9px] font-black flex items-center gap-1 transition-all ${cutEInvoice ? 'bg-indigo-600 text-white border-indigo-500 shadow-lg' : 'bg-stone-900 text-stone-500 border-white/5'}`}
-                                >
-                                    <FileText size={12} />
-                                    <span>e-FATURA{cutEInvoice ? ' ✓' : ''}</span>
-                                </button>
-                            )}
-                            {/* Payment Type Toggle */}
-                            <div className="flex-1 flex items-center bg-stone-900 rounded-xl border border-white/5 p-0.5">
-                                <button
                                     onClick={() => handlePriceTypeChange('CASH')}
-                                    className={`flex-1 py-1 sm:py-1.5 text-[7.5px] sm:text-[8px] font-black rounded-lg transition-all ${prescriptionPriceType === 'CASH' ? 'bg-emerald-600 text-white shadow-lg' : 'text-stone-500'}`}
+                                    className={`flex-1 py-2 text-xs font-black rounded-lg transition-all ${prescriptionPriceType === 'CASH' ? 'bg-emerald-600 text-white shadow-sm' : 'text-[var(--mks-muted)] hover:text-[var(--mks-text)]'}`}
                                 >
                                     PEŞİN
                                 </button>
                                 <button
+                                    type="button"
                                     onClick={() => handlePriceTypeChange('TERM')}
-                                    className={`flex-1 py-1 sm:py-1.5 text-[7.5px] sm:text-[8px] font-black rounded-lg transition-all ${prescriptionPriceType === 'TERM' ? 'bg-stone-700 text-white shadow-lg' : 'text-stone-500'}`}
+                                    className={`flex-1 py-2 text-xs font-black rounded-lg transition-all ${prescriptionPriceType === 'TERM' ? 'bg-amber-600 text-white shadow-sm' : 'text-[var(--mks-muted)] hover:text-[var(--mks-text)]'}`}
                                 >
-                                    VADE
+                                    VADELİ
                                 </button>
                             </div>
-                            
-                             {/* Account Selection for CASH or Due Date for TERM */}
+
                             {prescriptionPriceType === 'CASH' ? (
-                                <div className="flex-1 flex items-center space-x-1 bg-stone-900 px-1.5 sm:px-2 py-1.5 sm:py-2 rounded-xl border border-emerald-500/30 shadow-inner min-w-0">
-                                    <Landmark size={10} className="text-emerald-400 shrink-0" />
+                                <div className="bg-[var(--mks-subcard)] px-3 py-2 rounded-xl border border-emerald-500/30 flex items-center gap-2 min-w-0">
+                                    <Landmark size={15} className="text-emerald-600 shrink-0" />
                                     <div className="flex-1 min-w-0">
-                                        <p className="text-[6.5px] sm:text-[7px] font-black text-emerald-400 uppercase tracking-tighter leading-none mb-0.5">HESAP / KASA</p>
+                                        <p className="text-[9px] font-black text-emerald-600 uppercase tracking-wider leading-none mb-0.5">Kasa / Banka</p>
                                         <select
                                             value={prescriptionAccountId || (accounts.find(a => a.type === 'CASH')?.id || accounts[0]?.id || '')}
                                             onChange={(e) => setPrescriptionAccountId(e.target.value)}
-                                            className="bg-transparent border-none text-[8.5px] sm:text-[9px] text-stone-100 font-black w-full focus:ring-0 p-0 outline-none cursor-pointer truncate"
+                                            className="bg-transparent border-none text-xs text-[var(--mks-text)] font-black w-full focus:ring-0 p-0 outline-none cursor-pointer truncate"
                                         >
                                             {accounts.map(acc => (
-                                                <option key={acc.id} value={acc.id} className="bg-stone-900 text-stone-100">
+                                                <option key={acc.id} value={acc.id}>
                                                     {acc.name} ({new Intl.NumberFormat('tr-TR', { style: 'currency', currency: userProfile?.currency || 'TRY' }).format(acc.balance)})
                                                 </option>
                                             ))}
@@ -3364,28 +3185,27 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                     </div>
                                 </div>
                             ) : (
-                                <div className="flex-1 flex items-center space-x-1 bg-stone-900 px-1.5 sm:px-2 py-1.5 sm:py-2 rounded-xl border border-white/5 shadow-inner transition-all duration-300 min-w-0">
-                                    <Calendar size={10} className="text-amber-500 shrink-0" />
+                                <div className="bg-[var(--mks-subcard)] px-3 py-2 rounded-xl border border-amber-500/30 flex items-center gap-2 min-w-0">
+                                    <Calendar size={15} className="text-amber-600 shrink-0" />
                                     <div className="flex-1 min-w-0">
-                                        <p className="text-[6.5px] sm:text-[7px] font-black text-stone-500 uppercase tracking-tighter leading-none mb-0.5">VADE</p>
-                                        <div className="text-[8.5px] sm:text-[9px] text-stone-200 font-black truncate relative">
-                                            <input
-                                                type="date"
-                                                value={prescriptionDueDate}
-                                                onChange={(e) => {
-                                                    setPrescriptionDueDate(e.target.value);
-                                                    setIsManualDueDate(true);
-                                                }}
-                                                className="bg-transparent border-none text-[8.5px] sm:text-[9px] text-stone-200 font-black w-full focus:ring-0 p-0 outline-none relative z-10"
-                                                style={{ colorScheme: 'dark' }}
-                                            />
-                                        </div>
+                                        <p className="text-[9px] font-black text-amber-600 uppercase tracking-wider leading-none mb-0.5">Vade Tarihi</p>
+                                        <input
+                                            type="date"
+                                            value={prescriptionDueDate}
+                                            onChange={(e) => {
+                                                setPrescriptionDueDate(e.target.value);
+                                                setIsManualDueDate(true);
+                                            }}
+                                            className="bg-transparent border-none text-xs text-[var(--mks-text)] font-black w-full focus:ring-0 p-0 outline-none"
+                                        />
                                     </div>
                                 </div>
                             )}
                         </div>
+                    </div>
 
-                        {/* #28 Kredi Limiti Aşım Uyarısı */}
+                    <div className="space-y-2.5 pb-36 sm:pb-8">
+                        {/* Kredi Limiti Aşım Uyarısı */}
                         {prescriptionType === 'SALE' && prescriptionPriceType === 'TERM' && selectedFarmer?.creditLimit && selectedFarmer.creditLimit > 0 && (() => {
                             const curDebt = Math.max(0, getFarmerNetDebt(selectedFarmer.id));
                             const draftSum = Math.max(0, selectedItems.reduce((acc, it) => acc + (it.totalPrice || 0), 0) - (parseFloat(prescriptionDiscount.replace(',', '.')) || 0));
@@ -3393,31 +3213,31 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                             if (afterDebt <= selectedFarmer.creditLimit) return null;
                             const overBy = afterDebt - selectedFarmer.creditLimit;
                             return (
-                                <div className="rounded-xl sm:rounded-2xl border border-rose-500/40 bg-rose-500/10 p-2.5 sm:p-3.5 text-xs text-rose-200 shadow-md">
-                                    <div className="flex items-center gap-1.5 font-black text-rose-300 text-xs sm:text-sm mb-1">
-                                        <AlertTriangle size={14} /> KREDİ LİMİTİ AŞIM UYARISI!
+                                <div className="rounded-2xl border border-rose-500/35 bg-rose-500/10 p-3 text-xs text-rose-700 shadow-sm">
+                                    <div className="flex items-center gap-1.5 font-black text-rose-600 text-xs sm:text-sm mb-1">
+                                        <AlertTriangle size={15} /> Kredi Limiti Aşım Uyarısı
                                     </div>
                                     <p className="leading-relaxed text-[11px] sm:text-xs">
                                         <b>{selectedFarmer.fullName}</b> için tanımlı kredi limiti <b>{formatCurrency(selectedFarmer.creditLimit, userProfile?.currency || 'TRY')}</b>.
-                                        Mevcut borç (<b>{formatCurrency(curDebt, userProfile?.currency || 'TRY')}</b>) ve bu vadeli satış (<b>{formatCurrency(draftSum, userProfile?.currency || 'TRY')}</b>) ile toplam risk <b>{formatCurrency(afterDebt, userProfile?.currency || 'TRY')}</b> olacak (Limit aşımı: <b className="text-rose-300">+{formatCurrency(overBy, userProfile?.currency || 'TRY')}</b>).
+                                        Mevcut borç (<b>{formatCurrency(curDebt, userProfile?.currency || 'TRY')}</b>) ve bu vadeli satış (<b>{formatCurrency(draftSum, userProfile?.currency || 'TRY')}</b>) ile toplam risk <b>{formatCurrency(afterDebt, userProfile?.currency || 'TRY')}</b> olacak (Limit aşımı: <b>+{formatCurrency(overBy, userProfile?.currency || 'TRY')}</b>).
                                     </p>
                                 </div>
                             );
                         })()}
 
-                        {/* #23 İade Ürünlerini Karantina Stoğuna Ayırma */}
+                        {/* İade Ürünlerini Karantina Stoğuna Ayırma */}
                         {prescriptionType === 'RETURN' && (
-                            <div className="rounded-xl sm:rounded-2xl border border-amber-500/30 bg-amber-500/10 p-2.5 sm:p-3.5 space-y-2">
+                            <div className="rounded-2xl border border-amber-500/35 bg-amber-500/10 p-3 space-y-2">
                                 <label className="flex items-center justify-between cursor-pointer gap-2">
                                     <div>
-                                        <span className="text-[11px] sm:text-xs font-black text-amber-300 block">⚠️ İade Ürünleri Karantina Stoğuna Ayır (#23)</span>
-                                        <span className="text-[9px] sm:text-[10px] text-stone-300 block mt-0.5">Açık ambalaj veya SKT yakın iadeleri karantinada bekletir.</span>
+                                        <span className="text-xs font-black text-amber-700 block">İade Ürünleri Karantina Stoğuna Ayır</span>
+                                        <span className="text-[10px] text-[var(--mks-muted)] block mt-0.5">Açık ambalaj veya SKT yakın iadeleri satış stoğu yerine karantinada bekletir.</span>
                                     </div>
                                     <input
                                         type="checkbox"
                                         checked={quarantineReturnEnabled}
                                         onChange={e => setQuarantineReturnEnabled(e.target.checked)}
-                                        className="w-4 h-4 sm:w-5 sm:h-5 accent-amber-500 rounded cursor-pointer shrink-0"
+                                        className="w-4 h-4 sm:w-5 sm:h-5 accent-amber-600 rounded cursor-pointer shrink-0"
                                     />
                                 </label>
                                 {quarantineReturnEnabled && (
@@ -3426,24 +3246,27 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                         value={quarantineReturnReason}
                                         onChange={e => setQuarantineReturnReason(e.target.value)}
                                         placeholder="Karantina nedeni..."
-                                        className="w-full bg-stone-950 border border-amber-500/30 rounded-xl px-2.5 py-1.5 text-xs text-stone-100 outline-none focus:border-amber-400"
+                                        className="w-full bg-[var(--mks-input-bg)] border border-amber-500/30 rounded-xl px-3 py-2 text-xs text-[var(--mks-text)] outline-none focus:border-amber-500"
                                     />
                                 )}
                             </div>
                         )}
 
                         {selectedItems.map((item, idx) => (
-                            <div key={idx} className="bg-stone-900/80 backdrop-blur-sm p-2.5 sm:p-4 rounded-xl sm:rounded-2xl shadow-md sm:shadow-xl border border-white/5 relative overflow-hidden group animate-in fade-in slide-in-from-bottom-2 duration-300">
-                                <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 -mr-12 -mt-12 rounded-full blur-2xl group-hover:bg-emerald-500/10 transition-colors" />
-                                
-                                <div className="flex items-start justify-between gap-2.5 sm:gap-4 relative z-10">
+                            <div key={idx} className="v22-bento-card p-3 sm:p-4 rounded-2xl border border-[var(--mks-card-border)] relative overflow-hidden">
+                                <div className="flex items-start justify-between gap-3">
                                     <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-1.5 mb-2 sm:mb-3">
-                                            <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
-                                            <h4 className="font-black text-stone-100 text-xs sm:text-sm tracking-tight truncate">{item.pesticide.name}</h4>
+                                        <div className="flex items-center flex-wrap gap-2 mb-2">
+                                            <div className="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></div>
+                                            <h4 className="font-black text-[var(--mks-text)] text-xs sm:text-sm tracking-tight truncate">{item.pesticide.name}</h4>
+                                            {item.dosage && (
+                                                <span className="text-[10px] font-bold text-[var(--mks-muted)] bg-[var(--mks-subcard)] border border-[var(--mks-card-border)] px-2 py-0.5 rounded-full">
+                                                    Doz: {item.dosage}
+                                                </span>
+                                            )}
                                         </div>
 
-                                        {/* İzlenebilirlik (GTIN / Lot / SKT / Seri) + stok uyarısı */}
+                                        {/* Depo Lot / SKT / Stok Kontrolü */}
                                         {(() => {
                                             const liveInv = contextInventory.filter(inv => !inv.deletedAt && inv.pesticideId === item.pesticide.id);
                                             const stock = round2(liveInv.reduce((a, inv) => a + (Number(inv.quantity) || 0), 0));
@@ -3451,33 +3274,29 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                             const fallbackInv = liveInv.find(inv => !item.lotNumber || inv.lotNumber === item.lotNumber) || liveInv[0];
                                             const lot = item.lotNumber || fallbackInv?.lotNumber;
                                             const exp = item.expiryDate || (fallbackInv && (!item.lotNumber || fallbackInv.lotNumber === item.lotNumber) ? fallbackInv.expiryDate : undefined);
-                                            const gtin = toGtin14(item.gtin) || toGtin14(fallbackInv?.gtin) || toGtin14(fallbackInv?.barcode);
                                             const dLeft = daysUntilExpiry(exp);
                                             const qtyInvalid = item.quantity !== '' && !(qty > 0);
                                             const stockShort = prescriptionType !== 'RETURN' && qty > 0 && qty > stock;
-                                            const bktsMissing = saleRegistryMode === 'BKTS' && (!gtin || !lot);
-                                            if (!gtin && !lot && !exp && !item.serialNumbers?.length && !qtyInvalid && !stockShort && !bktsMissing) return null;
+                                            if (!lot && !exp && !item.serialNumbers?.length && !qtyInvalid && !stockShort && !item.expiredSaleReason) return null;
                                             return (
-                                                <div className="mb-2 -mt-1 flex flex-wrap items-center gap-1">
-                                                    {gtin && <span className="text-[9.5px] sm:text-[11px] font-mono text-stone-300 bg-stone-800 px-1 py-0.5 rounded">GTIN {gtin}</span>}
-                                                    {lot && <span className="text-[9.5px] sm:text-[11px] font-mono text-stone-300 bg-stone-800 px-1 py-0.5 rounded">Lot {lot}</span>}
+                                                <div className="mb-2.5 flex flex-wrap items-center gap-1.5">
+                                                    {lot && <span className="text-[10px] font-mono text-[var(--mks-muted)] bg-[var(--mks-subcard)] border border-[var(--mks-card-border)] px-1.5 py-0.5 rounded">Lot {lot}</span>}
                                                     {exp && (
-                                                        <span className={`text-[9.5px] sm:text-[11px] font-black px-1 py-0.5 rounded border ${dLeft !== null && dLeft < 0 ? 'bg-rose-500/20 text-rose-300 border-rose-500/40' : dLeft !== null && dLeft <= 90 ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : 'bg-stone-800 text-stone-300 border-white/5'}`}>
-                                                            {dLeft !== null && dLeft < 0 ? `⛔ SKT GEÇMİŞ ${exp}` : dLeft === 0 ? `SKT bugün` : `SKT ${exp}`}
+                                                        <span className={`text-[10px] font-black px-1.5 py-0.5 rounded border ${dLeft !== null && dLeft < 0 ? 'bg-rose-500/15 text-rose-600 border-rose-500/30' : dLeft !== null && dLeft <= 90 ? 'bg-amber-500/15 text-amber-700 border-amber-500/30' : 'bg-[var(--mks-subcard)] text-[var(--mks-muted)] border-[var(--mks-card-border)]'}`}>
+                                                            {dLeft !== null && dLeft < 0 ? `SKT Geçmiş ${exp}` : dLeft === 0 ? `SKT Bugün` : `SKT ${exp}`}
                                                         </span>
                                                     )}
-                                                    {item.expiredSaleReason && <span className="text-[10px] text-amber-300">Gerekçe: {item.expiredSaleReason}</span>}
-                                                    {qtyInvalid && <span className="text-[10px] font-black text-rose-300">Miktar 0'dan büyük olmalı</span>}
-                                                    {stockShort && <span className="text-[10px] font-black text-amber-300">⚠ Stok yetersiz ({stock})</span>}
-                                                    {bktsMissing && <span className="text-[10px] font-black text-rose-300">BKTS için barkod okutun</span>}
+                                                    {item.expiredSaleReason && <span className="text-[10px] text-amber-700 font-medium">Gerekçe: {item.expiredSaleReason}</span>}
+                                                    {qtyInvalid && <span className="text-[10px] font-black text-rose-600">Miktar 0'dan büyük olmalı</span>}
+                                                    {stockShort && <span className="text-[10px] font-black text-amber-600">Stok yetersiz ({stock})</span>}
                                                     {(item.serialNumbers || []).map(s => (
-                                                        <span key={s} className="inline-flex items-center text-[9.5px] sm:text-[11px] font-mono text-sky-200 bg-sky-500/10 border border-sky-500/20 rounded-md pl-1.5">
+                                                        <span key={s} className="inline-flex items-center text-[10px] font-mono text-sky-700 bg-sky-500/10 border border-sky-500/20 rounded-md pl-1.5">
                                                             Seri {s}
                                                             <button
                                                                 type="button"
                                                                 onClick={() => removeSerial(item.pesticide.id, s)}
                                                                 aria-label={`Seri ${s} çıkar`}
-                                                                className="w-5 h-5 flex items-center justify-center text-stone-400 hover:text-rose-400"
+                                                                className="w-5 h-5 flex items-center justify-center text-[var(--mks-muted)] hover:text-rose-500"
                                                             ><X size={12} /></button>
                                                         </span>
                                                     ))}
@@ -3485,10 +3304,10 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                             );
                                         })()}
 
-                                        <div className="grid grid-cols-2 gap-2 sm:gap-3">
+                                        <div className="grid grid-cols-2 gap-2.5">
                                             <div className="space-y-1">
                                                 <div className="flex items-center justify-between">
-                                                    <label className="text-[8px] sm:text-[9px] font-black text-stone-500 uppercase tracking-widest pl-1">ADET / MİKTAR</label>
+                                                    <label className="text-[9px] font-black text-[var(--mks-muted)] uppercase tracking-wider pl-1">ADET / MİKTAR</label>
                                                     {(() => {
                                                         const invPack = contextInventory.find(inv => inv.pesticideId === item.pesticide.id);
                                                         if (!invPack?.packSize || invPack.packSize <= 1) return null;
@@ -3499,32 +3318,32 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                                                     const cur = parseFloat((item.quantity || '0').replace(',', '.')) || 0;
                                                                     updateQuantity(item.pesticide.id, String(cur + (invPack.packSize || 1)));
                                                                 }}
-                                                                className="text-[8px] sm:text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25 transition-colors"
+                                                                className="text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-700 border border-emerald-500/30 hover:bg-emerald-500/25 transition-colors"
                                                             >
                                                                 +{invPack.packSize}
                                                             </button>
                                                         );
                                                     })()}
                                                 </div>
-                                                <div className="bg-stone-950 border border-white/5 rounded-xl overflow-hidden focus-within:border-emerald-500/40 transition-all">
-                                                    <input 
-                                                        type="text" 
+                                                <div className="bg-[var(--mks-input-bg)] border border-[var(--mks-input-border)] rounded-xl overflow-hidden focus-within:border-emerald-500/50 transition-all">
+                                                    <input
+                                                        type="text"
                                                         value={item.quantity}
                                                         onChange={(e) => updateQuantity(item.pesticide.id, e.target.value)}
-                                                        className="w-full p-2 sm:p-2.5 bg-transparent font-black outline-none text-stone-200 text-xs sm:text-sm text-center"
+                                                        className="w-full p-2.5 bg-transparent font-black outline-none text-[var(--mks-text)] text-xs sm:text-sm text-center"
                                                         placeholder="0"
                                                     />
                                                 </div>
                                             </div>
 
                                             <div className="space-y-1">
-                                                <label className="text-[8px] sm:text-[9px] font-black text-stone-500 uppercase tracking-widest pl-1">BİRİM FİYAT</label>
-                                                <div className="bg-stone-950 border border-white/5 rounded-xl overflow-hidden focus-within:border-amber-500/40 transition-all">
-                                                    <input 
-                                                        type="text" 
+                                                <label className="text-[9px] font-black text-[var(--mks-muted)] uppercase tracking-wider pl-1 block">BİRİM FİYAT</label>
+                                                <div className="bg-[var(--mks-input-bg)] border border-[var(--mks-input-border)] rounded-xl overflow-hidden focus-within:border-amber-500/50 transition-all">
+                                                    <input
+                                                        type="text"
                                                         value={item.unitPrice || ''}
                                                         onChange={(e) => updatePrice(item.pesticide.id, e.target.value)}
-                                                        className="w-full p-2 sm:p-2.5 bg-transparent font-black outline-none text-stone-200 text-xs sm:text-sm text-center"
+                                                        className="w-full p-2.5 bg-transparent font-black outline-none text-[var(--mks-text)] text-xs sm:text-sm text-center"
                                                         placeholder="0.00"
                                                     />
                                                 </div>
@@ -3532,17 +3351,18 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                         </div>
                                     </div>
 
-                                    <div className="flex flex-col items-end justify-between h-[85px] sm:h-[100px] shrink-0">
-                                        <button 
-                                            onClick={() => removeItem(item.pesticide.id)} 
+                                    <div className="flex flex-col items-end justify-between min-h-[90px] shrink-0">
+                                        <button
+                                            type="button"
+                                            onClick={() => removeItem(item.pesticide.id)}
                                             aria-label={`${item.pesticide.name} ürününü çıkar`}
-                                            className="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white rounded-lg sm:rounded-xl transition-all active:scale-95 shadow-sm"
+                                            className="w-8 h-8 flex items-center justify-center bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl transition-all active:scale-95"
                                         >
-                                            <Trash2 size={14}/>
+                                            <Trash2 size={14} />
                                         </button>
                                         <div className="text-right">
-                                            <p className="text-[7.5px] sm:text-[8px] font-black text-stone-500 uppercase tracking-widest leading-none mb-0.5">ARA TOPLAM</p>
-                                            <span className="text-xs sm:text-base font-black text-emerald-400 font-mono tracking-tighter block leading-none">
+                                            <p className="text-[8.5px] font-black text-[var(--mks-muted)] uppercase tracking-wider leading-none mb-1">ARA TOPLAM</p>
+                                            <span className="text-xs sm:text-base font-black text-emerald-600 font-mono tracking-tight block leading-none">
                                                 {formatCurrency(item.totalPrice || 0, userProfile?.currency || 'TRY')}
                                             </span>
                                         </div>
@@ -3550,163 +3370,174 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                                 </div>
                             </div>
                         ))}
+
                         {selectedItems.length === 0 && (
-                            <div className="text-center py-10 border-2 border-dashed border-stone-800 rounded-2xl text-stone-600 bg-stone-900/20">
-                                <FlaskConical size={28} className="mx-auto mb-2 opacity-20" />
-                                <p className="text-xs">Hiç ilaç seçilmedi.</p>
+                            <div className="text-center py-10 border-2 border-dashed border-[var(--mks-card-border)] rounded-2xl text-[var(--mks-muted)] bg-[var(--mks-subcard)]">
+                                <FlaskConical size={28} className="mx-auto mb-2 opacity-30" />
+                                <p className="text-xs font-medium">Henüz ürün seçilmedi.</p>
                             </div>
                         )}
                     </div>
 
-                    <div className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] left-0 w-full p-2.5 sm:p-4 md:static md:p-0 md:mt-8 z-30 bg-gradient-to-t from-[var(--mks-canvas-bg)] via-[var(--mks-canvas-bg)] to-transparent pb-4 sm:pb-6">
-                        <div className="max-w-3xl mx-auto">
-                             <button 
+                    <div className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] left-0 w-full p-2.5 sm:p-4 md:static md:p-0 z-30 bg-gradient-to-t from-[var(--mks-canvas-bg)] via-[var(--mks-canvas-bg)] to-transparent pb-4 sm:pb-2">
+                        <div className="max-w-4xl mx-auto">
+                            <button
+                                type="button"
                                 disabled={selectedItems.length === 0}
                                 onClick={() => changeStep(5)}
-                                className="w-full bg-emerald-600 text-white py-3 sm:py-4 rounded-xl font-bold text-sm sm:text-lg shadow-lg shadow-emerald-900/40 disabled:opacity-50 hover:bg-emerald-700 active:scale-95 transition-all flex items-center justify-center border border-emerald-500/20"
-                             >
-                                Devam Et <Check size={18} className="ml-1.5" />
-                             </button>
+                                className="w-full bg-emerald-600 text-white py-3.5 sm:py-4 rounded-2xl font-black text-sm sm:text-base shadow-lg shadow-emerald-600/20 disabled:opacity-45 hover:bg-emerald-700 active:scale-95 transition-all flex items-center justify-center gap-2"
+                            >
+                                <span>5. Adım: Önizleme ve Onay</span>
+                                <ChevronRight size={18} />
+                            </button>
                         </div>
                     </div>
                 </div>
             )}
 
             {step === 5 && (
-                <div className="pb-28 sm:pb-24">
-                    <h2 className="text-base sm:text-xl font-black mb-3 sm:mb-6 text-stone-100 text-center tracking-tight">Önizleme ve Onay</h2>
+                <div className="pb-28 sm:pb-24 space-y-3 sm:space-y-4">
                     {prescriptionType === 'SALE' && prescriptionPriceType === 'TERM' && selectedFarmer?.creditLimit && selectedFarmer.creditLimit > 0 && (() => {
                         const curDebt = Math.max(0, getFarmerNetDebt(selectedFarmer.id));
                         const draftSum = Math.max(0, selectedItems.reduce((acc, it) => acc + (it.totalPrice || 0), 0) - (parseFloat(prescriptionDiscount.replace(',', '.')) || 0));
                         const afterDebt = curDebt + draftSum;
                         if (afterDebt <= selectedFarmer.creditLimit) return null;
                         return (
-                            <div className="mb-3 sm:mb-4 rounded-xl sm:rounded-2xl border border-rose-500/40 bg-rose-500/10 p-2.5 sm:p-3.5 text-xs text-rose-200 flex items-start gap-2">
-                                <AlertTriangle size={16} className="text-rose-400 shrink-0 mt-0.5" />
+                            <div className="rounded-2xl border border-rose-500/35 bg-rose-500/10 p-3 text-xs text-rose-700 flex items-start gap-2">
+                                <AlertTriangle size={16} className="text-rose-600 shrink-0 mt-0.5" />
                                 <div>
-                                    <span className="font-black text-rose-300 block text-xs">Kredi Limiti Aşılıyor!</span>
+                                    <span className="font-black text-rose-700 block text-xs">Kredi Limiti Aşılıyor</span>
                                     <span className="text-[11px]">Limit: {formatCurrency(selectedFarmer.creditLimit, userProfile?.currency || 'TRY')} • Risk: <b>{formatCurrency(afterDebt, userProfile?.currency || 'TRY')}</b></span>
                                 </div>
                             </div>
                         );
                     })()}
                     {prescriptionType === 'RETURN' && quarantineReturnEnabled && (
-                        <div className="mb-3 sm:mb-4 rounded-xl sm:rounded-2xl border border-amber-500/40 bg-amber-500/10 p-2.5 sm:p-3 text-xs text-amber-200 font-bold">
-                            ⚠️ İade edilen ürünler <b>Karantina Stoğuna</b> ayrılacak ({quarantineReturnReason.trim() || 'Müşteri İadesi'}).
+                        <div className="rounded-2xl border border-amber-500/35 bg-amber-500/10 p-3 text-xs text-amber-800 font-bold">
+                            İade edilen ürünler <b>Karantina Stoğuna</b> ayrılacak ({quarantineReturnReason.trim() || 'Müşteri İadesi'}).
                         </div>
                     )}
-                    <div className={`mb-3 sm:mb-4 rounded-xl sm:rounded-2xl border p-2.5 sm:p-3 text-xs font-bold flex items-start gap-2 ${saleRegistryMode === 'BKTS' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200' : 'border-white/10 bg-stone-900 text-stone-300'}`}>
-                        {saleRegistryMode === 'BKTS' ? <ShieldCheck size={15} className="shrink-0 text-emerald-400" /> : <AlertCircle size={15} className="shrink-0 text-stone-400" />}
-                        <span className="text-[11px] sm:text-xs">
-                            {saleRegistryMode === 'BKTS'
-                                ? <>BKTS/GTS Kayıtlı Satış — Bakanlık defterine aktarıma hazır.{bReceteEnabled && bReceteCode.trim() ? <> B-Reçete: <b className="font-mono">{bReceteCode.trim()}</b></> : null}</>
-                                : <>Kayıtsız Serbest Satış — defterde kayıtlı tutulur, Bakanlığa aktarılmaz.</>}
-                        </span>
-                    </div>
-                    <div className="bg-stone-900 p-3.5 sm:p-6 rounded-xl sm:rounded-2xl shadow-sm border border-white/5 mb-4 sm:mb-6">
-                         <div className="flex items-center justify-between mb-3 pb-3 border-b border-white/5">
-                             <div>
-                                 <p className="text-xs text-stone-500">{farmerLabel}</p>
-                                 <p className="font-bold text-sm sm:text-lg text-stone-200">{selectedFarmer?.fullName}</p>
-                             </div>
-                             <div className="text-right">
-                                 <p className="text-xs text-stone-500">Tarih</p>
-                                 <p className="font-medium text-xs sm:text-sm text-stone-300">{new Date().toLocaleDateString()}</p>
-                             </div>
-                         </div>
-                         {selectedCrop && (
-                             <div className="mb-3 flex items-center justify-between bg-emerald-500/10 border border-emerald-500/20 px-3 py-2 rounded-xl">
-                                 <div className="flex items-center gap-1.5">
-                                     <Sprout size={14} className="text-emerald-400" />
-                                     <span className="text-[11px] text-stone-400 font-medium">Mahsul:</span>
-                                     <span className="text-[11px] font-black text-emerald-400">{selectedCrop}</span>
-                                 </div>
-                                 <span className="text-[9px] font-bold text-emerald-500/80 bg-emerald-500/20 px-1.5 py-0.5 rounded-md">Ürün Bazlı</span>
-                             </div>
-                         )}
-                         <div className="space-y-1.5">
-                             {selectedItems.map((item, idx) => (
-                                 <div key={idx} className="flex justify-between py-1.5 border-b border-white/5 last:border-0 items-center">
-                                     <div className="min-w-0 flex-1 pr-2">
-                                         <span className="font-bold text-xs sm:text-sm text-stone-300 block truncate">{item.pesticide.name}</span>
-                                         {item.quantity && <span className="text-[10px] text-stone-400 font-bold bg-stone-950 px-1.5 py-0.5 rounded inline-block mt-0.5">{item.quantity.toString().replace(/^-/, '')} Adet</span>}
-                                         {(item.lotNumber || (item.serialNumbers?.length || 0) > 0) && (
-                                             <span className="text-[9.5px] text-stone-500 font-mono block mt-0.5">
-                                                 {[item.lotNumber ? `Lot ${item.lotNumber}` : '', item.expiryDate ? `SKT ${item.expiryDate}` : '', item.serialNumbers?.length ? `${item.serialNumbers.length} seri` : ''].filter(Boolean).join(' • ')}
-                                             </span>
-                                         )}
-                                     </div>
-                                     <div className="text-right shrink-0">
-                                         <span className="font-bold text-xs text-stone-300 block">{item.dosage}</span>
-                                         <div className="flex flex-col items-end mt-0.5">
-                                             {item.totalPrice && item.totalPrice > 0 ? (
-                                                 <span className="text-xs sm:text-sm text-emerald-400 font-mono font-bold block">
-                                                     {formatCurrency(item.totalPrice, userProfile?.currency || 'TRY')}
-                                                 </span>
-                                             ) : null}
-                                         </div>
-                                     </div>
-                                 </div>
-                             ))}
-                             
-                             {/* Toplam Tutar Gösterimi */}
-                             {selectedItems.some(i => i.totalPrice && i.totalPrice > 0) && (() => {
-                                 const initialTotal = selectedItems.reduce((acc, item) => acc + (item.totalPrice || 0), 0);
-                                 const discountValue = parseFloat(prescriptionDiscount.replace(',', '.')) || 0;
-                                 const finalTotal = Math.max(0, initialTotal - discountValue);
+                    <div className="v22-bento-card p-4 sm:p-6 rounded-2xl border border-[var(--mks-card-border)] space-y-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3 pb-3.5 border-b border-[var(--mks-card-border)]">
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">5. Adım • Önizleme ve Onay</p>
+                                <p className="font-black text-base sm:text-xl text-[var(--mks-text)] tracking-tight mt-0.5">{selectedFarmer?.fullName}</p>
+                                <p className="text-xs text-[var(--mks-muted)] mt-0.5">
+                                    {farmerLabel} • {prescriptionPriceType === 'CASH' ? 'Peşin ' : 'Vadeli '}{prescriptionType === 'RETURN' ? 'İade' : 'Satış'}
+                                </p>
+                            </div>
+                            <div className="text-right space-y-1">
+                                <p className="text-[10px] font-black uppercase tracking-wider text-[var(--mks-muted)]">İşlem Tarihi</p>
+                                <p className="font-bold text-xs sm:text-sm text-[var(--mks-text)]">{new Date().toLocaleDateString('tr-TR')}</p>
+                                {selectedCrop && (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/25 text-emerald-700 text-[10px] font-black">
+                                        <Sprout size={11} /> {selectedCrop}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
 
-                                 return (
-                                     <div className="pt-3 border-t border-white/10 mt-3 space-y-2.5">
-                                         <div className="flex justify-between items-center">
-                                             <div>
-                                                 <span className="font-bold text-xs sm:text-sm text-stone-300 block">TOPLAM TUTAR</span>
-                                                 <span className={`text-[9px] font-black px-2 py-0.5 rounded-full mt-0.5 inline-block ${prescriptionPriceType === 'CASH' ? 'bg-emerald-900/40 text-emerald-400' : 'bg-stone-800 text-stone-500'}`}>
-                                                     {prescriptionPriceType === 'CASH' ? 'PEŞİN ' : 'VADELİ '} {prescriptionType === 'RETURN' ? 'İADE' : 'SATIŞ'}
-                                                 </span>
-                                             </div>
-                                             <span className={`font-bold font-mono ${discountValue > 0 ? 'text-stone-500 text-xs sm:text-sm line-through' : 'text-emerald-400 text-base sm:text-lg'}`}>
-                                                 {formatCurrency(initialTotal, userProfile?.currency || 'TRY')}
-                                             </span>
-                                         </div>
-                                         
-                                         <div className="flex justify-between items-center bg-stone-950 p-2.5 rounded-xl border border-stone-800">
-                                             <span className="text-[9px] sm:text-[10px] font-bold text-stone-500 uppercase tracking-widest">İskonto</span>
-                                             <input 
-                                                type="number"
-                                                value={prescriptionDiscount}
-                                                onChange={(e) => setPrescriptionDiscount(e.target.value)}
-                                                className="w-24 sm:w-28 bg-stone-900 border border-stone-800 rounded-lg p-1.5 text-right font-mono font-bold text-rose-400 outline-none focus:border-rose-500 transition-colors text-xs"
-                                                placeholder="0.00"
-                                             />
-                                         </div>
+                        <div className="divide-y divide-[var(--mks-card-border)]">
+                            {selectedItems.map((item, idx) => (
+                                <div key={idx} className="flex justify-between py-2.5 items-center gap-3">
+                                    <div className="min-w-0 flex-1">
+                                        <span className="font-black text-xs sm:text-sm text-[var(--mks-text)] block truncate">{item.pesticide.name}</span>
+                                        <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                                            {item.quantity && (
+                                                <span className="text-[10px] text-[var(--mks-text)] font-bold bg-[var(--mks-subcard)] border border-[var(--mks-card-border)] px-2 py-0.5 rounded-md">
+                                                    {item.quantity.toString().replace(/^-/, '')} Adet
+                                                </span>
+                                            )}
+                                            {(() => {
+                                                const unitNum = parseFloat(String(item.unitPrice || '').replace(',', '.')) || 0;
+                                                return unitNum > 0 ? (
+                                                    <span className="text-[10px] text-[var(--mks-muted)] font-mono">
+                                                        Birim: {formatCurrency(unitNum, userProfile?.currency || 'TRY')}
+                                                    </span>
+                                                ) : null;
+                                            })()}
+                                            {(item.lotNumber || (item.serialNumbers?.length || 0) > 0) && (
+                                                <span className="text-[10px] text-[var(--mks-muted)] font-mono">
+                                                    {[item.lotNumber ? `Lot ${item.lotNumber}` : '', item.expiryDate ? `SKT ${item.expiryDate}` : '', item.serialNumbers?.length ? `${item.serialNumbers.length} seri` : ''].filter(Boolean).join(' • ')}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div className="text-right shrink-0">
+                                        {item.dosage && <span className="text-[10px] font-bold text-[var(--mks-muted)] block">{item.dosage}</span>}
+                                        {item.totalPrice && item.totalPrice > 0 ? (
+                                            <span className="text-xs sm:text-sm text-emerald-600 font-mono font-black block mt-0.5">
+                                                {formatCurrency(item.totalPrice, userProfile?.currency || 'TRY')}
+                                            </span>
+                                        ) : null}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
 
-                                         {discountValue > 0 && (
-                                            <div className="flex justify-between items-center pt-1">
-                                                 <span className="font-black text-emerald-400 block text-sm sm:text-base tracking-tight">İNDİRİMLİ TUTAR</span>
-                                                 <span className="font-black text-emerald-400 text-lg sm:text-2xl font-mono">
-                                                     {formatCurrency(finalTotal, userProfile?.currency || 'TRY')}
-                                                 </span>
-                                            </div>
-                                         )}
-                                     </div>
-                                 );
-                             })()}
-                         </div>
+                        {selectedItems.some(i => i.totalPrice && i.totalPrice > 0) && (() => {
+                            const initialTotal = selectedItems.reduce((acc, item) => acc + (item.totalPrice || 0), 0);
+                            const discountValue = parseFloat(prescriptionDiscount.replace(',', '.')) || 0;
+                            const finalTotal = Math.max(0, initialTotal - discountValue);
+
+                            return (
+                                <div className="pt-3.5 border-t border-[var(--mks-card-border)] space-y-2.5">
+                                    <div className="flex justify-between items-center">
+                                        <div>
+                                            <span className="font-black text-xs sm:text-sm text-[var(--mks-text)] block">ARA TOPLAM</span>
+                                            <span className={`text-[9.5px] font-black px-2 py-0.5 rounded-full mt-1 inline-block ${prescriptionPriceType === 'CASH' ? 'bg-emerald-500/15 text-emerald-700' : 'bg-amber-500/15 text-amber-700'}`}>
+                                                {prescriptionPriceType === 'CASH' ? 'PEŞİN ' : 'VADELİ '}{prescriptionType === 'RETURN' ? 'İADE' : 'SATIŞ'}
+                                            </span>
+                                        </div>
+                                        <span className={`font-black font-mono ${discountValue > 0 ? 'text-[var(--mks-muted)] text-xs sm:text-sm line-through' : 'text-emerald-600 text-base sm:text-lg'}`}>
+                                            {formatCurrency(initialTotal, userProfile?.currency || 'TRY')}
+                                        </span>
+                                    </div>
+
+                                    <div className="flex justify-between items-center bg-[var(--mks-subcard)] p-2.5 rounded-xl border border-[var(--mks-card-border)]">
+                                        <span className="text-[10px] font-black text-[var(--mks-muted)] uppercase tracking-widest">İskonto</span>
+                                        <input
+                                            type="number"
+                                            value={prescriptionDiscount}
+                                            onChange={(e) => setPrescriptionDiscount(e.target.value)}
+                                            className="w-28 bg-[var(--mks-input-bg)] border border-[var(--mks-input-border)] rounded-lg p-1.5 text-right font-mono font-black text-rose-600 outline-none focus:border-rose-500 transition-colors text-xs"
+                                            placeholder="0.00"
+                                        />
+                                    </div>
+
+                                    {discountValue > 0 && (
+                                        <div className="flex justify-between items-center pt-1">
+                                            <span className="font-black text-emerald-700 block text-sm sm:text-base tracking-tight">GENEL TOPLAM</span>
+                                            <span className="font-black text-emerald-600 text-lg sm:text-2xl font-mono">
+                                                {formatCurrency(finalTotal, userProfile?.currency || 'TRY')}
+                                            </span>
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })()}
+
+                        <div className="rounded-xl bg-[var(--mks-subcard)] border border-[var(--mks-card-border)] px-3 py-2 text-[11px] font-medium text-[var(--mks-muted)] flex items-center gap-2">
+                            <Check size={14} className="text-emerald-600 shrink-0" />
+                            <span>Depo stoğu, kasa/vade hareketi ve çiftçi cari bakiyesi otomatik güncellenir.</span>
+                        </div>
                     </div>
-                    <div className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] left-0 w-full p-2.5 sm:p-4 md:static md:p-0 md:mt-8 z-30 bg-gradient-to-t from-[var(--mks-canvas-bg)] via-[var(--mks-canvas-bg)] to-transparent pb-4 sm:pb-6">
-                        <div className="max-w-3xl mx-auto">
-                            <button 
+
+                    <div className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] left-0 w-full p-2.5 sm:p-4 md:static md:p-0 z-30 bg-gradient-to-t from-[var(--mks-canvas-bg)] via-[var(--mks-canvas-bg)] to-transparent pb-4 sm:pb-2">
+                        <div className="max-w-4xl mx-auto">
+                            <button
+                                type="button"
                                 onClick={handleSave}
                                 disabled={isSavingPrescription}
-                                className="w-full bg-emerald-600 disabled:opacity-50 disabled:grayscale text-white py-3.5 sm:py-4 rounded-xl font-bold text-base sm:text-lg shadow-lg hover:bg-emerald-700 flex items-center justify-center transition-all border border-emerald-500/20 active:scale-95"
+                                className="w-full bg-emerald-600 disabled:opacity-50 disabled:grayscale text-white py-3.5 sm:py-4 rounded-2xl font-black text-sm sm:text-base shadow-lg shadow-emerald-600/20 hover:bg-emerald-700 flex items-center justify-center transition-all active:scale-95"
                             >
                                 {isSavingPrescription ? (
                                     <>
-                                        <Loader2 className="animate-spin mr-2" size={24} /> Kaydediliyor...
+                                        <Loader2 className="animate-spin mr-2" size={20} /> Kaydediliyor...
                                     </>
                                 ) : (
                                     <>
-                                        <FileOutput className="mr-2" /> {editingId ? `${currentPrescriptionLabel} Güncelle` : `${currentPrescriptionLabel} Oluştur`}
+                                        <FileOutput className="mr-2" size={19} /> {editingId ? `${currentPrescriptionLabel} Güncelle` : `${currentPrescriptionLabel} Onayla ve Kaydet`}
                                     </>
                                 )}
                             </button>
@@ -3874,10 +3705,11 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
                             </button>
                             <button
                                 type="button"
+                                disabled={isSavingTemplate}
                                 onClick={handleSaveAsTemplate}
-                                className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black"
+                                className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black disabled:opacity-50"
                             >
-                                Şablonu Kaydet
+                                {isSavingTemplate ? 'Kaydediliyor...' : 'Şablonu Kaydet'}
                             </button>
                         </div>
                     </div>

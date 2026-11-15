@@ -1,24 +1,95 @@
 import type { jsPDF as JsPDFInstance } from 'jspdf';
 import type { Options as Html2CanvasOptions } from 'html2canvas';
 import { archivePdf, hasNativePdfBridge, openPdfBlob } from './pdfArchive';
+import { getLocalDateString } from './dateUtils';
+
+/**
+ * jsPDF v2.5.x `save` metodunu prototype yerine doğrudan her örnek (`this.save`) üzerine tanımlar.
+ * Bu nedenle yalnızca prototype yaması yeterli değildir; hem `API.events['initialized']` kancasıyla
+ * hem de yapıcı (`Proxy`) ve örnek yamasıyla her `.save()` çağrısını garanti altına alırız.
+ */
+export function patchJsPdfInstance<T extends Record<string, any>>(instance: T): T {
+  if (!instance || (instance as any)._mksInstanceSavePatched) return instance;
+  (instance as any)._mksInstanceSavePatched = true;
+
+  const originalSave = typeof instance.save === 'function' ? instance.save.bind(instance) : null;
+
+  (instance as any).save = function (filename?: string, ...args: any[]) {
+    const rawName = (filename || `MKS_Belge_${getLocalDateString()}.pdf`).trim();
+    const name = rawName.toLowerCase().endsWith('.pdf') ? rawName : `${rawName}.pdf`;
+
+    try {
+      let blob: Blob | null = null;
+      if (typeof instance.output === 'function') {
+        const out = instance.output('blob');
+        if (out instanceof Blob) {
+          blob = out;
+        } else {
+          const ab = instance.output('arraybuffer');
+          if (ab) blob = new Blob([ab], { type: 'application/pdf' });
+        }
+      }
+
+      if (blob && blob.size > 0) {
+        const archiveName = name.split(/[\\/]/).pop() || name;
+        void archivePdf(archiveName, blob);
+        // Android WebView blob indirmeyi desteklemez: PDF'i yerel görüntüleyicide aç
+        if (hasNativePdfBridge()) {
+          void openPdfBlob(archiveName, blob, 'open');
+          return instance;
+        }
+      }
+    } catch (e) {
+      console.warn('PDF archive intercept error:', e);
+    }
+
+    return originalSave ? originalSave(name, ...args) : instance;
+  };
+
+  return instance;
+}
 
 function patchJsPdfSave(cls: any) {
-  if (!cls || (cls.prototype as any)._mksSaveIntercepted) return;
-  (cls.prototype as any)._mksSaveIntercepted = true;
-  const originalSave = cls.prototype.save;
-  cls.prototype.save = function (this: any, filename: string, ...args: any[]) {
-    const name = filename || `MKS_Belge_${new Date().toISOString().slice(0, 10)}.pdf`;
+  if (!cls) return;
+  if (!cls._mksEventsPatched) {
+    cls._mksEventsPatched = true;
     try {
-      const blob: Blob = this.output('blob');
-      void archivePdf(name, blob);
-      // Android WebView blob indirmeyi desteklemez: PDF'i yerel görüntüleyicide aç
-      if (hasNativePdfBridge()) {
-        void openPdfBlob(name, blob, 'open');
-        return this;
-      }
+      cls.API?.events?.push([
+        'initialized',
+        function (this: any) {
+          patchJsPdfInstance(this);
+        }
+      ]);
     } catch {}
-    return originalSave.call(this, filename, ...args);
-  };
+  }
+
+  // Olası özel/alt sınıflar için prototype yedek yaması
+  if (cls.prototype && !cls.prototype._mksSaveIntercepted) {
+    cls.prototype._mksSaveIntercepted = true;
+    const protoSave = cls.prototype.save;
+    if (typeof protoSave === 'function') {
+      cls.prototype.save = function (this: any, filename: string, ...args: any[]) {
+        patchJsPdfInstance(this);
+        return this.save(filename, ...args);
+      };
+    }
+  }
+}
+
+function wrapJsPdfConstructor<T>(cls: T): T {
+  patchJsPdfSave(cls);
+  const anyCls = cls as any;
+  if (!anyCls || typeof anyCls !== 'function') return cls;
+  if (anyCls._mksWrappedProxy) return anyCls._mksWrappedProxy as T;
+
+  const proxied = new Proxy(anyCls, {
+    construct(target, args, newTarget) {
+      const inst = Reflect.construct(target, args, newTarget);
+      return patchJsPdfInstance(inst);
+    }
+  });
+  anyCls._mksWrappedProxy = proxied;
+  return proxied as T;
 }
 
 /**
@@ -26,8 +97,7 @@ function patchJsPdfSave(cls: any) {
  */
 export async function loadJsPdf() {
   const mod = await import('jspdf');
-  patchJsPdfSave(mod.jsPDF);
-  return mod.jsPDF;
+  return wrapJsPdfConstructor(mod.jsPDF);
 }
 
 /**
@@ -38,8 +108,8 @@ export async function loadJsPdfWithAutoTable() {
     import('jspdf'),
     import('jspdf-autotable')
   ]);
-  patchJsPdfSave(jsPDF);
-  return { jsPDF, autoTable: autoTableMod.default };
+  const WrappedJsPdf = wrapJsPdfConstructor(jsPDF);
+  return { jsPDF: WrappedJsPdf, autoTable: autoTableMod.default };
 }
 
 /**
@@ -90,5 +160,5 @@ export async function createMultiPagePdf(canvas: HTMLCanvasElement): Promise<JsP
     heightLeft -= pageHeight;
   }
 
-  return pdf;
+  return patchJsPdfInstance(pdf as unknown as Record<string, any>) as unknown as JsPDFInstance;
 }

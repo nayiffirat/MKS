@@ -4,12 +4,12 @@ import { openDB, DBSchema } from 'idb';
 import { Farmer, Pesticide, VisitLog, Prescription, PrescriptionItem, AppNotification, UserProfile, Reminder, InventoryItem, InventoryBatch, PesticideCategory, Payment, ManualDebt, Supplier, SupplierPurchase, SupplierPayment, MyPayment, TurnoverLog, Expense, Account, Transaction, TeamMember, Message, News, CollectionLog, Plant, SystemError, PortalShareSnapshot, SavedMapFeature, SatelliteCacheRecord, SyncOutboxEntry, PrescriptionTemplate, PortalInquiry, MinistryShipmentRecord, MinistryRecord } from '../types';
 import { supplierDocKind } from '../utils/tradeCore';
 import { MOCK_PESTICIDES } from '../constants';
-import { db as firestore, auth, storage } from './firebase';
+import { db as firestore, auth } from './firebase';
 import { doc, setDoc, deleteDoc, deleteField, collection, getDocs, getDocsFromServer, writeBatch, query, where, getDoc, onSnapshot, getDocFromServer } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { generatePortalToken, hashSecret, isHashedSecret } from '../utils/crypto';
 import { generateUUID } from '../utils/uuid';
 import { round2, normalizeGtin } from '../utils/dateUtils';
+import { parseGS1Barcode, findItemByScan, canonicalBarcodeFromParsed } from '../utils/gs1Parser';
 
 export enum OperationType {
   CREATE = 'create',
@@ -781,6 +781,9 @@ export const setActionBlocked = (blocked: boolean) => {
   isActionBlocked = blocked;
 };
 
+export const isSubscriptionBlocked = () =>
+  isActionBlocked && auth.currentUser?.email !== 'nayiffirat@gmail.com';
+
 export const setActionBlockedCallback = (cb: () => void) => {
   onActionBlocked = cb;
 };
@@ -980,6 +983,161 @@ const sanitizeCanonicalBarcode = (rawBarcode?: string, rawGtin?: string): { barc
     cleanBarcode = cleanGtin;
   }
   return { barcode: cleanBarcode, gtin: cleanGtin };
+};
+
+const computeInventoryItemLedger = (
+  pesticideId: string,
+  purchases: SupplierPurchase[],
+  prescriptions: Prescription[],
+  adjustments?: InventoryItem['adjustments']
+) => {
+  let purchasedQty = 0;
+  let soldQty = 0;
+  let hasAnyPurchaseLine = false;
+
+  for (const purchase of purchases) {
+    if (purchase.deletedAt || purchase.isInventoryProcessed === false) continue;
+    const isReturnOrSale = supplierDocKind(purchase) !== 'PURCHASE';
+    for (const pItem of (purchase.items || [])) {
+      if (pItem.pesticideId === pesticideId) {
+        hasAnyPurchaseLine = true;
+        const qty = parseFloat(String(pItem.quantity || '0').replace(',', '.')) || 0;
+        if (isReturnOrSale || qty < 0) {
+          purchasedQty -= Math.abs(qty);
+        } else {
+          purchasedQty += Math.abs(qty);
+        }
+      }
+    }
+  }
+
+  for (const prescription of prescriptions) {
+    if (prescription.deletedAt) continue;
+    if (!prescription.isInventoryProcessed && prescription.isProcessed === false) continue;
+    for (const pItem of (prescription.items || [])) {
+      if (pItem.pesticideId === pesticideId) {
+        if (prescription.type === 'RETURN' && Boolean(pItem.quarantineReason)) {
+          continue; // Karantina iadeleri normal rafa değil quarantineQty'ye işlenir
+        }
+        const qty = parseFloat(String(pItem.quantity || '0').replace(',', '.')) || 0;
+        if (prescription.type === 'RETURN') {
+          soldQty -= Math.abs(qty);
+        } else {
+          soldQty += Math.abs(qty);
+        }
+      }
+    }
+  }
+
+  let adjustedQty = 0;
+  if (adjustments && adjustments.length > 0) {
+    for (const adj of adjustments) {
+      adjustedQty += (Number(adj.amount) || 0);
+    }
+  }
+
+  return {
+    purchasedQty: round2(purchasedQty),
+    soldQty: round2(soldQty),
+    adjustedQty: round2(adjustedQty),
+    calculatedQty: round2(adjustedQty + purchasedQty - soldQty),
+    hasAnyPurchaseLine
+  };
+};
+
+const normalizeInventoryNumbers = (item: InventoryItem): { item: InventoryItem; changed: boolean } => {
+  let changed = false;
+  const fixed: InventoryItem = { ...item };
+
+  const numOrZero = (v: unknown) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  if (fixed.quantity === null || fixed.quantity === undefined || !Number.isFinite(Number(fixed.quantity))) {
+    fixed.quantity = 0;
+    changed = true;
+  } else {
+    const q = round2(Number(fixed.quantity));
+    if (q !== fixed.quantity) { fixed.quantity = q; changed = true; }
+  }
+
+  const bp = numOrZero(fixed.buyingPrice);
+  if (fixed.buyingPrice === null || fixed.buyingPrice === undefined || !Number.isFinite(Number(fixed.buyingPrice)) || bp !== fixed.buyingPrice) {
+    fixed.buyingPrice = bp;
+    changed = true;
+  }
+
+  const sp = numOrZero(fixed.sellingPrice);
+  if (fixed.sellingPrice === null || fixed.sellingPrice === undefined || !Number.isFinite(Number(fixed.sellingPrice)) || sp !== fixed.sellingPrice) {
+    fixed.sellingPrice = sp;
+    changed = true;
+  }
+
+  if (fixed.cashBuyingPrice !== undefined && (!Number.isFinite(Number(fixed.cashBuyingPrice)) || fixed.cashBuyingPrice === null)) {
+    fixed.cashBuyingPrice = bp;
+    changed = true;
+  }
+  if (fixed.cashPrice !== undefined && (!Number.isFinite(Number(fixed.cashPrice)) || fixed.cashPrice === null)) {
+    fixed.cashPrice = sp;
+    changed = true;
+  }
+
+  return { item: fixed, changed };
+};
+
+const reconcileItemBatchesAndNumbers = (
+  rawItem: InventoryItem,
+  targetQty: number,
+  nowIso: string
+): InventoryItem => {
+  const { item: normItem } = normalizeInventoryNumbers(rawItem);
+  const cleanQty = round2(Number.isFinite(targetQty) ? targetQty : 0);
+
+  if (cleanQty <= 0) {
+    return {
+      ...normItem,
+      quantity: cleanQty,
+      batches: undefined,
+      lastUpdated: nowIso
+    };
+  }
+
+  if (Array.isArray(normItem.batches) && normItem.batches.length > 0) {
+    const activeBatches = normItem.batches
+      .map(b => ({ ...b, quantity: round2(Math.max(0, Number(b.quantity) || 0)) }))
+      .filter(b => b.quantity > 0);
+    const batchSum = round2(activeBatches.reduce((sum, b) => sum + b.quantity, 0));
+
+    let nextBatches = activeBatches;
+    if (cleanQty > batchSum + 0.005) {
+      nextBatches = addBatchStock(activeBatches, {
+        lotNumber: activeBatches[0]?.lotNumber || normItem.lotNumber || 'GENEL',
+        expiryDate: activeBatches[0]?.expiryDate || normItem.expiryDate,
+        quantity: round2(cleanQty - batchSum),
+        receivedAt: nowIso
+      });
+    } else if (batchSum > cleanQty + 0.005) {
+      nextBatches = deductBatchStock(activeBatches, {
+        quantity: round2(batchSum - cleanQty)
+      });
+    }
+
+    return applyBatchesToInventoryItem(
+      {
+        ...normItem,
+        quantity: cleanQty,
+        lastUpdated: nowIso
+      },
+      nextBatches
+    );
+  }
+
+  return {
+    ...normItem,
+    quantity: cleanQty,
+    lastUpdated: nowIso
+  };
 };
 
 const dbServiceObj = {
@@ -1274,7 +1432,6 @@ const dbServiceObj = {
       localStorage.removeItem(`mks_ministry_records_v1_${uid}`);
       localStorage.removeItem(`mks_ministry_shipments_v1_${uid}`);
     }
-    console.log("Local IndexedDB cleared.");
   },
 
   /**
@@ -1285,8 +1442,22 @@ const dbServiceObj = {
     if (!uid) return;
     const userPath = [FS_ROOT, FS_ORG, FS_USERS, uid].join("/");
     const collections = [
-      ...USER_SYNC_COLLECTIONS, "systemErrors"
+      ...USER_SYNC_COLLECTIONS, "systemErrors", "counters", "edmData"
     ] as const;
+
+    // 0. Arka planda bekleyen senkronizasyon ve portal zamanlayıcılarını durdur (eski veri buluta geri yazılmasın)
+    for (const timer of portalRefreshTimers.values()) {
+      clearTimeout(timer);
+    }
+    portalRefreshTimers.clear();
+    try {
+      const db = await initDB();
+      if (db.objectStoreNames.contains('syncOutbox')) {
+        await db.clear('syncOutbox');
+      }
+    } catch (e) {
+      console.warn("syncOutbox pre-wipe clear error:", e);
+    }
 
     // 1. Buluttaki (Firestore) tüm dökümanları sil
     for (const col of collections) {
@@ -1315,7 +1486,7 @@ const dbServiceObj = {
       }
     }
 
-    // 2. Kullanıcı profil belgesini sıfırla (mevcut rol ve abonelik bilgilerini koruyarak)
+    // 2. Kullanıcı profil belgesini temiz bir nesneyle sıfırla (eski şirket/kaşe/entegratör ayarlarını da kaldırır, abonelik & yetki korunur)
     try {
       const userDocRef = doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid);
       const existingSnap = await getDoc(userDocRef);
@@ -1324,17 +1495,25 @@ const dbServiceObj = {
       const defaultEnd = new Date();
       if (isRootAdmin) defaultEnd.setFullYear(2099);
       else defaultEnd.setDate(defaultEnd.getDate() + 7);
+      const endsAt = existingData?.subscriptionEndsAt || defaultEnd.toISOString();
 
-      await setDoc(userDocRef, {
-        uid: uid,
+      const resetProfile: Record<string, any> = {
+        uid,
         email: auth.currentUser?.email || existingData?.email || '',
         fullName: existingData?.fullName || auth.currentUser?.displayName || 'İsimsiz Kullanıcı',
         role: existingData?.role || (isRootAdmin ? 'admin' : 'user'),
         subscriptionStatus: existingData?.subscriptionStatus || (isRootAdmin ? 'active' : 'trial'),
-        subscriptionEndsAt: existingData?.subscriptionEndsAt || defaultEnd.toISOString(),
+        subscriptionTier: existingData?.subscriptionTier || (isRootAdmin ? 'MAX' : 'PRO'),
+        subscriptionEndsAt: endsAt,
+        subscriptionEndsAtMs: existingData?.subscriptionEndsAtMs || new Date(endsAt).getTime(),
         createdAt: existingData?.createdAt || new Date().toISOString(),
         lastLoginAt: new Date().toISOString()
-      }, { merge: true });
+      };
+      if (existingData?.adminPassword) {
+        resetProfile.adminPassword = existingData.adminPassword;
+      }
+
+      await setDoc(userDocRef, sanitizeForFirestore(resetProfile));
     } catch (e) {
       console.error("Firestore user doc reset error:", e);
     }
@@ -1446,7 +1625,9 @@ const dbServiceObj = {
     }
 
     // Reconcile and audit accounts and transactions after cloud sync
-    await dbService.reconcileAccountBalances();
+    if (!isSubscriptionBlocked()) {
+      await dbService.reconcileAccountBalances();
+    }
   },
 
   async syncGlobalPesticides() {
@@ -1571,12 +1752,6 @@ const dbServiceObj = {
     await addSystemErrorInternal(error);
   },
 
-  async getSystemErrors() {
-    const db = await initDB();
-    const errors = await db.getAll('systemErrors');
-    return errors.sort((a, b) => b.timestamp - a.timestamp);
-  },
-
   async getGlobalSystemErrors() {
     if (!navigator.onLine) return [];
     try {
@@ -1592,7 +1767,6 @@ const dbServiceObj = {
   },
 
   async deleteSystemError(id: string) {
-    const db = await initDB();
     await backgroundDelete('systemErrors', id);
     // Also try to delete from global if exists
     backgroundDeleteGlobal('system_errors', id);
@@ -1859,7 +2033,6 @@ const dbServiceObj = {
   },
 
   async deleteFarmer(id: string) {
-    const db = await initDB();
     await backgroundDelete('farmers', id);
   },
   
@@ -1908,7 +2081,6 @@ const dbServiceObj = {
   },
 
   async deleteVisit(id: string) {
-    const db = await initDB();
     await backgroundDelete('visits', id);
   },
   
@@ -1933,7 +2105,6 @@ const dbServiceObj = {
   },
 
   async deletePrescription(id: string) {
-    const db = await initDB();
     await backgroundDelete('prescriptions', id);
   },
   
@@ -1980,7 +2151,6 @@ const dbServiceObj = {
   },
 
   async deleteReminder(id: string) {
-    const db = await initDB();
     await backgroundDelete('reminders', id);
   },
 
@@ -2003,7 +2173,6 @@ const dbServiceObj = {
   },
 
   async deleteNotification(id: string) {
-    const db = await initDB();
     await backgroundDelete('notifications', id);
   },
 
@@ -2053,7 +2222,6 @@ const dbServiceObj = {
   },
 
   async permanentlyDeleteInventoryItem(id: string) {
-    const db = await initDB();
     await backgroundDelete('inventory', id);
   },
 
@@ -2358,60 +2526,19 @@ const dbServiceObj = {
 
     for (const item of inventory) {
         if (item.deletedAt) continue;
-        let purchasedQty = 0;
-        let soldQty = 0;
+        const ledger = computeInventoryItemLedger(item.pesticideId, purchases, prescriptions, item.adjustments);
+        const rawQty = Number(item.quantity);
+        const currentQty = !Number.isFinite(rawQty) ? 0 : round2(rawQty);
 
-        for (const purchase of purchases) {
-            if (purchase.deletedAt) continue;
-            if (purchase.isInventoryProcessed === false) continue;
-            for (const pItem of (purchase.items || [])) {
-                if (pItem.pesticideId === item.pesticideId) {
-                    const qty = parseFloat(String(pItem.quantity || '0').replace(',', '.')) || 0;
-                    const isSale = purchase.type === 'SALE';
-                    const isReturn = purchase.type === 'RETURN';
-                    if (isSale || isReturn || qty < 0) {
-                        purchasedQty -= Math.abs(qty);
-                    } else {
-                        purchasedQty += Math.abs(qty);
-                    }
-                }
-            }
-        }
-
-        for (const prescription of prescriptions) {
-            if (prescription.deletedAt) continue;
-            if (!prescription.isInventoryProcessed && prescription.isProcessed === false) continue;
-            for (const pItem of (prescription.items || [])) {
-                if (pItem.pesticideId === item.pesticideId) {
-                    const qty = parseFloat(String(pItem.quantity || '0').replace(',', '.')) || 0;
-                    if (prescription.type === 'RETURN') {
-                        soldQty -= Math.abs(qty);
-                    } else {
-                        soldQty += Math.abs(qty);
-                    }
-                }
-            }
-        }
-
-        let adjustedQty = 0;
-        if (item.adjustments && item.adjustments.length > 0) {
-            for (const adj of item.adjustments) {
-                adjustedQty += (Number(adj.amount) || 0);
-            }
-        }
-
-        const calculatedQty = Number((adjustedQty + purchasedQty - soldQty).toFixed(2));
-        const currentQty = isNaN(item.quantity) ? 0 : Number((item.quantity || 0).toFixed(2));
-
-        if (isNaN(item.quantity) || Math.abs(currentQty - calculatedQty) > 0.001) {
+        if (!Number.isFinite(rawQty) || Math.abs(currentQty - ledger.calculatedQty) > 0.001) {
             mismatches.push({
                 pesticideId: item.pesticideId,
                 pesticideName: item.pesticideName,
                 currentQty,
-                calculatedQty,
-                purchasedQty: Number(purchasedQty.toFixed(2)),
-                soldQty: Number(soldQty.toFixed(2)),
-                adjustedQty: Number(adjustedQty.toFixed(2))
+                calculatedQty: ledger.calculatedQty,
+                purchasedQty: ledger.purchasedQty,
+                soldQty: ledger.soldQty,
+                adjustedQty: ledger.adjustedQty
             });
         }
     }
@@ -2419,64 +2546,165 @@ const dbServiceObj = {
     return mismatches;
   },
 
-  async rebuildInventoryBalances() {
+  async sanitizeInventoryNumbers(): Promise<number> {
+    const db = await initDB();
+    const inventory = await db.getAll('inventory');
+    let fixedCount = 0;
+    const nowIso = new Date().toISOString();
+    for (const raw of inventory) {
+      if (raw.deletedAt) continue;
+      const { item, changed } = normalizeInventoryNumbers(raw);
+      if (changed) {
+        item.lastUpdated = nowIso;
+        await db.put('inventory', item);
+        void backgroundSync('inventory', item, { preserveLastUpdated: true });
+        fixedCount++;
+      }
+    }
+    return fixedCount;
+  },
+
+  async rebuildInventoryBalances(): Promise<{ updatedCount: number; deduplicatedCount: number }> {
     const db = await initDB();
     const inventory = await db.getAll('inventory');
     const purchases = await db.getAll('supplierPurchases');
     const prescriptions = await db.getAll('prescriptions');
+    const nowIso = new Date().toISOString();
 
-    for (const item of inventory) {
-        if (item.deletedAt) continue;
-        let purchasedQty = 0;
-        let soldQty = 0;
+    let updatedCount = 0;
+    let deduplicatedCount = 0;
 
-        for (const purchase of purchases) {
-            if (purchase.deletedAt) continue;
-            if (purchase.isInventoryProcessed === false) continue;
-            for (const pItem of (purchase.items || [])) {
-                if (pItem.pesticideId === item.pesticideId) {
-                    const qty = parseFloat(String(pItem.quantity || '0').replace(',', '.')) || 0;
-                    const isSale = purchase.type === 'SALE';
-                    const isReturn = purchase.type === 'RETURN';
-                    if (isSale || isReturn || qty < 0) {
-                        purchasedQty -= Math.abs(qty);
-                    } else {
-                        purchasedQty += Math.abs(qty);
-                    }
-                }
-            }
+    // 1. Aynı pesticideId'ye sahip aktif mükerrer stok kartlarını birleştir
+    const uniqueByPesticide = new Map<string, InventoryItem>();
+    for (const rawItem of inventory) {
+      if (rawItem.deletedAt) continue;
+      const { item: normItem, changed: numChanged } = normalizeInventoryNumbers(rawItem);
+      const existing = uniqueByPesticide.get(normItem.pesticideId);
+      if (existing) {
+        const mergedAdjustments = [
+          ...(existing.adjustments || []),
+          ...(normItem.adjustments || [])
+        ];
+        const mergedQuarantineLogs = [
+          ...(existing.quarantineLogs || []),
+          ...(normItem.quarantineLogs || [])
+        ];
+        let mergedBatches = ensureInventoryBatches(existing);
+        for (const b of ensureInventoryBatches(normItem)) {
+          mergedBatches = addBatchStock(mergedBatches, {
+            lotNumber: b.lotNumber,
+            expiryDate: b.expiryDate,
+            quantity: b.quantity,
+            serialNumbers: b.serialNumbers,
+            receivedAt: b.receivedAt || nowIso
+          });
         }
-
-        for (const prescription of prescriptions) {
-            if (prescription.deletedAt) continue;
-            if (!prescription.isInventoryProcessed && prescription.isProcessed === false) continue;
-            for (const pItem of (prescription.items || [])) {
-                if (pItem.pesticideId === item.pesticideId) {
-                    const qty = parseFloat(String(pItem.quantity || '0').replace(',', '.')) || 0;
-                    if (prescription.type === 'RETURN') {
-                        soldQty -= Math.abs(qty);
-                    } else {
-                        soldQty += Math.abs(qty);
-                    }
-                }
-            }
+        const merged: InventoryItem = {
+          ...existing,
+          quantity: round2((Number(existing.quantity) || 0) + (Number(normItem.quantity) || 0)),
+          quarantineQty: round2((Number(existing.quarantineQty) || 0) + (Number(normItem.quarantineQty) || 0)) || existing.quarantineQty,
+          adjustments: mergedAdjustments.length > 0 ? mergedAdjustments : undefined,
+          quarantineLogs: mergedQuarantineLogs.length > 0 ? mergedQuarantineLogs : undefined,
+          batches: mergedBatches.length > 0 ? mergedBatches : undefined,
+          lastUpdated: nowIso
+        };
+        uniqueByPesticide.set(normItem.pesticideId, merged);
+        await db.put('inventory', merged);
+        void backgroundSync('inventory', merged, { preserveLastUpdated: true });
+        await backgroundDelete('inventory', normItem.id);
+        deduplicatedCount++;
+      } else {
+        if (numChanged) {
+          normItem.lastUpdated = nowIso;
+          updatedCount++;
         }
-
-        let adjustedQty = 0;
-        if (item.adjustments && item.adjustments.length > 0) {
-            for (const adj of item.adjustments) {
-                adjustedQty += (Number(adj.amount) || 0);
-            }
-        }
-
-        const calculatedQty = Number((adjustedQty + purchasedQty - soldQty).toFixed(2));
-        const finalQty = isNaN(calculatedQty) ? 0 : calculatedQty;
-
-        item.quantity = finalQty;
-        item.lastUpdated = new Date().toISOString();
-        await db.put('inventory', item);
-        backgroundSync('inventory', item);
+        uniqueByPesticide.set(normItem.pesticideId, normItem);
+      }
     }
+
+    // 2. Her stok kartını tedarikçi alımları, satışlar/iadeler, açılış koruması ve partilerle senkronize et
+    for (const item of uniqueByPesticide.values()) {
+      const ledger = computeInventoryItemLedger(item.pesticideId, purchases, prescriptions, item.adjustments);
+      const rawCurrent = round2(Number(item.quantity) || 0);
+      let nextItem = item;
+      let finalQty = Number.isFinite(ledger.calculatedQty) ? ledger.calculatedQty : 0;
+
+      // Geçmiş alımı ve düzeltme kaydı olmayan manuel/CSV açılış stoklarını sıfırlamak yerine koru
+      if (
+        !ledger.hasAnyPurchaseLine &&
+        (!item.adjustments || item.adjustments.length === 0) &&
+        rawCurrent >= 0 &&
+        round2(rawCurrent + ledger.soldQty) > 0
+      ) {
+        const openingAmount = round2(rawCurrent + ledger.soldQty);
+        nextItem = {
+          ...item,
+          adjustments: [
+            {
+              date: nowIso,
+              amount: openingAmount,
+              note: 'Açılış Stoğu (Otomatik Senkronizasyon)'
+            }
+          ]
+        };
+        finalQty = rawCurrent;
+      }
+
+      const reconciled = reconcileItemBatchesAndNumbers(nextItem, finalQty, nowIso);
+      const batchSumBefore = Array.isArray(item.batches) ? round2(item.batches.reduce((s, b) => s + (Number(b.quantity) || 0), 0)) : null;
+      const qtyChanged = Math.abs(rawCurrent - reconciled.quantity) > 0.001 || !Number.isFinite(Number(item.quantity));
+      const adjAdded = nextItem !== item;
+      const batchChanged = batchSumBefore !== null && Math.abs(batchSumBefore - reconciled.quantity) > 0.005;
+
+      if (qtyChanged || adjAdded || batchChanged) {
+        await db.put('inventory', reconciled);
+        void backgroundSync('inventory', reconciled, { preserveLastUpdated: true });
+        updatedCount++;
+      }
+    }
+
+    return { updatedCount, deduplicatedCount };
+  },
+
+  async preserveInventoryCurrentQuantities(): Promise<number> {
+    const db = await initDB();
+    const mismatches = await this.analyzeInventoryBalances();
+    if (mismatches.length === 0) return 0;
+
+    const inventory = await db.getAll('inventory');
+    const nowIso = new Date().toISOString();
+    let adjustedCount = 0;
+
+    for (const m of mismatches) {
+      const item = inventory.find(i => !i.deletedAt && i.pesticideId === m.pesticideId);
+      if (!item) continue;
+
+      const diff = round2(m.currentQty - m.calculatedQty);
+      const nextAdjustments = Math.abs(diff) > 0.001
+        ? [
+            ...(item.adjustments || []),
+            {
+              date: nowIso,
+              amount: diff,
+              note: 'Stok Senkronizasyon Sayım Farkı'
+            }
+          ]
+        : item.adjustments;
+
+      const updated = reconcileItemBatchesAndNumbers(
+        {
+          ...item,
+          adjustments: nextAdjustments
+        },
+        m.currentQty,
+        nowIso
+      );
+      await db.put('inventory', updated);
+      void backgroundSync('inventory', updated, { preserveLastUpdated: true });
+      adjustedCount++;
+    }
+
+    return adjustedCount;
   },
 
   async processInventory(prescription: Prescription) {
@@ -2844,7 +3072,6 @@ const dbServiceObj = {
   },
 
   async deletePayment(id: string) {
-    const db = await initDB();
     await backgroundDelete('payments', id);
   },
 
@@ -2917,11 +3144,44 @@ const dbServiceObj = {
         primaryMyPay.portfolioStatus === 'ENDORSED' &&
         (params.desiredMyPayment.type === 'CHECK' || params.desiredMyPayment.type === 'PROMISSORY_NOTE');
 
-      for (const settledTx of settledTxsForPrimary) {
-        affectedAccountIds.add(settledTx.accountId);
-        const tombTx: any = { ...settledTx, deletedAt: nowIso, lastUpdated: nowIso };
-        await txStore.put(tombTx);
-        syncTxs.push(tombTx);
+      const keepSettledTxInPlace =
+        Boolean(primaryMyPay) &&
+        settledTxsForPrimary.length > 0 &&
+        params.desiredMyPayment.status === 'PAID' &&
+        params.desiredMyPayment.portfolioStatus !== 'BOUNCED' &&
+        primaryMyPay!.type === params.desiredMyPayment.type &&
+        !preserveEndorsement;
+
+      if (keepSettledTxInPlace) {
+        const primarySettledTx = settledTxsForPrimary[0];
+        affectedAccountIds.add(primarySettledTx.accountId);
+        const nextAccountId = params.desiredMyPayment.accountId || primarySettledTx.accountId;
+        affectedAccountIds.add(nextAccountId);
+        const updatedSettledTx: Transaction & { lastUpdated?: string } = {
+          ...primarySettledTx,
+          accountId: nextAccountId,
+          amount: round2(params.desiredMyPayment.amount),
+          partyName: params.desiredMyPayment.farmerName || primarySettledTx.partyName,
+          partyType: params.desiredMyPayment.farmerId ? 'FARMER' : primarySettledTx.partyType,
+          partyId: params.desiredMyPayment.farmerId || primarySettledTx.partyId,
+          lastUpdated: nowIso
+        };
+        await txStore.put(updatedSettledTx);
+        syncTxs.push(updatedSettledTx);
+
+        for (const extraSettledTx of settledTxsForPrimary.slice(1)) {
+          affectedAccountIds.add(extraSettledTx.accountId);
+          const tombTx: any = { ...extraSettledTx, deletedAt: nowIso, lastUpdated: nowIso };
+          await txStore.put(tombTx);
+          syncTxs.push(tombTx);
+        }
+      } else {
+        for (const settledTx of settledTxsForPrimary) {
+          affectedAccountIds.add(settledTx.accountId);
+          const tombTx: any = { ...settledTx, deletedAt: nowIso, lastUpdated: nowIso };
+          await txStore.put(tombTx);
+          syncTxs.push(tombTx);
+        }
       }
 
       const nextMyPay: MyPayment = {
@@ -3116,7 +3376,6 @@ const dbServiceObj = {
   },
 
   async deleteManualDebt(id: string) {
-    const db = await initDB();
     await backgroundDelete('manualDebts', id);
   },
 
@@ -3141,7 +3400,6 @@ const dbServiceObj = {
   },
 
   async deleteSupplier(id: string) {
-    const db = await initDB();
     await backgroundDelete('suppliers', id);
   },
 
@@ -3406,7 +3664,6 @@ const dbServiceObj = {
   },
 
   async deleteSupplierPurchase(id: string) {
-    const db = await initDB();
     await backgroundDelete('supplierPurchases', id);
   },
 
@@ -3424,7 +3681,6 @@ const dbServiceObj = {
   },
 
   async deleteSupplierPayment(id: string) {
-    const db = await initDB();
     await backgroundDelete('supplierPayments', id);
   },
 
@@ -3449,7 +3705,6 @@ const dbServiceObj = {
   },
 
   async deleteMyPayment(id: string) {
-    const db = await initDB();
     await backgroundDelete('myPayments', id);
   },
 
@@ -3458,12 +3713,6 @@ const dbServiceObj = {
     const db = await initDB();
     const items = await db.getAll('turnoverLogs');
     return items.filter((i: any) => !i.deletedAt);
-  },
-
-  async addTurnoverLog(log: TurnoverLog): Promise<void> {
-    const db = await initDB();
-    await db.put('turnoverLogs', log);
-    await backgroundSync('turnoverLogs', log);
   },
 
   async performFinancialTurnover(year: number, farmerBalances: Record<string, number>): Promise<void> {
@@ -3584,7 +3833,6 @@ const dbServiceObj = {
   },
 
   async deleteAccount(id: string) {
-    const db = await initDB();
     await backgroundDelete('accounts', id);
   },
 
@@ -3907,7 +4155,6 @@ const dbServiceObj = {
   },
 
   async deleteExpense(id: string) {
-    const db = await initDB();
     await backgroundDelete('expenses', id);
   },
 
@@ -3945,7 +4192,6 @@ const dbServiceObj = {
   },
 
   async deleteTeamMember(id: string) {
-    const db = await initDB();
     await backgroundDelete('teamMembers', id);
   },
 
@@ -3997,7 +4243,8 @@ const dbServiceObj = {
     const db = await initDB();
     const news = await db.get('news', id);
     if (news) {
-      const updated = { ...news, deletedAt: new Date().toISOString() };
+      const nowIso = new Date().toISOString();
+      const updated = { ...news, deletedAt: nowIso, lastUpdated: nowIso };
       await db.put('news', updated);
       
       const user = auth.currentUser;
@@ -4072,16 +4319,6 @@ const dbServiceObj = {
     }
   },
 
-  async permanentlyDeletePlant(id: string): Promise<void> {
-    const db = await initDB();
-    await backgroundDelete('plants', id);
-  },
-
-  async getAllPlantsRaw(): Promise<Plant[]> {
-    const db = await initDB();
-    return db.getAll('plants');
-  },
-
   async addCollectionLog(log: CollectionLog) {
     const db = await initDB();
     await db.put('collectionLogs', log);
@@ -4095,7 +4332,6 @@ const dbServiceObj = {
   },
 
   async deleteCollectionLog(id: string) {
-    const db = await initDB();
     await backgroundDelete('collectionLogs', id);
   },
 
@@ -4128,23 +4364,6 @@ const dbServiceObj = {
       await backgroundDelete('siloTransactions', `${id}_barter`);
     }
     await backgroundDelete('siloTransactions', id);
-  },
-
-  /**
-   * Yüklenen bir PDF'i Firebase Storage'a yükler ve indirme bağlantısını döndürür.
-   * WhatsApp paylaşımı vb. için kullanılır.
-   */
-  async uploadPdf(file: Blob, path: string): Promise<string> {
-    const user = auth.currentUser;
-    if (!user) throw new Error("Oturum açılmadı.");
-    
-    // Yolu org/users/uid/pdfs/.. yapısına yerleştir.
-    const fullPath = `${FS_ROOT}/${FS_ORG}/users/${user.uid}/pdfs/${path}`;
-    const storageRef = ref(storage, fullPath);
-    
-    await uploadBytes(storageRef, file, { contentType: 'application/pdf' });
-    const downloadURL = await getDownloadURL(storageRef);
-    return downloadURL;
   },
 
   /**
@@ -4541,7 +4760,14 @@ const dbServiceObj = {
    */
   async acceptMinistryShipment(
     shipment: MinistryShipmentRecord,
-    opts?: { defaultBuyingPrice?: number; defaultSellingPrice?: number }
+    opts?: {
+      defaultBuyingPrice?: number;
+      defaultSellingPrice?: number;
+      library?: { id?: string; gtin?: string; barcode?: string; deletedAt?: string; name?: string; category?: PesticideCategory }[];
+      defaultCategory?: PesticideCategory;
+      skipRecordCreation?: boolean;
+      skipStatusGuard?: boolean;
+    }
   ): Promise<{ alreadyAccepted: boolean; shipment: MinistryShipmentRecord; records: MinistryRecord[] }> {
     const db = await initDB();
     const nowIso = new Date().toISOString();
@@ -4550,42 +4776,42 @@ const dbServiceObj = {
     const shipStore = tx.objectStore('ministryShipments');
     const recStore = tx.objectStore('ministryRecords');
 
-    const existingById = shipment.id ? await shipStore.get(shipment.id) : undefined;
-    if (existingById && existingById.status === 'ACCEPTED' && !existingById.deletedAt) {
-      await tx.done;
-      return { alreadyAccepted: true, shipment: existingById, records: [] };
-    }
-    if (shipment.sscc) {
-      const sameSscc = await shipStore.index('by-sscc').getAll(shipment.sscc);
-      const acceptedSame = sameSscc.find(s => !s.deletedAt && s.status === 'ACCEPTED');
-      if (acceptedSame) {
+    if (!opts?.skipStatusGuard) {
+      const existingById = shipment.id ? await shipStore.get(shipment.id) : undefined;
+      if (existingById && existingById.status === 'ACCEPTED' && !existingById.deletedAt) {
         await tx.done;
-        return { alreadyAccepted: true, shipment: acceptedSame, records: [] };
+        return { alreadyAccepted: true, shipment: existingById, records: [] };
+      }
+      if (shipment.sscc) {
+        const sameSscc = await shipStore.index('by-sscc').getAll(shipment.sscc);
+        const acceptedSame = sameSscc.find(s => !s.deletedAt && s.status === 'ACCEPTED');
+        if (acceptedSame) {
+          await tx.done;
+          return { alreadyAccepted: true, shipment: acceptedSame, records: [] };
+        }
       }
     }
 
     const allInventory = await invStore.getAll();
     const inventoryUpdates: InventoryItem[] = [];
     const createdRecords: MinistryRecord[] = [];
+    const note = `BKTS/GTS Mal Kabul${shipment.sscc ? ` (SSCC ${shipment.sscc})` : ''}${shipment.waybillNo ? ` · İrsaliye ${shipment.waybillNo}` : ''}${shipment.senderName ? ` · ${shipment.senderName}` : ''}`;
 
     for (let idx = 0; idx < (shipment.lines || []).length; idx++) {
       const line = shipment.lines[idx];
       const qty = round2(Math.max(0, Number(line.qty) || 0));
       if (qty <= 0) continue;
 
-      const normGtin = normalizeGtin(line.gtin);
+      const code = line.gtin || '';
+      const probe = parseGS1Barcode(code);
+      const canonical = code ? canonicalBarcodeFromParsed(probe) : '';
+      const normGtin = probe.gtin ? normalizeGtin(probe.gtin) : normalizeGtin(code);
       const nameLower = String(line.name || '').trim().toLocaleLowerCase('tr-TR');
-      let existingIdx = -1;
-      if (normGtin) {
-        existingIdx = allInventory.findIndex(
-          i => !i.deletedAt && normalizeGtin(i.gtin || i.barcode) === normGtin
-        );
-      }
-      if (existingIdx === -1 && nameLower) {
-        existingIdx = allInventory.findIndex(
-          i => !i.deletedAt && i.pesticideName.trim().toLocaleLowerCase('tr-TR') === nameLower
-        );
-      }
+      const liveInventory = allInventory.filter(i => !i.deletedAt);
+      const matched = code
+        ? findItemByScan(liveInventory, probe)
+        : liveInventory.find(i => i.pesticideName.trim().toLocaleLowerCase('tr-TR') === nameLower);
+      const existingIdx = matched ? allInventory.findIndex(i => i.id === matched.id) : -1;
 
       let targetItem: InventoryItem;
       if (existingIdx !== -1) {
@@ -4597,12 +4823,14 @@ const dbServiceObj = {
           serialNumbers: line.serial ? [line.serial] : undefined,
           receivedAt: nowIso
         });
+        const legacyRawBarcode = existing.barcode && existing.barcode.length > 16;
         targetItem = applyBatchesToInventoryItem(
           {
             ...existing,
             quantity: round2((Number(existing.quantity) || 0) + qty),
             gtin: existing.gtin || (normGtin || undefined),
-            barcode: existing.barcode || (normGtin || undefined),
+            barcode: !existing.barcode || legacyRawBarcode ? (canonical || normGtin || existing.barcode) : existing.barcode,
+            adjustments: [...(existing.adjustments || []), { date: nowIso, amount: qty, note }],
             lastUpdated: nowIso
           },
           nextBatches
@@ -4610,6 +4838,11 @@ const dbServiceObj = {
         await invStore.put(targetItem);
         allInventory[existingIdx] = targetItem;
       } else {
+        const libMatch = code && opts?.library ? findItemByScan(opts.library as any[], probe) : undefined;
+        const resolvedName =
+          (line.name || '').startsWith('Yeni ürün') && libMatch?.name
+            ? String(libMatch.name)
+            : line.name || String(libMatch?.name || canonical || 'BKTS Ürünü');
         const nextBatches = addBatchStock([], {
           lotNumber: line.batch,
           expiryDate: line.expiry,
@@ -4620,15 +4853,16 @@ const dbServiceObj = {
         targetItem = applyBatchesToInventoryItem(
           {
             id: generateUUID(),
-            pesticideId: generateUUID(),
-            pesticideName: line.name,
-            category: PesticideCategory.OTHER,
+            pesticideId: libMatch?.id || `bkts-${normGtin || canonical || generateUUID()}`,
+            pesticideName: resolvedName,
+            category: libMatch?.category || opts?.defaultCategory || PesticideCategory.OTHER,
             quantity: qty,
-            unit: 'Adet',
+            unit: line.unit || 'Adet',
             buyingPrice: opts?.defaultBuyingPrice || 0,
             sellingPrice: opts?.defaultSellingPrice || 0,
             gtin: normGtin || line.gtin || undefined,
-            barcode: normGtin || line.gtin || undefined,
+            barcode: canonical || normGtin || line.gtin || undefined,
+            adjustments: [{ date: nowIso, amount: qty, note }],
             lastUpdated: nowIso
           },
           nextBatches
@@ -4636,37 +4870,44 @@ const dbServiceObj = {
         await invStore.put(targetItem);
         allInventory.push(targetItem);
       }
-      inventoryUpdates.push(targetItem);
+      if (!inventoryUpdates.some(u => u.id === targetItem.id)) {
+        inventoryUpdates.push(targetItem);
+      } else {
+        const uIdx = inventoryUpdates.findIndex(u => u.id === targetItem.id);
+        inventoryUpdates[uIdx] = targetItem;
+      }
 
-      const minRec: MinistryRecord = {
-        id: `minrec-ship-${shipment.id || shipment.sscc}-${idx}`,
-        system: 'BKTS',
-        recordType: 'SHIPMENT_ACCEPT',
-        date: nowIso,
-        documentNo: shipment.waybillNo,
-        supplierName: shipment.senderName,
-        sscc: shipment.sscc,
-        waybillNo: shipment.waybillNo,
-        pesticideId: targetItem.pesticideId,
-        productName: line.name,
-        gtin: normGtin || line.gtin,
-        lotNumber: line.batch,
-        serialNumber: line.serial,
-        expiryDate: line.expiry,
-        quantity: qty,
-        unit: targetItem.unit || 'Adet',
-        status: 'Dışa Aktarıma Hazır',
-        lastUpdated: nowIso
-      };
-      await recStore.put(minRec);
-      createdRecords.push(minRec);
+      if (!opts?.skipRecordCreation) {
+        const minRec: MinistryRecord = {
+          id: `minrec-ship-${shipment.id || shipment.sscc}-${idx}`,
+          system: 'BKTS',
+          recordType: 'SHIPMENT_ACCEPT',
+          date: nowIso,
+          documentNo: shipment.waybillNo,
+          supplierName: shipment.senderName,
+          sscc: shipment.sscc,
+          waybillNo: shipment.waybillNo,
+          pesticideId: targetItem.pesticideId,
+          productName: line.name,
+          gtin: normGtin || line.gtin,
+          lotNumber: line.batch,
+          serialNumber: line.serial,
+          expiryDate: line.expiry,
+          quantity: qty,
+          unit: targetItem.unit || 'Adet',
+          status: 'Dışa Aktarıma Hazır',
+          lastUpdated: nowIso
+        };
+        await recStore.put(minRec);
+        createdRecords.push(minRec);
+      }
     }
 
     const acceptedShipment: MinistryShipmentRecord = {
       ...shipment,
       id: shipment.id || generateUUID(),
       status: 'ACCEPTED',
-      acceptedAt: nowIso,
+      acceptedAt: shipment.acceptedAt || nowIso,
       lastUpdated: nowIso
     };
     await shipStore.put(acceptedShipment);
@@ -4757,7 +4998,20 @@ export const dbService = new Proxy(dbServiceObj, {
     const value = target[prop as keyof typeof target];
     if (typeof value === 'function') {
       const propStr = prop.toString();
-      const isMutating = (propStr.startsWith('add') || 
+      const mutatingExactMethods = new Set([
+        'importData',
+        'restoreInventoryItem',
+        'permanentlyDeleteInventoryItem',
+        'initializeInventoryFromPrescriptions',
+        'applyInventoryFixes',
+        'applyFarmerFixes',
+        'sanitizeInventoryNumbers',
+        'rebuildInventoryBalances',
+        'preserveInventoryCurrentQuantities',
+        'reconcileAccountBalances',
+        'sendMessage'
+      ]);
+      const isMutating = ((propStr.startsWith('add') || 
                          propStr.startsWith('update') || 
                          propStr.startsWith('delete') || 
                          propStr.startsWith('save') ||
@@ -4766,7 +5020,8 @@ export const dbService = new Proxy(dbServiceObj, {
                          propStr.startsWith('accept') ||
                          propStr.startsWith('process') ||
                          propStr.startsWith('revert') ||
-                         propStr.startsWith('perform')) && 
+                         propStr.startsWith('perform')) ||
+                         mutatingExactMethods.has(propStr)) && 
                          propStr !== 'saveUserProfile' &&
                          propStr !== 'saveSatelliteCache' &&
                          propStr !== 'saveEdmData' &&
@@ -4777,8 +5032,7 @@ export const dbService = new Proxy(dbServiceObj, {
                          
       if (isMutating) {
         return async (...args: any[]) => {
-          const isRootAdmin = auth.currentUser?.email === 'nayiffirat@gmail.com';
-          if (isActionBlocked && !isRootAdmin) {
+          if (isSubscriptionBlocked()) {
             if (onActionBlocked) onActionBlocked();
             throw new Error('SUBSCRIPTION_EXPIRED');
           }

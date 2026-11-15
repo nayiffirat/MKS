@@ -1,9 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { 
-  MapPin, AlertCircle, RefreshCw, ArrowLeft, ShieldAlert, Thermometer, 
-  Droplets, Wind, Bug, Flame, CheckCircle2, ChevronRight, MessageSquare, 
-  Sparkles, Filter, Zap, Share2, AlertTriangle, Info, Sprout, Send, FlaskConical,
-  Search, ExternalLink, Calendar, BellRing
+  MapPin, RefreshCw, ArrowLeft, ShieldAlert, Thermometer, 
+  Droplets, Flame, CheckCircle2, MessageSquare, 
+  Sparkles, Sprout,
+  Search, Calendar
 } from 'lucide-react';
 import { useAppViewModel } from '../context/AppContext';
 
@@ -138,7 +138,7 @@ const REGIONAL_ALERT_DATA: RegionalAlert[] = [
 ];
 
 export const RegionalAlerts: React.FC<{ onBack: () => void }> = ({ onBack }) => {
-  const { farmers, showToast, hapticFeedback } = useAppViewModel();
+  const { showToast, hapticFeedback } = useAppViewModel();
   const [selectedRegion, setSelectedRegion] = useState<string>('ALL');
   const [selectedSeverity, setSelectedSeverity] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -347,6 +347,28 @@ export const RegionalAlerts: React.FC<{ onBack: () => void }> = ({ onBack }) => 
             >
               Konya
             </button>
+          </div>
+
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+            {[
+              { id: 'ALL', label: 'Tüm Riskler', activeCls: 'bg-stone-200 text-stone-950' },
+              { id: 'CRITICAL', label: 'Kritik Alarm', activeCls: 'bg-rose-600 text-white' },
+              { id: 'HIGH', label: 'Yüksek Risk', activeCls: 'bg-amber-500 text-stone-950' },
+              { id: 'MEDIUM', label: 'Orta Risk', activeCls: 'bg-sky-600 text-white' }
+            ].map(sev => (
+              <button
+                key={sev.id}
+                type="button"
+                onClick={() => setSelectedSeverity(sev.id)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors ${
+                  selectedSeverity === sev.id
+                    ? sev.activeCls
+                    : 'bg-stone-900 text-stone-400 hover:bg-stone-800'
+                }`}
+              >
+                {sev.label}
+              </button>
+            ))}
           </div>
         </div>
 

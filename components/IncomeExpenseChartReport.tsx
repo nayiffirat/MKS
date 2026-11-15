@@ -1,13 +1,13 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { 
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, 
-  CartesianGrid, Tooltip, PieChart as RePieChart, Pie, Cell, Legend 
+  CartesianGrid, Tooltip, PieChart as RePieChart, Pie, Cell 
 } from 'recharts';
 import { 
-  TrendingUp, TrendingDown, DollarSign, Calendar, Filter, Download, 
-  ArrowUpRight, ArrowDownRight, PieChart, BarChart2, Activity, 
-  FileText, CheckCircle2, Search, RefreshCcw, Sparkles, Layers,
-  Receipt, ArrowDownLeft, Wallet, ShieldCheck, ChevronRight
+  TrendingUp, Download, 
+  ArrowUpRight, PieChart, BarChart2, Activity, 
+  FileText, Search,
+  ArrowDownLeft, Wallet
 } from 'lucide-react';
 import { format, subDays, startOfMonth, endOfMonth, startOfYear, parseISO, isWithinInterval, startOfDay, endOfDay } from 'date-fns';
 import { tr } from 'date-fns/locale';

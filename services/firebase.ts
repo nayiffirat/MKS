@@ -5,9 +5,7 @@ import {
   persistentLocalCache,
   persistentMultipleTabManager,
   memoryLocalCache,
-  memoryLruGarbageCollector,
-  doc,
-  getDocFromServer
+  memoryLruGarbageCollector
 } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 import firebaseConfig from '../firebase-applet-config.json';
@@ -38,26 +36,5 @@ export const db = createFirestoreInstance();
 export const storage = getStorage(app);
 
 // Offline persistence is backed by Firestore persistentLocalCache + IndexedDB write-ahead syncOutbox (services/db.ts)
-
-// CRITICAL: Validate Connection to Firestore on boot
-async function testConnection() {
-  try {
-    // Attempt to read a non-existent document to check connectivity
-    // We use getDocFromServer to bypass local cache
-    await getDocFromServer(doc(db, 'test', 'connection'));
-    console.log("Firebase connection established successfully.");
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration and internet connection.");
-    } else {
-      console.log("Firebase initialized (connection test completed).");
-    }
-  }
-}
-
-// Only run test in browser context
-if (typeof window !== 'undefined') {
-  testConnection();
-}
 
 export default app;

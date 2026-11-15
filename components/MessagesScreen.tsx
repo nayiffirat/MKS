@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAppViewModel } from '../context/AppContext';
-import { Message } from '../types';
-import { Send, ChevronLeft, User as UserIcon } from 'lucide-react';
+import { Send, ChevronLeft } from 'lucide-react';
 
 export const MessagesScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     const { messages, sendMessage, activeTeamMember, userProfile } = useAppViewModel();
     const [newMessage, setNewMessage] = useState('');
+    const [isSending, setIsSending] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     const scrollToBottom = () => {
@@ -18,11 +18,16 @@ export const MessagesScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => 
 
     const handleSend = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!newMessage.trim()) return;
+        if (isSending || !newMessage.trim()) return;
         if (!activeTeamMember && userProfile.role !== 'admin') return;
         
-        await sendMessage(newMessage.trim());
-        setNewMessage('');
+        setIsSending(true);
+        try {
+            await sendMessage(newMessage.trim());
+            setNewMessage('');
+        } finally {
+            setIsSending(false);
+        }
     };
 
     const currentUserId = activeTeamMember?.id || 'admin-bypass';
@@ -83,7 +88,7 @@ export const MessagesScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => 
                     />
                     <button 
                         type="submit"
-                        disabled={!newMessage.trim()}
+                        disabled={isSending || !newMessage.trim()}
                         className="p-3 bg-emerald-600 hover:bg-emerald-500 disabled:bg-stone-800 disabled:text-stone-500 text-white rounded-2xl transition-colors flex items-center justify-center"
                     >
                         <Send size={20} />

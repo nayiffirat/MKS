@@ -20,7 +20,7 @@ jobs:
           java-version: '17'
       - name: Install dependencies & Build Web Assets
         run: |
-          npm install --no-audit --no-fund
+          npm install --legacy-peer-deps --no-audit --no-fund
           npm run build
           npx cap sync android
       - name: Build Android 16 (API 36) Play Console Bundle (.aab) & APK (.apk)
@@ -46,7 +46,7 @@ jobs:
           node-version: '20'
       - name: Install dependencies & Sync Capacitor iOS
         run: |
-          npm install --no-audit --no-fund
+          npm install --legacy-peer-deps --no-audit --no-fund
           npm run build
           npx cap sync ios
       - name: Install CocoaPods

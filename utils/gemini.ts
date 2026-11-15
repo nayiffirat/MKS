@@ -1,7 +1,12 @@
-import { API_BASE } from './api';
+import { API_BASE, PUBLIC_PORTAL_ORIGIN } from './api';
 import { auth } from '../services/firebase';
 
 export const DEFAULT_GEMINI_MODEL = 'gemini-3-flash-preview';
+
+export interface AIChatHistoryTurn {
+  role: 'user' | 'ai';
+  text: string;
+}
 
 export const generateAIContent = async (modelName: string, contents: any, config?: any): Promise<string> => {
   const payload = JSON.stringify({
@@ -24,11 +29,12 @@ export const generateAIContent = async (modelName: string, contents: any, config
     ...(idToken ? { Authorization: `Bearer ${idToken}` } : {})
   };
 
-  // Denenecek uç noktalar (Önce mevcut origin / API_BASE, ardından yerel sunucu 3000)
+  // Denenecek uç noktalar (Mevcut origin / API_BASE, bulut Portal API ve yerel sunucu 3000)
   const endpoints = Array.from(
     new Set([
-      `${API_BASE}/api/generate`,
+      ...(API_BASE ? [`${API_BASE}/api/generate`] : []),
       '/api/generate',
+      `${PUBLIC_PORTAL_ORIGIN}/api/generate`,
       'http://127.0.0.1:3000/api/generate'
     ])
   );
@@ -63,31 +69,46 @@ export const generateAIContent = async (modelName: string, contents: any, config
 };
 
 /**
- * Ziraat Mühendisi Yapay Zeka Sorusu Sor
+ * Ziraat Mühendisi & MKS İşletme Copilot Yapay Zeka Sorusu Sor (Çok turlu hafıza destekli)
  */
-export const askAgronomistAI = async (userPrompt: string, cropContext?: string, businessContext?: string) => {
-  const systemContext = `Sen Türkiye'nin en deneyimli, uzman Ziraat Mühendisi ve MKS (Mühendis Kayıt Sistemi) Yapay Zeka Danışmanısın (TARGEM / TAGEM ve Ziraat Fakültesi teknik kaynaklarına %100 hakimsin).
-Sana sorulan tarımsal veya işletme/stok/finans sorularına son derece detaylı, akademik ama çiftçi ve ziraat mühendisinin doğrudan sahada ve bayide uygulayabileceği pratik, net ve Türkçe yanıtlar ver.
+export const askAgronomistAI = async (
+  userPrompt: string,
+  cropContext?: string,
+  businessContext?: string,
+  history?: AIChatHistoryTurn[]
+) => {
+  const systemContext = `Sen Türkiye'nin en deneyimli, uzman Ziraat Mühendisi ve MKS (Mühendis Kayıt Sistemi) Yapay Zeka Karar Destek Danışmanısın (T.C. Tarım ve Orman Bakanlığı Resmi BKÜ Kataloğu, TAGEM teknik bültenleri ve Ziraat Fakültesi doktrinlerine %100 hakimsin).
+Sana sorulan tarımsal veya işletme/stok/cari/finans sorularına son derece detaylı, sayısal kanıtlara dayalı, doğrudan sahada ve bayide aksiyon alınabilir net ve Türkçe yanıtlar ver.
 
-Eğer soru bitki hastalıkları, zararlılar, gübreleme veya ilaçlama hakkındaysa şu başlıkları kullan:
-1. **Teşhis & Durum Özeti**: Sorunun teknik ve fizyolojik tanımı.
+Eğer soru bitki hastalıkları, zararlılar, gübreleme, tank karışımı veya ilaçlama hakkındaysa şu başlıkları kullan:
+1. **Teşhis & Eşik Özeti**: Etmenin biyolojik tanımı ve Ekonomik Zarar Eşiği (EZE).
 2. **Kültürel ve Biyolojik Önlemler**: İlaçsız çözüm, havalandırma, budama, sulama, ekim nöbeti.
-3. **Kimyasal Mücadele & Etken Maddeler**: Türkiye'de ruhsatlı resmi etken maddeler (Aktif maddeler), depodaki mevcut uygun ilaçlar ve örnek ticari isimler.
-4. **Dozaj & PHI (Hasat Arası Süre)**: Uygulama zamanı ve güvenlik kuralları.
-5. **Kritik Uyarılar**: Hava sıcaklığı, rüzgar, pH, tank karışım uyarıları.
+3. **Kimyasal Mücadele & Depo / BKÜ Eşleşmesi**: Resmi ruhsatlı etken maddeler, direnç yönetimi (IRAC/FRAC/HRAC) ve varsa bayinin kendi deposundaki uygun mevcut ilaçlar (stok adediyle).
+4. **Dozaj, Tank Karışımı & PHI (Hasat Arası Süre)**: Uygulama zamanı, su pH/sertlik ve güvenli bekleme süresi.
 
-Eğer soru MKS içindeki stoklar, çiftçi borçları, kasa durumu veya finansal analiz hakkındaysa aşağıdaki canlı işletme verilerini baz alarak net rakamlarla yanıt ver.
-${cropContext ? `\nİlgili Bitki Bağlamı: ${cropContext}` : ''}
-${businessContext ? `\nCANLI MKS İŞLETME & DEPO VERİLERİ:\n${businessContext}` : ''}`;
+Eğer soru MKS içindeki stoklar, SKT takibi, çiftçi borçları, tahsilat önceliği, kasa durumu veya finansal analiz hakkındaysa aşağıdaki canlı işletme verilerini ve RAG eşleşmelerini baz alarak isim, miktar ve net TL/döviz rakamlarıyla yanıt ver; somut aksiyon listesi öner.
+${cropContext ? `\nİlgili Bitki Bağlamı:\n${cropContext}` : ''}
+${businessContext ? `\nCANLI MKS İŞLETME, DEPO VE RESMİ BKÜ VERİLERİ:\n${businessContext}` : ''}`;
+
+  const recentTurns = (history || [])
+    .filter(turn => turn.text && turn.text.trim())
+    .slice(-8)
+    .map(turn => ({
+      role: turn.role === 'ai' ? 'model' : 'user',
+      parts: [{ text: turn.text.slice(0, 2000) }]
+    }));
 
   const contents = [
+    ...recentTurns,
     {
       role: 'user',
-      parts: [{ text: `${systemContext}\n\nKullanıcı Sorusu: ${userPrompt}` }]
+      parts: [{ text: userPrompt }]
     }
   ];
 
-  return await generateAIContent(DEFAULT_GEMINI_MODEL, contents);
+  return await generateAIContent(DEFAULT_GEMINI_MODEL, contents, {
+    systemInstruction: systemContext
+  });
 };
 
 /**

@@ -16,3 +16,9 @@ ios/App/build/
 *.ipa
 .claude-flow/
 .swarm/
+.firebase/
+*.p8
+*.pem
+*.p12
+*.cer
+*.mobileprovision

@@ -3,9 +3,7 @@ import { Farmer } from '../types';
 import { dbService } from '../services/db';
 import { generatePortalToken } from '../utils/crypto';
 import { buildPublicPortalUrl } from '../utils/api';
-import { useAppViewModel } from '../context/AppContext';
-import { normalizeWaPhone, buildWaUrl } from '../utils/whatsappTemplates';
-import { useBackHandler } from '../utils/navigationManager';
+import { buildWaUrl } from '../utils/whatsappTemplates';
 import { ModalCloseButton } from './ModalCloseButton';
 import { 
     MessageCircle, 
@@ -184,8 +182,7 @@ export const DebtReminderModal: React.FC<DebtReminderModalProps> = ({
         }
 
         const msg = generateMessage(farmer);
-        const cleanPhone = (farmer.phoneNumber || '').replace(/[^0-9]/g, '');
-        const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`;
+        const waUrl = buildWaUrl(farmer.phoneNumber, msg) || `https://wa.me/?text=${encodeURIComponent(msg)}`;
         
         setSentStatus(prev => ({ ...prev, [farmer.id]: 'SENT' }));
         if (onLogReminderSent) {
@@ -223,12 +220,6 @@ export const DebtReminderModal: React.FC<DebtReminderModalProps> = ({
         } else {
             setIsQueueMode(false);
         }
-    };
-
-    const handleCopyText = (text: string, idKey: string) => {
-        navigator.clipboard.writeText(text);
-        setCopiedIndex(idKey);
-        setTimeout(() => setCopiedIndex(null), 2000);
     };
 
     const handleCopyAllPhones = () => {
@@ -346,7 +337,7 @@ export const DebtReminderModal: React.FC<DebtReminderModalProps> = ({
                                         : 'text-stone-400 hover:text-stone-200'
                                 }`}
                             >
-                                <Users size={14} /> Tüm Üreticiler ({allFarmers.length || farmersWithDebt.length})
+                                <Users size={14} /> Tüm Çiftçiler ({allFarmers.length || farmersWithDebt.length})
                             </button>
                         </div>
 
@@ -420,7 +411,7 @@ export const DebtReminderModal: React.FC<DebtReminderModalProps> = ({
                             <div className="flex flex-wrap items-center gap-1.5 pt-1">
                                 <span className="text-[9px] font-bold text-stone-500 uppercase mr-1">Değişken Ekle:</span>
                                 {[
-                                    { tag: '{ad_soyad}', label: '👤 Müşteri Adı' },
+                                    { tag: '{ad_soyad}', label: '👤 Çiftçi Adı' },
                                     { tag: '{borc_miktari}', label: '💰 Borç Miktarı' },
                                     { tag: '{portal_linki}', label: '🔗 Portal Linki' },
                                     { tag: '{koy}', label: '🏡 Köy' },
@@ -454,7 +445,7 @@ export const DebtReminderModal: React.FC<DebtReminderModalProps> = ({
                         <div className="max-h-56 overflow-y-auto space-y-1.5 custom-scrollbar pr-1">
                             {candidates.length === 0 ? (
                                 <div className="text-center py-8 text-stone-500 text-xs bg-stone-950/40 rounded-2xl border border-white/5">
-                                    Arama veya filtre kriterlerinize uygun üretici bulunamadı.
+                                    Arama veya filtre kriterlerinize uygun çiftçi bulunamadı.
                                 </div>
                             ) : (
                                 candidates.map(farmer => {

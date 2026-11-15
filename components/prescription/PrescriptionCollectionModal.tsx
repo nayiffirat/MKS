@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { X, Wallet, Loader2, Check, Calendar, Download, Plus, Trash2, Split } from 'lucide-react';
 import { format } from 'date-fns';
 import { Farmer, Account, Payment, CardSettlementOption } from '../../types';
-import { getCurrencySymbol, formatCurrency } from '../../utils/currency';
+import { getCurrencySymbol, formatCurrency, parseTrDecimal } from '../../utils/currency';
+import { getLocalDateString } from '../../utils/dateUtils';
 import { useBackHandler } from '../../utils/navigationManager';
 
 interface PrescriptionCollectionModalProps {
@@ -71,8 +72,8 @@ export const PrescriptionCollectionModal: React.FC<PrescriptionCollectionModalPr
         dueDate: string;
         cardOption: CardSettlementOption;
     }[]>(() => [
-        { id: 'row-1', method: 'CASH', amount: '', accountId: '', dueDate: new Date().toISOString().split('T')[0], cardOption: 'UNBLOCKED' },
-        { id: 'row-2', method: 'CARD', amount: '', accountId: '', dueDate: new Date().toISOString().split('T')[0], cardOption: 'DAYS_30' },
+        { id: 'row-1', method: 'CASH', amount: '', accountId: '', dueDate: getLocalDateString(), cardOption: 'UNBLOCKED' },
+        { id: 'row-2', method: 'CARD', amount: '', accountId: '', dueDate: getLocalDateString(), cardOption: 'DAYS_30' },
     ]);
 
     // Donanım geri tuşu modalı kapatsın (sayfadan çıkmasın)
@@ -81,13 +82,13 @@ export const PrescriptionCollectionModal: React.FC<PrescriptionCollectionModalPr
     if (!isOpen) return null;
 
     const splitTotal = splitRows.reduce((sum, r) => {
-        const val = parseFloat(r.amount.replace(/,/g, '.'));
-        return sum + (isNaN(val) || val <= 0 ? 0 : val);
+        const val = parseTrDecimal(r.amount);
+        return sum + (val <= 0 ? 0 : val);
     }, 0);
 
     const validSplitRows = splitRows.filter(r => {
-        const val = parseFloat(r.amount.replace(/,/g, '.'));
-        return !isNaN(val) && val > 0;
+        const val = parseTrDecimal(r.amount);
+        return val > 0;
     });
 
     return (
@@ -238,7 +239,7 @@ export const PrescriptionCollectionModal: React.FC<PrescriptionCollectionModalPr
                                                 method: 'CHECK',
                                                 amount: '',
                                                 accountId: '',
-                                                dueDate: new Date().toISOString().split('T')[0],
+                                                dueDate: getLocalDateString(),
                                                 cardOption: 'UNBLOCKED'
                                             }
                                         ])
@@ -348,7 +349,7 @@ export const PrescriptionCollectionModal: React.FC<PrescriptionCollectionModalPr
                                     const nowIso = new Date().toISOString();
                                     for (let i = 0; i < validSplitRows.length; i++) {
                                         const row = validSplitRows[i];
-                                        const amt = parseFloat(row.amount.replace(/,/g, '.'));
+                                        const amt = parseTrDecimal(row.amount);
                                         const defaultAcc =
                                             row.method === 'CARD'
                                                 ? (accounts.find(a => a.type === 'BANK')?.id || accounts[0]?.id)
@@ -368,16 +369,16 @@ export const PrescriptionCollectionModal: React.FC<PrescriptionCollectionModalPr
                                     showToast(`${validSplitRows.length} kalem karma tahsilat kaydedildi`, 'success');
                                     setIsSplitMode(false);
                                     setSplitRows([
-                                        { id: 'row-1', method: 'CASH', amount: '', accountId: '', dueDate: new Date().toISOString().split('T')[0], cardOption: 'UNBLOCKED' },
-                                        { id: 'row-2', method: 'CARD', amount: '', accountId: '', dueDate: new Date().toISOString().split('T')[0], cardOption: 'DAYS_30' },
+                                        { id: 'row-1', method: 'CASH', amount: '', accountId: '', dueDate: getLocalDateString(), cardOption: 'UNBLOCKED' },
+                                        { id: 'row-2', method: 'CARD', amount: '', accountId: '', dueDate: getLocalDateString(), cardOption: 'DAYS_30' },
                                     ]);
                                     hapticFeedback('success');
                                     onSavedReset();
                                     return;
                                 }
 
-                                const parsedAmount = parseFloat(paymentAmount.replace(/,/g, ''));
-                                if (isNaN(parsedAmount) || parsedAmount <= 0) {
+                                const parsedAmount = parseTrDecimal(paymentAmount);
+                                if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
                                     showToast('Geçerli bir tutar giriniz', 'error');
                                     setIsSavingPayment(false);
                                     return;

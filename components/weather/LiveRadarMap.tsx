@@ -18,6 +18,7 @@ export class RadarAnimator {
   private idx: RadarIndex | null = null;
   private token = 0;
   private timer = 0;
+  private loadTimeout = 0;
   private raf = 0;
   private dead = false;
   private visible = true;
@@ -54,11 +55,12 @@ export class RadarAnimator {
     if (!this.idx) return;
     const my = ++this.token;
     let done = false;
-    const go = () => { if (done || my !== this.token || this.dead) return; done = true; this.back.off('load', go); then(); };
+    window.clearTimeout(this.loadTimeout);
+    const go = () => { if (done || my !== this.token || this.dead) return; done = true; window.clearTimeout(this.loadTimeout); this.back.off('load', go); then(); };
     this.back.setOpacity(0);
     this.back.once('load', go);
     this.back.setUrl(radarTileUrl(this.idx, this.idx.frames[i]));
-    window.setTimeout(go, 1400);
+    this.loadTimeout = window.setTimeout(go, 1400);
   }
 
   private fade(i: number, after?: () => void) {
@@ -103,7 +105,8 @@ export class RadarAnimator {
 
   destroy() {
     this.dead = true; this.playing = false; this.token++;
-    window.clearTimeout(this.timer); cancelAnimationFrame(this.raf);
+    window.clearTimeout(this.timer); window.clearTimeout(this.loadTimeout); cancelAnimationFrame(this.raf);
+    this.back.off('load');
     this.front.remove(); this.back.remove();
   }
 }

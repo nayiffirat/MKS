@@ -37,7 +37,7 @@ service cloud.firestore {
 
     // 4. Hata Günlükleri (Giriş yapmış istemciler raporlayabilir, yalnızca Root Admin okuyup silebilir)
     match /MKS/{orgId}/system_errors/{docId} {
-      allow create, update: if isSignedIn();
+      allow create: if isSignedIn();
       allow read, delete: if isRootAdmin();
     }
 

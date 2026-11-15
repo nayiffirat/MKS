@@ -8,10 +8,8 @@ import {
 } from 'motion/react';
 import {
   Users,
-  Package,
   ScanBarcode,
   FileCheck2,
-  Compass,
   Smartphone,
   Monitor,
   Apple,
@@ -21,15 +19,21 @@ import {
   CloudOff,
   RefreshCw,
   Bell,
-  Phone,
   ShieldCheck,
   Headphones,
   LogIn,
   UserPlus,
   Wheat,
-  Lock,
-  Wallet,
   Receipt,
+  Sparkles,
+  MapPin,
+  CalendarCheck2,
+  Play,
+  Pause,
+  ChevronLeft,
+  ChevronRight,
+  Layers,
+  BarChart3,
   type LucideIcon
 } from 'lucide-react';
 import { MksBrandLogo } from './MksBrandLogo';
@@ -40,93 +44,127 @@ export interface CorporateShowcaseProps {
   onOpenSupport: () => void;
 }
 
-type ShowcaseModuleId = 'cari' | 'stok' | 'bkts_gts' | 'efatura' | 'saha_ek';
+type HeroStageTab = 'studio' | 'sales5' | 'cari' | 'resmi' | 'harita' | 'ai';
 type SatelliteSubLayer = 'NDVI' | 'NDMI' | 'SWIR';
 
-interface ShowcaseModuleSpec {
-  id: ShowcaseModuleId;
+interface HeroTabSpec {
+  id: HeroStageTab;
   label: string;
   shortLabel: string;
   headline: string;
-  summary: string;
-  metrics: { label: string; value: string }[];
+  caption: string;
   icon: LucideIcon;
 }
 
-const SHOWCASE_MODULES: ShowcaseModuleSpec[] = [
+const HERO_STAGE_TABS: HeroTabSpec[] = [
   {
-    id: 'cari',
-    label: 'Çiftçi Cari Takibi',
-    shortLabel: 'Çiftçi Cari',
-    headline: 'Müstahsil veresiye, parçalı tahsilat, yıllık devir ve şifresiz cari paylaşımı',
-    summary:
-      'Çiftçilerinizin vadeli ilaç, gübre ve tohum alımlarını tek ekrandan takip edin. Nakit, çek, senet ve 15/30/45 gün POS bloke tahsilatlarını birleştirin; sezon sonunda tek onayla bakiyeleri yeni yıla devredin ve WhatsApp üzerinden şifresiz cari ekstre linki gönderin.',
-    metrics: [
-      { label: 'Tahsilat yapısı', value: 'Nakit • Çek • POS Bloke' },
-      { label: 'Sezon geçişi', value: 'Kayıpsız yıllık devir' },
-      { label: 'Çiftçi bilgilendirme', value: 'Şifresiz portal + PDF' }
-    ],
-    icon: Users
+    id: 'studio',
+    label: 'MKS Stüdyo Vitrin',
+    shortLabel: 'Vitrin',
+    headline: 'Masaüstü, Mobil ve Barkod Okuyucu Tek Kurumsal Ekosistemde',
+    caption: 'Telefon ve masaüstü bilgisayarınız arasında anlık bulut + çevrimdışı senkronizasyon.',
+    icon: Monitor
   },
   {
-    id: 'stok',
-    label: 'Depo ve Stok Takibi',
-    shortLabel: 'Stok Takibi',
-    headline: 'Market barkod tabancası ile hızlı satış, SKT takibi ve onaylı stok sayımı',
-    summary:
-      'Dükkân tezgâhında barkod okuyucuyla saniyeler içinde peşin veya vadeli çıkış yapın. Kritik stok seviyelerini, son kullanma tarihi yaklaşan ürünleri (FEFO) ve sayım tarihi ile adetlerin mühürlendiği net onaylı stok sayım geçmişini karmaşasız yönetin.',
-    metrics: [
-      { label: 'Tezgâh hızı', value: 'Barkod tabancası uyumlu' },
-      { label: 'Envanter kontrolü', value: 'Tarihli onaylı sayım' },
-      { label: 'Raf güvenliği', value: 'Kritik stok ve SKT uyarısı' }
-    ],
-    icon: Package
-  },
-  {
-    id: 'bkts_gts',
-    label: 'BKTS ve GTS Karekod',
-    shortLabel: 'BKTS / GTS',
-    headline: 'Tarım Bakanlığı uyumlu 2D GS1 karekodlu zirai ilaç ve gübre takibi',
-    summary:
-      'Fabrikadan veya toptancıdan gelen zirai ilaç (BKTS) ve gübreleri (GTS) telefon kamerası ya da 2D barkod okuyucuyla mal kabule alın. GTIN, parti numarası, seri no ve SKT verilerini otomatik ayrıştırın; aktif maddeye göre eşdeğer ilaçları anında bulun.',
-    metrics: [
-      { label: 'Bakanlık uyumu', value: 'BKTS • GTS • B-Reçete' },
-      { label: 'Karekod okuma', value: 'GS1 DataMatrix 2D' },
-      { label: 'Tezgâh desteği', value: 'Aktif madde muadil radarı' }
-    ],
-    icon: ScanBarcode
-  },
-  {
-    id: 'efatura',
-    label: 'EDM e-Fatura ve Kasa',
-    shortLabel: 'e-Fatura',
-    headline: 'Resmi e-Fatura, e-Arşiv, tedarikçi cari ve kasa-banka mutabakatı',
-    summary:
-      'Toptancılardan gelen alış e-Faturalarındaki ürünleri tek onayla deponuza ve tedarikçi carinize işleyin. Müşteri ve çiftçilerinize saniyeler içinde resmi e-Fatura veya e-Arşiv fatura kesin; banka, kasa ve çek portföyünüzü tek merkezde tutun.',
-    metrics: [
-      { label: 'Fatura entegrasyonu', value: 'EDM e-Fatura ve e-Arşiv' },
-      { label: 'Alış otomasyonu', value: 'Faturadan otomatik stok' },
-      { label: 'Finans kontrolü', value: 'Kasa • Banka • Tedarikçi' }
-    ],
+    id: 'sales5',
+    label: '5 Adımda Fatura & Satış',
+    shortLabel: '5 Adım Satış',
+    headline: 'Önce Çiftçi, Sonra Ekili Ürün, İlaçlar, Fiyat ve Onay',
+    caption: 'Karmaşık resmi kodlardan arındırılmış kompakt depo & cari satış sihirbazı.',
     icon: Receipt
   },
   {
-    id: 'saha_ek',
-    label: 'Ek Saha Araçları',
-    shortLabel: 'Ek Araçlar',
-    headline: 'Silo kantar mahsubu, zirai hava durumu ve parsel uydu görünümü',
-    summary:
-      'Temel bayi ve cari yönetiminizi destekleyen yardımcı saha araçları: hububat alımlarında kantar nem/fire mahsubu, ilaçlama rüzgar uygunluğu, uygulama içi TKGM parsel sorgusu ve isteğe bağlı Sentinel-2 tarla gelişim görünümü.',
-    metrics: [
-      { label: 'Hububat alımı', value: 'Silo ve kantar mahsubu' },
-      { label: 'Saha kontrolü', value: 'TKGM sorgu ve parsel' },
-      { label: 'Zirai destek', value: 'Hava ve uydu katmanı' }
-    ],
-    icon: Compass
+    id: 'cari',
+    label: 'Çiftçi Cari & Devir',
+    shortLabel: 'Çiftçi Cari',
+    headline: 'Veresiye, Parçalı Tahsilat, POS Bloke ve Yıllık Devir',
+    caption: 'WhatsApp şifresiz üretici portalı ve kaşeli çok sayfalı yıl sonu PDF bilançosu.',
+    icon: Users
+  },
+  {
+    id: 'resmi',
+    label: 'Resmi Servisler',
+    shortLabel: 'GTS / BKTS',
+    headline: 'GTS, BKTS, B-Reçete ve EDM e-Fatura Kendi Özel Alanında',
+    caption: 'GS1 2D karekod ayrıştırma ve GİB zarflama işlemleri ana satış akışını yormaz.',
+    icon: ScanBarcode
+  },
+  {
+    id: 'harita',
+    label: 'TKGM Parsel & Uydu',
+    shortLabel: 'TKGM Harita',
+    headline: 'Ada/Parsel Sorgu, Kalıcı Tarla Sahibi Etiketi ve Uydu Katmanı',
+    caption: 'Çiftçiye bağlanan parseller haritadan kaybolmaz; yakınlaştırmada harita bozulmaz.',
+    icon: MapPin
+  },
+  {
+    id: 'ai',
+    label: 'MKS Yapay Zeka',
+    shortLabel: 'MKS AI',
+    headline: 'Canlı Depo, Cari ve Ziraat Mühendisi AI Copilot',
+    caption: 'Depo stoklarınız ve BKU veritabanıyla konuşan görsel bitki teşhis asistanı.',
+    icon: Sparkles
   }
 ];
 
-const EASE_CORPORATE: [number, number, number, number] = [0.22, 1, 0.36, 1];
+interface GallerySlide {
+  id: string;
+  tag: string;
+  title: string;
+  subtitle: string;
+  image?: string;
+  highlights: string[];
+  accent: string;
+}
+
+const GALLERY_SLIDES: GallerySlide[] = [
+  {
+    id: 'komuta',
+    tag: 'MKS KURUMSAL v8.2 • ANA KOMUTA',
+    title: 'Tüm bayilik operasyonu tek bakışta net.',
+    subtitle: 'Açık alacaklar, kasa-banka mutabakatı, kritik depo kalemleri ve günlük saha planı.',
+    image: '/showcase/apple-hero-devices.png',
+    highlights: ['Canlı kasa & alacak dengesi', 'Market barkod tabancası uyumlu', 'İnternetsiz köy ve depoda kesintisiz'],
+    accent: 'text-emerald-400'
+  },
+  {
+    id: 'fatura5',
+    tag: 'KOMPAKT SATIŞ SİHİRBAZI',
+    title: '5 adımda hatasız satış ve iade faturası.',
+    subtitle: 'Çiftçi seç → Ekili ürün → İlaç & gübre → Fiyat & adet → Önizle ve onayla.',
+    highlights: ['Tek dokunuşta çiftçi kilidi yok', 'Otomatik depo stok düşümü', 'Nakit, vadeli veya parçalı tahsilat'],
+    accent: 'text-sky-400'
+  },
+  {
+    id: 'depo',
+    tag: 'DEPO, BARKOD & STOK ONARIM',
+    title: 'GS1 2D karekod ve onaylı stok sayımı.',
+    subtitle: 'GTIN, parti no ve SKT ayrıştırma; mükerrer kart birleştirme ve sayım farkı mutabakatı.',
+    image: '/showcase/apple-tile-pos-warehouse.png',
+    highlights: ['FEFO öncelikli SKT takibi', 'Stok & Depo Senkronizasyon Merkezi', 'Alış faturasından otomatik stok girişi'],
+    accent: 'text-amber-300'
+  },
+  {
+    id: 'harita',
+    tag: 'SAHA HARİTASI & UYDU',
+    title: 'TKGM ada/parsel ve çiftçi tarla etiketleri.',
+    subtitle: 'Çiftçi adına kaydedilen parseller haritada adıyla kalıcı görünür; NDVI/NDMI analizine hazırdır.',
+    image: '/showcase/apple-tile-field-ipad.png',
+    highlights: ['Ada / parsel / dekar otomatik okuma', 'Uydu yakınlaştırma koruması', 'NDVI • Sulama (NDMI) • Tav (SWIR)'],
+    accent: 'text-emerald-300'
+  },
+  {
+    id: 'muhendisim',
+    tag: 'MKS MÜHENDİSİM & BKU KÜTÜPHANESİ',
+    title: 'TARGEM/BKU ruhsatlı ilaç kütüphanesi & yapay zeka.',
+    subtitle: 'Ticari isim, aktif madde, hedef zararlı ve gerçek hastalık görselleriyle anlık teşhis.',
+    image: '/showcase/apple-tile-ai-muhendisim.png',
+    highlights: ['Etken madde muadil radarı', 'Görsel yaprak hastalık analizi', 'Depo & cariyle entegre AI asistan'],
+    accent: 'text-teal-300'
+  }
+];
+
+const APPLE_EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
 
 export const CorporateShowcaseWebsite: React.FC<CorporateShowcaseProps> = ({
   onOpenAuthModal,
@@ -134,578 +172,290 @@ export const CorporateShowcaseWebsite: React.FC<CorporateShowcaseProps> = ({
   onOpenSupport
 }) => {
   const prefersReducedMotion = useReducedMotion();
-  const [activeModule, setActiveModule] = useState<ShowcaseModuleId>('cari');
+  const [heroTab, setHeroTab] = useState<HeroStageTab>('studio');
+  const [wizardStep, setWizardStep] = useState<number>(3);
   const [satLayer, setSatLayer] = useState<SatelliteSubLayer>('NDVI');
-  const [isPaused, setIsPaused] = useState(false);
+  const [galleryIdx, setGalleryIdx] = useState<number>(0);
+  const [isGalleryPaused, setIsGalleryPaused] = useState<boolean>(false);
 
-  const stageRef = useRef<HTMLDivElement | null>(null);
+  const heroStageRef = useRef<HTMLDivElement | null>(null);
   const { scrollYProgress } = useScroll({
-    target: stageRef,
+    target: heroStageRef,
     offset: ['start end', 'center center']
   });
-
-  const stageRotateX = useTransform(scrollYProgress, [0, 1], prefersReducedMotion ? [0, 0] : [5, 0]);
   const stageScale = useTransform(scrollYProgress, [0, 1], prefersReducedMotion ? [1, 1] : [0.97, 1]);
-  const stageOpacity = useTransform(scrollYProgress, [0, 0.45], [0.88, 1]);
-
-  // Auto-advance core tabs cleanly unless hovered/interacted
-  useEffect(() => {
-    if (isPaused || prefersReducedMotion) return;
-    const timer = window.setInterval(() => {
-      setActiveModule(prev => {
-        const idx = SHOWCASE_MODULES.findIndex(m => m.id === prev);
-        return SHOWCASE_MODULES[(idx + 1) % SHOWCASE_MODULES.length].id;
-      });
-    }, 6400);
-    return () => window.clearInterval(timer);
-  }, [isPaused, prefersReducedMotion]);
+  const stageOpacity = useTransform(scrollYProgress, [0, 0.35], [0.9, 1]);
 
   useEffect(() => {
-    if (activeModule !== 'saha_ek' || isPaused || prefersReducedMotion) return;
-    const subTimer = window.setInterval(() => {
+    if (isGalleryPaused || prefersReducedMotion) return;
+    const id = window.setInterval(() => {
+      setGalleryIdx(prev => (prev + 1) % GALLERY_SLIDES.length);
+    }, 5200);
+    return () => window.clearInterval(id);
+  }, [isGalleryPaused, prefersReducedMotion]);
+
+  useEffect(() => {
+    if (prefersReducedMotion) return;
+    const subId = window.setInterval(() => {
       setSatLayer(prev => (prev === 'NDVI' ? 'NDMI' : prev === 'NDMI' ? 'SWIR' : 'NDVI'));
-    }, 2300);
-    return () => window.clearInterval(subTimer);
-  }, [activeModule, isPaused, prefersReducedMotion]);
+    }, 2600);
+    return () => window.clearInterval(subId);
+  }, [prefersReducedMotion]);
 
-  const currentSpec = SHOWCASE_MODULES.find(m => m.id === activeModule) || SHOWCASE_MODULES[0];
+  const activeHeroSpec = HERO_STAGE_TABS.find(t => t.id === heroTab) || HERO_STAGE_TABS[0];
+  const currentSlide = GALLERY_SLIDES[galleryIdx] || GALLERY_SLIDES[0];
 
-  const renderDesktopScreen = (moduleId: ShowcaseModuleId) => {
-    switch (moduleId) {
-      case 'cari':
-        return (
-          <div className="h-[310px] sm:h-[375px] w-full bg-[#090D14] p-4 sm:p-5 flex flex-col justify-between select-none">
-            {/* Top Summary Metrics */}
-            <div className="grid grid-cols-3 gap-2.5">
-              {[
-                { label: 'Toplam Açık Alacak', val: '₺1.842.500', sub: '118 aktif müstahsil', tone: 'text-white' },
-                { label: 'Portföy Çek ve POS Bloke', val: '₺615.000', sub: '4 çek • 3 POS bloke', tone: 'text-emerald-400' },
-                { label: '2025 → 2026 Sezon Devri', val: 'Tam Mutabık', sub: 'Önceki yıl arşivi açık', tone: 'text-amber-300' }
-              ].map(card => (
-                <div key={card.label} className="p-2 sm:p-3 rounded-xl bg-white/[0.03] border border-white/[0.07] min-w-0">
-                  <div className="text-[10px] sm:text-[11px] leading-tight text-stone-400 line-clamp-2 min-h-[2.5em] sm:min-h-0">{card.label}</div>
-                  <div className={`text-[11px] sm:text-base font-semibold mt-1 tabular-nums whitespace-nowrap ${card.tone}`}>{card.val}</div>
-                  <div className="text-[10px] text-stone-500 mt-0.5 truncate">{card.sub}</div>
-                </div>
-              ))}
+  const appleFontStyle: React.CSSProperties = {
+    fontFamily:
+      '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", system-ui, sans-serif'
+  };
+
+  const renderHeroInteractiveOverlay = () => {
+    if (heroTab === 'studio') {
+      return (
+        <div className="relative aspect-[16/9] w-full overflow-hidden rounded-[22px] sm:rounded-[28px] bg-[#000000] border border-white/10 shadow-[0_32px_100px_rgba(0,0,0,0.85)]">
+          <img
+            src="/showcase/apple-hero-devices.png"
+            onError={e => {
+              (e.currentTarget as HTMLImageElement).src = '/showcase/corporate-agtech-hero.jpg';
+            }}
+            alt="Mühendis Kayıt Sistemi MacBook Pro, iPhone ve 2D Barkod Okuyucu Stüdyo Görünümü"
+            className="w-full h-full object-cover"
+          />
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/85 via-black/35 to-transparent" />
+          <div className="absolute bottom-3.5 left-4 right-4 sm:bottom-5 sm:left-6 sm:right-6 flex flex-wrap items-center justify-between gap-2 text-left">
+            <div className="px-3.5 py-2 rounded-2xl bg-black/70 backdrop-blur-xl border border-white/15">
+              <div className="text-[11px] font-semibold text-emerald-400">
+                Windows • macOS / Web • iOS • Android
+              </div>
+              <div className="text-xs sm:text-sm font-medium text-white">
+                {activeHeroSpec.headline}
+              </div>
             </div>
-
-            {/* Real Farmer Ledger Rows */}
-            <div className="space-y-2 my-auto py-2">
-              {[
-                {
-                  name: 'Ahmet Yılmaz • Salça Köyü',
-                  detail: 'Vadeli ilaç ve yaprak gübresi reçetesi • Vade: 25 Kasım',
-                  balance: '₺128.400,00',
-                  badge: 'Portal Linki Gönderildi'
-                },
-                {
-                  name: 'Mehmet Kaya • Akçakale',
-                  detail: 'Parçalı tahsilat: ₺45.000 Nakit + ₺80.000 30 Gün POS Bloke',
-                  balance: '₺64.500,00',
-                  badge: 'Tahsilat İşlendi'
-                },
-                {
-                  name: 'Ali Ayhan • Şahinsoylu',
-                  detail: '2025 devir bakiyesi + 2026 pamuk tohum ve gübre çıkışı',
-                  balance: '₺214.750,00',
-                  badge: 'Kaşeli PDF Hazır'
-                }
-              ].map((row, idx) => (
-                <motion.div
-                  key={row.name}
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: idx * 0.07, duration: 0.32, ease: EASE_CORPORATE }}
-                  className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.07] flex items-center justify-between gap-3"
-                >
-                  <div className="min-w-0">
-                    <div className="text-xs sm:text-[13px] font-semibold text-white truncate">{row.name}</div>
-                    <div className="text-[11px] text-stone-400 truncate mt-0.5">{row.detail}</div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <div className="text-xs sm:text-sm font-semibold text-white">{row.balance}</div>
-                    <div className="text-[10px] font-medium text-emerald-400">{row.badge}</div>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-
-            <div className="flex items-center justify-between text-[11px] text-stone-400 pt-2 border-t border-white/10">
-              <span>Şifresiz Üretici Portalı ile çiftçi kendi bakiyesini görür</span>
-              <span className="text-emerald-400 font-medium">Telefon + Bilgisayar anlık senkron</span>
-            </div>
+            <button
+              type="button"
+              onClick={() => setHeroTab('sales5')}
+              className="px-4 py-2 rounded-full bg-white/15 hover:bg-white/25 backdrop-blur-xl border border-white/20 text-xs font-medium text-white transition-colors inline-flex items-center gap-1.5"
+            >
+              <span>Canlı Ekranları İncele</span>
+              <ChevronRight size={14} />
+            </button>
           </div>
-        );
+        </div>
+      );
+    }
 
-      case 'stok':
-        return (
-          <div className="h-[310px] sm:h-[375px] w-full bg-[#090D14] p-4 sm:p-5 flex flex-col justify-between select-none">
-            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-white/10">
-              <div>
-                <div className="text-sm font-semibold text-white">Depo Stok Yönetimi ve Onaylı Sayım Kaydı</div>
-                <div className="text-[11px] text-stone-400">
-                  Son onaylanan sayım: 11 Kasım 2026 • 08:30 — Sayılan 342 kalem ve adetler mühürlendi
-                </div>
-              </div>
-              <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[11px] font-semibold">
-                Market Barkod Tabancası Aktif
-              </span>
-            </div>
-
-            <div className="space-y-2 my-auto py-2">
-              {[
-                {
-                  name: 'DAP 18-46 Taban Gübresi (50 kg Çuval)',
-                  meta: 'Alış: ₺1.180 • Satış: ₺1.340 • Merkez Depo',
-                  qty: '420 Çuval',
-                  status: 'Sayım Onaylı (11.11.2026)',
-                  tone: 'text-emerald-400'
-                },
-                {
-                  name: 'Coragen 20 SC • 200 ml Zirai İlaç',
-                  meta: 'Barkod: 8699745120841 • SKT: 09/2028',
-                  qty: '48 Adet',
-                  status: 'Stok Yeterli',
-                  tone: 'text-emerald-400'
-                },
-                {
-                  name: 'Deniz Yosunu + Aminoasit Yaprak Gübresi (1 L)',
-                  meta: 'Kritik sınır: 15 Adet • Öncelikli çıkış (FEFO)',
-                  qty: '9 Litre',
-                  status: 'Kritik Stok Uyarısı',
-                  tone: 'text-amber-300'
-                }
-              ].map((item, idx) => (
-                <motion.div
-                  key={item.name}
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: idx * 0.07, duration: 0.32, ease: EASE_CORPORATE }}
-                  className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.07] flex items-center justify-between gap-3"
-                >
-                  <div className="min-w-0">
-                    <div className="text-xs sm:text-[13px] font-semibold text-white truncate">{item.name}</div>
-                    <div className="text-[11px] text-stone-400 truncate mt-0.5">{item.meta}</div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <div className="text-xs sm:text-sm font-semibold text-white">{item.qty}</div>
-                    <div className={`text-[10px] font-medium ${item.tone}`}>{item.status}</div>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-
-            <div className="pt-2 border-t border-white/10 flex items-center justify-between text-[11px] text-stone-400">
-              <span>Karmaşık defterler yerine net sayım tarihi ve onaylanan adetler</span>
-              <span className="text-stone-200 font-medium">Toplam envanter değeri: ₺2.480.600</span>
-            </div>
+    return (
+      <div className="aspect-[16/9] min-h-[340px] w-full overflow-hidden rounded-[22px] sm:rounded-[28px] bg-[#0D1117] border border-white/15 shadow-[0_32px_100px_rgba(0,0,0,0.85)] flex flex-col">
+        {/* Window Chrome */}
+        <div className="h-10 px-4 bg-[#161B22] border-b border-white/[0.08] flex items-center justify-between gap-2 shrink-0">
+          <div className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-[#FF5F56]" />
+            <span className="w-2.5 h-2.5 rounded-full bg-[#FFBD2E]" />
+            <span className="w-2.5 h-2.5 rounded-full bg-[#27C93F]" />
           </div>
-        );
+          <span className="text-[11px] text-white/75 font-medium truncate">
+            MKS Kurumsal v8.2 — {activeHeroSpec.label}
+          </span>
+          <button
+            type="button"
+            onClick={() => setHeroTab('studio')}
+            className="text-[11px] text-emerald-400 hover:text-emerald-300 font-medium shrink-0"
+          >
+            Stüdyo Fotoğrafı
+          </button>
+        </div>
 
-      case 'bkts_gts':
-        return (
-          <div className="h-[310px] sm:h-[375px] w-full bg-[#090D14] p-4 sm:p-5 flex flex-col justify-between select-none">
-            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-white/10">
-              <div>
-                <div className="text-sm font-semibold text-white">Tarım Bakanlığı BKTS ve GTS 2D Karekod Merkezi</div>
-                <div className="text-[11px] text-stone-400">
-                  GS1 DataMatrix karekod ayrıştırma (GTIN, Parti No, Seri No, Son Kullanma Tarihi)
+        {/* Mock Content per Tab */}
+        <div className="flex-1 p-4 sm:p-7 flex flex-col justify-between text-left bg-gradient-to-b from-[#0D1117] to-[#080B0F] overflow-y-auto">
+          {heroTab === 'sales5' && (
+            <div className="space-y-4 my-auto">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="text-xs font-semibold text-emerald-400">Kompakt Fatura Defteri Akışı</div>
+                  <h3 className="text-lg sm:text-xl font-semibold text-white">5 Adımda Kusursuz Satış & İade</h3>
                 </div>
+                <span className="px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[11px] font-medium">
+                  BKTS / B-Reçete Karmaşasından Arındırılmış
+                </span>
               </div>
-              <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[11px] font-semibold">
-                BKTS + GTS Hazır
-              </span>
-            </div>
-
-            <div className="space-y-2 my-auto py-2">
-              {[
-                {
-                  name: 'BKTS Mal Kabul • Amistar Top (1 Litre)',
-                  gtin: '08691234009182',
-                  lot: 'LOT-8841',
-                  skt: '04/2028',
-                  qty: '64 Adet',
-                  status: 'BKTS Bildirimi Hazır'
-                },
-                {
-                  name: 'GTS Karekod • Üre %46 Granül Gübre',
-                  gtin: '08690045771209',
-                  lot: 'GTS-9920',
-                  skt: '12/2029',
-                  qty: '24 Ton',
-                  status: 'DNA ve Karekod Doğrulandı'
-                },
-                {
-                  name: 'BKTS Çiftçi Satış • T.C. / Vergi No Eşleşmeli Çıkış',
-                  gtin: '08699745120841',
-                  lot: 'TR-2604A',
-                  skt: '09/2028',
-                  qty: '12 Adet',
-                  status: 'Reçete ve Cariye İşlendi'
-                }
-              ].map((row, i) => (
-                <motion.div
-                  key={row.gtin + i}
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.08, duration: 0.34, ease: EASE_CORPORATE }}
-                  className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.07] flex items-center justify-between gap-3"
-                >
-                  <div className="min-w-0">
-                    <div className="text-xs sm:text-[13px] font-semibold text-white truncate">{row.name}</div>
-                    <div className="text-[11px] text-stone-400 font-mono truncate mt-0.5">
-                      GTIN {row.gtin} • Parti {row.lot} • SKT {row.skt}
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <div className="text-xs sm:text-sm font-semibold text-white">{row.qty}</div>
-                    <div className="text-[10px] font-medium text-emerald-400">{row.status}</div>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-
-            <div className="pt-2 border-t border-white/10 flex items-center justify-between text-[11px] text-stone-400">
-              <span>Aktif maddeye göre anlık eşdeğer / muadil ilaç bulucu</span>
-              <span className="text-stone-200 font-medium">Kamera ve el terminali tam uyumlu</span>
-            </div>
-          </div>
-        );
-
-      case 'efatura':
-        return (
-          <div className="h-[310px] sm:h-[375px] w-full bg-[#090D14] p-4 sm:p-5 flex flex-col justify-between select-none">
-            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-white/10">
-              <div>
-                <div className="text-sm font-semibold text-white">EDM e-Fatura, e-Arşiv ve Tedarikçi Cari Entegrasyonu</div>
-                <div className="text-[11px] text-stone-400">
-                  Gelen alış faturalarından tek tıkla stok girişi ve çiftçi/bayi satışlarında anında resmi fatura
-                </div>
-              </div>
-              <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[11px] font-semibold">
-                GİB / EDM Bağlantısı Aktif
-              </span>
-            </div>
-
-            <div className="space-y-2 my-auto py-2">
-              {[
-                {
-                  docNo: 'Gelen e-Fatura • #GIB202600048192',
-                  party: 'Toros Tarım Sanayi ve Ticaret A.Ş. → Merkez Depo',
-                  amount: '₺468.200,00',
-                  state: '14 Kalem Otomatik Stoğa Alındı'
-                },
-                {
-                  docNo: 'Giden e-Arşiv Fatura • #EAR202600011904',
-                  party: 'Ahmet Yılmaz (Müstahsil Cari #104) • Zirai İlaç Çıkışı',
-                  amount: '₺34.850,00',
-                  state: 'Onaylandı ve PDF Gönderildi'
-                },
-                {
-                  docNo: 'Giden Ticari e-Fatura • #EFT202600008341',
-                  party: 'Bereket Tarım Ürünleri Ltd. Şti.',
-                  amount: '₺142.000,00',
-                  state: 'GİB Zarflandı • Cariye İşlendi'
-                }
-              ].map((inv, idx) => (
-                <motion.div
-                  key={inv.docNo}
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: idx * 0.08, duration: 0.34, ease: EASE_CORPORATE }}
-                  className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.07] flex items-center justify-between gap-3"
-                >
-                  <div className="min-w-0">
-                    <div className="text-xs sm:text-[13px] font-semibold text-white truncate">{inv.docNo}</div>
-                    <div className="text-[11px] text-stone-400 truncate mt-0.5">{inv.party}</div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <div className="text-xs sm:text-sm font-semibold text-white">{inv.amount}</div>
-                    <div className="text-[10px] font-medium text-emerald-400">{inv.state}</div>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-
-            <div className="pt-2 border-t border-white/10 flex items-center justify-between text-[11px] text-stone-400">
-              <span>Çoklu depo (Merkez, Şube, Emanet) stok takibi destekli</span>
-              <span className="text-stone-200 font-medium">Kasa ve banka hesaplarıyla tam entegre</span>
-            </div>
-          </div>
-        );
-
-      case 'saha_ek': {
-        const layerMeta = {
-          NDVI: {
-            badge: 'Yardımcı Saha Katmanı • NDVI Bitki Gelişimi',
-            polyA: 'rgba(16, 185, 129, 0.54)',
-            polyB: 'rgba(52, 211, 153, 0.46)',
-            stroke: '#34d399'
-          },
-          NDMI: {
-            badge: 'Yardımcı Saha Katmanı • NDMI Sulama Durumu',
-            polyA: 'rgba(14, 165, 233, 0.56)',
-            polyB: 'rgba(56, 189, 248, 0.46)',
-            stroke: '#38bdf8'
-          },
-          SWIR: {
-            badge: 'Yardımcı Saha Katmanı • Çamur ve Tav Kontrolü',
-            polyA: 'rgba(20, 184, 166, 0.52)',
-            polyB: 'rgba(99, 102, 241, 0.52)',
-            stroke: '#2dd4bf'
-          }
-        }[satLayer];
-
-        return (
-          <div className="relative h-[310px] sm:h-[375px] w-full bg-[#081119] overflow-hidden select-none">
-            <img
-              src="/showcase/aerial-parcel-base.jpg"
-              onError={e => {
-                (e.currentTarget as HTMLImageElement).src = '/showcase/erp-bkts-silo-showcase.jpg';
-              }}
-              alt="MKS Yardımcı Saha, Silo ve Parsel Araçları"
-              className="absolute inset-0 w-full h-full object-cover opacity-75"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-[#06090E] via-[#06090E]/30 to-[#06090E]/65" />
-
-            <div className="absolute top-3 left-3 right-3 flex flex-wrap items-center justify-between gap-2 z-10">
-              <div className="px-3 py-1.5 rounded-xl bg-[#0A0F17]/90 backdrop-blur-md border border-white/15 text-[11px] text-stone-200">
-                <span className="font-semibold text-white">Tamamlayıcı Saha Araçları:</span> Silo Kantar • Hava Durumu • TKGM Parsel
-              </div>
-              <div className="px-2.5 py-1.5 rounded-xl bg-[#0A0F17]/90 backdrop-blur-md border border-emerald-500/30 text-[11px] font-medium text-emerald-300">
-                Silo 1: 840 Ton Buğday (%84)
-              </div>
-            </div>
-
-            <svg viewBox="0 0 640 340" className="absolute inset-0 w-full h-full pointer-events-none" preserveAspectRatio="xMidYMid slice">
-              <motion.polygon
-                points="172,102 317,102 317,174 172,174"
-                animate={{ fill: layerMeta.polyA, stroke: layerMeta.stroke }}
-                transition={{ duration: 0.5, ease: EASE_CORPORATE }}
-                strokeWidth="2.2"
-              />
-              <motion.polygon
-                points="324,102 425,102 425,212 324,212"
-                animate={{ fill: layerMeta.polyB, stroke: layerMeta.stroke }}
-                transition={{ duration: 0.5, ease: EASE_CORPORATE }}
-                strokeWidth="2.2"
-              />
-              <text x="190" y="138" fill="#ffffff" fontSize="12" fontWeight="700">
-                TKGM Ada 142 / Parsel 8
-              </text>
-              <text x="190" y="155" fill="#ecfdf5" fontSize="10.5" fontWeight="600">
-                184.6 Dekar • Çiftçi Kartına Bağlı
-              </text>
-            </svg>
-
-            <div className="absolute bottom-3 left-3 right-3 z-10 flex flex-col sm:flex-row sm:items-end justify-between gap-2.5">
-              <div className="p-3 rounded-xl bg-[#0A0F17]/92 backdrop-blur-md border border-white/10 max-w-md">
-                <div className="text-xs font-semibold text-white">{layerMeta.badge}</div>
-                <p className="text-[11px] text-stone-300 mt-0.5">
-                  Reçete ve cari takibini destekleyen kantar fişi mahsubu, ilaçlama rüzgar uyarısı ve parsel görünümü.
-                </p>
-              </div>
-              <div className="mks-tab-rail flex items-center gap-1 p-1 rounded-xl bg-[#0A0F17]/95 border border-white/15 self-start sm:self-auto">
-                {(
-                  [
-                    { id: 'NDVI', label: 'NDVI' },
-                    { id: 'NDMI', label: 'Sulama' },
-                    { id: 'SWIR', label: 'Tav' }
-                  ] as const
-                ).map(btn => (
-                  <button
-                    key={btn.id}
-                    type="button"
-                    onClick={() => {
-                      setSatLayer(btn.id);
-                      setIsPaused(true);
-                    }}
-                    className={`px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-colors ${
-                      satLayer === btn.id ? 'bg-emerald-600 text-white' : 'text-stone-300 hover:text-white'
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+                {[
+                  { step: '1. Çiftçi', val: 'Ahmet Yılmaz', sub: 'Tek dokunuşla seçilir' },
+                  { step: '2. Ekili Ürün', val: 'Pamuk • 184 Da', sub: 'Tarla & sezon seçimi' },
+                  { step: '3. İlaç & Gübre', val: '3 Kalem Sepette', sub: 'Barkod veya liste' },
+                  { step: '4. Fiyat & Adet', val: '₺34.850,00', sub: 'Peşin / Vadeli seçim' },
+                  { step: '5. Önizleme', val: 'Onayla & Düş', sub: 'Depo + Cari işlenir' }
+                ].map((s, idx) => (
+                  <div
+                    key={s.step}
+                    className={`p-3 rounded-2xl border ${
+                      idx === 4
+                        ? 'bg-emerald-500/15 border-emerald-500/40'
+                        : 'bg-white/[0.03] border-white/[0.08]'
                     }`}
                   >
-                    {btn.label}
-                  </button>
+                    <div className="text-[10px] font-semibold text-emerald-400">{s.step}</div>
+                    <div className="text-xs sm:text-sm font-semibold text-white mt-1 truncate">{s.val}</div>
+                    <div className="text-[10px] text-white/60 mt-0.5 truncate">{s.sub}</div>
+                  </div>
                 ))}
               </div>
             </div>
-          </div>
-        );
-      }
-    }
-  };
+          )}
 
-  const renderMobileScreen = (moduleId: ShowcaseModuleId) => {
-    switch (moduleId) {
-      case 'cari':
-        return (
-          <div className="space-y-2.5">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1.5">
-                <Bell size={12} /> Vade ve Tahsilat Bildirimi
-              </span>
-              <span className="text-[10px] text-stone-400">Mobil Cari</span>
-            </div>
-            {[
-              { name: 'Ahmet Yılmaz • Vade hatırlatma', amt: '₺128.400' },
-              { name: 'Mehmet Kaya • Tahsilat sözü', amt: '₺64.500' }
-            ].map(item => (
-              <div
-                key={item.name}
-                className="p-2.5 rounded-xl bg-white/[0.04] border border-white/10 flex items-center justify-between gap-2"
-              >
-                <div className="min-w-0">
-                  <div className="text-[11px] font-semibold text-white truncate">{item.name}</div>
-                  <div className="text-[10px] text-stone-400">{item.amt}</div>
-                </div>
-                <span className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-semibold inline-flex items-center gap-1 shrink-0">
-                  <Phone size={10} /> Ara
-                </span>
+          {heroTab === 'cari' && (
+            <div className="space-y-4 my-auto">
+              <div className="grid grid-cols-3 gap-3">
+                {[
+                  { k: 'Aktif Alacak', v: '₺1.842.500', c: 'text-white' },
+                  { k: 'Tahsilat (Nakit/POS/Çek)', v: '₺615.000', c: 'text-emerald-400' },
+                  { k: 'Yıl Sonu Devri', v: 'Tam Mutabık', c: 'text-amber-300' }
+                ].map(item => (
+                  <div key={item.k} className="p-3.5 rounded-2xl bg-white/[0.04] border border-white/[0.08]">
+                    <div className="text-[11px] text-white/60 truncate">{item.k}</div>
+                    <div className={`text-sm sm:text-xl font-semibold mt-1 tabular-nums ${item.c}`}>{item.v}</div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        );
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/[0.08] flex items-center justify-between">
+                  <div>
+                    <div className="text-xs font-semibold text-white">Ahmet Yılmaz • Salça Köyü</div>
+                    <div className="text-[11px] text-white/60">WhatsApp Şifresiz Ekstre Linki • 25 Kasım Vade</div>
+                  </div>
+                  <span className="text-sm font-semibold text-emerald-400 tabular-nums">₺128.400</span>
+                </div>
+                <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/[0.08] flex items-center justify-between">
+                  <div>
+                    <div className="text-xs font-semibold text-white">Mehmet Kaya • Akçakale</div>
+                    <div className="text-[11px] text-white/60">Nakit + 30 Gün POS Bloke Parçalı Tahsilat</div>
+                  </div>
+                  <span className="text-sm font-semibold text-white tabular-nums">₺64.500</span>
+                </div>
+              </div>
+            </div>
+          )}
 
-      case 'stok':
-        return (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-emerald-400">Mobil Hızlı Stok Sayımı</span>
-              <span className="text-[10px] text-stone-400">Merkez Depo</span>
+          {heroTab === 'resmi' && (
+            <div className="space-y-4 my-auto">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {[
+                  { title: 'GTS Gübre Takip', desc: 'DNA & 2D Karekod mal kabul ve çıkış bildirimi' },
+                  { title: 'BKTS İlaç Takip', desc: 'GTIN, Lot, Seri No ve SKT ayrıştırma' },
+                  { title: 'B-Reçete Sistemi', desc: 'T.C. No / İl-İlçe ile hızlı e-reçete akışı' },
+                  { title: 'EDM e-Fatura', desc: 'Gelen alış faturasından otomatik stok girişi' }
+                ].map(srv => (
+                  <div key={srv.title} className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/25">
+                    <div className="text-xs font-semibold text-emerald-300">{srv.title}</div>
+                    <p className="text-[11px] text-white/75 mt-1 leading-relaxed">{srv.desc}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/[0.08] font-mono text-[11px] text-emerald-300 truncate">
+                GS1 DataMatrix: (01)08699745120841(17)280930(10)TR2604A(21)994812 → BKTS Doğrulandı
+              </div>
             </div>
-            <div className="p-3 rounded-2xl bg-white/[0.04] border border-white/10 space-y-1.5">
-              <div className="text-xs font-semibold text-white">DAP 18-46 Gübre (50 kg)</div>
-              <div className="text-[11px] text-stone-300">Sayılan Adet: 420 Çuval</div>
-              <div className="text-[10px] text-emerald-400">11.11.2026 • 08:30 itibarıyla onaylandı</div>
-            </div>
-            <div className="p-2.5 rounded-xl bg-emerald-600/20 border border-emerald-500/30 text-center text-xs font-semibold text-emerald-300">
-              Sayımı Onayla ve Mühürle
-            </div>
-          </div>
-        );
+          )}
 
-      case 'bkts_gts':
-        return (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-emerald-400">Kamera ile 2D Karekod</span>
-              <span className="text-[10px] text-stone-400">BKTS / GTS</span>
+          {heroTab === 'harita' && (
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-center my-auto">
+              <div className="sm:col-span-7 relative aspect-[16/9] rounded-2xl overflow-hidden border border-white/10">
+                <img
+                  src="/showcase/apple-tile-field-ipad.png"
+                  alt="TKGM Parsel Haritası ve NDVI Uydu"
+                  className="w-full h-full object-cover"
+                />
+              </div>
+              <div className="sm:col-span-5 space-y-2.5">
+                <div className="text-xs font-semibold text-emerald-400">TKGM + Çiftçi Tarla Etiketi</div>
+                <div className="text-base font-semibold text-white">Ada 142 / Parsel 8 • 184.6 Da</div>
+                <p className="text-xs text-white/70 leading-relaxed">
+                  Çiftçiyi seçip &ldquo;Parseli MKS&rsquo;ye Kaydet&rdquo; dediğinizde tarla haritadan kaybolmaz; sahibi olan çiftçinin adıyla harita üzerinde kalıcı olarak gösterilir.
+                </p>
+                <div className="inline-flex px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[11px] font-medium">
+                  Sahibi: Ahmet Yılmaz • Pamuk
+                </div>
+              </div>
             </div>
-            <div className="p-3 rounded-2xl bg-white/[0.04] border border-emerald-500/30 space-y-1.5">
-              <div className="text-[11px] text-stone-400">GS1 Karekod Okundu</div>
-              <div className="text-xs font-semibold text-white">Amistar Top • 1 Litre</div>
-              <div className="text-[10px] font-mono text-emerald-300">GTIN: 08691234009182 • Parti: 8841</div>
-            </div>
-            <div className="p-2.5 rounded-xl bg-white/[0.05] border border-white/10 text-center text-xs font-semibold text-white">
-              Mal Kabul ve Stoğa İşlendi
-            </div>
-          </div>
-        );
+          )}
 
-      case 'efatura':
-        return (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-emerald-400">Mobil e-Fatura / e-Arşiv</span>
-              <span className="text-[10px] text-stone-400">EDM Resmi</span>
+          {heroTab === 'ai' && (
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-center my-auto">
+              <div className="sm:col-span-5 relative aspect-[16/10] rounded-2xl overflow-hidden border border-white/10">
+                <img
+                  src="/showcase/apple-tile-ai-muhendisim.png"
+                  alt="MKS Yapay Zeka Bitki Teşhis"
+                  className="w-full h-full object-cover"
+                />
+              </div>
+              <div className="sm:col-span-7 space-y-2.5">
+                <div className="text-xs font-semibold text-emerald-400">MKS Zirai & Finansal Copilot</div>
+                <div className="p-3.5 rounded-2xl bg-white/[0.04] border border-white/[0.08] text-xs text-white/85 leading-relaxed">
+                  &ldquo;Depomda 72 kalem aktif stok ve 87 kayıtlı müstahsil cari hesabı canlı bağlı. Pamuk yaprak biti için ruhsatlı BKU dozajını çıkarıp deponuzdaki eşdeğer ürünleri hemen listeleyebilirim.&rdquo;
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <span className="px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-300 text-[11px]">Depo Stok Analizi</span>
+                  <span className="px-3 py-1 rounded-full bg-white/[0.06] text-white/80 text-[11px]">BKU Ruhsat & Dozaj</span>
+                  <span className="px-3 py-1 rounded-full bg-white/[0.06] text-white/80 text-[11px]">Görsel Teşhis</span>
+                </div>
+              </div>
             </div>
-            <div className="p-3 rounded-2xl bg-white/[0.04] border border-white/10 space-y-1.5">
-              <div className="text-xs font-semibold text-white">Ahmet Yılmaz • ₺34.850,00</div>
-              <div className="text-[11px] text-stone-300">e-Arşiv Fatura #EAR202600011904</div>
-              <div className="text-[10px] text-emerald-400">Cari hesaba ve stok çıkışına işlendi</div>
-            </div>
-            <div className="p-2.5 rounded-xl bg-emerald-600 text-white text-center text-xs font-semibold">
-              Fatura PDF WhatsApp Paylaş
-            </div>
-          </div>
-        );
-
-      case 'saha_ek':
-        return (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-stone-300">Üretici Portalı ve Kantar</span>
-              <span className="text-[10px] text-emerald-400">Ek Özellik</span>
-            </div>
-            <div className="p-3 rounded-2xl bg-white/[0.04] border border-white/10 space-y-1.5">
-              <div className="text-xs font-semibold text-white">63 MKS 214 • Net 28.440 kg</div>
-              <div className="text-[11px] text-stone-300">Kantar alımı müstahsil borcundan düşüldü</div>
-              <div className="text-[10px] text-emerald-400">İlaçlama havası: 22°C uygun</div>
-            </div>
-            <div className="p-2.5 rounded-xl bg-white/[0.05] border border-white/10 text-center text-xs font-semibold text-white">
-              Cari Mahsup Fişini Aç
-            </div>
-          </div>
-        );
-    }
+          )}
+        </div>
+      </div>
+    );
   };
 
   return (
-    <div className="min-h-screen bg-[#06090E] text-[#F3F5F7] relative overflow-x-clip flex flex-col selection:bg-emerald-500/30 selection:text-white">
-      {/* Quiet Architectural Ambient Lighting */}
-      <div className="pointer-events-none fixed inset-0 overflow-hidden">
-        <div
-          className="absolute top-0 left-1/2 -translate-x-1/2 w-[980px] h-[420px] opacity-30"
-          style={{
-            background:
-              'radial-gradient(ellipse at center top, rgba(16, 185, 129, 0.16) 0%, rgba(14, 165, 233, 0.05) 45%, transparent 75%)'
-          }}
-        />
-      </div>
-
-      {/* ==================== CORPORATE HEADER ==================== */}
-      <header className="sticky top-0 z-30 border-b border-white/[0.07] bg-[#06090E]/85 backdrop-blur-xl">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 sm:h-[70px] flex items-center justify-between gap-3">
-          <a href="#ust" className="flex items-center gap-3 min-w-0">
-            <MksBrandLogo size="lg" rounded="xl" className="border-emerald-500/25 shadow-md" />
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="hidden min-[400px]:inline font-semibold text-white text-sm sm:text-[15px] tracking-tight truncate">
-                  <span className="sm:hidden">Mühendis Kayıt</span>
-                  <span className="hidden sm:inline">Mühendis Kayıt Sistemi</span>
-                </span>
-                <span className="hidden sm:inline-flex px-2 py-0.5 rounded-md text-[11px] font-medium text-stone-400 border border-white/10">
-                  Kurumsal v8.2
-                </span>
-              </div>
-              <span className="text-[11px] text-stone-400 hidden md:block truncate">
-                Çiftçi cari takibi, depo ve stok yönetimi, BKTS / GTS karekod ve e-Fatura sistemi
-              </span>
-            </div>
+    <div
+      style={appleFontStyle}
+      className="min-h-screen bg-[#FFFFFF] text-[#1D1D1F] flex flex-col overflow-x-clip selection:bg-emerald-500/30"
+    >
+      {/* ==================== APPLE GLOBAL TRANSLUCENT NAV (44-48px) ==================== */}
+      <header className="sticky top-0 z-40 h-12 bg-[#161617]/85 backdrop-blur-2xl border-b border-white/[0.08] text-[#F5F5F7]">
+        <div className="max-w-[1180px] mx-auto h-full px-4 sm:px-6 flex items-center justify-between gap-3">
+          <a href="#ust" className="flex items-center gap-2 shrink-0 group">
+            <MksBrandLogo size="sm" rounded="lg" className="border-white/15" />
+            <span className="text-[13px] font-semibold tracking-tight text-white">
+              MKS <span className="hidden sm:inline text-white/60 font-normal">Kurumsal</span>
+            </span>
           </a>
 
-          <nav className="hidden lg:flex items-center gap-1 shrink-0">
-            <a
-              href="#uygulama-ekranlari"
-              className="px-3.5 py-2 rounded-xl text-xs font-medium text-stone-300 hover:text-white hover:bg-white/[0.04] transition-colors"
-            >
-              Temel modüller
+          <nav className="hidden lg:flex items-center gap-5 text-[12px] font-normal text-white/80">
+            <a href="#hero-komuta" className="hover:text-white transition-colors whitespace-nowrap">
+              MKS Kurumsal
             </a>
-            <a
-              href="#kurumsal-altyapi"
-              className="px-3.5 py-2 rounded-xl text-xs font-medium text-stone-300 hover:text-white hover:bg-white/[0.04] transition-colors"
-            >
-              Kurumsal altyapı
+            <a href="#hero-cari" className="hover:text-white transition-colors whitespace-nowrap">
+              Çiftçi Cari
+            </a>
+            <a href="#hero-resmi" className="hover:text-white transition-colors whitespace-nowrap">
+              Resmi Servisler
+            </a>
+            <a href="#bento-izgara" className="hover:text-white transition-colors whitespace-nowrap">
+              Depo & TKGM
+            </a>
+            <a href="#galeri-vitrin" className="hover:text-white transition-colors whitespace-nowrap">
+              Ekranlar
             </a>
             <button
               type="button"
               onClick={() => onOpenPortalTab('download')}
-              className="px-3.5 py-2 rounded-xl text-xs font-medium text-stone-300 hover:text-white hover:bg-white/[0.04] transition-colors"
+              className="hover:text-white transition-colors whitespace-nowrap"
             >
-              İndirme merkezi
+              İndir
             </button>
             <button
               type="button"
               onClick={() => onOpenPortalTab('pricing')}
-              className="px-3.5 py-2 rounded-xl text-xs font-medium text-stone-300 hover:text-white hover:bg-white/[0.04] transition-colors"
+              className="hover:text-white transition-colors whitespace-nowrap"
             >
               Paketler
             </button>
             <button
               type="button"
               onClick={onOpenSupport}
-              className="px-3.5 py-2 rounded-xl text-xs font-medium text-stone-300 hover:text-white hover:bg-white/[0.04] transition-colors"
+              className="hover:text-white transition-colors whitespace-nowrap"
             >
               Destek
             </button>
@@ -715,710 +465,930 @@ export const CorporateShowcaseWebsite: React.FC<CorporateShowcaseProps> = ({
             <button
               type="button"
               onClick={() => onOpenAuthModal('LOGIN')}
-              className="min-h-[40px] px-3.5 sm:px-4 py-2 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-white text-xs font-semibold transition-colors whitespace-nowrap inline-flex items-center gap-1.5"
+              className="h-8 px-3.5 rounded-full bg-white/[0.1] hover:bg-white/[0.18] text-white text-[11px] font-medium transition-colors whitespace-nowrap inline-flex items-center gap-1.5"
             >
-              <LogIn size={14} className="text-emerald-400 hidden sm:inline" />
-              <span>Giriş yap</span>
+              <LogIn size={12} className="hidden sm:inline text-emerald-400" />
+              <span>Giriş Yap</span>
             </button>
             <button
               type="button"
               onClick={() => onOpenAuthModal('REGISTER')}
-              className="min-h-[40px] px-3.5 sm:px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors whitespace-nowrap inline-flex items-center gap-1.5"
+              className="h-8 px-3.5 rounded-full bg-[#10B981] hover:bg-[#059669] text-[#052E16] text-[11px] font-semibold transition-colors whitespace-nowrap inline-flex items-center gap-1.5"
             >
-              <UserPlus size={14} className="hidden sm:inline" />
-              <span>Hesap oluştur</span>
+              <UserPlus size={12} className="hidden sm:inline" />
+              <span>Hesap Oluştur</span>
             </button>
           </div>
         </div>
       </header>
 
-      <main id="ust" className="flex-1 relative z-10">
-        {/* ==================== 1. ARCHITECTURAL CORPORATE HERO (CORE ERP FIRST) ==================== */}
-        <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 sm:pt-16 lg:pt-20 pb-10">
-          <motion.div
-            initial={{ opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.65, ease: EASE_CORPORATE }}
-            className="max-w-3xl space-y-6"
-          >
-            <div className="inline-flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-white/[0.03] border border-white/[0.08] text-xs text-stone-300">
-              <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              <span>Zirai ilaç, gübre ve tohum bayileri ile ziraat mühendisleri için 7/24 bulut ve çevrimdışı sistem</span>
-            </div>
+      {/* Mobile Compact Quick-Jump Ribbon (Zero Overflow) */}
+      <div className="lg:hidden bg-[#1D1D1F] border-b border-white/[0.08] px-3 py-2 flex items-center gap-2 overflow-x-auto no-scrollbar text-[11px] text-white/80">
+        <a href="#hero-cari" className="shrink-0 px-2.5 py-1 rounded-full bg-white/[0.06]">Çiftçi Cari</a>
+        <a href="#hero-resmi" className="shrink-0 px-2.5 py-1 rounded-full bg-white/[0.06]">Resmi Servisler</a>
+        <a href="#bento-izgara" className="shrink-0 px-2.5 py-1 rounded-full bg-white/[0.06]">Depo & TKGM</a>
+        <button type="button" onClick={() => onOpenPortalTab('download')} className="shrink-0 px-2.5 py-1 rounded-full bg-white/[0.06]">İndir</button>
+        <button type="button" onClick={() => onOpenPortalTab('pricing')} className="shrink-0 px-2.5 py-1 rounded-full bg-white/[0.06]">Paketler</button>
+        <button type="button" onClick={onOpenSupport} className="shrink-0 px-2.5 py-1 rounded-full bg-white/[0.06]">Destek</button>
+      </div>
 
-            <h1 className="text-3xl sm:text-5xl lg:text-[52px] font-semibold text-white tracking-[-0.03em] leading-[1.12]">
-              Çiftçi cari takibi, depo stok, BKTS, GTS ve e-Fatura tek kurumsal sistemde.
-            </h1>
-
-            <p className="text-sm sm:text-lg text-[#94A0B0] leading-relaxed max-w-2xl">
-              Müstahsil veresiye ve vadeli tahsilat hesaplarınızı, barkodlu depo ve onaylı stok sayımınızı, Tarım
-              Bakanlığı uyumlu BKTS / GTS karekod bildirimlerinizi ve resmi e-Fatura süreçlerinizi telefon, bilgisayar
-              ve web üzerinde sıfır veri kaybıyla yönetin.
-            </p>
-
-            <div className="flex flex-wrap items-center gap-3 pt-1">
-              <button
-                type="button"
-                onClick={() => onOpenAuthModal('LOGIN')}
-                className="min-h-[46px] px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold transition-all inline-flex items-center gap-2 shadow-lg shadow-emerald-950/40"
-              >
-                <span>Sisteme giriş yap</span>
-                <ArrowRight size={16} />
-              </button>
-              <button
-                type="button"
-                onClick={() => onOpenAuthModal('REGISTER')}
-                className="min-h-[46px] px-5 py-3 rounded-xl bg-white/[0.05] hover:bg-white/[0.09] border border-white/10 text-white text-sm font-semibold transition-colors"
-              >
-                Yeni kurumsal hesap aç
-              </button>
-              <button
-                type="button"
-                onClick={() => onOpenPortalTab('download')}
-                className="min-h-[46px] px-4 py-3 rounded-xl text-stone-300 hover:text-white text-sm font-medium transition-colors inline-flex items-center gap-2"
-              >
-                <Download size={16} className="text-emerald-400" />
-                <span>Masaüstü ve mobil indir</span>
-              </button>
-            </div>
-          </motion.div>
-        </section>
-
-        {/* ==================== 2. ANIMATED MULTI-DEVICE APP SHOWCASE STAGE ==================== */}
-        <section
-          id="uygulama-ekranlari"
-          ref={stageRef}
-          className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-20 sm:pb-24"
-          style={{ perspective: 1400 }}
+      {/* ==================== APPLE RIBBON DUYURU ŞERİDİ ==================== */}
+      <div className="bg-[#1D1D1F] text-[#F5F5F7] text-xs py-2.5 px-4 text-center border-b border-white/[0.06]">
+        <span className="text-white/85">
+          MKS Kurumsal v8.2 yayında. Çiftçi cari, BKTS/GTS, B-Reçete, e-Fatura ve TKGM parsel haritası tek merkezde.{' '}
+        </span>
+        <button
+          type="button"
+          onClick={() => onOpenPortalTab('pricing')}
+          className="text-[#34D399] hover:underline font-medium inline-flex items-center gap-0.5 ml-1"
         >
-          {/* Module Selector Rail with Animated Spring Pill */}
-          <div
-            className="mks-tab-rail flex items-center gap-1.5 p-1.5 rounded-2xl bg-[#0D1219] border border-white/[0.08] mb-6"
-            onMouseEnter={() => setIsPaused(true)}
-            onMouseLeave={() => setIsPaused(false)}
-          >
-            {SHOWCASE_MODULES.map(mod => {
-              const Icon = mod.icon;
-              const isActive = mod.id === activeModule;
-              return (
-                <button
-                  key={mod.id}
-                  type="button"
-                  onClick={() => {
-                    setActiveModule(mod.id);
-                    setIsPaused(true);
-                  }}
-                  className={`relative min-h-[42px] px-4 py-2 rounded-xl text-xs sm:text-[13px] font-semibold transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
-                    isActive ? 'text-white' : 'text-stone-400 hover:text-stone-200'
-                  }`}
-                >
-                  {isActive && (
-                    <motion.span
-                      layoutId="mks-corporate-tab-pill"
-                      transition={{ type: 'spring', stiffness: 360, damping: 32 }}
-                      className="absolute inset-0 rounded-xl bg-white/[0.09] border border-white/15"
-                    />
-                  )}
-                  <Icon size={15} className={`relative z-10 ${isActive ? 'text-emerald-400' : 'text-stone-500'}`} />
-                  <span className="relative z-10 hidden sm:inline">{mod.label}</span>
-                  <span className="relative z-10 sm:hidden">{mod.shortLabel}</span>
-                </button>
-              );
-            })}
-          </div>
+          <span>Paketleri ve indirme seçeneklerini inceleyin</span>
+          <ChevronRight size={13} />
+        </button>
+      </div>
 
-          {/* Scroll-Linked 3D Corporate Product Frame */}
-          <motion.div
-            style={{
-              rotateX: stageRotateX,
-              scale: stageScale,
-              opacity: stageOpacity
-            }}
-            className="rounded-3xl bg-[#0D1219] border border-white/[0.09] p-4 sm:p-6 lg:p-8 shadow-[0_32px_90px_rgba(0,0,0,0.65)]"
-          >
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-center">
-              {/* Desktop Application Window (8 cols) */}
-              <div className="lg:col-span-8 rounded-2xl overflow-hidden border border-white/10 bg-[#06090E]">
-                {/* Window Chrome */}
-                <div className="h-10 px-4 bg-[#0B1018] border-b border-white/[0.07] flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-white/15" />
-                    <span className="w-2.5 h-2.5 rounded-full bg-white/15" />
-                    <span className="w-2.5 h-2.5 rounded-full bg-white/15" />
-                  </div>
-                  <div className="flex items-center gap-2 min-w-0">
-                    <MksBrandLogo size="xs" rounded="lg" />
-                    <span className="text-[11px] text-stone-400 font-medium truncate">
-                      MKS Kurumsal Masaüstü ve Web — {currentSpec.label}
-                    </span>
-                  </div>
-                  <span className="text-[10px] text-emerald-400 font-medium shrink-0">Canlı Senkron</span>
-                </div>
-
-                {/* Animated Screen Body */}
-                <AnimatePresence mode="wait">
-                  <motion.div
-                    key={activeModule}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    transition={{ duration: 0.36, ease: EASE_CORPORATE }}
-                  >
-                    {renderDesktopScreen(activeModule)}
-                  </motion.div>
-                </AnimatePresence>
+      <main id="ust" className="flex-1">
+        {/* ==================== BÖLÜM 1: FLAGSHIP DARK HERO ==================== */}
+        <section
+          id="hero-komuta"
+          className="bg-[#000000] text-[#F5F5F7] pt-12 sm:pt-18 lg:pt-20 pb-12 sm:pb-16 px-4 sm:px-6 text-center overflow-hidden"
+        >
+          <div className="max-w-5xl mx-auto space-y-5">
+            <motion.div
+              initial={prefersReducedMotion ? false : { opacity: 0, y: 14 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, ease: APPLE_EASE }}
+              className="space-y-4"
+            >
+              <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-white/[0.07] border border-white/[0.12] text-[11px] font-medium text-emerald-300">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                <span>MKS Kurumsal v8.2 • Zirai ERP &amp; Saha Komuta Merkezi</span>
               </div>
 
-              {/* Synchronized Mobile iPhone Preview + Module Spec (4 cols) */}
-              <div className="lg:col-span-4 flex flex-col justify-between space-y-5">
+              <h1 className="text-4xl sm:text-6xl lg:text-[68px] font-semibold text-white tracking-[-0.035em] leading-[1.04]">
+                Mühendis Kayıt Sistemi.
+              </h1>
+
+              <p className="text-lg sm:text-2xl text-[#86868B] font-normal tracking-[-0.015em] max-w-2xl mx-auto leading-snug">
+                Zirai bayilik ve mühendislikte yeni standart. Kusursuz tasarım, tam resmi uyum.
+              </p>
+
+              {/* Apple Dual Pill CTAs (17px gap, 44px height) */}
+              <div className="flex flex-wrap items-center justify-center gap-[17px] pt-2">
+                <button
+                  type="button"
+                  onClick={() => onOpenAuthModal('LOGIN')}
+                  className="h-11 px-7 rounded-full bg-[#10B981] hover:bg-[#059669] text-[#052E16] text-sm font-semibold transition-all inline-flex items-center gap-1.5"
+                >
+                  <span>Sisteme Giriş Yap</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onOpenAuthModal('REGISTER')}
+                  className="h-11 px-7 rounded-full border border-[#10B981]/70 text-[#34D399] hover:bg-[#10B981]/15 text-sm font-medium transition-all inline-flex items-center gap-1.5"
+                >
+                  <span>Ücretsiz Hesap Aç</span>
+                </button>
+              </div>
+            </motion.div>
+
+            {/* Apple Segmented Tab Switcher + Hero Stage */}
+            <div ref={heroStageRef} className="pt-6 space-y-4">
+              <div className="inline-flex max-w-full items-center gap-1 p-1 rounded-full bg-[#161617] border border-white/[0.1] overflow-x-auto no-scrollbar">
+                {HERO_STAGE_TABS.map(tab => {
+                  const Icon = tab.icon;
+                  const active = heroTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setHeroTab(tab.id)}
+                      className={`shrink-0 px-3.5 py-2 rounded-full text-xs font-medium transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                        active
+                          ? 'bg-white text-[#1D1D1F] font-semibold shadow-sm'
+                          : 'text-white/75 hover:text-white'
+                      }`}
+                    >
+                      <Icon size={13} className={active ? 'text-emerald-600' : 'text-white/60'} />
+                      <span className="hidden sm:inline">{tab.label}</span>
+                      <span className="sm:hidden">{tab.shortLabel}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <motion.div style={{ scale: stageScale, opacity: stageOpacity }}>
                 <AnimatePresence mode="wait">
                   <motion.div
-                    key={`desc-${activeModule}`}
-                    initial={{ opacity: 0, y: 8 }}
+                    key={heroTab}
+                    initial={prefersReducedMotion ? false : { opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -8 }}
-                    transition={{ duration: 0.32, ease: EASE_CORPORATE }}
-                    className="space-y-2.5"
+                    exit={prefersReducedMotion ? undefined : { opacity: 0, y: -8 }}
+                    transition={{ duration: 0.3, ease: APPLE_EASE }}
                   >
-                    <h2 className="text-lg sm:text-xl font-semibold text-white tracking-tight leading-snug">
-                      {currentSpec.headline}
-                    </h2>
-                    <p className="text-xs sm:text-[13px] text-[#94A0B0] leading-relaxed">{currentSpec.summary}</p>
+                    {renderHeroInteractiveOverlay()}
                   </motion.div>
                 </AnimatePresence>
+              </motion.div>
+            </div>
+          </div>
+        </section>
 
-                {/* Synchronized iPhone Frame */}
-                <div className="rounded-[26px] p-3.5 bg-[#080C12] border border-white/15 shadow-xl">
-                  <div className="w-16 h-1 rounded-full bg-white/15 mx-auto mb-3" />
-                  <AnimatePresence mode="wait">
-                    <motion.div
-                      key={`mob-${activeModule}`}
-                      initial={{ opacity: 0, x: 10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: -10 }}
-                      transition={{ duration: 0.34, ease: EASE_CORPORATE }}
+        {/* ==================== BÖLÜM 2: FLAGSHIP LIGHT HERO (ÇİFTÇİ CARİ & 5 ADIM SATIŞ) ==================== */}
+        <section
+          id="hero-cari"
+          className="bg-[#F5F5F7] text-[#1D1D1F] mt-3 py-16 sm:py-24 px-4 sm:px-6 text-center"
+        >
+          <div className="max-w-5xl mx-auto space-y-6">
+            <div className="space-y-3">
+              <h2 className="text-3xl sm:text-5xl lg:text-[54px] font-semibold tracking-[-0.03em] leading-[1.06] text-[#1D1D1F]">
+                Çiftçi Cari ve Fatura Defteri.
+              </h2>
+              <p className="text-base sm:text-xl text-[#6E6E73] max-w-2xl mx-auto leading-snug">
+                Önce çiftçi, sonra ekili ürün, ilaçlar, fiyat ve onay. Karmaşadan uzak, kuruşu kuruşuna mutabakat.
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-[17px] pt-2">
+                <button
+                  type="button"
+                  onClick={() => onOpenAuthModal('LOGIN')}
+                  className="h-11 px-7 rounded-full bg-[#0071E3] hover:bg-[#0077ED] text-white text-sm font-medium transition-colors"
+                >
+                  Hemen Deneyin
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onOpenPortalTab('overview')}
+                  className="h-11 px-7 rounded-full border border-[#0071E3] text-[#0071E3] hover:bg-[#0071E3] hover:text-white text-sm font-medium transition-colors inline-flex items-center gap-1"
+                >
+                  <span>Yıl Sonu &amp; Devir Özellikleri</span>
+                  <ChevronRight size={15} />
+                </button>
+              </div>
+            </div>
+
+            {/* Interactive Light MKS Kurumsal Showcase Card */}
+            <div className="bg-white rounded-[28px] border border-black/[0.06] shadow-[0_20px_60px_rgba(0,0,0,0.06)] p-5 sm:p-8 text-left space-y-6 mt-6">
+              {/* 5-Step Progress Pills */}
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-black/[0.06] pb-4">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {[
+                    { id: 1, label: '1. Çiftçi' },
+                    { id: 2, label: '2. Ekili Ürün' },
+                    { id: 3, label: '3. İlaç & Gübre' },
+                    { id: 4, label: '4. Fiyat & Adet' },
+                    { id: 5, label: '5. Önizleme & Onay' }
+                  ].map(st => (
+                    <button
+                      key={st.id}
+                      type="button"
+                      onClick={() => setWizardStep(st.id)}
+                      className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                        wizardStep === st.id
+                          ? 'bg-[#052E16] text-white'
+                          : 'bg-[#F5F5F7] text-[#6E6E73] hover:text-[#1D1D1F]'
+                      }`}
                     >
-                      {renderMobileScreen(activeModule)}
-                    </motion.div>
-                  </AnimatePresence>
+                      {st.label}
+                    </button>
+                  ))}
+                </div>
+                <span className="text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full">
+                  Sadece Depo &amp; Cari Takibi
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+                <div className="lg:col-span-7 space-y-3">
+                  <div className="p-4 rounded-2xl bg-[#F5F5F7] border border-black/[0.05] space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-[#1D1D1F]">
+                        Adım {wizardStep}/5:{' '}
+                        {wizardStep === 1
+                          ? 'Müstahsil Tek Dokunuşta Seçildi'
+                          : wizardStep === 2
+                          ? 'Pamuk & Buğday Tarla Parseli Bağlandı'
+                          : wizardStep === 3
+                          ? 'BKU İlaç ve Gübre Kalemleri Eklendi'
+                          : wizardStep === 4
+                          ? 'Peşin / Vadeli Birim Fiyat Hesaplandı'
+                          : 'Önizleme Onaylandı — Cari ve Stok Güncellendi'}
+                      </span>
+                      <span className="text-emerald-700 font-semibold">Aktif</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                      <div className="p-3 rounded-xl bg-white border border-black/[0.05]">
+                        <div className="text-[11px] text-[#6E6E73]">Seçili Müstahsil</div>
+                        <div className="text-sm font-semibold text-[#1D1D1F] mt-0.5">Ahmet Yılmaz • Salça</div>
+                        <div className="text-[11px] text-emerald-700 mt-0.5">Önceki bakiye: ₺93.550</div>
+                      </div>
+                      <div className="p-3 rounded-xl bg-white border border-black/[0.05]">
+                        <div className="text-[11px] text-[#6E6E73]">Fatura &amp; Sepet Tutarı</div>
+                        <div className="text-sm font-semibold text-[#1D1D1F] mt-0.5 tabular-nums">₺34.850,00</div>
+                        <div className="text-[11px] text-[#6E6E73] mt-0.5">Vadeli + Nakit / POS Bloke destekli</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2.5 text-center">
+                    {[
+                      { label: 'Parçalı Tahsilat', val: 'Nakit • Çek • POS' },
+                      { label: 'Müstahsil Paylaşımı', val: 'Şifresiz Portal Linki' },
+                      { label: 'Dönem Sonu', val: 'Kayıpsız Yıllık Devir' }
+                    ].map(f => (
+                      <div key={f.label} className="p-3 rounded-2xl bg-[#F5F5F7]">
+                        <div className="text-[10px] text-[#6E6E73]">{f.label}</div>
+                        <div className="text-xs font-semibold text-[#1D1D1F] mt-0.5">{f.val}</div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
-                {/* 3 Key Module Facts */}
-                <div className="grid grid-cols-3 gap-2 pt-1">
-                  {currentSpec.metrics.map(m => (
-                    <div key={m.label} className="p-2.5 rounded-xl bg-white/[0.025] border border-white/[0.06]">
-                      <div className="text-[10px] text-stone-400 truncate">{m.label}</div>
-                      <div className="text-[11px] leading-snug font-semibold text-white mt-0.5 line-clamp-2">{m.value}</div>
+                <div className="lg:col-span-5 space-y-2.5">
+                  <div className="p-4 rounded-2xl bg-[#052E16] text-white space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-emerald-300">Şifresiz Üretici Portalı</span>
+                      <ShieldCheck size={16} className="text-emerald-400" />
                     </div>
+                    <div className="text-xl font-semibold tabular-nums">₺128.400,00</div>
+                    <p className="text-xs text-white/75 leading-relaxed">
+                      Çiftçiniz WhatsApp üzerinden gönderilen özel bağlantıyla güncel borcunu ve kaşeli PDF ekstresini anında görür.
+                    </p>
+                  </div>
+                  <div className="p-3.5 rounded-2xl bg-[#F5F5F7] flex items-center justify-between text-xs">
+                    <span className="font-medium text-[#1D1D1F]">Çok Sayfalı Yıl Sonu Bilanço PDF</span>
+                    <span className="text-emerald-700 font-semibold">Hazır</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ==================== BÖLÜM 3: FLAGSHIP RESMİ SERVİSLER HERO ==================== */}
+        <section
+          id="hero-resmi"
+          className="bg-[#07130E] text-[#F5F5F7] mt-3 py-16 sm:py-24 px-4 sm:px-6 text-center"
+        >
+          <div className="max-w-5xl mx-auto space-y-8">
+            <div className="space-y-3">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/25 text-[11px] font-medium text-emerald-300">
+                <ScanBarcode size={13} />
+                <span>Ayrı Resmi Servisler Komuta Alanı</span>
+              </div>
+              <h2 className="text-3xl sm:text-5xl lg:text-[54px] font-semibold tracking-[-0.03em] leading-[1.06] text-white">
+                Resmi Servisler. Kendi Özel Alanında.
+              </h2>
+              <p className="text-base sm:text-xl text-[#9CB0A5] max-w-2xl mx-auto leading-snug">
+                GTS, BKTS, B-Reçete ve EDM e-Fatura. Fatura defterini yormadan, tek tıkla Bakanlık ve GİB entegrasyonu.
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-[17px] pt-2">
+                <button
+                  type="button"
+                  onClick={() => onOpenAuthModal('LOGIN')}
+                  className="h-11 px-7 rounded-full bg-[#10B981] hover:bg-[#059669] text-[#052E16] text-sm font-semibold transition-colors"
+                >
+                  Servisleri Aç
+                </button>
+                <button
+                  type="button"
+                  onClick={onOpenSupport}
+                  className="h-11 px-7 rounded-full border border-white/25 text-white hover:bg-white/10 text-sm font-medium transition-colors"
+                >
+                  BKTS / EDM Bilgi Al
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 text-left">
+              {[
+                {
+                  title: 'GTS Gübre Takip',
+                  badge: 'DNA & Karekod',
+                  desc: 'Gübre çuvallarındaki 2D karekodu telefonla okutup mal kabul ve satış bildirimi yapın.'
+                },
+                {
+                  title: 'BKTS İlaç Takip',
+                  badge: 'GS1 DataMatrix',
+                  desc: 'GTIN, parti numarası, seri no ve SKT ayrıştırması ile sıfır hatalı bakanlık bildirimi.'
+                },
+                {
+                  title: 'B-Reçete Sistemi',
+                  badge: 'E-Reçete Uyumu',
+                  desc: 'Çiftçi T.C. No ve onay kodlarıyla saniyeler içinde resmi e-Reçete çıkışı oluşturun.'
+                },
+                {
+                  title: 'EDM Resmi e-Fatura',
+                  badge: 'GİB Entegre',
+                  desc: 'Gelen alış faturalarını tek onayla stoğa işleyin; resmi e-Fatura / e-Arşiv kesin.'
+                }
+              ].map(card => (
+                <div
+                  key={card.title}
+                  className="p-5 rounded-3xl bg-white/[0.04] border border-white/[0.1] hover:border-emerald-500/40 transition-colors space-y-2.5"
+                >
+                  <span className="inline-block px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 text-[10px] font-semibold">
+                    {card.badge}
+                  </span>
+                  <h3 className="text-base font-semibold text-white">{card.title}</h3>
+                  <p className="text-xs text-[#A3B8AD] leading-relaxed">{card.desc}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ==================== BÖLÜM 4: APPLE.COM 2x3 BENTO PROMO GRID (12px gap) ==================== */}
+        <section id="bento-izgara" className="mt-3 px-0 sm:px-3 max-w-[1600px] mx-auto">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {/* TILE 1 (Light #F5F5F7): Depo, Stok ve Barkod */}
+            <div className="bg-[#F5F5F7] text-[#1D1D1F] min-h-[540px] sm:min-h-[580px] flex flex-col justify-between overflow-hidden text-center pt-10">
+              <div className="px-6 sm:px-10 space-y-2.5">
+                <h3 className="text-3xl sm:text-4xl font-semibold tracking-[-0.025em]">Depo &amp; Barkod.</h3>
+                <p className="text-sm sm:text-base text-[#6E6E73] max-w-md mx-auto">
+                  Market barkod tabancası ile hızlı çıkış, FEFO SKT takibi ve Stok Senkronizasyon Merkezi.
+                </p>
+                <div className="flex items-center justify-center gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => onOpenAuthModal('LOGIN')}
+                    className="h-9 px-5 rounded-full bg-[#0071E3] hover:bg-[#0077ED] text-white text-xs font-medium transition-colors"
+                  >
+                    Stok Sistemini Gör
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onOpenPortalTab('overview')}
+                    className="h-9 px-5 rounded-full border border-[#0071E3] text-[#0071E3] hover:bg-[#0071E3] hover:text-white text-xs font-medium transition-colors"
+                  >
+                    Detaylar ›
+                  </button>
+                </div>
+              </div>
+              <div className="mt-6 h-[320px] sm:h-[360px] w-full overflow-hidden">
+                <img
+                  src="/showcase/apple-tile-pos-warehouse.png"
+                  alt="MKS Depo, Barkod ve Stok Takip Tezgahı"
+                  className="w-full h-full object-cover object-center"
+                />
+              </div>
+            </div>
+
+            {/* TILE 2 (Dark #000000): MKS Mühendisim & İlaç Kütüphanesi */}
+            <div className="bg-[#000000] text-[#F5F5F7] min-h-[540px] sm:min-h-[580px] flex flex-col justify-between overflow-hidden text-center pt-10">
+              <div className="px-6 sm:px-10 space-y-2.5">
+                <h3 className="text-3xl sm:text-4xl font-semibold tracking-[-0.025em] text-white">
+                  MKS Mühendisim.
+                </h3>
+                <p className="text-sm sm:text-base text-[#86868B] max-w-md mx-auto">
+                  TARGEM/BKU ruhsatlı ilaç kütüphanesi: ticari isim, aktif madde, hedef zararlı, dozaj ve gerçek yaprak görselleri.
+                </p>
+                <div className="flex items-center justify-center gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => onOpenAuthModal('LOGIN')}
+                    className="h-9 px-5 rounded-full bg-[#10B981] hover:bg-[#059669] text-[#052E16] text-xs font-semibold transition-colors"
+                  >
+                    Kütüphaneyi Aç
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onOpenPortalTab('overview')}
+                    className="h-9 px-5 rounded-full border border-white/30 text-white hover:bg-white/10 text-xs font-medium transition-colors"
+                  >
+                    BKU Veritabanı ›
+                  </button>
+                </div>
+              </div>
+              <div className="mt-6 h-[320px] sm:h-[360px] w-full overflow-hidden">
+                <img
+                  src="/showcase/apple-tile-ai-muhendisim.png"
+                  alt="MKS Mühendisim Bitki Sağlığı ve Yapay Zeka Teşhisi"
+                  className="w-full h-full object-cover object-center"
+                />
+              </div>
+            </div>
+
+            {/* TILE 3 (Dark #081410): TKGM Parsel & Sentinel-2 Uydu */}
+            <div className="bg-[#081410] text-[#F5F5F7] min-h-[540px] sm:min-h-[580px] relative flex flex-col justify-between overflow-hidden text-center pt-10">
+              <div className="px-6 sm:px-10 space-y-2.5 relative z-10">
+                <h3 className="text-3xl sm:text-4xl font-semibold tracking-[-0.025em] text-white">
+                  TKGM Parsel &amp; Uydu.
+                </h3>
+                <p className="text-sm sm:text-base text-[#A3B8AD] max-w-md mx-auto">
+                  Ada/parsel sorgu, haritada kalıcı tarla sahibi etiketi ve canlı {satLayer} bitki gelişim katmanı.
+                </p>
+                <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                  {(['NDVI', 'NDMI', 'SWIR'] as const).map(layer => (
+                    <button
+                      key={layer}
+                      type="button"
+                      onClick={() => setSatLayer(layer)}
+                      className={`px-3.5 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                        satLayer === layer
+                          ? 'bg-emerald-500 text-[#052E16] font-semibold'
+                          : 'bg-white/10 text-white/80 hover:bg-white/20'
+                      }`}
+                    >
+                      {layer === 'NDVI' ? 'NDVI Gelişim' : layer === 'NDMI' ? 'NDMI Sulama' : 'SWIR Tav'}
+                    </button>
                   ))}
                 </div>
               </div>
-            </div>
-          </motion.div>
-
-          {/* ==================== 2B. CORE 4 PILLARS SCREEN GALLERY ==================== */}
-          <div className="mt-14 sm:mt-20 space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
-              <div>
-                <h2 className="text-xl sm:text-2xl font-semibold text-white tracking-tight">
-                  İşletmenizin dört ana omurgası
-                </h2>
-                <p className="text-xs sm:text-sm text-[#94A0B0] mt-1">
-                  Çiftçi cari hesaplarından depo stok sayımına, Bakanlık BKTS/GTS karekodundan resmi e-Fatura’ya kadar temel ekranlar.
-                </p>
+              <div className="mt-6 h-[320px] sm:h-[360px] w-full relative overflow-hidden">
+                <img
+                  src="/showcase/apple-tile-field-ipad.png"
+                  alt="TKGM Ada Parsel ve Sentinel-2 Uydu Haritası"
+                  className="w-full h-full object-cover object-center"
+                />
+                <div className="absolute bottom-4 left-4 right-4 flex justify-between items-center pointer-events-none">
+                  <span className="px-3 py-1 rounded-full bg-black/70 backdrop-blur-md border border-emerald-400/40 text-emerald-300 text-[11px] font-medium">
+                    Kayıtlı Sahibi: Ahmet Yılmaz • Ada 142 / Parsel 8
+                  </span>
+                  <span className="px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md text-white text-[11px]">
+                    {satLayer} Aktif
+                  </span>
+                </div>
               </div>
-              <span className="text-xs text-stone-400">Canlı önizleme için modül kartına dokunun</span>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              {/* Core Card 1: Çiftçi Cari Takibi */}
-              <motion.button
-                type="button"
-                initial={{ opacity: 0, y: 16 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, amount: 0.2 }}
-                transition={{ duration: 0.45, ease: EASE_CORPORATE }}
-                onClick={() => {
-                  setActiveModule('cari');
-                  setIsPaused(true);
-                  stageRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }}
-                className="group text-left rounded-2xl bg-[#0D1219] border border-white/[0.08] hover:border-emerald-500/35 overflow-hidden transition-colors"
-              >
-                <div className="h-52 p-4 bg-[#080C12] border-b border-white/[0.06] flex flex-col justify-between">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-semibold text-white">Müstahsil Cari Portföy ve Tahsilat</span>
-                    <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300 text-[10px] font-semibold">
-                      Yıllık Devir Garantili
-                    </span>
-                  </div>
-                  <div className="space-y-2">
-                    <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-between text-xs">
-                      <div>
-                        <div className="font-semibold text-white">Ahmet Yılmaz • Salça Köyü</div>
-                        <div className="text-[10px] text-stone-400">Vadeli reçete + gübre çıkışı • Vade: 25 Kas</div>
-                      </div>
-                      <span className="font-semibold text-amber-300">₺128.400</span>
-                    </div>
-                    <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-between text-xs">
-                      <div>
-                        <div className="font-semibold text-white">Mehmet Kaya • Parçalı Tahsilat</div>
-                        <div className="text-[10px] text-stone-400">Nakit + 30 Gün POS Bloke + Çek</div>
-                      </div>
-                      <span className="font-semibold text-emerald-400">Tahsil Edildi</span>
-                    </div>
-                  </div>
-                  <div className="text-[11px] text-stone-400 flex justify-between">
-                    <span>Kaşeli PDF cari mutabakat</span>
-                    <span className="text-emerald-400 font-medium">Şifresiz Üretici Portalı linki</span>
-                  </div>
-                </div>
-                <div className="p-4 sm:p-5 flex items-center justify-between gap-3">
-                  <div>
-                    <h3 className="text-sm font-semibold text-white">1. Çiftçi Cari Takibi, Vade ve Sezon Devri</h3>
-                    <p className="text-xs text-[#94A0B0] mt-1">
-                      Veresiye satış, parçalı tahsilat, POS bloke takvimi, vade hatırlatmaları ve kayıpsız yıllık bakiye devri.
-                    </p>
-                  </div>
-                  <ArrowRight size={16} className="text-stone-500 group-hover:text-emerald-400 shrink-0 transition-colors" />
-                </div>
-              </motion.button>
-
-              {/* Core Card 2: Depo & Stok Takibi */}
-              <motion.button
-                type="button"
-                initial={{ opacity: 0, y: 16 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, amount: 0.2 }}
-                transition={{ duration: 0.45, delay: 0.06, ease: EASE_CORPORATE }}
-                onClick={() => {
-                  setActiveModule('stok');
-                  setIsPaused(true);
-                  stageRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }}
-                className="group text-left rounded-2xl bg-[#0D1219] border border-white/[0.08] hover:border-emerald-500/35 overflow-hidden transition-colors"
-              >
-                <div className="h-52 p-4 bg-[#080C12] border-b border-white/[0.06] flex flex-col justify-between">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-white">Depo Stok ve Barkodlu Hızlı Satış</span>
-                    <span className="px-2 py-0.5 rounded-md bg-white/[0.06] text-stone-200 text-[10px] font-medium">
-                      Sayım: 11.11.2026 Onaylı
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-                      <div className="text-[10px] text-stone-400">Aktif Ürün</div>
-                      <div className="text-xs font-semibold text-white mt-0.5">342 Kalem</div>
-                    </div>
-                    <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-                      <div className="text-[10px] text-stone-400">Kritik Stok</div>
-                      <div className="text-xs font-semibold text-amber-300 mt-0.5">7 Ürün</div>
-                    </div>
-                    <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-                      <div className="text-[10px] text-stone-400">Barkod Modu</div>
-                      <div className="text-xs font-semibold text-emerald-400 mt-0.5">Hazır</div>
-                    </div>
-                  </div>
-                  <div className="px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-between text-[11px]">
-                    <span className="text-emerald-200 font-medium">Stok sayımı onaylandığında tarih ve adetler net kaydedilir</span>
-                    <span className="text-emerald-400 font-semibold">FEFO Aktif</span>
-                  </div>
-                </div>
-                <div className="p-4 sm:p-5 flex items-center justify-between gap-3">
-                  <div>
-                    <h3 className="text-sm font-semibold text-white">2. Depo Stok Takibi, Barkod ve Onaylı Sayım</h3>
-                    <p className="text-xs text-[#94A0B0] mt-1">
-                      Market barkod tabancası ile hızlı çıkış, SKT/kritik stok kontrolü ve şeffaf onaylı sayım geçmişi.
-                    </p>
-                  </div>
-                  <ArrowRight size={16} className="text-stone-500 group-hover:text-emerald-400 shrink-0 transition-colors" />
-                </div>
-              </motion.button>
-
-              {/* Core Card 3: BKTS & GTS */}
-              <motion.button
-                type="button"
-                initial={{ opacity: 0, y: 16 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, amount: 0.2 }}
-                transition={{ duration: 0.45, delay: 0.12, ease: EASE_CORPORATE }}
-                onClick={() => {
-                  setActiveModule('bkts_gts');
-                  setIsPaused(true);
-                  stageRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }}
-                className="group text-left rounded-2xl bg-[#0D1219] border border-white/[0.08] hover:border-emerald-500/35 overflow-hidden transition-colors"
-              >
-                <div className="h-52 p-4 bg-[#080C12] border-b border-white/[0.06] flex flex-col justify-between">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-white">Tarım Bakanlığı BKTS ve GTS Karekod</span>
-                    <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300 text-[10px] font-semibold">
-                      GS1 DataMatrix 2D
-                    </span>
-                  </div>
-                  <div className="space-y-2">
-                    <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-between text-xs">
-                      <div>
-                        <div className="font-semibold text-white">BKTS • Coragen 20 SC (200 ml)</div>
-                        <div className="text-[10px] font-mono text-stone-400">GTIN 08699745120841 • Parti TR-2604A</div>
-                      </div>
-                      <span className="font-semibold text-emerald-400">48 Adet</span>
-                    </div>
-                    <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-between text-xs">
-                      <div>
-                        <div className="font-semibold text-white">GTS • Üre %46 Granül Gübre</div>
-                        <div className="text-[10px] font-mono text-stone-400">GTIN 08690045771209 • Parti GTS-9920</div>
-                      </div>
-                      <span className="font-semibold text-white">24 Ton</span>
-                    </div>
-                  </div>
-                  <div className="text-[11px] text-stone-400 flex justify-between">
-                    <span>Aktif maddeye göre muadil ilaç bulucu</span>
-                    <span className="text-emerald-400 font-medium">Mal kabul + Satış bildirimi</span>
-                  </div>
-                </div>
-                <div className="p-4 sm:p-5 flex items-center justify-between gap-3">
-                  <div>
-                    <h3 className="text-sm font-semibold text-white">3. BKTS ve GTS 2D Karekod Entegrasyonu</h3>
-                    <p className="text-xs text-[#94A0B0] mt-1">
-                      Zirai ilaç ve gübrelerde GTIN, parti no ve SKT ayrıştırma, B-Reçete uyumu ve eşdeğer ilaç radarı.
-                    </p>
-                  </div>
-                  <ArrowRight size={16} className="text-stone-500 group-hover:text-emerald-400 shrink-0 transition-colors" />
-                </div>
-              </motion.button>
-
-              {/* Core Card 4: EDM e-Fatura & Kasa */}
-              <motion.button
-                type="button"
-                initial={{ opacity: 0, y: 16 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, amount: 0.2 }}
-                transition={{ duration: 0.45, delay: 0.18, ease: EASE_CORPORATE }}
-                onClick={() => {
-                  setActiveModule('efatura');
-                  setIsPaused(true);
-                  stageRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }}
-                className="group text-left rounded-2xl bg-[#0D1219] border border-white/[0.08] hover:border-emerald-500/35 overflow-hidden transition-colors"
-              >
-                <div className="h-52 p-4 bg-[#080C12] border-b border-white/[0.06] flex flex-col justify-between">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-white">EDM e-Fatura, e-Arşiv ve Kasa-Banka</span>
-                    <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300 text-[10px] font-semibold">
-                      Resmi Entegrasyon
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2.5">
-                    <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.06] space-y-1">
-                      <div className="text-[10px] text-stone-400">Gelen Alış e-Faturası</div>
-                      <div className="text-xs font-semibold text-white">₺468.200 • Toros Tarım</div>
-                      <div className="text-[10px] text-emerald-400">Tek tıkla stoğa işlendi</div>
-                    </div>
-                    <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.06] space-y-1">
-                      <div className="text-[10px] text-stone-400">Kesilen e-Fatura / e-Arşiv</div>
-                      <div className="text-xs font-semibold text-white">GİB Onaylı Çıkış</div>
-                      <div className="text-[10px] text-amber-300">Cari ve KDV tam uyumlu</div>
-                    </div>
-                  </div>
-                  <div className="text-[11px] text-stone-400 flex justify-between">
-                    <span>Tedarikçi cari ve çek ciro takibi</span>
-                    <span className="text-stone-200 font-medium">Çoklu depo yönetimi</span>
-                  </div>
-                </div>
-                <div className="p-4 sm:p-5 flex items-center justify-between gap-3">
-                  <div>
-                    <h3 className="text-sm font-semibold text-white">4. EDM e-Fatura, Tedarikçi Cari ve Kasa</h3>
-                    <p className="text-xs text-[#94A0B0] mt-1">
-                      Alış faturalarından otomatik ürün girişi, resmi e-Fatura/e-Arşiv kesimi ve günlük kasa-banka kontrolü.
-                    </p>
-                  </div>
-                  <ArrowRight size={16} className="text-stone-500 group-hover:text-emerald-400 shrink-0 transition-colors" />
-                </div>
-              </motion.button>
-            </div>
-          </div>
-
-          {/* ==================== 2C. SECONDARY / SUPPORTING TOOLS (SECOND PLAN) ==================== */}
-          <div className="mt-10 pt-8 border-t border-white/[0.06]">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
-              <span className="text-xs font-semibold text-stone-300">
-                Tamamlayıcı saha ve işletme araçları (isteğe bağlı ek modüller)
-              </span>
-              <span className="text-[11px] text-stone-500">
-                Ana cari, stok, BKTS/GTS ve fatura akışınızı bozmadan arka planda destekler
-              </span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
-              {[
-                {
-                  icon: Smartphone,
-                  title: 'Şifresiz Üretici Portalı',
-                  desc: 'Çiftçiye WhatsApp linki atın; uygulama kurmadan güncel borcunu ve aldığı ürünleri görsün, ödeme bildirsin.'
-                },
-                {
-                  icon: Wheat,
-                  title: 'Hububat Silo ve Kantar Mahsubu',
-                  desc: 'Sezon sonunda çiftçiden alınan buğday, mısır ve pamuk tonajını nem firesiyle hesaplayıp ilaç borcundan düşün.'
-                },
-                {
-                  icon: Compass,
-                  title: 'Zirai Hava Durumu ve Tarla Haritası',
-                  desc: 'Saha ziyaretlerinde ilaçlama rüzgar uygunluğu, uygulama içi TKGM parsel sorgusu ve yardımcı uydu görünümü.'
-                }
-              ].map(extra => {
-                const ExtraIcon = extra.icon;
-                return (
-                  <div
-                    key={extra.title}
-                    className="p-4 rounded-2xl bg-white/[0.02] border border-white/[0.06] flex items-start gap-3"
+            {/* TILE 4 (Light #F5F5F7): MKS Yapay Zeka Merkezi */}
+            <div className="bg-[#F5F5F7] text-[#1D1D1F] min-h-[540px] sm:min-h-[580px] flex flex-col justify-between overflow-hidden text-center pt-10 pb-8 px-6 sm:px-10">
+              <div className="space-y-2.5">
+                <h3 className="text-3xl sm:text-4xl font-semibold tracking-[-0.025em]">MKS Yapay Zeka.</h3>
+                <p className="text-sm sm:text-base text-[#6E6E73] max-w-md mx-auto">
+                  Canlı depo stoklarınıza, çiftçi alacaklarınıza ve TARGEM reçete rehberine bağlı akıllı AI Copilot.
+                </p>
+                <div className="flex items-center justify-center gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => onOpenAuthModal('LOGIN')}
+                    className="h-9 px-5 rounded-full bg-[#0071E3] hover:bg-[#0077ED] text-white text-xs font-medium transition-colors"
                   >
-                    <div className="p-2 rounded-xl bg-white/[0.04] text-stone-300 shrink-0">
-                      <ExtraIcon size={16} />
-                    </div>
-                    <div>
-                      <h3 className="text-xs font-semibold text-stone-200">{extra.title}</h3>
-                      <p className="text-[11px] text-stone-400 mt-1 leading-relaxed">{extra.desc}</p>
+                    Zirai Asistanı Aç
+                  </button>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-3xl border border-black/[0.06] shadow-sm p-5 text-left space-y-3 max-w-md mx-auto w-full my-auto">
+                <div className="flex items-center justify-between">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700">
+                    <Sparkles size={14} /> Canlı AI Bağlantısı
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium">
+                    72 Ürün • 87 Cari
+                  </span>
+                </div>
+                <div className="p-3 rounded-2xl bg-[#F5F5F7] text-xs text-[#1D1D1F] leading-relaxed">
+                  &ldquo;Pamukta kırmızı örümcek için depomda hangi ruhsatlı ilaçlar hazır ve muadilleri neler?&rdquo;
+                </div>
+                <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200/70 text-xs text-[#052E16] leading-relaxed">
+                  Depoda <strong>48 adet Abamectin 18 EC</strong> (SKT 09/2028) ve <strong>16 adet Hexythiazox</strong> hazır. Önerilen doz: 50 ml/100 L su.
+                </div>
+              </div>
+            </div>
+
+            {/* TILE 5 (Light #FBFBFD): Ajanda, Görevler & Silo Kantar */}
+            <div className="bg-[#FBFBFD] border border-black/[0.04] text-[#1D1D1F] min-h-[540px] sm:min-h-[580px] flex flex-col justify-between overflow-hidden text-center pt-10 pb-8 px-6 sm:px-10">
+              <div className="space-y-2.5">
+                <h3 className="text-3xl sm:text-4xl font-semibold tracking-[-0.025em]">
+                  Ajanda &amp; Silo Kantar.
+                </h3>
+                <p className="text-sm sm:text-base text-[#6E6E73] max-w-md mx-auto">
+                  Kurumsal zirai takvim, çek/senet vade bildirimleri ve hububat kantar nem-fire cari mahsubu.
+                </p>
+                <div className="flex items-center justify-center gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => onOpenAuthModal('REGISTER')}
+                    className="h-9 px-5 rounded-full bg-[#1D1D1F] hover:bg-black text-white text-xs font-medium transition-colors"
+                  >
+                    Ücretsiz Başla
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 max-w-md mx-auto w-full my-auto text-left">
+                <div className="p-4 rounded-2xl bg-[#F5F5F7] flex items-center gap-3.5">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0">
+                    <CalendarCheck2 size={18} />
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold text-[#1D1D1F]">Zirai Takvim &amp; Vade Alarmları</div>
+                    <div className="text-[11px] text-[#6E6E73]">
+                      09:00 günlük saha planı, 20:00 tahsilat vade hatırlatması
                     </div>
                   </div>
-                );
-              })}
+                </div>
+                <div className="p-4 rounded-2xl bg-[#F5F5F7] flex items-center gap-3.5">
+                  <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0">
+                    <Wheat size={18} />
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold text-[#1D1D1F]">Silo &amp; Kantar Cari Mahsubu</div>
+                    <div className="text-[11px] text-[#6E6E73]">
+                      Net 28.440 kg buğday alımı anında müstahsil borcundan düşülür
+                    </div>
+                  </div>
+                </div>
+                <div className="p-4 rounded-2xl bg-[#F5F5F7] flex items-center gap-3.5">
+                  <div className="w-10 h-10 rounded-xl bg-[#0071E3] text-white flex items-center justify-center shrink-0">
+                    <Bell size={18} />
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold text-[#1D1D1F]">Çek, Senet &amp; Aranacaklar</div>
+                    <div className="text-[11px] text-[#6E6E73]">
+                      Geciken veya vadesi gelen kayıtlar tek dokunuşta aranır
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* TILE 6 (Dark #0B0F17): Sistem İşlemleri & 4 Platform Senkron */}
+            <div className="bg-[#0B0F17] text-[#F5F5F7] min-h-[540px] sm:min-h-[580px] flex flex-col justify-between overflow-hidden text-center pt-10 pb-8 px-6 sm:px-10">
+              <div className="space-y-2.5">
+                <h3 className="text-3xl sm:text-4xl font-semibold tracking-[-0.025em] text-white">
+                  Kusursuz Devir &amp; Senkron.
+                </h3>
+                <p className="text-sm sm:text-base text-[#86868B] max-w-md mx-auto">
+                  Google/şifre doğrulamalı yıl sonu devri, bilanço PDF’leri, veri sağlığı denetimi ve 4 platformda sıfır kayıp.
+                </p>
+                <div className="flex items-center justify-center gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => onOpenPortalTab('download')}
+                    className="h-9 px-5 rounded-full bg-white text-[#1D1D1F] hover:bg-white/90 text-xs font-semibold transition-colors"
+                  >
+                    Cihazınıza İndirin
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5 max-w-md mx-auto w-full my-auto text-left">
+                {[
+                  { icon: RefreshCw, title: 'Yeni Yıla Devret', sub: 'Google & şifre korumalı sezon geçişi' },
+                  { icon: BarChart3, title: 'Yıl Sonu PDF Bilanço', sub: 'Tüm cariler kuruşu kuruşuna' },
+                  { icon: ShieldCheck, title: 'Veri Sağlığı & Stok Onar', sub: 'Tek tıkla kasa & depo mutabakatı' },
+                  { icon: CloudOff, title: 'Çevrimdışı Çalışma', sub: 'İnternetsiz sahada anlık kayıt' }
+                ].map(item => {
+                  const Icon = item.icon;
+                  return (
+                    <div key={item.title} className="p-3.5 rounded-2xl bg-white/[0.05] border border-white/[0.09] space-y-1.5">
+                      <Icon size={17} className="text-emerald-400" />
+                      <div className="text-xs font-semibold text-white">{item.title}</div>
+                      <div className="text-[11px] text-white/65 leading-snug">{item.sub}</div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </section>
 
-        {/* ==================== 3. EDITORIAL CORPORATE ARCHITECTURE & FIELD VISUALS ==================== */}
-        <section
-          id="kurumsal-altyapi"
-          className="border-t border-white/[0.07] bg-[#080C13] py-20 sm:py-24"
-        >
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-14">
-            <motion.div
-              initial={{ opacity: 0, y: 16 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, amount: 0.25 }}
-              transition={{ duration: 0.55, ease: EASE_CORPORATE }}
-              className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center"
-            >
-              <div className="lg:col-span-6 space-y-5">
-                <h2 className="text-2xl sm:text-4xl font-semibold text-white tracking-[-0.025em] leading-tight">
-                  Telefondan girdiğiniz tahsilat ve stok kaydı, ofisteki bilgisayarınızda saniyesinde hazır.
+        {/* ==================== BÖLÜM 5: APPLE TV+ TARZI GALERİ & 4 PLATFORM İNDİRME ==================== */}
+        <section id="galeri-vitrin" className="bg-[#FFFFFF] text-[#1D1D1F] mt-3 py-16 sm:py-24 px-4 sm:px-6">
+          <div className="max-w-6xl mx-auto space-y-14">
+            {/* Gallery Carousel */}
+            <div className="space-y-6">
+              <div className="text-center space-y-2">
+                <h2 className="text-3xl sm:text-5xl font-semibold tracking-[-0.03em] text-[#1D1D1F]">
+                  Her ekranda MKS Kurumsal.
                 </h2>
-                <p className="text-sm sm:text-base text-[#94A0B0] leading-relaxed">
-                  Dükkân bilgisayarınız kapalıyken bile cep telefonunuzdan cari tahsilat girebilir, karekod okutabilir
-                  veya reçete kesebilirsiniz. İnternetin çekmediği depoda ya da köyde yapılan her işlem cihazda korunur,
-                  bağlantı geldiği anda hesabınıza kayıpsız eşitlenir.
+                <p className="text-sm sm:text-lg text-[#6E6E73]">
+                  Komuta merkezinden saha haritasına kadar tüm arayüzler uyumlu.
                 </p>
-
-                <div className="space-y-3 pt-2">
-                  {[
-                    {
-                      icon: CloudOff,
-                      title: 'Sıfır veri kaybı ve çevrimdışı çalışma garantisi',
-                      desc: 'İnternet kesilse bile satış, tahsilat ve stok sayımı durmaz; tüm cihazlarınız tek hesapta anında senkronize olur.'
-                    },
-                    {
-                      icon: RefreshCw,
-                      title: 'Tertemiz yeni hesap ve kusursuz yıllık sezon devri',
-                      desc: 'Hesap açtığınızda örnek veri karmaşası olmadan temiz başlarsınız; yıl sonunda bakiyeler yeni sezona toplu devredilir.'
-                    },
-                    {
-                      icon: Wallet,
-                      title: 'Vade, çek/senet ve aranacaklar bildirim merkezi',
-                      desc: 'Vadesi gelen müstahsil alacakları, çek-senetler ve günlük aranacak çiftçi listesi telefon ve masaüstü bildirimiyle hatırlatılır.'
-                    }
-                  ].map(item => {
-                    const Icon = item.icon;
-                    return (
-                      <div
-                        key={item.title}
-                        className="p-4 rounded-2xl bg-[#0D1219] border border-white/[0.07] flex items-start gap-3.5"
-                      >
-                        <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shrink-0">
-                          <Icon size={18} />
-                        </div>
-                        <div>
-                          <h3 className="text-sm font-semibold text-white">{item.title}</h3>
-                          <p className="text-xs text-[#94A0B0] mt-1 leading-relaxed">{item.desc}</p>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
               </div>
 
-              <div className="lg:col-span-6 space-y-4">
-                <div className="rounded-3xl overflow-hidden border border-white/10 bg-[#0D1219] shadow-2xl">
-                  <div className="aspect-[16/10] relative overflow-hidden bg-[#06090E]">
-                    <img
-                      src="/showcase/corporate-agtech-hero.jpg"
-                      onError={e => {
-                        (e.currentTarget as HTMLImageElement).src = '/showcase/erp-bkts-silo-showcase.jpg';
+              <div className="relative rounded-[28px] overflow-hidden bg-[#000000] text-white min-h-[340px] sm:min-h-[430px] shadow-[0_24px_70px_rgba(0,0,0,0.14)] flex flex-col justify-between p-6 sm:p-10">
+                {currentSlide.image && (
+                  <img
+                    src={currentSlide.image}
+                    alt={currentSlide.title}
+                    className="absolute inset-0 w-full h-full object-cover opacity-50 transition-opacity duration-500"
+                  />
+                )}
+                <div className="absolute inset-0 bg-gradient-to-r from-black/90 via-black/70 to-black/30" />
+
+                <div className="relative z-10 flex items-center justify-between gap-2">
+                  <span className={`text-[11px] font-semibold tracking-wide ${currentSlide.accent}`}>
+                    {currentSlide.tag}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      aria-label="Önceki ekran"
+                      onClick={() => {
+                        setIsGalleryPaused(true);
+                        setGalleryIdx(prev => (prev - 1 + GALLERY_SLIDES.length) % GALLERY_SLIDES.length);
                       }}
-                      alt="MKS Zirai Bayi ve Mühendis Kurumsal Yönetim Sistemi"
-                      className="w-full h-full object-cover"
+                      className="w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 backdrop-blur-md flex items-center justify-center transition-colors"
+                    >
+                      <ChevronLeft size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Sonraki ekran"
+                      onClick={() => {
+                        setIsGalleryPaused(true);
+                        setGalleryIdx(prev => (prev + 1) % GALLERY_SLIDES.length);
+                      }}
+                      className="w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 backdrop-blur-md flex items-center justify-center transition-colors"
+                    >
+                      <ChevronRight size={16} />
+                    </button>
+                  </div>
+                </div>
+
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={currentSlide.id}
+                    initial={prefersReducedMotion ? false : { opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={prefersReducedMotion ? undefined : { opacity: 0, y: -8 }}
+                    transition={{ duration: 0.3, ease: APPLE_EASE }}
+                    className="relative z-10 max-w-xl space-y-4 my-auto py-4"
+                  >
+                    <h3 className="text-2xl sm:text-4xl font-semibold tracking-[-0.025em] leading-tight text-white">
+                      {currentSlide.title}
+                    </h3>
+                    <p className="text-sm sm:text-base text-white/80 leading-relaxed">
+                      {currentSlide.subtitle}
+                    </p>
+                    <ul className="space-y-1.5 pt-1">
+                      {currentSlide.highlights.map(h => (
+                        <li key={h} className="text-xs sm:text-sm text-white/90 flex items-center gap-2">
+                          <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
+                          <span>{h}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </motion.div>
+                </AnimatePresence>
+
+                <div className="relative z-10 flex items-center justify-between pt-2">
+                  <button
+                    type="button"
+                    onClick={() => onOpenAuthModal('LOGIN')}
+                    className="h-10 px-6 rounded-full bg-white text-[#1D1D1F] hover:bg-white/90 text-xs font-semibold transition-colors inline-flex items-center gap-1.5"
+                  >
+                    <span>Sistemi Başlat</span>
+                    <ArrowRight size={14} />
+                  </button>
+                  <span className="text-xs text-white/60 tabular-nums">
+                    {galleryIdx + 1} / {GALLERY_SLIDES.length}
+                  </span>
+                </div>
+              </div>
+
+              {/* Apple Pagination Dots + Play/Pause Control */}
+              <div className="flex items-center justify-center gap-3">
+                <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#F5F5F7]">
+                  {GALLERY_SLIDES.map((s, idx) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      aria-label={`Slayt ${idx + 1}: ${s.title}`}
+                      onClick={() => {
+                        setIsGalleryPaused(true);
+                        setGalleryIdx(idx);
+                      }}
+                      className={`h-2 rounded-full transition-all ${
+                        idx === galleryIdx ? 'w-6 bg-[#1D1D1F]' : 'w-2 bg-[#86868B]/50 hover:bg-[#1D1D1F]/60'
+                      }`}
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-[#06090E] via-transparent to-transparent" />
-                    <div className="absolute bottom-4 left-4 right-4 p-4 rounded-2xl bg-[#0A0F17]/90 backdrop-blur-md border border-white/10 flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-xs sm:text-sm font-semibold text-white">
-                          Dükkân, Depo ve Sahada Tek Kurumsal Hesap
-                        </div>
-                        <div className="text-[11px] text-stone-400 mt-0.5">
-                          Çiftçi cari • Depo stok • BKTS / GTS karekod • EDM e-Fatura
-                        </div>
-                      </div>
-                      <ShieldCheck size={22} className="text-emerald-400 shrink-0" />
-                    </div>
-                  </div>
+                  ))}
                 </div>
-
-                <div className="grid grid-cols-3 gap-2 sm:gap-3">
-                  <div className="p-3 sm:p-4 rounded-2xl bg-[#0D1219] border border-white/[0.07]">
-                    <div className="text-sm sm:text-2xl leading-tight font-semibold text-white">4 Platform</div>
-                    <div className="text-[11px] text-stone-400 mt-1">Windows, Android, iOS, Web</div>
-                  </div>
-                  <div className="p-3 sm:p-4 rounded-2xl bg-[#0D1219] border border-white/[0.07]">
-                    <div className="text-sm sm:text-2xl leading-tight font-semibold text-emerald-400">7/24 Aktif</div>
-                    <div className="text-[11px] text-stone-400 mt-1">Bulut + Çevrimdışı Senkron</div>
-                  </div>
-                  <div className="p-3 sm:p-4 rounded-2xl bg-[#0D1219] border border-white/[0.07]">
-                    <div className="text-sm sm:text-2xl leading-tight font-semibold text-white">Tam Uyum</div>
-                    <div className="text-[11px] text-stone-400 mt-1">Cari • Stok • BKTS/GTS • Fatura</div>
-                  </div>
-                </div>
+                <button
+                  type="button"
+                  aria-label={isGalleryPaused ? 'Galeriyi oynat' : 'Galeriyi duraklat'}
+                  onClick={() => setIsGalleryPaused(p => !p)}
+                  className="w-8 h-8 rounded-full bg-[#F5F5F7] hover:bg-[#E8E8ED] text-[#1D1D1F] flex items-center justify-center transition-colors"
+                >
+                  {isGalleryPaused ? <Play size={13} /> : <Pause size={13} />}
+                </button>
               </div>
-            </motion.div>
-          </div>
-        </section>
-
-        {/* ==================== 4. MULTI-PLATFORM DOWNLOAD & DIRECT ACCESS ==================== */}
-        <section className="border-t border-white/[0.07] py-16 sm:py-24">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
-            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-              <div className="space-y-2 max-w-xl">
-                <h2 className="text-2xl sm:text-3xl font-semibold text-white tracking-tight">
-                  Tüm cihazlarınızda aynı kurumsal hesapla çalışın.
-                </h2>
-                <p className="text-sm text-[#94A0B0]">
-                  Dükkânda Windows masaüstü programından, depoda ve sahada cep telefonunuzdan veya doğrudan tarayıcıdan erişin.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => onOpenPortalTab('pricing')}
-                className="min-h-[42px] px-4 py-2.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-xs font-semibold text-white self-start sm:self-auto transition-colors"
-              >
-                Kurumsal paketleri karşılaştır
-              </button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <a
-                href="/downloads/MKS_Masaustu_Kurulum.exe"
-                download="MKS_Masaustu_Kurulum.exe"
-                className="p-5 rounded-2xl bg-[#0D1219] hover:bg-[#121923] border border-white/[0.08] transition-colors flex flex-col justify-between gap-4"
-              >
-                <div className="w-10 h-10 rounded-xl bg-white/[0.05] text-white flex items-center justify-center">
-                  <Monitor size={20} />
-                </div>
+            {/* 4 Platform Download Showcase */}
+            <div className="space-y-6 pt-4">
+              <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
                 <div>
-                  <div className="text-sm font-semibold text-white">Windows Masaüstü</div>
-                  <div className="text-xs text-stone-400 mt-1">Windows 10 ve 11 için tek tık kurulum ve canlı güncelleme (.exe)</div>
+                  <h2 className="text-2xl sm:text-3xl font-semibold tracking-[-0.025em] text-[#1D1D1F]">
+                    Tüm cihazlarınız için tek hesap.
+                  </h2>
+                  <p className="text-sm text-[#6E6E73] mt-1">
+                    Windows kasa bilgisayarında, depoda Android veya iPhone’da, ya da doğrudan web tarayıcınızda.
+                  </p>
                 </div>
-                <span className="text-xs font-semibold text-emerald-400 inline-flex items-center gap-1.5">
-                  <Download size={14} /> Masaüstüne indir
-                </span>
-              </a>
+                <button
+                  type="button"
+                  onClick={() => onOpenPortalTab('pricing')}
+                  className="h-9 px-5 rounded-full bg-[#F5F5F7] hover:bg-[#E8E8ED] text-[#1D1D1F] text-xs font-medium self-start sm:self-auto transition-colors"
+                >
+                  Paketleri Karşılaştır ›
+                </button>
+              </div>
 
-              <a
-                href="/downloads/MKS_Android.apk"
-                download="MKS_Android.apk"
-                className="p-5 rounded-2xl bg-[#0D1219] hover:bg-[#121923] border border-white/[0.08] transition-colors flex flex-col justify-between gap-4"
-              >
-                <div className="w-10 h-10 rounded-xl bg-white/[0.05] text-white flex items-center justify-center">
-                  <Smartphone size={20} />
-                </div>
-                <div>
-                  <div className="text-sm font-semibold text-white">Android Mobil</div>
-                  <div className="text-xs text-stone-400 mt-1">Telefon ve tabletler için imzalı v8.2 paketi (.apk)</div>
-                </div>
-                <span className="text-xs font-semibold text-emerald-400 inline-flex items-center gap-1.5">
-                  <Download size={14} /> Telefona indir
-                </span>
-              </a>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                <a
+                  href="/downloads/MKS_Masaustu_Kurulum.exe"
+                  download="MKS_Masaustu_Kurulum.exe"
+                  className="p-6 rounded-3xl bg-[#F5F5F7] hover:bg-[#EFEFF3] transition-colors flex flex-col justify-between gap-5"
+                >
+                  <div className="w-11 h-11 rounded-2xl bg-white text-[#1D1D1F] shadow-sm flex items-center justify-center">
+                    <Monitor size={20} />
+                  </div>
+                  <div>
+                    <div className="text-base font-semibold text-[#1D1D1F]">Windows Masaüstü</div>
+                    <p className="text-xs text-[#6E6E73] mt-1 leading-relaxed">
+                      Windows 10/11 kurulum (.EXE) ve 1D/2D USB barkod tabancası tam uyumu.
+                    </p>
+                  </div>
+                  <span className="text-xs font-semibold text-[#0071E3] inline-flex items-center gap-1">
+                    <Download size={13} /> Masaüstüne İndir
+                  </span>
+                </a>
 
-              <button
-                type="button"
-                onClick={() => onOpenPortalTab('ios_guide')}
-                className="p-5 rounded-2xl bg-[#0D1219] hover:bg-[#121923] border border-white/[0.08] transition-colors flex flex-col justify-between gap-4 text-left"
-              >
-                <div className="w-10 h-10 rounded-xl bg-white/[0.05] text-white flex items-center justify-center">
-                  <Apple size={20} />
-                </div>
-                <div>
-                  <div className="text-sm font-semibold text-white">iPhone ve iPad (iOS)</div>
-                  <div className="text-xs text-stone-400 mt-1">Tam ekran iOS kurulumu ve bildirim aktivasyonu</div>
-                </div>
-                <span className="text-xs font-semibold text-emerald-400 inline-flex items-center gap-1.5">
-                  Kurulum adımlarını aç <ArrowRight size={14} />
-                </span>
-              </button>
+                <a
+                  href="/downloads/MKS_Android.apk"
+                  download="MKS_Android.apk"
+                  className="p-6 rounded-3xl bg-[#F5F5F7] hover:bg-[#EFEFF3] transition-colors flex flex-col justify-between gap-5"
+                >
+                  <div className="w-11 h-11 rounded-2xl bg-white text-emerald-700 shadow-sm flex items-center justify-center">
+                    <Smartphone size={20} />
+                  </div>
+                  <div>
+                    <div className="text-base font-semibold text-[#1D1D1F]">Android Mobil</div>
+                    <p className="text-xs text-[#6E6E73] mt-1 leading-relaxed">
+                      Telefon kamerasıyla karekod &amp; yaprak tarama için v8.2 APK ve Google Play.
+                    </p>
+                  </div>
+                  <span className="text-xs font-semibold text-[#0071E3] inline-flex items-center gap-1">
+                    <Download size={13} /> APK İndir
+                  </span>
+                </a>
 
-              <button
-                type="button"
-                onClick={() => onOpenAuthModal('LOGIN')}
-                className="p-5 rounded-2xl bg-emerald-950/25 hover:bg-emerald-950/40 border border-emerald-500/30 transition-colors flex flex-col justify-between gap-4 text-left"
-              >
-                <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center">
-                  <FileCheck2 size={20} />
-                </div>
-                <div>
-                  <div className="text-sm font-semibold text-white">Doğrudan Web Girişi</div>
-                  <div className="text-xs text-stone-300 mt-1">Kurulum yapmadan tarayıcı üzerinden anında oturum açın</div>
-                </div>
-                <span className="text-xs font-semibold text-emerald-300 inline-flex items-center gap-1.5">
-                  Sisteme giriş yap <ArrowRight size={14} />
-                </span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => onOpenPortalTab('ios_guide')}
+                  className="p-6 rounded-3xl bg-[#F5F5F7] hover:bg-[#EFEFF3] transition-colors flex flex-col justify-between gap-5 text-left"
+                >
+                  <div className="w-11 h-11 rounded-2xl bg-white text-[#1D1D1F] shadow-sm flex items-center justify-center">
+                    <Apple size={20} />
+                  </div>
+                  <div>
+                    <div className="text-base font-semibold text-[#1D1D1F]">iPhone &amp; iPad (iOS)</div>
+                    <p className="text-xs text-[#6E6E73] mt-1 leading-relaxed">
+                      Tam ekran iOS kurulumu, bildirim desteği ve Xcode bulut paketi.
+                    </p>
+                  </div>
+                  <span className="text-xs font-semibold text-[#0071E3] inline-flex items-center gap-1">
+                    iOS Kurulumunu Aç <ChevronRight size={13} />
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onOpenAuthModal('LOGIN')}
+                  className="p-6 rounded-3xl bg-[#052E16] hover:bg-[#063A1D] text-white transition-colors flex flex-col justify-between gap-5 text-left"
+                >
+                  <div className="w-11 h-11 rounded-2xl bg-emerald-500/20 text-emerald-300 flex items-center justify-center">
+                    <FileCheck2 size={20} />
+                  </div>
+                  <div>
+                    <div className="text-base font-semibold text-white">Doğrudan Web Girişi</div>
+                    <p className="text-xs text-white/75 mt-1 leading-relaxed">
+                      Kurulum yapmadan tarayıcı üzerinden anında MKS Kurumsal’a bağlanın.
+                    </p>
+                  </div>
+                  <span className="text-xs font-semibold text-emerald-300 inline-flex items-center gap-1">
+                    Sisteme Giriş Yap <ArrowRight size={13} />
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
         </section>
       </main>
 
-      {/* ==================== CORPORATE FOOTER ==================== */}
-      <footer className="border-t border-white/[0.07] py-8 px-4 sm:px-6 lg:px-8 text-xs text-stone-500 relative z-10 bg-[#05080D]">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2.5">
-            <MksBrandLogo size="sm" rounded="lg" />
-            <span className="text-stone-400">
-              &copy; 2026 Mühendis Kayıt Sistemi (MKS) • Kurumsal Sürüm v8.2.0 • Tüm hakları saklıdır.
-            </span>
+      {/* ==================== BÖLÜM 6: APPLE.COM #F5F5F7 KURUMSAL FOOTER DİZİNİ ==================== */}
+      <footer className="bg-[#F5F5F7] text-[#6E6E73] border-t border-[#D2D2D7] pt-10 pb-8 px-4 sm:px-6 text-[12px]">
+        <div className="max-w-[980px] mx-auto space-y-6">
+          {/* Footnotes */}
+          <div className="space-y-2 pb-6 border-b border-[#D2D2D7] leading-relaxed text-[11px] text-[#6E6E73]">
+            <p>
+              1. Çevrimdışı IndexedDB ve Bulut Firestore hibrit altyapısı sayesinde internet kesilse bile satış, tahsilat ve stok işlemleri kesintisiz kaydedilir; bağlantı kurulduğunda otomatik eşitlenir.
+            </p>
+            <p>
+              2. Tarım Bakanlığı BKTS / GTS 2D karekod, B-Reçete ve GİB/EDM e-Fatura entegrasyonları yetkili bayi ve mühendis hesap bilgileriyle çalışır.
+            </p>
+            <p>
+              3. Kurumsal abonelikler Shopier 256-bit SSL güvenli ödeme altyapısı ve Fırat Tarım güvencesiyle sunulur.
+            </p>
           </div>
-          <div className="flex flex-wrap items-center justify-center gap-4 text-stone-400">
-            <button type="button" onClick={() => onOpenAuthModal('LOGIN')} className="hover:text-white transition-colors">
-              Giriş yap
-            </button>
-            <button type="button" onClick={() => onOpenPortalTab('pricing')} className="hover:text-white transition-colors">
-              Paketler & Fiyatlar
-            </button>
-            <a 
-              href="https://www.shopier.com/firattarim" 
-              target="_blank" 
-              rel="noopener noreferrer" 
-              className="hover:text-emerald-400 text-stone-300 transition-colors inline-flex items-center gap-1 font-medium"
-            >
-              <ShieldCheck size={13} className="text-emerald-400" /> Shopier Güvenli Mağaza
-            </a>
-            <button type="button" onClick={() => onOpenPortalTab('download')} className="hover:text-white transition-colors">
-              İndirme merkezi
-            </button>
-            <button type="button" onClick={() => onOpenPortalTab('ios_guide')} className="hover:text-white transition-colors">
-              iOS kurulum
-            </button>
-            <button type="button" onClick={onOpenSupport} className="hover:text-white transition-colors inline-flex items-center gap-1">
-              <Headphones size={13} /> Canlı destek
-            </button>
+
+          {/* 5-Column Apple Directory Grid */}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-6 py-2">
+            <div className="space-y-2">
+              <h4 className="font-semibold text-[#1D1D1F] text-[12px]">Komuta &amp; Finans</h4>
+              <ul className="space-y-1.5">
+                <li><a href="#hero-cari" className="hover:text-[#1D1D1F] hover:underline">Müstahsil Cari Takibi</a></li>
+                <li><a href="#hero-cari" className="hover:text-[#1D1D1F] hover:underline">5 Adım Satış &amp; İade</a></li>
+                <li><a href="#bento-izgara" className="hover:text-[#1D1D1F] hover:underline">Kasa, Banka &amp; Çekler</a></li>
+                <li><a href="#bento-izgara" className="hover:text-[#1D1D1F] hover:underline">Yıl Sonu PDF Bilanço</a></li>
+              </ul>
+            </div>
+
+            <div className="space-y-2">
+              <h4 className="font-semibold text-[#1D1D1F] text-[12px]">Resmi Servisler</h4>
+              <ul className="space-y-1.5">
+                <li><a href="#hero-resmi" className="hover:text-[#1D1D1F] hover:underline">GTS Gübre Takip</a></li>
+                <li><a href="#hero-resmi" className="hover:text-[#1D1D1F] hover:underline">BKTS İlaç Takip</a></li>
+                <li><a href="#hero-resmi" className="hover:text-[#1D1D1F] hover:underline">B-Reçete Sistemi</a></li>
+                <li><a href="#hero-resmi" className="hover:text-[#1D1D1F] hover:underline">EDM e-Fatura &amp; e-Arşiv</a></li>
+              </ul>
+            </div>
+
+            <div className="space-y-2">
+              <h4 className="font-semibold text-[#1D1D1F] text-[12px]">Depo &amp; Saha</h4>
+              <ul className="space-y-1.5">
+                <li><a href="#bento-izgara" className="hover:text-[#1D1D1F] hover:underline">Barkod &amp; Stok Onarım</a></li>
+                <li><a href="#bento-izgara" className="hover:text-[#1D1D1F] hover:underline">BKU İlaç Kütüphanesi</a></li>
+                <li><a href="#bento-izgara" className="hover:text-[#1D1D1F] hover:underline">TKGM Parsel &amp; Uydu</a></li>
+                <li><a href="#bento-izgara" className="hover:text-[#1D1D1F] hover:underline">MKS Yapay Zeka</a></li>
+              </ul>
+            </div>
+
+            <div className="space-y-2">
+              <h4 className="font-semibold text-[#1D1D1F] text-[12px]">Platformlar &amp; İndirme</h4>
+              <ul className="space-y-1.5">
+                <li>
+                  <button type="button" onClick={() => onOpenPortalTab('download')} className="hover:text-[#1D1D1F] hover:underline">
+                    Windows Masaüstü (.EXE)
+                  </button>
+                </li>
+                <li>
+                  <button type="button" onClick={() => onOpenPortalTab('download')} className="hover:text-[#1D1D1F] hover:underline">
+                    Android Mobil (.APK)
+                  </button>
+                </li>
+                <li>
+                  <button type="button" onClick={() => onOpenPortalTab('ios_guide')} className="hover:text-[#1D1D1F] hover:underline">
+                    iPhone &amp; iPad (iOS)
+                  </button>
+                </li>
+                <li>
+                  <button type="button" onClick={() => onOpenAuthModal('LOGIN')} className="hover:text-[#1D1D1F] hover:underline">
+                    Web Yönetim Paneli
+                  </button>
+                </li>
+              </ul>
+            </div>
+
+            <div className="space-y-2">
+              <h4 className="font-semibold text-[#1D1D1F] text-[12px]">Kurumsal &amp; Destek</h4>
+              <ul className="space-y-1.5">
+                <li>
+                  <button type="button" onClick={() => onOpenPortalTab('pricing')} className="hover:text-[#1D1D1F] hover:underline">
+                    Kurumsal Paketler
+                  </button>
+                </li>
+                <li>
+                  <a
+                    href="https://www.shopier.com/firattarim"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:text-[#1D1D1F] hover:underline"
+                  >
+                    Shopier Güvenli Mağaza
+                  </a>
+                </li>
+                <li>
+                  <button type="button" onClick={onOpenSupport} className="hover:text-[#1D1D1F] hover:underline inline-flex items-center gap-1">
+                    <Headphones size={12} /> Canlı Destek Hattı
+                  </button>
+                </li>
+                <li>
+                  <button type="button" onClick={() => onOpenAuthModal('REGISTER')} className="hover:text-[#1D1D1F] hover:underline">
+                    Yeni Hesap Oluştur
+                  </button>
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          {/* Bottom Legal Row */}
+          <div className="pt-5 border-t border-[#D2D2D7] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-[11px]">
+            <div className="flex items-center gap-2">
+              <MksBrandLogo size="xs" rounded="lg" />
+              <span>&copy; 2026 Mühendis Kayıt Sistemi (MKS) • Kurumsal Sürüm v8.2.0 • Tüm hakları saklıdır.</span>
+            </div>
+            <div className="flex items-center gap-4 text-[#424245]">
+              <span>Fırat Tarım Mühendislik</span>
+              <span className="inline-flex items-center gap-1">
+                <Layers size={11} /> Türkiye • Türkçe
+              </span>
+            </div>
           </div>
         </div>
       </footer>

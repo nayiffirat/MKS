@@ -5,7 +5,7 @@
  * - Stale-while-revalidate önbellek: ekran son veriyle anında açılır, arka planda yenilenir
  * Sağlayıcı değiştirmek için: AgroWeatherService.setProvider(new BaskaSaglayici())
  */
-import { calculateDeltaT } from './weather';
+import { calculateDeltaT, evaluateSprayingConditions, isWetWeatherCode, SpraySuitabilityLevel } from './weather';
 
 export interface GeoPoint { lat: number; lon: number }
 
@@ -179,24 +179,23 @@ export const radarTileUrl = (idx: RadarIndex, f: RadarFrame) => `${idx.host}${f.
 export const RADAR_MAX_NATIVE_ZOOM = 7;
 
 // ------------------------------------------------------------------ Zirai analiz
-export type SprayLevel = 'IDEAL' | 'DIKKAT' | 'UYGUNSUZ';
+export type SprayLevel = SpraySuitabilityLevel;
 export interface SprayVerdict { level: SprayLevel; reason: string; deltaT: number }
 
-export const isWet = (code: number) => (code >= 51 && code <= 67) || (code >= 71 && code <= 77) || (code >= 80 && code <= 86) || code >= 95;
+export const isWet = isWetWeatherCode;
 export const isSnow = (code: number) => (code >= 71 && code <= 77) || code === 85 || code === 86;
 export const isThunder = (code: number) => code >= 95;
 export const isHail = (code: number) => code === 96 || code === 99;
 
 export function sprayVerdict(h: Pick<AgroHour, 'temp' | 'rh' | 'wind' | 'gust' | 'precipProb' | 'code'>): SprayVerdict {
-  const deltaT = calculateDeltaT(h.temp, h.rh);
-  if (h.precipProb >= 45 || isWet(h.code)) return { level: 'UYGUNSUZ', reason: 'Yağış / yıkanma riski', deltaT };
-  if (h.wind > 15 || h.gust > 22) return { level: 'UYGUNSUZ', reason: `Rüzgar ${Math.round(h.wind)} km/s: sürüklenme riski`, deltaT };
-  if (deltaT > 10 || h.temp > 33) return { level: 'UYGUNSUZ', reason: `Yüksek buharlaşma (ΔT ${deltaT}°)`, deltaT };
-  if (h.temp < 5) return { level: 'UYGUNSUZ', reason: 'Düşük sıcaklık (<5°C)', deltaT };
-  if (h.wind > 10) return { level: 'DIKKAT', reason: 'Sınırda rüzgar: iri damla meme kullanın', deltaT };
-  if (deltaT > 8 || deltaT < 2) return { level: 'DIKKAT', reason: `Sınırda ΔT (${deltaT}°)`, deltaT };
-  if (h.precipProb >= 25) return { level: 'DIKKAT', reason: `Yağış olasılığı %${Math.round(h.precipProb)}`, deltaT };
-  return { level: 'IDEAL', reason: 'İdeal ΔT ve düşük rüzgar', deltaT };
+  return evaluateSprayingConditions({
+    tempC: h.temp,
+    humidity: h.rh,
+    windKmh: h.wind,
+    gustKmh: h.gust,
+    precipProb: h.precipProb,
+    weatherCode: h.code,
+  });
 }
 
 export interface SprayWindow { start: number; end: number; level: SprayLevel; avgWind: number; maxRainProb: number; avgDeltaT: number }

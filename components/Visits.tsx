@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Camera, Save, X, Plus, Calendar, User, MapPin, ChevronRight, Image as ImageIcon, CheckCircle2, Phone, MessageSquare, MessageCircle, ArrowLeft, Loader2, Navigation, Clock, ImagePlus, Edit2, Trash2, Share2, Upload, Check, ChevronDown, Copy, FileText, RefreshCw, Bug, AlertCircle, Mic, MicOff, Route, SplitSquareHorizontal } from 'lucide-react';
+import { Camera, Save, X, Plus, Calendar, MapPin, Image as ImageIcon, CheckCircle2, Phone, MessageSquare, MessageCircle, ArrowLeft, Navigation, Clock, Edit2, Trash2, Check, RefreshCw, Bug, AlertCircle, Mic, MicOff, Route, SplitSquareHorizontal } from 'lucide-react';
 import { dbService } from '../services/db';
 import { Farmer, VisitLog } from '../types';
 import { useAppViewModel } from '../context/AppContext';
@@ -16,7 +16,6 @@ interface VisitsProps {
 export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) => {
     const { userProfile, updateVisit, softDeleteVisit, updateUserProfile, showToast, hapticFeedback } = useAppViewModel();
     const farmerLabel = 'Çiftçi';
-    const farmerPluralLabel = 'Çiftçiler';
     // Yeni mod eklendi: 'DETAIL'
     const [viewMode, setViewMode] = useState<'LIST' | 'FORM' | 'SUCCESS' | 'DETAIL' | 'QUICK_VISIT'>('LIST');
 
@@ -94,6 +93,7 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
     const [isRouteModalOpen, setIsRouteModalOpen] = useState<boolean>(false);
     const [selectedRouteFarmerIds, setSelectedRouteFarmerIds] = useState<string[]>([]);
     const [isSyncing, setIsSyncing] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
 
     // UI-10: Rota modalı Android geri tuşuyla kapanır
     useBackHandler(isRouteModalOpen, () => setIsRouteModalOpen(false), 'Visits_routeModal', 50);
@@ -266,42 +266,49 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
     };
 
     const handleSave = async () => {
-        if (!selectedFarmerId) return;
-        const currentFarmer = farmers.find(f => f.id === selectedFarmerId);
-        // Auto-link previous visit photo as beforePhotoUri if user didn't upload a custom one
-        const previousVisitPhoto = !beforePhoto
-            ? visits.find(v => v.id !== editingId && v.farmerId === selectedFarmerId && (!selectedFieldId || v.fieldId === selectedFieldId) && v.photoUri)?.photoUri
-            : beforePhoto;
+        if (isSaving || !selectedFarmerId) return;
+        setIsSaving(true);
+        try {
+            const currentFarmer = farmers.find(f => f.id === selectedFarmerId);
+            // Auto-link previous visit photo as beforePhotoUri if user didn't upload a custom one
+            const previousVisitPhoto = !beforePhoto
+                ? visits.find(v => v.id !== editingId && v.farmerId === selectedFarmerId && (!selectedFieldId || v.fieldId === selectedFieldId) && v.photoUri)?.photoUri
+                : beforePhoto;
 
-        const visitData = { 
-            farmerId: selectedFarmerId, 
-            fieldId: selectedFieldId || undefined,
-            date: new Date().toISOString(), 
-            note, 
-            photoUri: photo || undefined, 
-            beforePhotoUri: previousVisitPhoto || undefined,
-            latitude: coords?.lat, 
-            longitude: coords?.lng,
-            pestFound: pestFound || undefined,
-            diseaseFound: diseaseFound || undefined,
-            severity,
-            village: currentFarmer?.village
-        };
-        
-        if (editingId) { 
-            await updateVisit({ id: editingId, ...visitData }); 
-            showToast('Reçete güncellendi', 'success');
-            hapticFeedback('success');
-            changeViewMode('LIST'); 
-        } else { 
-            await dbService.addVisit({ id: crypto.randomUUID(), ...visitData }); 
-            setLastVisitedFarmer(currentFarmer || null); 
-            showToast('Reçete başarıyla oluşturuldu', 'success');
-            hapticFeedback('success');
-            changeViewMode('SUCCESS'); 
+            const visitData = { 
+                farmerId: selectedFarmerId, 
+                fieldId: selectedFieldId || undefined,
+                date: new Date().toISOString(), 
+                note, 
+                photoUri: photo || undefined, 
+                beforePhotoUri: previousVisitPhoto || undefined,
+                latitude: coords?.lat, 
+                longitude: coords?.lng,
+                pestFound: pestFound || undefined,
+                diseaseFound: diseaseFound || undefined,
+                severity,
+                village: currentFarmer?.village
+            };
+            
+            if (editingId) { 
+                await updateVisit({ id: editingId, ...visitData }); 
+                showToast('Ziyaret kaydı güncellendi', 'success');
+                hapticFeedback('success');
+                changeViewMode('LIST'); 
+            } else { 
+                await dbService.addVisit({ id: crypto.randomUUID(), ...visitData }); 
+                setLastVisitedFarmer(currentFarmer || null); 
+                showToast('Ziyaret kaydı başarıyla oluşturuldu', 'success');
+                hapticFeedback('success');
+                changeViewMode('SUCCESS'); 
+            }
+            resetForm(); 
+            await loadData();
+        } catch {
+            showToast('Ziyaret kaydı kaydedilemedi.', 'error');
+        } finally {
+            setIsSaving(false);
         }
-        resetForm(); 
-        await loadData();
     };
 
     const resetForm = () => {
@@ -320,9 +327,9 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
     };
 
     const handleDelete = async (id: string) => {
-        if (confirm("Bu reçeteyi silmek istediğinize emin misiniz?")) { 
+        if (confirm("Bu ziyaret kaydını silmek istediğinize emin misiniz?")) { 
             await softDeleteVisit(id); 
-            showToast('Reçete silindi', 'success');
+            showToast('Ziyaret kaydı silindi', 'success');
             hapticFeedback('medium');
             await loadData();
             if (viewMode === 'DETAIL') {
@@ -979,8 +986,8 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
                     <span className="text-[11px]">{coords ? `GPS: ${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}` : "Konum bekleniyor..."}</span>
                 </div>
 
-                <button onClick={handleSave} disabled={!selectedFarmerId} className="w-full bg-emerald-700 text-white py-3.5 rounded-2xl font-bold text-xs shadow-xl hover:bg-emerald-600 disabled:opacity-50 transition-all flex items-center justify-center">
-                    <Save className="mr-2" size={16}/> Kaydet
+                <button type="button" onClick={handleSave} disabled={isSaving || !selectedFarmerId} className="w-full bg-emerald-700 text-white py-3.5 rounded-2xl font-bold text-xs shadow-xl hover:bg-emerald-600 disabled:opacity-50 transition-all flex items-center justify-center">
+                    <Save className="mr-2" size={16}/> {isSaving ? 'Kaydediliyor...' : 'Kaydet'}
                 </button>
             </div>
         </div>

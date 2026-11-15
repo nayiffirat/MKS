@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from 'react';
-import { ViewState, PesticideCategory, MinistryRecord, InventoryBatch, InventoryItem } from './types';
+import { ViewState, PesticideCategory, MinistryRecord, MinistryShipmentRecord } from './types';
 import { Layout } from './components/Layout';
 import { Dashboard } from './components/Dashboard';
 import { LoginScreen } from './components/Login';
@@ -42,9 +42,8 @@ import { initNotificationInfrastructure } from './utils/smartNotificationEngine'
 import ModalCloseButton from './components/ModalCloseButton';
 import { SUPPORT_WHATSAPP } from './constants';
 import { buildWaUrl } from './utils/whatsappTemplates';
-import { normalizeGtin, round2 } from './utils/dateUtils';
+import { getLocalDateString } from './utils/dateUtils';
 import { generateUUID } from './utils/uuid';
-import { parseGS1Barcode, findItemByScan, canonicalBarcodeFromParsed } from './utils/gs1Parser';
 
 // Lazy-loaded screens for fast initial boot and code splitting
 const Farmers = lazy(() => import('./components/Farmers').then(m => ({ default: m.Farmers })));
@@ -91,7 +90,7 @@ const ViewLoader = () => (
 
 function MainApp() {
   const { currentUser, loading } = useAuth();
-  const { updateUserProfile, syncUserProfile, refreshStats, refreshInventory, refreshNews, refreshPlants, isAdmin, userProfile, inventory, showToast, runSmartNotificationsScan } = useAppViewModel();
+  const { syncUserProfile, refreshStats, refreshInventory, refreshNews, refreshPlants, isAdmin, userProfile, inventory, showToast, runSmartNotificationsScan } = useAppViewModel();
   
   const [currentView, setCurrentView] = useState<ViewState>('DASHBOARD');
   const [selectedFarmerId, setSelectedFarmerId] = useState<string | null>(null);
@@ -110,7 +109,7 @@ function MainApp() {
   const [hasSetAdminInitialView, setHasSetAdminInitialView] = useState(false);
   const [showWelcomeModal, setShowWelcomeModal] = useState(false);
   const [isMinistryModalOpen, setIsMinistryModalOpen] = useState(false);
-  const [ministryModalTab, setMinistryModalTab] = useState<'malkabul' | 'satis' | 'esdeger'>('malkabul');
+  const [ministryModalTab, setMinistryModalTab] = useState<'malkabul' | 'satis' | 'esdeger' | 'gts' | 'bkts' | 'brecete'>('malkabul');
   const [ministryPendingShipments, setMinistryPendingShipments] = useState<FactoryShipment[]>([]);
   const [ministryTransactions, setMinistryTransactions] = useState<MinistryRecord[]>([]);
   const [isEdmModalOpen, setIsEdmModalOpen] = useState(false);
@@ -191,135 +190,34 @@ function MainApp() {
 
   const handleAcceptMinistryShipment = useCallback(
     async (shipment: FactoryShipment, opts: { registerToMinistry: boolean; config: MinistryConfig }) => {
-      const [liveInv, library] = await Promise.all([
-        dbService.getInventory(),
-        dbService.getPesticides().catch(() => [])
-      ]);
-      const nowIso = new Date().toISOString();
-      const note = `BKTS/GTS Mal Kabul${shipment.sscc ? ` (SSCC ${shipment.sscc})` : ''}${shipment.irsaliyeNo ? ` · İrsaliye ${shipment.irsaliyeNo}` : ''}${shipment.supplierName ? ` · ${shipment.supplierName}` : ''}`;
+      const library = await dbService.getPesticides().catch(() => []);
+      const record: MinistryShipmentRecord = {
+        id: shipment.id || generateUUID(),
+        sscc: shipment.sscc || '',
+        senderGln: shipment.supplierGln,
+        senderName: shipment.supplierName || '',
+        waybillNo: shipment.irsaliyeNo || '',
+        itemCount: (shipment.lines || []).length,
+        date: shipment.date || getLocalDateString(),
+        status: 'ACCEPTED',
+        acceptedAt: new Date().toISOString(),
+        lines: (shipment.lines || []).map(l => ({
+          gtin: l.gtin || '',
+          name: l.productName || '',
+          batch: (l.lotNo || 'GENEL').trim() || 'GENEL',
+          expiry: l.expiryDate,
+          serial: l.serialNo,
+          qty: Number(l.quantity) || 0,
+          unit: l.unit
+        }))
+      };
 
-      // Group shipment lines by GTIN (or lowercase name)
-      const groups = new Map<string, FactoryShipment['lines']>();
-      for (const line of shipment.lines || []) {
-        if (!(Number(line.quantity) > 0)) continue;
-        const key = normalizeGtin(line.gtin) || (line.productName || '').trim().toLocaleLowerCase('tr-TR');
-        const bucket = groups.get(key) || [];
-        bucket.push(line);
-        groups.set(key, bucket);
-      }
-
-      for (const [, lines] of groups) {
-        const first = lines[0];
-        const totalQty = round2(lines.reduce((sum, l) => sum + (Number(l.quantity) || 0), 0));
-        if (!(totalQty > 0)) continue;
-
-        const code = first.gtin || '';
-        const probe = parseGS1Barcode(code);
-        const canonical = code ? canonicalBarcodeFromParsed(probe) : '';
-        const gtin14 = probe.gtin ? normalizeGtin(probe.gtin) : normalizeGtin(code) || undefined;
-
-        const existing = code
-          ? findItemByScan(liveInv, probe)
-          : liveInv.find(i => !i.deletedAt && i.pesticideName.trim().toLocaleLowerCase('tr-TR') === (first.productName || '').trim().toLocaleLowerCase('tr-TR'));
-
-        const mergeLinesIntoBatches = (seedBatches: InventoryBatch[]): InventoryBatch[] => {
-          const next = seedBatches.map(b => ({
-            ...b,
-            quantity: round2(Math.max(0, Number(b.quantity) || 0)),
-            serialNumbers: b.serialNumbers ? [...b.serialNumbers] : undefined
-          })).filter(b => b.quantity > 0);
-
-          for (const l of lines) {
-            const addQty = round2(Math.max(0, Number(l.quantity) || 0));
-            if (!(addQty > 0)) continue;
-            const lot = (l.lotNo || 'GENEL').trim() || 'GENEL';
-            const lotKey = lot.toLocaleLowerCase('tr-TR');
-            const idx = next.findIndex(b => b.lotNumber.trim().toLocaleLowerCase('tr-TR') === lotKey);
-            if (idx >= 0) {
-              const cur = next[idx];
-              const mergedSerials = Array.from(new Set([...(cur.serialNumbers || []), ...(l.serialNo ? [l.serialNo] : [])]));
-              next[idx] = {
-                ...cur,
-                expiryDate: cur.expiryDate || l.expiryDate,
-                quantity: round2(cur.quantity + addQty),
-                serialNumbers: mergedSerials.length > 0 ? mergedSerials : undefined
-              };
-            } else {
-              next.push({
-                lotNumber: lot,
-                expiryDate: l.expiryDate,
-                quantity: addQty,
-                serialNumbers: l.serialNo ? [l.serialNo] : undefined,
-                receivedAt: nowIso
-              });
-            }
-          }
-          next.sort((a, b) => {
-            if (a.expiryDate && b.expiryDate) return a.expiryDate.localeCompare(b.expiryDate);
-            if (a.expiryDate) return -1;
-            if (b.expiryDate) return 1;
-            return a.lotNumber.localeCompare(b.lotNumber, 'tr-TR');
-          });
-          return next;
-        };
-
-        if (existing) {
-          const seedBatches: InventoryBatch[] =
-            existing.batches && existing.batches.length > 0
-              ? existing.batches
-              : existing.quantity > 0 && (existing.lotNumber || existing.expiryDate || existing.serialNumber)
-                ? [{
-                    lotNumber: existing.lotNumber || 'GENEL',
-                    expiryDate: existing.expiryDate,
-                    quantity: round2(existing.quantity),
-                    serialNumbers: existing.serialNumber ? [existing.serialNumber] : undefined
-                  }]
-                : [];
-          const mergedBatches = mergeLinesIntoBatches(seedBatches);
-          const headBatch = mergedBatches[0];
-          const legacyRawBarcode = existing.barcode && existing.barcode.length > 16;
-          const updated: InventoryItem = {
-            ...existing,
-            quantity: round2((Number(existing.quantity) || 0) + totalQty),
-            batches: mergedBatches,
-            lotNumber: headBatch?.lotNumber ?? existing.lotNumber,
-            expiryDate: headBatch?.expiryDate ?? existing.expiryDate,
-            gtin: existing.gtin || gtin14,
-            barcode: !existing.barcode || legacyRawBarcode ? (canonical || existing.barcode) : existing.barcode,
-            adjustments: [...(existing.adjustments || []), { date: nowIso, amount: totalQty, note }],
-            lastUpdated: nowIso
-          };
-          await dbService.updateInventoryItem(updated);
-        } else {
-          const libMatch = code ? findItemByScan(library as any[], probe) : undefined;
-          const mergedBatches = mergeLinesIntoBatches([]);
-          const headBatch = mergedBatches[0];
-          const resolvedName =
-            (first.productName || '').startsWith('Yeni ürün') && (libMatch as any)?.name
-              ? String((libMatch as any).name)
-              : first.productName || String((libMatch as any)?.name || canonical || 'BKTS Ürünü');
-          const created: InventoryItem = {
-            id: generateUUID(),
-            pesticideId: (libMatch as any)?.id || `bkts-${gtin14 || canonical || generateUUID()}`,
-            pesticideName: resolvedName,
-            category:
-              (libMatch as any)?.category ||
-              (opts.config.gts && !opts.config.bkts ? PesticideCategory.FERTILIZER : PesticideCategory.OTHER),
-            quantity: totalQty,
-            unit: first.unit || 'Adet',
-            buyingPrice: 0,
-            sellingPrice: 0,
-            barcode: canonical || undefined,
-            gtin: gtin14,
-            batches: mergedBatches,
-            lotNumber: headBatch?.lotNumber,
-            expiryDate: headBatch?.expiryDate,
-            adjustments: [{ date: nowIso, amount: totalQty, note }],
-            lastUpdated: nowIso
-          };
-          await dbService.addInventoryItem(created);
-        }
-      }
+      await dbService.acceptMinistryShipment(record, {
+        library: library as any[],
+        defaultCategory: opts.config.gts && !opts.config.bkts ? PesticideCategory.FERTILIZER : PesticideCategory.OTHER,
+        skipRecordCreation: true,
+        skipStatusGuard: true
+      });
 
       await refreshInventory();
       await refreshStats();
@@ -491,6 +389,7 @@ function MainApp() {
   useEffect(() => {
     let cleanupSync: (() => void) | undefined;
     let failsafeTimer: number | undefined;
+    let cancelled = false;
 
     if (!currentUser && !loading) {
       setInitialDataLoaded(false);
@@ -501,7 +400,7 @@ function MainApp() {
       if (currentUser && !loading) {
         // Kesin güvenlik kilidi: IndexedDB veya tarayıcı eklentisi yavaşlasa bile 2.5 sn içinde ekran mutlaka açılır
         failsafeTimer = window.setTimeout(() => {
-          setInitialDataLoaded(true);
+          if (!cancelled) setInitialDataLoaded(true);
         }, 2500);
 
         try {
@@ -511,13 +410,16 @@ function MainApp() {
           console.warn("Initial local refresh warning:", localErr);
         } finally {
           if (failsafeTimer) window.clearTimeout(failsafeTimer);
-          setInitialDataLoaded(true);
+          if (!cancelled) setInitialDataLoaded(true);
         }
+
+        if (cancelled) return;
 
         // 2. ADIM: İnternet varsa arka planda arayüzü kilitlemeden senkronize et
         if (navigator.onLine) {
           try {
             const cloudProfile = await dbService.getUserProfile(currentUser.uid);
+            if (cancelled) return;
             if (cloudProfile) syncUserProfile(cloudProfile);
 
             dbService.syncGlobalPesticides().catch(() => {});
@@ -525,9 +427,10 @@ function MainApp() {
 
             // Verileri buluttan çek ve yerelle birleştir
             await dbService.syncAllDataOnLogin(currentUser.uid);
+            if (cancelled) return;
 
             // 3. ADIM: Gerçek zamanlı senkronizasyonu başlat (Çoklu cihaz desteği)
-            cleanupSync = dbService.setupRealtimeSync(
+            const stopSync = dbService.setupRealtimeSync(
               currentUser.uid,
               () => {
                 refreshStats().catch(() => {});
@@ -537,6 +440,11 @@ function MainApp() {
                 syncUserProfile(updatedProfile);
               }
             );
+            if (cancelled) {
+              stopSync();
+              return;
+            }
+            cleanupSync = stopSync;
 
             // Veriler güncellenmiş olabilir, tekrar arayüzü yenile
             await refreshStats();
@@ -551,9 +459,10 @@ function MainApp() {
 
     // Auto-sync when reconnecting to the internet
     const handleOnline = async () => {
-      if (currentUser && !loading) {
+      if (!cancelled && currentUser && !loading) {
         try {
           await dbService.syncAllDataOnLogin(currentUser.uid);
+          if (cancelled) return;
           await refreshStats();
           await refreshNews();
         } catch (err) {
@@ -564,6 +473,7 @@ function MainApp() {
     window.addEventListener('online', handleOnline);
 
     return () => {
+      cancelled = true;
       if (failsafeTimer) window.clearTimeout(failsafeTimer);
       if (cleanupSync) cleanupSync();
       window.removeEventListener('online', handleOnline);
@@ -698,12 +608,18 @@ function MainApp() {
 
   useEffect(() => {
     let listenerHandle: any;
+    let cancelled = false;
     
     const initBackButton = async () => {
         try {
-            listenerHandle = await CapacitorApp.addListener('backButton', () => {
+            const handle = await CapacitorApp.addListener('backButton', () => {
                 handleSmartStepBack();
             });
+            if (cancelled) {
+                handle.remove();
+            } else {
+                listenerHandle = handle;
+            }
         } catch (err) {
             console.error('Back button listener error:', err);
         }
@@ -712,6 +628,7 @@ function MainApp() {
     initBackButton();
 
     return () => {
+        cancelled = true;
         if (listenerHandle) listenerHandle.remove();
     };
   }, []);
@@ -749,7 +666,7 @@ function MainApp() {
   useEffect(() => {
     (window as any).mks_navigate_settings = () => setCurrentView('SETTINGS');
     (window as any).mks_smart_step_back = handleSmartStepBack;
-    (window as any).mks_open_ministry = (tab?: 'malkabul' | 'satis' | 'esdeger') => {
+    (window as any).mks_open_ministry = (tab?: 'malkabul' | 'satis' | 'esdeger' | 'gts' | 'bkts' | 'brecete') => {
       if (tab === 'esdeger') {
         if (!isFeatureEnabledForUser('TANK_MIX_EQUIVALENT', userProfile, isAdmin)) {
           if (showToast) showToast('Eşdeğer / Muadil İlaç Bulucu seçili paketinizde kapalıdır. Paket yükseltiniz.', 'info');
@@ -931,7 +848,7 @@ function MainApp() {
     if (currentView === 'VISITS' && isVisitMode) return <VisitLogForm onBack={handleSmartStepBack} initialVisitId={editVisitId} />;
     if (currentView === 'REMINDERS') return <RemindersScreen onBack={handleSmartStepBack} initialAddMode={isReminderAddMode} initialFilter={isTomorrowMode ? 'TOMORROW' : undefined} />;
 
-    switch (currentView as any) {
+    switch (currentView) {
         case 'DASHBOARD': return <Dashboard onNavigate={handleNavigate} />;
         case 'RECENT_TRANSACTIONS': return <RecentTransactions onSelectFarmer={(id) => { setSelectedFarmerId(id); setCurrentView('FARMERS'); }} />;
         case 'FARMERS': return <Farmers 
@@ -952,7 +869,6 @@ function MainApp() {
         case 'PROFILE': return <ProfileScreen onBack={handleSmartStepBack} />;
         case 'STATISTICS': return <StatisticsScreen onNavigate={handleNavigate} />;
         case 'LAND_DETAIL': return <StatisticsScreen onNavigate={handleNavigate} initialTab="LAND" />;
-        case 'REMINDERS': return <RemindersScreen onBack={handleSmartStepBack} />;
         case 'INVENTORY': return <InventoryScreen 
             onNavigateToPrescription={handleEditPrescription}
             onNavigateToSupplier={(suppId) => {
@@ -960,7 +876,7 @@ function MainApp() {
                 setCurrentView('SUPPLIERS');
             }}
         />;
-        case 'DEBT_TRACKING': return <DebtTracking />;
+        case 'DEBT_TRACKING': return <DebtTracking onSelectFarmer={(id) => { setSelectedFarmerId(id); setCurrentView('FARMERS'); }} />;
         case 'MAP': return <MapComponent onBack={handleSmartStepBack} />;
         case 'KASA': return <Kasa onBack={handleSmartStepBack} />;
         case 'EXPENSES': return <ExpensesScreen onBack={handleSmartStepBack} />;
@@ -978,7 +894,7 @@ function MainApp() {
         case 'ADMIN_PANEL': return isAdmin ? <AdminPanel onBack={handleSmartStepBack} /> : <Dashboard onNavigate={handleNavigate} />;
         case 'PLANTS': return <Plants onNavigate={handleNavigate} />;
         case 'MKS_MUHENDISIM': return <MKSMuhendisim onBack={handleSmartStepBack} />;
-        case 'AI_ASSISTANT': return <AIAssistant onBack={handleSmartStepBack} />;
+        case 'AI_ASSISTANT': return <AIAssistant onBack={handleSmartStepBack} onNavigate={handleNavigate} />;
         case 'SMART_STOCK': return <SmartStock onBack={handleSmartStepBack} />;
         case 'SILO': return <SiloScreen onBack={handleSmartStepBack} />;
         case 'REGIONAL_ALERTS': return <RegionalAlerts onBack={handleSmartStepBack} />;

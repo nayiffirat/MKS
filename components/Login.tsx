@@ -5,9 +5,6 @@ import {
     createUserWithEmailAndPassword, 
     sendPasswordResetEmail,
     signInWithPopup,
-    signInWithRedirect,
-    signInWithCredential,
-    GoogleAuthProvider,
     getRedirectResult,
     User,
     updateProfile,
@@ -18,10 +15,10 @@ import {
     getAdditionalUserInfo,
     ConfirmationResult
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, collection, query, where, getDocs, limit } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../services/firebase';
 import { safeStringify } from '../utils/json';
-import { Mail, Lock, Loader2, CheckCircle2, AlertCircle, ArrowLeft, Eye, EyeOff, User as UserIcon, Sparkles, Phone, ChevronRight, MessageCircle, Globe, Send, Download, KeyRound, Headphones, Monitor, Smartphone, Apple, ShieldCheck, Satellite, Database, Layers, X } from 'lucide-react';
+import { Mail, Lock, Loader2, CheckCircle2, AlertCircle, ArrowLeft, Eye, EyeOff, User as UserIcon, Phone, ChevronRight, MessageCircle, KeyRound, Headphones, X, Download, Send } from 'lucide-react';
 import { WebLandingPortal } from './WebLandingPortal';
 import { LiveSupportWidget } from './LiveSupportWidget';
 import { CorporateShowcaseWebsite } from './CorporateShowcaseWebsite';
@@ -59,12 +56,8 @@ const resolveEmailByPhone = async (key: string): Promise<string | null> => {
     return null;
 };
 import { useAppViewModel } from '../context/AppContext';
-import { Language } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { Browser } from '@capacitor/browser';
 import { Capacitor } from '@capacitor/core';
-
-import { API_BASE } from '../utils/api';
 
 export const LoginScreen: React.FC = () => {
     const { language, setLanguage, t, showToast, hapticFeedback } = useAppViewModel();
@@ -129,11 +122,6 @@ export const LoginScreen: React.FC = () => {
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
     }, [isAuthModalOpen]);
-
-    // Auth Bridge State
-    const bridgePollInterval = useRef<any>(null);
-    const urlParams = new URLSearchParams(window.location.search);
-    const bridgeSession = urlParams.get('bridgeSession');
 
     useEffect(() => {
         auth.useDeviceLanguage(); // Türkçe dil desteği
@@ -447,7 +435,7 @@ export const LoginScreen: React.FC = () => {
 
     const isStandaloneOrNativeApp =
         Capacitor.isNativePlatform() ||
-        urlParams.get('platform') === 'desktop' ||
+        (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('platform') === 'desktop') ||
         (typeof window !== 'undefined' && window.matchMedia?.('(display-mode: standalone)')?.matches);
 
     const renderAuthCard = () => (

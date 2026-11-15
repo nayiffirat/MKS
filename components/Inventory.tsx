@@ -3,26 +3,25 @@ import { createPortal as invPortal } from 'react-dom';
 import { SlidersHorizontal as InvFilterIcon, MoreHorizontal as InvMoreIcon, X as InvCloseIcon, ChevronRight as InvChevIcon } from 'lucide-react';
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-    Search, Plus, Package, DollarSign, TrendingUp, 
-    Trash2, Edit2, Save, X, AlertCircle, Filter,
-    ArrowUpRight, ArrowDownRight, BarChart3, PieChart, FlaskConical,
-    History, User, Calendar, List, Download, Eye, EyeOff, Camera, Barcode, Truck, RefreshCw, ChevronRight, ClipboardCheck, ArrowRight, ShoppingCart, Share2, Sparkles, Loader2, Upload, ShieldCheck, Layers
+    Search, Plus, Package, DollarSign, TrendingUp, AlertCircle, 
+    Trash2, Edit2, X,
+    ArrowUpRight, ArrowDownRight, BarChart3, PieChart,
+    User, Calendar, Download, Truck, ClipboardCheck, ShoppingCart, Sparkles, ShieldCheck, Layers
 , Receipt , FileText } from 'lucide-react';
 import LazyBarcodeScanner from './LazyBarcodeScanner';
 import { 
-    ResponsiveContainer, BarChart, Bar, XAxis, YAxis, 
-    CartesianGrid, Tooltip, Cell, PieChart as RePieChart, Pie
+    ResponsiveContainer, Tooltip, Cell, PieChart as RePieChart, Pie
 } from 'recharts';
 import { dbService } from '../services/db';
-import { auth } from '../services/firebase';
 import { InventoryItem, InventoryBatch, Pesticide, PesticideCategory, SupplierPurchase } from '../types';
 import { useAppViewModel } from '../context/AppContext';
-import { formatCurrency, getCurrencySuffix } from '../utils/currency';
+import { formatCurrency } from '../utils/currency';
 import { ConfirmationModal } from './ConfirmationModal';
 import { SmartOrderModal } from './SmartOrderModal';
 import { useBackHandler } from '../utils/navigationManager';
 import { parseGS1Barcode, findItemByScan, canonicalBarcodeFromParsed, GS1ParseResult } from '../utils/gs1Parser';
 import { daysUntilExpiry, round2 } from '../utils/dateUtils';
+import { escapeHtml } from '../utils/html';
 import { playScanBeep, playErrorBeep } from '../utils/hardwareBarcodeScanner';
 import { generateAIContent, DEFAULT_GEMINI_MODEL } from '../utils/gemini';
 import { InventoryItemFormModal, applyScanToInventoryForm, getScanIssues } from './inventory/InventoryItemFormModal';
@@ -134,7 +133,7 @@ export const InventoryScreen: React.FC<{
         addInventoryItem, 
         updateInventoryItem, 
         bulkUpdateInventoryItems,
-        deleteInventoryItem, softDeleteInventoryItem, restoreInventoryItem, permanentlyDeleteInventoryItem,
+        softDeleteInventoryItem,
         refreshInventory,
         refreshStats,
         showToast,
@@ -144,14 +143,11 @@ export const InventoryScreen: React.FC<{
         suppliers,
         supplierPurchases,
         addSupplierPurchase,
-        updateSupplier,
         stats,
         userProfile,
-        updateUserProfile,
         activeTeamMember,
         prescriptionLabel,
         farmerLabel,
-        farmerPluralLabel,
         accounts
     } = useAppViewModel();
     const isSales = activeTeamMember?.role === 'SALES';
@@ -159,7 +155,6 @@ export const InventoryScreen: React.FC<{
     const hideCost = Boolean(userProfile?.hideCostAndProfit || (isSales && userProfile?.hideBuyingPricesForStaff));
     
     const [pesticides, setPesticides] = useState<Pesticide[]>([]);
-    const [loading, setLoading] = useState(false);
     const [activeTab, setActiveTab] = useState<'LIST' | 'ANALYSIS' | 'PROFIT_LOSS'>('LIST');
     
     // Search & Filter
@@ -185,21 +180,6 @@ export const InventoryScreen: React.FC<{
     const [selectedMismatches, setSelectedMismatches] = useState<Set<string>>(new Set());
     const [rebuildSearchTerm, setRebuildSearchTerm] = useState('');
     const [isSmartOrderModalOpen, setIsSmartOrderModalOpen] = useState(false);
-
-    const handleAnalyzeInventory = async () => {
-        setRebuildState('ANALYZING');
-        try {
-            const results = await dbService.analyzeInventoryBalances();
-            setMismatches(results);
-            setSelectedMismatches(new Set(results.map(r => r.pesticideId)));
-            setRebuildState('RESULT');
-        } catch (error) {
-            console.error("Analysis error:", error);
-            showToast("Stoklar analiz edilirken hata oluştu.", "error");
-            setIsRebuildModalOpen(false);
-            setRebuildState('IDLE');
-        }
-    };
 
     const handleRepairInventory = async () => {
         setRebuildState('REPAIRING');
@@ -240,7 +220,6 @@ export const InventoryScreen: React.FC<{
     };
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
-    const fileInputRef = React.useRef<HTMLInputElement>(null);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [isPriceUpdateModalOpen, setIsPriceUpdateModalOpen] = useState(false);
     const [priceUpdateSearch, setPriceUpdateSearch] = useState('');
@@ -253,59 +232,11 @@ export const InventoryScreen: React.FC<{
     const [editingAdjustmentIdx, setEditingAdjustmentIdx] = useState<number | null>(null);
     const [editingAdjustmentAmount, setEditingAdjustmentAmount] = useState('');
     const [showProfitability, setShowProfitability] = useState(false);
-    const [isListMenuOpen, setIsListMenuOpen] = useState(false);
     const [isActionsOpen, setIsActionsOpen] = useState(false);
     const [isFilterOpen, setIsFilterOpen] = useState(false);
     const [stockFilter, setStockFilter] = useState<'ALL' | 'OUT_OF_STOCK' | 'IN_STOCK'>('ALL');
-    const [isStockMenuOpen, setIsStockMenuOpen] = useState(false);
     const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
     const [selectedDetailItem, setSelectedDetailItem] = useState<InventoryItem | null>(null);
-    const [historySearchQuery, setHistorySearchQuery] = useState('');
-    const [historyTypeFilter, setHistoryTypeFilter] = useState<'ALL' | 'SALE' | 'PURCHASE' | 'ADJUSTMENT'>('ALL');
-    const [purchaseHistory, setPurchaseHistory] = useState<{ id: string; targetId: string; name: string; date: string; price: number; quantity: string; isReturn: boolean; type: 'SALE' | 'PURCHASE' }[]>([]);
-
-    useEffect(() => {
-        if (!selectedDetailItem) {
-            setPurchaseHistory([]);
-            return;
-        }
-        
-        const history: { id: string; targetId: string; name: string; date: string; price: number; quantity: string; isReturn: boolean; isSupplierSale?: boolean; type: 'SALE' | 'PURCHASE' }[] = [];
-        
-        supplierPurchases.filter(p => {
-            if (p.deletedAt) return false;
-            if (selectedYear < currentYear && p.date) {
-                const year = new Date(p.date).getFullYear();
-                if (!isNaN(year) && year !== selectedYear) return false;
-            }
-            return true;
-        }).forEach((p, pIdx) => {
-            (p.items || []).filter(i => i.pesticideId === selectedDetailItem.pesticideId).forEach((item, iIdx) => {
-                const supplier = suppliers.find(s => s.id === p.supplierId);
-                const supplierName = supplier ? supplier.name : 'Bilinmeyen Tedarikçi';
-                const qtyStr = String(item.quantity || '0').replace(',', '.');
-                const parsedQty = parseFloat(qtyStr) || 0;
-                
-                const isSale = p.type === 'SALE' || p.note?.includes('SATIŞ');
-                const isReturn = p.type === 'RETURN' || (p.note?.includes('İADE') && !isSale);
-                const effectiveQty = Math.abs(parsedQty);
-
-                history.push({
-                    id: iIdx === 0 ? p.id : `${p.id}-${iIdx}-${pIdx}`,
-                    targetId: p.supplierId,
-                    name: supplierName,
-                    date: p.date,
-                    price: item.buyingPrice || 0,
-                    quantity: effectiveQty.toString(),
-                    isReturn: Boolean(isReturn),
-                    isSupplierSale: Boolean(isSale),
-                    type: isSale ? 'SALE' : 'PURCHASE'
-                });
-            });
-        });
-        
-        setPurchaseHistory(history);
-    }, [selectedDetailItem, supplierPurchases, suppliers, selectedYear]);
 
     const [isScanning, setIsScanning] = useState(false);
     const [lastFormScan, setLastFormScan] = useState<{ parsed: GS1ParseResult; ts: number } | null>(null);
@@ -325,7 +256,6 @@ export const InventoryScreen: React.FC<{
     // Form States
     const [productName, setProductName] = useState('');
     const [selectedPesticide, setSelectedPesticide] = useState<Pesticide | null>(null);
-    const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
     const [formData, setFormData] = useState<import('./inventory/InventoryItemFormModal').InventoryFormDataState>({
         quantity: '',
         unit: 'Adet',
@@ -354,66 +284,12 @@ export const InventoryScreen: React.FC<{
 
     useEffect(() => {
         const init = async () => {
-            setLoading(true);
             const pestData = await dbService.getPesticides();
             setPesticides(pestData);
             await refreshInventory();
-            setLoading(false);
         };
         init();
     }, []);
-
-    // One-time auto-fix for corrupted inventory data (e.g. duplicates, NaN)
-    // Disabled automatic run to prevent infinite loops. Can be triggered manually if needed.
-    const fixAnomalies = async () => {
-        if (inventory.length === 0) return;
-        
-        console.log('Starting inventory anomaly check...');
-        let needsRefresh = false;
-        const seenMap = new Map<string, InventoryItem>();
-        
-        // We do this in a single pass to be efficient
-        for (const item of inventory) {
-            let isCorrupted = false;
-            
-            // 1. Fix NaN or null in numbers
-            const fixedItem = { ...item };
-            if (isNaN(Number(fixedItem.quantity)) || fixedItem.quantity === null) { fixedItem.quantity = 0; isCorrupted = true; }
-            if (isNaN(Number(fixedItem.buyingPrice)) || fixedItem.buyingPrice === null) { fixedItem.buyingPrice = 0; isCorrupted = true; }
-            if (isNaN(Number(fixedItem.sellingPrice)) || fixedItem.sellingPrice === null) { fixedItem.sellingPrice = 0; isCorrupted = true; }
-            if (isNaN(Number(fixedItem.cashBuyingPrice)) || fixedItem.cashBuyingPrice === null) { fixedItem.cashBuyingPrice = fixedItem.buyingPrice; isCorrupted = true; }
-            if (isNaN(Number(fixedItem.cashPrice)) || fixedItem.cashPrice === null) { fixedItem.cashPrice = fixedItem.sellingPrice; isCorrupted = true; }
-
-            // Force numeric types
-            fixedItem.quantity = Number(fixedItem.quantity);
-            fixedItem.buyingPrice = Number(fixedItem.buyingPrice);
-            fixedItem.sellingPrice = Number(fixedItem.sellingPrice);
-            fixedItem.cashBuyingPrice = Number(fixedItem.cashBuyingPrice);
-            fixedItem.cashPrice = Number(fixedItem.cashPrice);
-
-            // 2. Deduplicate
-            if (seenMap.has(fixedItem.pesticideId)) {
-                const existing = seenMap.get(fixedItem.pesticideId)!;
-                existing.quantity += fixedItem.quantity;
-                await updateInventoryItem(existing);
-                await permanentlyDeleteInventoryItem(fixedItem.id);
-                needsRefresh = true;
-                continue;
-            } else {
-                seenMap.set(fixedItem.pesticideId, fixedItem);
-            }
-
-            if (isCorrupted) {
-                await updateInventoryItem(fixedItem);
-                needsRefresh = true;
-            }
-        }
-        
-        if (needsRefresh) {
-            await refreshInventory();
-            showToast('Envanter verileri optimize edildi', 'info');
-        }
-    };
 
     // B-16: SKT is the last valid day, compared on the local calendar (shared helper).
     const getDaysUntilExpiry = (expiryDate?: string): number | null => daysUntilExpiry(expiryDate);
@@ -1024,14 +900,12 @@ export const InventoryScreen: React.FC<{
         });
         setSelectedPesticide(null);
         setProductName(presetProductName || '');
-        setSelectedSupplierId('');
         setIsAddModalOpen(true);
     };
 
     const openEditModal = (item: InventoryItem) => {
         setSelectedItem(item);
         setProductName(item.pesticideName);
-        setSelectedSupplierId('');
         setFormData({
             quantity: item.quantity.toString(),
             unit: item.unit,
@@ -1061,8 +935,6 @@ export const InventoryScreen: React.FC<{
         setConsignNote('');
         setQuarantineAddQty('');
         setQuarantineReasonInput('');
-        setHistorySearchQuery('');
-        setHistoryTypeFilter('ALL');
         setIsDetailModalOpen(true);
         hapticFeedback('light');
     };
@@ -1367,12 +1239,8 @@ export const InventoryScreen: React.FC<{
         setIsQuickStockModalOpen(false);
         setIsEditAdjustmentModalOpen(false);
         setShowProfitability(false);
-        setIsListMenuOpen(false);
         setSelectedItem(null);
         setSelectedDetailItem(null);
-        setSelectedSupplierId('');
-        setHistorySearchQuery('');
-        setHistoryTypeFilter('ALL');
         setLastFormScan(null);
     };
 
@@ -1662,20 +1530,7 @@ export const InventoryScreen: React.FC<{
         }
     };
 
-    // Helper for Turkish characters (jsPDF default fonts don't support them well without custom fonts)
-    const tr = (text: string | undefined | null) => {
-        if (!text) return '';
-        return String(text)
-            .replace(/ğ/g, 'g').replace(/Ğ/g, 'G')
-            .replace(/ü/g, 'u').replace(/Ü/g, 'U')
-            .replace(/ş/g, 's').replace(/Ş/g, 'S')
-            .replace(/ı/g, 'i').replace(/İ/g, 'I')
-            .replace(/ö/g, 'o').replace(/Ö/g, 'O')
-            .replace(/ç/g, 'c').replace(/Ç/g, 'C');
-    };
-
     const generateInventoryPDF = async (type: 'CUSTOMER' | 'INTERNAL' | 'FULL') => {
-        setIsListMenuOpen(false);
         const dateStr = new Date().toLocaleDateString('tr-TR');
         const timeStr = new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
         const engineerName = userProfile.fullName || 'Ziraat Mühendisi';
@@ -1735,12 +1590,12 @@ export const InventoryScreen: React.FC<{
                         </div>
                         <div style="text-align: right; color: #57534e; font-size: 12px;">
                             <div style="font-weight: bold; margin-bottom: 3px;">Rapor No: #INV-${Math.floor(Math.random() * 10000)}</div>
-                            <div style="margin-bottom: 3px;">Tarih: ${dateStr} ${timeStr}</div>
-                            <div>Sorumlu: ${engineerName}</div>
+                            <div style="margin-bottom: 3px;">Tarih: ${escapeHtml(dateStr)} ${escapeHtml(timeStr)}</div>
+                            <div>Sorumlu: ${escapeHtml(engineerName)}</div>
                         </div>
                     </div>
 
-                    <h3 style="font-size: 20px; font-weight: 800; color: #292524; margin: 0 0 15px 0;">${title}</h3>
+                    <h3 style="font-size: 20px; font-weight: 800; color: #292524; margin: 0 0 15px 0;">${escapeHtml(title)}</h3>
                     
                     <table style="width: 100%; border-collapse: collapse; font-size: 11px; text-align: left;">
                         <thead>
@@ -1753,29 +1608,32 @@ export const InventoryScreen: React.FC<{
 
             sortedInventory.forEach((item, i) => {
                 const bg = i % 2 === 0 ? '#fafaf9' : '#ffffff';
+                const safeName = escapeHtml(item.pesticideName);
+                const safeCat = escapeHtml(item.category);
+                const safeUnit = escapeHtml(item.unit);
                 htmlContent += `<tr style="background-color: ${bg}; border-bottom: 1px solid #e7e5e4;">`;
                 
                 if (type === 'CUSTOMER') {
                     htmlContent += `
-                        <td style="padding: 10px; font-weight: 600;">${item.pesticideName}</td>
-                        <td style="padding: 10px;">${item.category}</td>
-                        <td style="padding: 10px;">${item.unit}</td>
+                        <td style="padding: 10px; font-weight: 600;">${safeName}</td>
+                        <td style="padding: 10px;">${safeCat}</td>
+                        <td style="padding: 10px;">${safeUnit}</td>
                         <td style="padding: 10px; text-align: right; font-family: monospace; font-weight: bold; font-size: 13px;">${formatCurrency(item.sellingPrice, userProfile?.currency || 'TRY')}</td>
                     `;
                 } else if (type === 'INTERNAL') {
                     htmlContent += `
-                        <td style="padding: 10px; font-weight: 600;">${item.pesticideName}</td>
-                        <td style="padding: 10px;">${item.category}</td>
-                        <td style="padding: 10px; text-align: center;"><span style="background-color: #fef3c7; color: #78350f; border: 1px solid #fde68a; font-family: monospace; font-weight: 800; padding: 2px 7px; border-radius: 4px; font-size: 11px; display: inline-block;">${item.quantity}</span></td>
-                        <td style="padding: 10px;">${item.unit}</td>
+                        <td style="padding: 10px; font-weight: 600;">${safeName}</td>
+                        <td style="padding: 10px;">${safeCat}</td>
+                        <td style="padding: 10px; text-align: center;"><span style="background-color: #fef3c7; color: #78350f; border: 1px solid #fde68a; font-family: monospace; font-weight: 800; padding: 2px 7px; border-radius: 4px; font-size: 11px; display: inline-block;">${Number(item.quantity)}</span></td>
+                        <td style="padding: 10px;">${safeUnit}</td>
                         <td style="padding: 10px; text-align: right; font-family: monospace; color: #ef4444;">${formatCurrency(item.buyingPrice, userProfile?.currency || 'TRY')}</td>
                         <td style="padding: 10px; text-align: right; font-family: monospace; color: #10b981;">${formatCurrency(item.cashBuyingPrice || 0, userProfile?.currency || 'TRY')}</td>
                     `;
                 } else {
                     htmlContent += `
-                        <td style="padding: 10px; font-weight: 600;">${item.pesticideName}</td>
-                        <td style="padding: 10px;">${item.category}</td>
-                        <td style="padding: 10px; text-align: center;"><span style="background-color: #fef3c7; color: #78350f; border: 1px solid #fde68a; font-family: monospace; font-weight: 800; padding: 2px 7px; border-radius: 4px; font-size: 11px; display: inline-block;">${item.quantity} ${item.unit}</span></td>
+                        <td style="padding: 10px; font-weight: 600;">${safeName}</td>
+                        <td style="padding: 10px;">${safeCat}</td>
+                        <td style="padding: 10px; text-align: center;"><span style="background-color: #fef3c7; color: #78350f; border: 1px solid #fde68a; font-family: monospace; font-weight: 800; padding: 2px 7px; border-radius: 4px; font-size: 11px; display: inline-block;">${Number(item.quantity)} ${safeUnit}</span></td>
                         <td style="padding: 10px; text-align: right; font-family: monospace; font-size: 10px;">
                             <span style="color:#ef4444">${formatCurrency(item.buyingPrice, userProfile?.currency || 'TRY')}</span> / 
                             <span style="color:#10b981">${formatCurrency(item.cashBuyingPrice || 0, userProfile?.currency || 'TRY')}</span>
@@ -1831,14 +1689,16 @@ export const InventoryScreen: React.FC<{
 
             container.innerHTML = htmlContent;
             document.body.appendChild(container);
-
-            const canvas = await renderElementToCanvas(container, {
-                scale: 2,
-                backgroundColor: '#ffffff',
-                logging: false
-            });
-
-            document.body.removeChild(container);
+            let canvas: HTMLCanvasElement;
+            try {
+                canvas = await renderElementToCanvas(container, {
+                    scale: 2,
+                    backgroundColor: '#ffffff',
+                    logging: false
+                });
+            } finally {
+                if (container.parentNode) container.parentNode.removeChild(container);
+            }
             
             const pdf = await createMultiPagePdf(canvas);
             pdf.save(`MKS_Depo_Raporu_${type}_${dateStr.replace(/\./g, '_')}.pdf`);
@@ -1957,18 +1817,18 @@ export const InventoryScreen: React.FC<{
                             <h2 style="font-size: 16px; font-weight: 600; margin: 0; color: #10b981;">Ürün Detay Raporu</h2>
                         </div>
                         <div style="text-align: right; color: #57534e; font-size: 12px;">
-                            <div style="margin-bottom: 3px;">Tarih: ${dateStr} ${timeStr}</div>
-                            <div>Sorumlu: ${userProfile.fullName || 'Ziraat Mühendisi'}</div>
+                            <div style="margin-bottom: 3px;">Tarih: ${escapeHtml(dateStr)} ${escapeHtml(timeStr)}</div>
+                            <div>Sorumlu: ${escapeHtml(userProfile.fullName || 'Ziraat Mühendisi')}</div>
                         </div>
                     </div>
 
                     <div style="background-color: #f8faf9; border: 1px solid #d1d5db; border-radius: 8px; padding: 20px; display: flex; justify-content: space-between;">
                         <div>
-                            <h3 style="font-size: 20px; font-weight: 800; color: #10b981; margin: 0 0 10px 0;">${item.pesticideName}</h3>
-                            <div style="color: #57534e; font-size: 12px; margin-bottom: 5px;">Kategori: <span style="font-weight: 600; color: #1c1917;">${item.category}</span></div>
-                            <div style="color: #57534e; font-size: 12px; margin-bottom: 5px;">Mevcut Stok: <span style="font-weight: 800; color: #1c1917; font-size: 14px;">${Number(item.quantity).toString()} ${item.unit}</span></div>
-                            <div style="color: #57534e; font-size: 12px; margin-bottom: 5px;">Toplam Alınan: <span style="font-weight: 700; color: #10b981;">${totalPurchasesQty} ${item.unit}</span></div>
-                            <div style="color: #57534e; font-size: 12px;">Toplam Satılan: <span style="font-weight: 700; color: #3b82f6;">${totalSalesQty} ${item.unit}</span></div>
+                            <h3 style="font-size: 20px; font-weight: 800; color: #10b981; margin: 0 0 10px 0;">${escapeHtml(item.pesticideName)}</h3>
+                            <div style="color: #57534e; font-size: 12px; margin-bottom: 5px;">Kategori: <span style="font-weight: 600; color: #1c1917;">${escapeHtml(item.category)}</span></div>
+                            <div style="color: #57534e; font-size: 12px; margin-bottom: 5px;">Mevcut Stok: <span style="font-weight: 800; color: #1c1917; font-size: 14px;">${Number(item.quantity).toString()} ${escapeHtml(item.unit)}</span></div>
+                            <div style="color: #57534e; font-size: 12px; margin-bottom: 5px;">Toplam Alınan: <span style="font-weight: 700; color: #10b981;">${totalPurchasesQty} ${escapeHtml(item.unit)}</span></div>
+                            <div style="color: #57534e; font-size: 12px;">Toplam Satılan: <span style="font-weight: 700; color: #3b82f6;">${totalSalesQty} ${escapeHtml(item.unit)}</span></div>
                         </div>
                         <div style="display: flex; gap: 30px;">
                             <div>
@@ -2024,9 +1884,9 @@ export const InventoryScreen: React.FC<{
                     htmlContent += `
                         <tr style="background-color: ${bg}; border-bottom: 1px solid #e7e5e4;">
                             <td style="padding: 10px;">${new Date(h.date).toLocaleDateString('tr-TR')}</td>
-                            <td style="padding: 10px; font-weight: bold; color: ${typeColor};">${typeStr}</td>
-                            <td style="padding: 10px; font-weight: 600;">${h.name}</td>
-                            <td style="padding: 10px; text-align: right; font-weight: bold;">${isReturn ? '-' : (h.type === 'ADJUSTMENT' && !isReturn ? '+' : '')}${Number(h.quantity)} ${item.unit}</td>
+                            <td style="padding: 10px; font-weight: bold; color: ${typeColor};">${escapeHtml(typeStr)}</td>
+                            <td style="padding: 10px; font-weight: 600;">${escapeHtml(h.name)}</td>
+                            <td style="padding: 10px; text-align: right; font-weight: bold;">${isReturn ? '-' : (h.type === 'ADJUSTMENT' && !isReturn ? '+' : '')}${Number(h.quantity)} ${escapeHtml(item.unit)}</td>
                             <td style="padding: 10px; text-align: right; font-family: monospace;">${h.type === 'ADJUSTMENT' ? '-' : formatCurrency(h.price, userProfile?.currency || 'TRY')}</td>
                             <td style="padding: 10px; text-align: right; font-family: monospace; font-weight: bold;">${h.type === 'ADJUSTMENT' ? '-' : formatCurrency(total, userProfile?.currency || 'TRY')}</td>
                         </tr>
@@ -2038,14 +1898,16 @@ export const InventoryScreen: React.FC<{
 
             container.innerHTML = htmlContent;
             document.body.appendChild(container);
-
-            const canvas = await renderElementToCanvas(container, {
-                scale: 2,
-                backgroundColor: '#ffffff',
-                logging: false
-            });
-
-            document.body.removeChild(container);
+            let canvas: HTMLCanvasElement;
+            try {
+                canvas = await renderElementToCanvas(container, {
+                    scale: 2,
+                    backgroundColor: '#ffffff',
+                    logging: false
+                });
+            } finally {
+                if (container.parentNode) container.parentNode.removeChild(container);
+            }
             
             const pdf = await createMultiPagePdf(canvas);
             pdf.save(`MKS_Urun_Raporu_${item.pesticideName.replace(/[^a-zA-Z0-9]/g, '_')}_${dateStr.replace(/\./g, '_')}.pdf`);
@@ -2064,107 +1926,6 @@ export const InventoryScreen: React.FC<{
             return acc;
         }, {} as Record<string, string>);
     }, [farmers]);
-
-    const salesHistory = useMemo(() => {
-        if (!selectedDetailItem) return [];
-        
-        const history: { id: string; targetId: string; name: string; date: string; price: number; quantity: string; isReturn: boolean; type: 'SALE' | 'PURCHASE' }[] = [];
-        
-        prescriptions.filter(p => {
-            if (p.deletedAt) return false;
-            if (!p.isInventoryProcessed && p.isProcessed === false) return false;
-            if (selectedYear < currentYear && p.date) {
-                const year = new Date(p.date).getFullYear();
-                if (!isNaN(year) && year !== selectedYear) return false;
-            }
-            return true;
-        }).forEach((p, pIdx) => {
-            (p.items || []).filter(i => i.pesticideId === selectedDetailItem.pesticideId).forEach((item, iIdx) => {
-                const qty = parseFloat(item.quantity?.toString().replace(',', '.') || '0') || 0;
-                const isReturn = p.type === 'RETURN';
-                const qtyMultiplier = isReturn ? 1 : -1;
-                const impact = qty * qtyMultiplier;
-                history.push({
-                    id: iIdx === 0 ? p.id : `${p.id}-${iIdx}-${pIdx}`,
-                    targetId: p.farmerId,
-                    name: farmerMap[p.farmerId] || `Bilinmeyen ${farmerLabel}`,
-                    date: p.date,
-                    price: item.unitPrice || 0,
-                    quantity: Math.abs(qty).toString(),
-                    isReturn: impact > 0,
-                    type: 'SALE'
-                });
-            });
-        });
-        
-        return history;
-    }, [selectedDetailItem, prescriptions, farmerMap, selectedYear, currentYear]);
-
-    const combinedHistory = useMemo(() => {
-        const adjustmentsHistory = (selectedDetailItem?.adjustments || []).filter(adj => {
-            if (selectedYear < currentYear && adj.date) {
-                const year = new Date(adj.date).getFullYear();
-                if (!isNaN(year) && year !== selectedYear) return false;
-            }
-            return true;
-        }).map((adj, idx) => ({
-            id: `adj-${idx}`,
-            index: idx,
-            targetId: 'manual',
-            name: adj.note || 'Manuel Stok Düzeltme',
-            date: adj.date,
-            price: 0,
-            quantity: Math.abs(adj.amount).toString(),
-            isReturn: adj.amount < 0,
-            type: 'ADJUSTMENT' as 'SALE'|'PURCHASE'|'ADJUSTMENT'
-        }));
-        
-        return [...salesHistory, ...purchaseHistory, ...adjustmentsHistory].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    }, [salesHistory, purchaseHistory, selectedDetailItem, selectedYear]);
-
-    const salesCount = useMemo(() => combinedHistory.filter(i => i.type === 'SALE').length, [combinedHistory]);
-    const purchaseCount = useMemo(() => combinedHistory.filter(i => i.type === 'PURCHASE').length, [combinedHistory]);
-    const adjustmentCount = useMemo(() => combinedHistory.filter(i => i.type === 'ADJUSTMENT').length, [combinedHistory]);
-
-    const filteredCombinedHistory = useMemo(() => {
-        let list = combinedHistory;
-
-        if (historyTypeFilter !== 'ALL') {
-            list = list.filter(item => item.type === historyTypeFilter);
-        }
-
-        if (historySearchQuery.trim()) {
-            const query = historySearchQuery.trim().toLowerCase();
-            list = list.filter(item => {
-                const nameMatch = item.name.toLowerCase().includes(query);
-
-                const rawPriceStr = item.price.toString();
-                const formattedPriceStr = formatCurrency(item.price, userProfile?.currency || 'TRY').toLowerCase();
-                const priceMatch = rawPriceStr.includes(query) || formattedPriceStr.includes(query);
-
-                const qtyMatch = item.quantity.toString().includes(query);
-
-                let dateFormatted = '';
-                try {
-                    dateFormatted = new Date(item.date).toLocaleDateString('tr-TR');
-                } catch (e) {
-                    dateFormatted = item.date;
-                }
-                const dateMatch = dateFormatted.includes(query) || item.date.includes(query);
-
-                const typeLabel = item.type === 'SALE'
-                    ? (item.isReturn ? 'satış iade' : 'satış')
-                    : item.type === 'PURCHASE'
-                    ? (item.isReturn ? 'alım iade tedarikçi' : 'alım tedarikçi')
-                    : 'depomdan manuel düzeltme fark';
-                const typeMatch = typeLabel.toLowerCase().includes(query);
-
-                return nameMatch || priceMatch || qtyMatch || dateMatch || typeMatch;
-            });
-        }
-
-        return list;
-    }, [combinedHistory, historySearchQuery, historyTypeFilter, userProfile?.currency]);
 
     const profitabilityMetrics = useMemo(() => {
         if (!selectedDetailItem) return null;

@@ -6,6 +6,7 @@ import {
   SupplierPurchase,
   SupplierPayment
 } from '../types';
+import { supplierDocKind } from './tradeCore';
 
 /**
  * Yıl sonu devir (`turnover-`) kayıtları tüm yılları kapsayan genel bakiyelerde
@@ -66,7 +67,7 @@ export const getIndependentFarmerMyPayments = (
       farmerId: p.farmerId!,
       amount: Number(p.amount) || 0,
       date: p.issueDate,
-      method: (p.type === 'CHECK' ? 'CHECK' : 'PROMISSORY') as Payment['method'],
+      method: p.type === 'CHECK' ? 'CHECK' : p.type === 'TEDYE' ? 'TEDYE' : 'PROMISSORY_NOTE',
       note: p.note
     }));
 };
@@ -212,13 +213,17 @@ export const computeSupplierLedgerTotals = (params: {
   myPayments?: MyPayment[];
 }): SupplierLedgerTotals => {
   const { supplierId, purchases, supplierPayments, myPayments = [] } = params;
+  const bouncedRelatedIds = getBouncedRelatedPaymentIds(myPayments);
 
   const totalPurchased = purchases
     .filter(p => !p.deletedAt && p.supplierId === supplierId)
-    .reduce((sum, p) => sum + (Number(p.totalAmount) || 0), 0);
+    .reduce((sum, p) => {
+      const amt = Math.abs(Number(p.totalAmount) || 0);
+      return sum + (supplierDocKind(p) === 'PURCHASE' ? amt : -amt);
+    }, 0);
 
   const directPaid = supplierPayments
-    .filter(p => !p.deletedAt && p.supplierId === supplierId)
+    .filter(p => !p.deletedAt && p.supplierId === supplierId && !bouncedRelatedIds.has(p.id))
     .reduce((sum, p) => {
       const amt = Number(p.amount) || 0;
       return p.type === 'RECEIVE' ? sum - amt : sum + amt;
@@ -229,6 +234,7 @@ export const computeSupplierLedgerTotals = (params: {
       mp =>
         !mp.deletedAt &&
         mp.status !== 'CANCELLED' &&
+        mp.portfolioStatus !== 'BOUNCED' &&
         !mp.relatedId &&
         mp.supplierId === supplierId
     )

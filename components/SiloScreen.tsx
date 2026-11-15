@@ -1,10 +1,11 @@
 import { createMultiPagePdf, loadJsPdf, renderElementToCanvas } from '../utils/pdfHelper';
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { dbService } from '../services/db';
 import { SiloTransaction } from '../types';
-import { Plus, Trash2, ArrowLeft, TrendingUp, TrendingDown, Package, Edit2, Info, User, Download, Calendar, Wallet, ChevronRight, FileText, Paperclip, Search, X as XIcon, Camera, AlertTriangle, CheckCircle2, Truck, Sparkles, Loader2, RefreshCw, Scale, ArrowRightLeft, Phone } from 'lucide-react';
+import { Trash2, ArrowLeft, TrendingUp, TrendingDown, Package, Edit2, Info, User, Download, Calendar, Wallet, FileText, Paperclip, Search, X as XIcon, Camera, AlertTriangle, CheckCircle2, Truck, Sparkles, Loader2, Scale, ArrowRightLeft, Phone } from 'lucide-react';
 import { validateTcOrVkn } from '../utils/tcNoValidator';
-import { formatCurrency } from '../utils/currency';
+import { formatCurrency, parseTrDecimal } from '../utils/currency';
+import { getLocalDateString } from '../utils/dateUtils';
 import { computeFarmerLedgerTotals } from '../utils/ledger';
 import { useAppViewModel } from '../context/AppContext';
 import { useBackHandler } from '../utils/navigationManager';
@@ -33,6 +34,7 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     const [transactions, setTransactions] = useState<SiloTransaction[]>([]);
     const [siloContacts, setSiloContacts] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [isSaving, setIsSaving] = useState(false);
     
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isContactModalOpen, setIsContactModalOpen] = useState(false);
@@ -45,12 +47,13 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
     const [isConfirmDeleteModalOpen, setIsConfirmDeleteModalOpen] = useState(false);
     const [txToDelete, setTxToDelete] = useState<string | null>(null);
+    const [isDeletingTx, setIsDeletingTx] = useState(false);
 
     const [editingTx, setEditingTx] = useState<SiloTransaction | null>(null);
     const [type, setType] = useState<'BUY' | 'SELL' | 'PAYMENT_IN' | 'PAYMENT_OUT'>('BUY');
     const [product, setProduct] = useState(PRODUCTS[0]);
     const [person, setPerson] = useState('');
-    const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+    const [date, setDate] = useState(() => getLocalDateString());
     const [quantity, setQuantity] = useState('');
     const [unitPrice, setUnitPrice] = useState('');
     const [paymentMode, setPaymentMode] = useState<'CASH' | 'TERM'>('CASH');
@@ -105,13 +108,13 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
     // Kantar Brüt/Dara ve Rutubet/Yabancı Madde Fire Hesaplaması (#40)
     const weighbridgeSummary = useMemo(() => {
-        const gross = parseFloat(grossWeightKg.replace(',', '.')) || 0;
-        const tare = parseFloat(tareWeightKg.replace(',', '.')) || 0;
-        const rawNet = gross > 0 ? Math.max(0, gross - tare) : (parseFloat(quantity.replace(',', '.')) || 0);
-        const moist = parseFloat(moisturePct.replace(',', '.')) || 0;
-        const baseMoist = parseFloat(baseMoisturePct.replace(',', '.')) || 14;
-        const fm = parseFloat(foreignMatterPct.replace(',', '.')) || 0;
-        const hl = parseFloat(hectoliter.replace(',', '.')) || 0;
+        const gross = parseTrDecimal(grossWeightKg);
+        const tare = parseTrDecimal(tareWeightKg);
+        const rawNet = gross > 0 ? Math.max(0, gross - tare) : parseTrDecimal(quantity);
+        const moist = parseTrDecimal(moisturePct);
+        const baseMoist = parseTrDecimal(baseMoisturePct) || 14;
+        const fm = parseTrDecimal(foreignMatterPct);
+        const hl = parseTrDecimal(hectoliter);
 
         // Fazla rutubet firesi: baz rutubetin üstündeki her 1 puan için %1.2 fire + %1 muafiyet üstü yabancı madde
         const moisturePenaltyPct = moist > baseMoist ? (moist - baseMoist) * 1.2 : 0;
@@ -119,7 +122,7 @@ export const SiloScreen: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         const hlPenaltyPct = hl > 0 && hl < 74 ? (74 - hl) * 0.5 : 0;
         const autoPct = Math.round((moisturePenaltyPct + fmPenaltyPct + hlPenaltyPct) * 100) / 100;
         const effectiveDeductionPct = manualDeductionPct.trim() !== ''
-            ? Math.max(0, parseFloat(manualDeductionPct.replace(',', '.')) || 0)
+            ? Math.max(0, parseTrDecimal(manualDeductionPct))
             : autoPct;
         const deductionKg = Math.round(rawNet * (effectiveDeductionPct / 100));
         const payableNetKg = Math.max(0, Math.round(rawNet - deductionKg));
@@ -213,7 +216,7 @@ Not: Ton olarak yazılmışsa KG'ye çevir (örn: 24.580 kg veya 24,58 ton -> 24
                 setShowWeighbridgePanel(true);
             }
             if (nKg > 0) {
-                const baseM = parseFloat(baseMoisturePct) || 14;
+                const baseM = parseTrDecimal(baseMoisturePct) || 14;
                 const mPen = mPct > baseM ? (mPct - baseM) * 1.2 : 0;
                 const fPen = fmPct > 1 ? (fmPct - 1) : 0;
                 const hPen = hlVal > 0 && hlVal < 74 ? (74 - hlVal) * 0.5 : 0;
@@ -252,7 +255,6 @@ Not: Ton olarak yazılmışsa KG'ye çevir (örn: 24.580 kg veya 24,58 ton -> 24
     const [customEndDate, setCustomEndDate] = useState('');
     
     const [documentFile, setDocumentFile] = useState<File | null>(null);
-    const [documentPreviewUrl, setDocumentPreviewUrl] = useState<string | null>(null);
     const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
 
     const tr = (text: string | undefined | null) => {
@@ -287,16 +289,16 @@ Not: Ton olarak yazılmışsa KG'ye çevir (örn: 24.580 kg veya 24,58 ton -> 24
     };
     
     const handleSave = async () => {
+        if (isSaving) return;
         if (!isAdmin) return window.alert("Sadece yöneticiler silom işlemlerine müdahale edebilir.");
         if (!person || (!quantity && type !== 'PAYMENT_IN' && type !== 'PAYMENT_OUT') || !unitPrice) return;
         
+        setIsSaving(true);
         setIsLoading(true);
         try {
-            const parsedQuantity = quantity.replace(',', '.');
-            const parsedPrice = unitPrice.replace(',', '.');
-            const parsedTransport = isTransportIncluded && transportCost ? transportCost.replace(',', '.') : undefined;
+            const parsedTransportVal = isTransportIncluded && transportCost.trim() ? parseTrDecimal(transportCost) : undefined;
             
-            const rawQtyNum = type === 'PAYMENT_IN' || type === 'PAYMENT_OUT' ? 0 : parseFloat(parsedQuantity);
+            const rawQtyNum = type === 'PAYMENT_IN' || type === 'PAYMENT_OUT' ? 0 : parseTrDecimal(quantity);
             // Kantar / Rutubet fire girişi varsa net ödenecek tonajı otomatik esas al (#40)
             const qtyNum =
                 (type === 'BUY' || type === 'SELL') &&
@@ -304,8 +306,9 @@ Not: Ton olarak yazılmışsa KG'ye çevir (örn: 24.580 kg veya 24,58 ton -> 24
                 weighbridgeSummary.payableNetKg > 0
                     ? weighbridgeSummary.payableNetKg
                     : rawQtyNum;
-            const priceNum = parseFloat(parsedPrice);
-            if (isNaN(qtyNum) || isNaN(priceNum) || priceNum <= 0) {
+            const priceNum = parseTrDecimal(unitPrice);
+            const hasValidQty = type === 'PAYMENT_IN' || type === 'PAYMENT_OUT' || qtyNum > 0;
+            if (!hasValidQty || priceNum <= 0) {
                 setIsLoading(false);
                 return;
             }
@@ -315,7 +318,7 @@ Not: Ton olarak yazılmışsa KG'ye çevir (örn: 24.580 kg veya 24,58 ton -> 24
             let commAmt: number | undefined = undefined;
             
             if (type === 'SELL') {
-                const rate = parseFloat(commissionRate.replace(',', '.')) || 0;
+                const rate = parseTrDecimal(commissionRate);
                 if (rate > 0) {
                     commRate = rate;
                     commAmt = totalAmt * (rate / 100);
@@ -323,16 +326,14 @@ Not: Ton olarak yazılmışsa KG'ye çevir (örn: 24.580 kg veya 24,58 ton -> 24
                 }
             }
 
-            if ((type === 'BUY' || type === 'SELL') && parsedTransport) {
-                const transportNum = parseFloat(parsedTransport);
-                if (!isNaN(transportNum)) {
-                    if (transportPayer === 'US') {
-                        if (type === 'SELL') totalAmt -= transportNum;
-                        if (type === 'BUY') totalAmt += transportNum;
-                    } else {
-                        if (type === 'SELL') totalAmt += transportNum;
-                        if (type === 'BUY') totalAmt -= transportNum;
-                    }
+            if ((type === 'BUY' || type === 'SELL') && parsedTransportVal !== undefined && parsedTransportVal > 0) {
+                const transportNum = parsedTransportVal;
+                if (transportPayer === 'US') {
+                    if (type === 'SELL') totalAmt -= transportNum;
+                    if (type === 'BUY') totalAmt += transportNum;
+                } else {
+                    if (type === 'SELL') totalAmt += transportNum;
+                    if (type === 'BUY') totalAmt -= transportNum;
                 }
             }
 
@@ -363,7 +364,7 @@ Not: Ton olarak yazılmışsa KG'ye çevir (örn: 24.580 kg veya 24,58 ton -> 24
             } : {};
 
             const rawBarterOffset = type === 'BUY' && enableBarterOffset && barterFarmerId
-                ? Math.max(0, parseFloat(barterOffsetAmount.replace(',', '.')) || 0)
+                ? Math.max(0, parseTrDecimal(barterOffsetAmount))
                 : 0;
             const farmerCurrentDebt = barterFarmerId ? Math.max(0, farmerDebtMap[barterFarmerId] || 0) : 0;
             const maxAllowedBarter = farmerCurrentDebt > 0 ? Math.min(Math.max(0, totalAmt), farmerCurrentDebt) : Math.max(0, totalAmt);
@@ -385,8 +386,8 @@ Not: Ton olarak yazılmışsa KG'ye çevir (örn: 24.580 kg veya 24,58 ton -> 24
                     dueDate: isCargoTx && paymentMode === 'TERM' && dueDate ? new Date(dueDate).toISOString() : undefined,
                     plateNumber: isCargoTx && plateNumber.trim() ? plateNumber.trim() : undefined,
                     driverPhone: isCargoTx && driverPhone.trim() ? driverPhone.trim() : undefined,
-                    transportCost: isCargoTx && parsedTransport ? parseFloat(parsedTransport) : undefined,
-                    transportPayer: isCargoTx && parsedTransport ? transportPayer : undefined,
+                    transportCost: isCargoTx && parsedTransportVal !== undefined ? parsedTransportVal : undefined,
+                    transportPayer: isCargoTx && parsedTransportVal !== undefined ? transportPayer : undefined,
                     documentUrl: finalDocUrl,
                     ...wbFields,
                 };
@@ -441,8 +442,8 @@ Not: Ton olarak yazılmışsa KG'ye çevir (örn: 24.580 kg veya 24,58 ton -> 24
                     dueDate: isCargoTx && paymentMode === 'TERM' && dueDate ? new Date(dueDate).toISOString() : undefined,
                     plateNumber: isCargoTx && plateNumber.trim() ? plateNumber.trim() : undefined,
                     driverPhone: isCargoTx && driverPhone.trim() ? driverPhone.trim() : undefined,
-                    transportCost: isCargoTx && parsedTransport ? parseFloat(parsedTransport) : undefined,
-                    transportPayer: isCargoTx && parsedTransport ? transportPayer : undefined,
+                    transportCost: isCargoTx && parsedTransportVal !== undefined ? parsedTransportVal : undefined,
+                    transportPayer: isCargoTx && parsedTransportVal !== undefined ? transportPayer : undefined,
                     barterFarmerId: barterOffsetNum > 0 ? barterFarmerId : undefined,
                     barterOffsetAmount: barterOffsetNum > 0 ? barterOffsetNum : undefined,
                     linkedPaymentId: linkedPaymentMarker,
@@ -453,14 +454,14 @@ Not: Ton olarak yazılmışsa KG'ye çevir (örn: 24.580 kg veya 24,58 ton -> 24
                 await dbService.addSiloTransaction(newTx);
             }
             
-            const contactType = (type === 'BUY' || type === 'PAYMENT_OUT') ? 'SELLER' : 'BUYER';
-            
             closeModal();
             loadData();
         } catch (e) {
             console.error("Save error:", e);
             window.alert("Kayıt sırasında bir hata oluştu.");
             setIsLoading(false);
+        } finally {
+            setIsSaving(false);
         }
     };
     
@@ -596,15 +597,19 @@ Not: Ton olarak yazılmışsa KG'ye çevir (örn: 24.580 kg veya 24,58 ton -> 24
     };
 
     const confirmDelete = async () => {
-        if (!txToDelete) return;
-        const tx = transactions.find(t => t.id === txToDelete);
-        if (tx) {
-            const updated = { ...tx, deletedAt: new Date().toISOString() };
-            await dbService.updateSiloTransaction(updated);
-            loadData();
+        if (!txToDelete || isDeletingTx) return;
+        setIsDeletingTx(true);
+        try {
+            await dbService.deleteSiloTransaction(txToDelete);
+            await loadData();
+            setIsConfirmDeleteModalOpen(false);
+            setTxToDelete(null);
+        } catch (err) {
+            console.error('Silo transaction delete failed:', err);
+            showToast('Kayıt silinemedi.', 'error');
+        } finally {
+            setIsDeletingTx(false);
         }
-        setIsConfirmDeleteModalOpen(false);
-        setTxToDelete(null);
     };
     
     const openNewModal = (txType: 'BUY' | 'SELL' | 'PAYMENT_IN' | 'PAYMENT_OUT', defaultPerson?: string) => {
@@ -615,7 +620,7 @@ Not: Ton olarak yazılmışsa KG'ye çevir (örn: 24.580 kg veya 24,58 ton -> 24
         setPerson(defaultPerson || '');
         setQuantity('');
         setUnitPrice('');
-        setDate(new Date().toISOString().split('T')[0]);
+        setDate(getLocalDateString());
         setPaymentMode('CASH');
         setDueDate('');
         setPlateNumber('');
@@ -855,16 +860,18 @@ Not: Ton olarak yazılmışsa KG'ye çevir (örn: 24.580 kg veya 24,58 ton -> 24
                 </div>
             `;
             document.body.appendChild(container);
-            
-            const elementToCapture = container.firstElementChild as HTMLElement;
-            const canvas = await renderElementToCanvas(elementToCapture, {
-                scale: 3, 
-                backgroundColor: '#ffffff',
-                useCORS: true,
-                logging: false
-            });
-            
-            document.body.removeChild(container);
+            let canvas: HTMLCanvasElement;
+            try {
+                const elementToCapture = container.firstElementChild as HTMLElement;
+                canvas = await renderElementToCanvas(elementToCapture, {
+                    scale: 3, 
+                    backgroundColor: '#ffffff',
+                    useCORS: true,
+                    logging: false
+                });
+            } finally {
+                if (container.parentNode) container.parentNode.removeChild(container);
+            }
             
             const pdf = await createMultiPagePdf(canvas);
             
@@ -986,16 +993,18 @@ Not: Ton olarak yazılmışsa KG'ye çevir (örn: 24.580 kg veya 24,58 ton -> 24
                 </div>
             `;
             document.body.appendChild(container);
-            
-            const elementToCapture = container.firstElementChild as HTMLElement;
-            const canvas = await renderElementToCanvas(elementToCapture, {
-                scale: 3, 
-                backgroundColor: '#ffffff',
-                useCORS: true,
-                logging: false
-            });
-            
-            document.body.removeChild(container);
+            let canvas: HTMLCanvasElement;
+            try {
+                const elementToCapture = container.firstElementChild as HTMLElement;
+                canvas = await renderElementToCanvas(elementToCapture, {
+                    scale: 3, 
+                    backgroundColor: '#ffffff',
+                    useCORS: true,
+                    logging: false
+                });
+            } finally {
+                if (container.parentNode) container.parentNode.removeChild(container);
+            }
             
             const pdf = await createMultiPagePdf(canvas);
             
@@ -1019,13 +1028,20 @@ Not: Ton olarak yazılmışsa KG'ye çevir (örn: 24.580 kg veya 24,58 ton -> 24
         try {
             const response = await fetch(url);
             const blob = await response.blob();
+            const objectUrl = URL.createObjectURL(blob);
             const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            let ext = url.split('?')[0].split('.').pop();
-            a.download = `Silo_Belge_MKS_${Date.now()}.${ext}`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
+            try {
+                a.href = objectUrl;
+                let ext = url.split('?')[0].split('.').pop();
+                a.download = `Silo_Belge_MKS_${Date.now()}.${ext}`;
+                document.body.appendChild(a);
+                a.click();
+            } finally {
+                if (a.parentNode) {
+                    a.parentNode.removeChild(a);
+                }
+                setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+            }
         } catch (err) {
             // Fallback
             window.open(url, '_blank');
@@ -2065,7 +2081,7 @@ Not: Ton olarak yazılmışsa KG'ye çevir (örn: 24.580 kg veya 24,58 ton -> 24
                                                          const fObj = farmers.find(f => f.id === fid);
                                                          if (fObj && !person.trim()) setPerson(fObj.fullName);
                                                          const debt = farmerDebtMap[fid] || 0;
-                                                         const buyTotal = (parseFloat(quantity.replace(',', '.')) || 0) * (parseFloat(unitPrice.replace(',', '.')) || 0);
+                                                         const buyTotal = parseTrDecimal(quantity) * parseTrDecimal(unitPrice);
                                                          if (debt > 0) {
                                                              setBarterOffsetAmount(String(buyTotal > 0 ? Math.min(debt, buyTotal) : debt));
                                                          } else {
@@ -2107,7 +2123,7 @@ Not: Ton olarak yazılmışsa KG'ye çevir (örn: 24.580 kg veya 24,58 ton -> 24
                                                      <p className="text-[11px] text-emerald-300/80 bg-emerald-950/50 border border-emerald-500/20 rounded-xl p-2">
                                                          Bu tutar çiftçinin zirai ilaç borcundan otomatik tahsilat olarak düşülür. Kalan ödenecek mahsul bedeli:{' '}
                                                          <strong className="font-mono text-white">
-                                                             {formatCurrency(Math.max(0, ((parseFloat(quantity.replace(',', '.')) || 0) * (parseFloat(unitPrice.replace(',', '.')) || 0)) - (parseFloat(barterOffsetAmount.replace(',', '.')) || 0)), userProfile?.currency || 'TRY')}
+                                                             {formatCurrency(Math.max(0, (parseTrDecimal(quantity) * parseTrDecimal(unitPrice)) - parseTrDecimal(barterOffsetAmount)), userProfile?.currency || 'TRY')}
                                                          </strong>
                                                      </p>
                                                  </>
@@ -2170,7 +2186,7 @@ Not: Ton olarak yazılmışsa KG'ye çevir (örn: 24.580 kg veya 24,58 ton -> 24
                                      <div className="flex justify-between items-center bg-stone-950 p-4 rounded-xl border border-stone-800">
                                          <span className="text-xs font-bold text-stone-400">Toplam Tutar</span>
                                          <span className="text-xl font-black text-white font-mono">
-                                             {formatCurrency(((parseFloat(quantity) || 0) * (parseFloat(unitPrice) || 0)), userProfile?.currency || 'TRY')}
+                                             {formatCurrency((parseTrDecimal(quantity) * parseTrDecimal(unitPrice)), userProfile?.currency || 'TRY')}
                                          </span>
                                      </div>
                                  </div>
@@ -2178,8 +2194,8 @@ Not: Ton olarak yazılmışsa KG'ye çevir (örn: 24.580 kg veya 24,58 ton -> 24
                         </div>
 
                         <div className="p-4 bg-stone-950 border-t border-white/5">
-                             <button onClick={handleSave} disabled={!person || (!quantity && type !== 'PAYMENT_IN' && type !== 'PAYMENT_OUT') || !unitPrice} className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-400 disabled:bg-stone-800 disabled:text-stone-500 text-stone-950 font-black rounded-xl transition-colors">
-                                 KAYDET
+                             <button type="button" onClick={handleSave} disabled={isSaving || !person || (!quantity && type !== 'PAYMENT_IN' && type !== 'PAYMENT_OUT') || !unitPrice} className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-400 disabled:bg-stone-800 disabled:text-stone-500 text-stone-950 font-black rounded-xl transition-colors">
+                                 {isSaving ? 'KAYDEDİLİYOR...' : 'KAYDET'}
                              </button>
                         </div>
                     </div>
@@ -2786,7 +2802,3 @@ Not: Ton olarak yazılmışsa KG'ye çevir (örn: 24.580 kg veya 24,58 ton -> 24
         </div>
     );
 };
-
-const X = ({ size }: { size: number }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-);

@@ -2,8 +2,8 @@
 # MKS — Google Play Console Android 16 (API 36) .AAB Üretim Aracı
 # ==============================================================================
 param(
-    [int]$VersionCode = 27,
-    [string]$VersionName = "8.2.0"
+    [int]$VersionCode = 30,
+    [string]$VersionName = "8.3.0"
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,6 +18,8 @@ npm run build
 
 Write-Host "`n[2/3] Capacitor Android 16 (API 36) Senkronize Ediliyor..." -ForegroundColor Cyan
 npx cap sync android
+node "D:\MKS\scripts\prepare-android-bundle.mjs"
+if ($LASTEXITCODE -ne 0) { throw "prepare-android-bundle.mjs failed with exit code $LASTEXITCODE" }
 
 Write-Host "`n[3/3] Google Play Console Üretim Paketi (.aab) Derleniyor (API 36 | versionCode=$VersionCode)..." -ForegroundColor Cyan
 Set-Location "D:\MKS\android"

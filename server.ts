@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { registerEdmRoutes } from "./server/edm";
+import { registerMinistryRoutes } from "./server/ministry";
 import cors from "cors";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
@@ -312,7 +313,7 @@ async function startServer() {
       }
 
       // 2. Yedek: Doğrudan GEMINI_API_KEY (tanımlıysa)
-      const apiKey = (process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || "").trim();
+      const apiKey = (process.env.GEMINI_API_KEY || "").trim();
       if (!apiKey || apiKey === "undefined" || apiKey === "null" || apiKey.length < 10) {
         return res.status(500).json({
           error: "Yapay zeka servisine ulaşılamadı (OmniRoute veya GEMINI_API_KEY aktif değil).",
@@ -332,7 +333,7 @@ async function startServer() {
         config
       });
 
-      const text = typeof response.text === "function" ? await response.text() : response.text;
+      const text = response.text || "";
       res.json({ text: String(text || "") });
     } catch (error: any) {
       const safeMessage = error?.message || "Bilinmeyen bir hata oluştu";
@@ -388,7 +389,7 @@ async function startServer() {
   app.get("/api/check-ai", (_req, res) => {
     const hasConfiguredProvider = Boolean(
       (process.env.OMNIROUTE_TOKEN || "").trim() ||
-      (process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || "").trim()
+      (process.env.GEMINI_API_KEY || "").trim()
     );
     res.json({
       status: hasConfiguredProvider ? "ready" : "unconfigured",
@@ -400,13 +401,34 @@ async function startServer() {
   // --- EDM Bilişim e-Fatura / e-Arşiv köprüsü (bağlantı testi, mükellef sorgusu, fatura gönder/listele) ---
   registerEdmRoutes(app, { isDev, isLoopbackAddress, verifyFirebaseIdToken, checkRateLimit });
 
+  // --- Tarım ve Orman Bakanlığı Resmi Servisler köprüsü (BKTS, GTS, B-Reçete) ---
+  registerMinistryRoutes(app, { isDev, isLoopbackAddress, verifyFirebaseIdToken, checkRateLimit });
+
   // --- TKGM Ada/Parsel ve Koordinat Sorgulama Uç Noktası (Uygulama İçi, Yönlendirmesiz) ---
   app.post("/api/tkgm/parcel", async (req, res) => {
+    const remoteIp = req.socket.remoteAddress;
     const forwardedIp = process.env.K_SERVICE
       ? String(req.headers["x-forwarded-for"] || "").split(",")[0].trim()
       : "";
-    const clientIp = forwardedIp || req.socket.remoteAddress || "unknown";
-    if (!checkRateLimit(`tkgm:${clientIp}`, 30, 60_000)) {
+    const clientIp = forwardedIp || remoteIp || "unknown";
+    const isLocalLoopback = isDev && isLoopbackAddress(remoteIp) && !forwardedIp;
+
+    const authHeader = String(req.headers.authorization || "");
+    const bearerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+    let verifiedUser: VerifiedFirebaseUser | null = null;
+    if (bearerToken) {
+      verifiedUser = await verifyFirebaseIdToken(bearerToken, isLocalLoopback);
+    }
+
+    if (!verifiedUser && !isLocalLoopback) {
+      return res.status(401).json({
+        error: "TKGM parsel sorgusu için geçerli bir MKS oturumu gereklidir.",
+        code: "UNAUTHORIZED"
+      });
+    }
+
+    const rateKey = verifiedUser ? `tkgm:${verifiedUser.uid}` : `tkgm:${clientIp}`;
+    if (!checkRateLimit(rateKey, 30, 60_000)) {
       return res.status(429).json({ error: "Çok fazla parsel sorgusu gönderildi, lütfen bekleyin." });
     }
     try {

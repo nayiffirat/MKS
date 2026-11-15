@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useAppViewModel } from '../context/AppContext';
-import { Package, TrendingUp, AlertTriangle, ArrowLeft, Bot, RefreshCw, BarChart2, CheckCircle2, Loader2 } from 'lucide-react';
-import { API_BASE } from '../utils/api';
+import { Package, TrendingUp, AlertTriangle, ArrowLeft, Bot, RefreshCw, BarChart2, Loader2 } from 'lucide-react';
 import { generateAIContent } from '../utils/gemini';
 
 export const SmartStock: React.FC<{ onBack: () => void }> = ({ onBack }) => {
-  const { inventory, prescriptions, t } = useAppViewModel();
+  const { inventory, prescriptions } = useAppViewModel();
   const [loading, setLoading] = useState(false);
   const [analysis, setAnalysis] = useState<string | null>(null);
 
@@ -15,7 +14,6 @@ export const SmartStock: React.FC<{ onBack: () => void }> = ({ onBack }) => {
       // Gather simple stats to avoid huge token usage
       const stockItems = inventory.map(i => `${i.pesticideName} (${i.category}): ${i.quantity} adet/lt`).join('\n');
       
-      const salesCount = prescriptions.length;
       const recentSales = prescriptions.slice(0, 50).map(p => {
         const itemStr = p.items.map(i => `${i.pesticideName} (${i.quantity} miktar)`).join(', ');
         return `Tarih: ${p.date.split('T')[0]} - Satışlar: ${itemStr}`;
@@ -152,9 +150,11 @@ Lütfen bana çok net ve aksiyona geçirici stok uyarısı ve sipariş tavsiyele
   );
 };
 
+import { escapeHtml } from '../utils/html';
+
 // Simple helper to render basic markdown bold and bullet points safely without heavy libraries
 function formatMarkdown(text: string) {
-  let html = text
+  let html = escapeHtml(text)
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.*?)\*/g, '<em>$1</em>')
     .replace(/\n\n/g, '</p><p>')

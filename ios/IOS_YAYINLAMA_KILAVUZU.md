@@ -1,4 +1,4 @@
-# MKS (Mühendis Kayıt Sistemi) — iOS App Store & TestFlight Yayınlama Kılavuzu (`v8.2.1` • Build `28`)
+# MKS (Mühendis Kayıt Sistemi) — iOS App Store & TestFlight Yayınlama Kılavuzu (`v8.3.0` • Build `30`)
 
 Bu klasör (`D:\MKS\ios\App`), **Mühendis Kayıt Sistemi (MKS)** uygulamasının Apple App Store Connect ve TestFlight inceleme kurallarına %100 uyumlu yerel Capacitor iOS projesini içerir.
 
@@ -7,9 +7,9 @@ Bu klasör (`D:\MKS\ios\App`), **Mühendis Kayıt Sistemi (MKS)** uygulamasını
 ## 1. Tamamlanan Apple İnceleme (App Review) Hazırlıkları
 
 1. **Bundle Identifier & Sürüm Bilgileri (`project.pbxproj`):**
-   - **Bundle ID:** `com.nayiffirat.muhendiskayitsistemi`
-   - **Sürüm (`MARKETING_VERSION`):** `8.2.1`
-   - **Derleme (`CURRENT_PROJECT_VERSION`):** `28`
+   - **Bundle ID:** `firattarim.muhendiskayitsistemiv2`
+   - **Sürüm (`MARKETING_VERSION`):** `8.3.0`
+   - **Derleme (`CURRENT_PROJECT_VERSION`):** `30`
    - **Minimum iOS Sürümü (`IPHONEOS_DEPLOYMENT_TARGET`):** `14.0` (Xcode 16 ve güncel CocoaPods standartları ile tam uyumlu)
    - **Varsayılan Dil & Bölge:** Türkçe (`tr`)
 
@@ -36,7 +36,7 @@ Bu klasör (`D:\MKS\ios\App`), **Mühendis Kayıt Sistemi (MKS)** uygulamasını
 Depoda `.github/workflows/ios-release.yml` iş akışı hazırdır:
 
 1. Değişiklikleri GitHub deponuza (`https://github.com/nayiffirat/MKS`) gönderin.
-2. GitHub -> **Actions** -> **MKS iOS App Store & TestFlight Build (v8.2.1 - Build 28)** sekmesine girin.
+2. GitHub -> **Actions** -> **MKS iOS App Store & TestFlight Build (v8.3.0 - Build 30)** sekmesine girin.
 3. **Run workflow** butonuna tıklayın:
    - İmzasız test/arşiv doğrulaması için `export_signed_ipa: false` seçin.
    - Doğrudan App Store Connect / TestFlight imzalı `.ipa` için GitHub Secrets bölümüne `APPLE_TEAM_ID`, `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_PRIVATE_KEY` ekleyip `export_signed_ipa: true` seçin.

@@ -3,19 +3,20 @@ import { createMultiPagePdf, renderElementToCanvas } from '../utils/pdfHelper';
 import React, { useState, useRef } from 'react';
 import { 
     ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, 
-    CartesianGrid, LineChart, Line, AreaChart, Area, PieChart, Pie, Cell 
+    CartesianGrid, AreaChart, Area, PieChart, Pie, Cell 
 } from 'recharts';
 import { 
     Download, Users, Ruler, Sprout, MapPin, Loader2, ArrowUpRight, ArrowDownRight,
-    FileText, X, Calendar, Activity, Zap, ClipboardCheck, 
-    AlertTriangle, TrendingUp, History, Scale, BookOpen, 
-    ChevronRight, PieChart as PieIcon, BarChart3, LineChart as LineIcon, Truck, DollarSign, Package
+    Activity, Zap, ClipboardCheck, 
+    AlertTriangle, TrendingUp, Scale, 
+    PieChart as PieIcon, BarChart3, Truck, DollarSign, Package
 } from 'lucide-react';
 import { dbService } from '../services/db';
 import { useAppViewModel } from '../context/AppContext';
 import { Prescription } from '../types';
 import { supplierDocKind } from '../utils/tradeCore';
 import { formatCurrency } from '../utils/currency';
+import { getLocalDateString } from '../utils/dateUtils';
 import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
 
     type StatTab = 'OVERVIEW' | 'PROFIT_LOSS' | 'PESTICIDES' | 'VISITS' | 'CONSUMPTION' | 'SALES' | 'DEBTS' | 'RECEIVABLES' | 'INVENTORY' | 'LAND';
@@ -36,7 +37,6 @@ import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
         userProfile,
         activeTeamMember,
         farmerLabel,
-        farmerPluralLabel,
         prescriptionLabel,
         plants,
         showToast
@@ -82,16 +82,6 @@ import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
             };
         }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     }, [visitLogs, farmers]);
-
-    const prescriptionsWithNames = React.useMemo(() => {
-        return prescriptions.map(p => {
-            const farmer = farmers.find(f => f.id === p.farmerId);
-            return {
-                ...p,
-                farmerName: farmer ? farmer.fullName : 'Bilinmeyen Üretici'
-            };
-        }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    }, [prescriptions, farmers]);
 
     // Calculate Sales Data
     const salesData = React.useMemo(() => {
@@ -257,7 +247,7 @@ import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
 
             const pdf = await createMultiPagePdf(canvas);
 
-            pdf.save(`MKS_Detayli_Analiz_Raporu_${new Date().toISOString().split('T')[0]}.pdf`);
+            pdf.save(`MKS_Detayli_Analiz_Raporu_${getLocalDateString()}.pdf`);
         } catch (e) {
             console.error("PDF Generation Error:", e);
             showToast("Rapor oluşturulurken bir hata oluştu.", "error");

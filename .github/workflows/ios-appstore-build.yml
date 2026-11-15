@@ -6,7 +6,7 @@ on:
       build_number:
         description: 'iOS Build Number (CURRENT_PROJECT_VERSION)'
         required: false
-        default: '26'
+        default: '30'
 
 jobs:
   build-ios:
@@ -24,7 +24,7 @@ jobs:
 
       - name: Install Dependencies & Build Web Assets
         run: |
-          npm ci
+          npm ci --legacy-peer-deps
           npm run build
           rm -f dist/downloads/*.apk dist/downloads/*.exe
 
@@ -48,16 +48,16 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            CURRENT_PROJECT_VERSION=${{ github.event.inputs.build_number || '26' }} \
-            MARKETING_VERSION=8.1.0 \
+            CURRENT_PROJECT_VERSION=${{ github.event.inputs.build_number || '30' }} \
+            MARKETING_VERSION=8.3.0 \
             archive
           mkdir -p $RUNNER_TEMP/Payload
           cp -r $RUNNER_TEMP/MKS.xcarchive/Products/Applications/App.app $RUNNER_TEMP/Payload/
           cd $RUNNER_TEMP
-          zip -r MKS_iOS_v8.1.0_b${{ github.event.inputs.build_number || '26' }}.ipa Payload
+          zip -r MKS_iOS_v8.3.0_b${{ github.event.inputs.build_number || '30' }}.ipa Payload
 
       - name: Upload MKS iOS .IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MKS-iOS-IPA-v8.1.0
+          name: MKS-iOS-IPA-v8.3.0
           path: ${{ runner.temp }}/*.ipa

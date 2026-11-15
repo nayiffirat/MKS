@@ -1,4 +1,29 @@
 import { AgriCity } from '../types';
+import { getLocalDateString } from '../utils/dateUtils';
+
+export const SPRAY_THRESHOLDS = {
+  maxWindKmh: 15,
+  cautionWindKmh: 10,
+  maxGustKmh: 22,
+  minTempC: 5,
+  maxTempC: 33,
+  maxDeltaT: 10,
+  cautionMaxDeltaT: 8,
+  cautionMinDeltaT: 2,
+  blockRainProb: 45,
+  cautionRainProb: 25,
+} as const;
+
+export type SpraySuitabilityLevel = 'IDEAL' | 'DIKKAT' | 'UYGUNSUZ';
+
+export interface SprayEvaluation {
+  level: SpraySuitabilityLevel;
+  reason: string;
+  deltaT: number;
+}
+
+export const isWetWeatherCode = (code: number): boolean =>
+  (code >= 51 && code <= 67) || (code >= 71 && code <= 77) || (code >= 80 && code <= 86) || code >= 95;
 
 export interface HourlySprayingSlot {
   timeIso: string;
@@ -85,6 +110,44 @@ export function calculateDeltaT(tempC: number, rhPercent: number): number {
   return Math.max(0, Math.round((T - tw) * 10) / 10);
 }
 
+export function evaluateSprayingConditions(input: {
+  tempC: number;
+  humidity?: number;
+  windKmh: number;
+  gustKmh?: number;
+  precipProb?: number;
+  weatherCode?: number;
+}): SprayEvaluation {
+  const hasHumidity = input.humidity !== undefined && Number.isFinite(input.humidity);
+  const deltaT = hasHumidity ? calculateDeltaT(input.tempC, input.humidity!) : 5;
+  const rainProb = Number(input.precipProb) || 0;
+  const wCode = Number(input.weatherCode) || 0;
+  const gustKmh = input.gustKmh ?? input.windKmh;
+
+  if (rainProb >= SPRAY_THRESHOLDS.blockRainProb || isWetWeatherCode(wCode)) {
+    return { level: 'UYGUNSUZ', reason: 'Yağış / yıkanma riski', deltaT };
+  }
+  if (input.windKmh > SPRAY_THRESHOLDS.maxWindKmh || gustKmh > SPRAY_THRESHOLDS.maxGustKmh) {
+    return { level: 'UYGUNSUZ', reason: `Rüzgar ${Math.round(input.windKmh)} km/s: sürüklenme riski`, deltaT };
+  }
+  if ((hasHumidity && deltaT > SPRAY_THRESHOLDS.maxDeltaT) || input.tempC > SPRAY_THRESHOLDS.maxTempC) {
+    return { level: 'UYGUNSUZ', reason: `Yüksek buharlaşma (ΔT ${deltaT}°C)`, deltaT };
+  }
+  if (input.tempC < SPRAY_THRESHOLDS.minTempC) {
+    return { level: 'UYGUNSUZ', reason: 'Düşük sıcaklık (<5°C)', deltaT };
+  }
+  if (input.windKmh > SPRAY_THRESHOLDS.cautionWindKmh) {
+    return { level: 'DIKKAT', reason: 'Sınırda rüzgar: iri damla meme kullanın', deltaT };
+  }
+  if (hasHumidity && (deltaT > SPRAY_THRESHOLDS.cautionMaxDeltaT || deltaT < SPRAY_THRESHOLDS.cautionMinDeltaT)) {
+    return { level: 'DIKKAT', reason: `Sınırda ΔT (${deltaT}°C)`, deltaT };
+  }
+  if (rainProb >= SPRAY_THRESHOLDS.cautionRainProb) {
+    return { level: 'DIKKAT', reason: `Yağış olasılığı %${Math.round(rainProb)}`, deltaT };
+  }
+  return { level: 'IDEAL', reason: 'İdeal ΔT ve düşük rüzgar', deltaT };
+}
+
 /**
  * Evaluates next 12 hours of spraying suitability based on Delta-T, Wind, Gusts & Rain probability (#1).
  */
@@ -104,28 +167,10 @@ export function computeHourlySprayingWindow(weather: WeatherResponse | null): Ho
     const gustKmh = Number(weather.hourly.wind_gusts_10m?.[i] ?? windKmh * 1.25);
     const rainProb = Number(weather.hourly.precipitation_probability?.[i] ?? 0);
     const wCode = Number(weather.hourly.weather_code?.[i] ?? 0);
-    const deltaT = calculateDeltaT(tempC, humidity);
-
-    let suitability: 'IDEAL' | 'DIKKAT' | 'UYGUNSUZ' = 'IDEAL';
-    let reason = 'İdeal Delta-T ve düşük rüzgar';
-
-    const isRaining = rainProb >= 45 || (wCode >= 51 && wCode <= 99);
-    if (isRaining) {
-      suitability = 'UYGUNSUZ';
-      reason = 'Yağış / Yıkanma riski';
-    } else if (windKmh > 15 || gustKmh > 22) {
-      suitability = 'UYGUNSUZ';
-      reason = `Yüksek rüzgar (${Math.round(windKmh)} km/s) sürüklenme riski`;
-    } else if (deltaT > 10 || tempC > 33) {
-      suitability = 'UYGUNSUZ';
-      reason = `Yüksek buharlaşma (ΔT ${deltaT}°C)`;
-    } else if (tempC < 5) {
-      suitability = 'UYGUNSUZ';
-      reason = 'Düşük sıcaklık (<5°C)';
-    } else if (windKmh > 10 || deltaT > 8 || deltaT < 2 || rainProb >= 25) {
-      suitability = 'DIKKAT';
-      reason = windKmh > 10 ? 'Sınırda rüzgar (iri damla meme kullanın)' : `Sınırda ΔT (${deltaT}°C)`;
-    }
+    const verdict = evaluateSprayingConditions({ tempC, humidity, windKmh, gustKmh, precipProb: rainProb, weatherCode: wCode });
+    const suitability = verdict.level;
+    const reason = verdict.reason;
+    const deltaT = verdict.deltaT;
 
     const d = new Date(tIso);
     slots.push({
@@ -215,15 +260,16 @@ export function computeGddPestAlerts(
 }
 
 export const WeatherService = {
-  async getForecast(lat: number, lon: number): Promise<WeatherResponse> {
+  async getForecast(lat: number, lon: number, signal?: AbortSignal): Promise<WeatherResponse> {
     try {
       const response = await fetch(
-        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,wind_gusts_10m&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_gusts_10m,precipitation_probability,weather_code&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code&past_days=14&forecast_days=7&timezone=auto`
+        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,wind_gusts_10m&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_gusts_10m,precipitation_probability,weather_code&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code&past_days=14&forecast_days=7&timezone=auto`,
+        { signal }
       );
       if (!response.ok) throw new Error('Weather API Error');
       const raw = await response.json();
       // Keep daily slice starting from today for 7-day forecast UI while preserving full GDD history on raw._fullDaily
-      const todayIso = new Date().toISOString().split('T')[0];
+      const todayIso = getLocalDateString();
       const startIdx = Array.isArray(raw?.daily?.time)
         ? Math.max(0, raw.daily.time.findIndex((t: string) => t >= todayIso))
         : 0;
@@ -245,7 +291,8 @@ export const WeatherService = {
         ...raw,
         daily: slicedDaily,
       };
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.name === 'AbortError' || signal?.aborted) throw error;
       console.warn('Weather API unreachable, using fallback.', error);
       return {
         current: {
@@ -260,7 +307,7 @@ export const WeatherService = {
           time: Array.from({ length: 7 }, (_, i) => {
             const d = new Date();
             d.setDate(d.getDate() + i);
-            return d.toISOString().split('T')[0];
+            return getLocalDateString(d);
           }),
           temperature_2m_max: [22, 23, 24, 23, 22, 23, 24],
           temperature_2m_min: [10, 11, 12, 11, 10, 11, 12],
@@ -277,14 +324,16 @@ export const WeatherService = {
   async getPrecipitationSinceCapture(
     lat: number,
     lon: number,
-    captureIso: string
+    captureIso: string,
+    signal?: AbortSignal
   ): Promise<PostCaptureRainReport> {
     try {
       const captureMs = new Date(captureIso).getTime();
       if (isNaN(captureMs)) return { totalMm: 0, rainyHoursCount: 0 };
 
       const response = await fetch(
-        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&past_days=31&forecast_days=1&hourly=precipitation&timezone=UTC`
+        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&past_days=31&forecast_days=1&hourly=precipitation&timezone=UTC`,
+        { signal }
       );
       if (!response.ok) return { totalMm: 0, rainyHoursCount: 0, fetchFailed: true };
       const data = await response.json();
@@ -317,16 +366,18 @@ export const WeatherService = {
         rainyHoursCount,
         lastRainIso,
       };
-    } catch {
+    } catch (error: any) {
+      if (error?.name === 'AbortError' || signal?.aborted) throw error;
       return { totalMm: 0, rainyHoursCount: 0, fetchFailed: true };
     }
   },
 
-  async searchLocations(query: string): Promise<AgriCity[]> {
+  async searchLocations(query: string, signal?: AbortSignal): Promise<AgriCity[]> {
     if (!query || query.length < 3) return [];
     try {
       const response = await fetch(
-        `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=10&language=tr&format=json`
+        `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=10&language=tr&format=json`,
+        { signal }
       );
       const data = await response.json();
       if (!data.results) return [];
@@ -339,7 +390,8 @@ export const WeatherService = {
           lon: item.longitude,
           admin1: item.admin1
         }));
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.name === 'AbortError' || signal?.aborted) throw error;
       console.error('Geocoding API Error', error);
       return [];
     }

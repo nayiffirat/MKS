@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion } from 'motion/react';
 import QRCode from 'qrcode';
 import { MksBrandLogo } from './MksBrandLogo';
 import {
@@ -10,7 +10,6 @@ import {
   Apple,
   CheckCircle2,
   Lock,
-  Sparkles,
   ScanBarcode,
   Database,
   Crown,
@@ -20,13 +19,9 @@ import {
   Check,
   MessageCircle,
   Globe,
-  Cpu,
   Layers,
   ExternalLink,
-  Share2,
   X,
-  Zap,
-  Award,
   QrCode
 } from 'lucide-react';
 import {
@@ -63,7 +58,6 @@ export const WebLandingPortal: React.FC<{
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('yearly');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
-  const [DeferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [purchasingTier, setPurchasingTier] = useState<SubscriptionTierId | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [plans, setPlans] = useState(() => getSubscriptionPlans());
@@ -103,13 +97,6 @@ export const WebLandingPortal: React.FC<{
     })
       .then(url => setQrDataUrl(url))
       .catch(() => {});
-
-    const handleBeforeInstall = (e: any) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
-    };
-    window.addEventListener('beforeinstallprompt', handleBeforeInstall);
-    return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
   }, []);
 
   const handleCopyLink = (id: string, url: string) => {
@@ -151,8 +138,8 @@ export const WebLandingPortal: React.FC<{
     <div
       className={`${
         mode === 'modal'
-          ? 'fixed inset-0 z-[110] bg-black/80 backdrop-blur-xl flex items-center justify-center p-2 sm:p-5 overflow-y-auto'
-          : 'min-h-screen bg-stone-950 text-stone-100 flex flex-col'
+          ? 'fixed inset-0 z-[110] bg-black/75 backdrop-blur-2xl flex items-center justify-center p-2 sm:p-5 overflow-y-auto'
+          : 'min-h-screen bg-[#0B0D12] text-stone-100 flex flex-col'
       }`}
     >
       <motion.div
@@ -161,12 +148,12 @@ export const WebLandingPortal: React.FC<{
         transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
         className={`w-full ${
           mode === 'modal'
-            ? 'max-w-6xl bg-stone-950 border border-white/10 rounded-[28px] shadow-2xl overflow-hidden max-h-[92vh] flex flex-col'
+            ? 'max-w-6xl bg-[#0B0D12] border border-white/12 rounded-[28px] shadow-[0_32px_100px_rgba(0,0,0,0.8)] overflow-hidden max-h-[92vh] flex flex-col'
             : 'max-w-7xl mx-auto flex-1 flex flex-col p-4 sm:p-8'
         }`}
       >
-        {/* Top Navigation Bar */}
-        <div className="px-4 sm:px-7 py-3.5 bg-stone-900/95 border-b border-white/10 space-y-3 sticky top-0 z-20 backdrop-blur-xl">
+        {/* Top Navigation Bar (Apple Frosted Glass) */}
+        <div className="px-4 sm:px-7 py-3.5 bg-[#161617]/85 border-b border-white/[0.08] space-y-3 sticky top-0 z-20 backdrop-blur-2xl">
           <div className="flex items-center justify-between gap-2 min-w-0">
             <div className="flex items-center gap-3 min-w-0 flex-1">
               <MksBrandLogo size="md" rounded="xl" className="border-emerald-500/30" />
@@ -175,11 +162,11 @@ export const WebLandingPortal: React.FC<{
                   <span className="font-semibold text-white text-sm sm:text-base tracking-tight truncate">
                     Mühendis Kayıt Sistemi
                   </span>
-                  <span className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium text-stone-400 border border-white/10 shrink-0">
+                  <span className="hidden md:inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium text-white/70 border border-white/10 bg-white/[0.04] shrink-0">
                     <Globe size={11} /> muhendiskayitsistemi.com.tr
                   </span>
                 </div>
-                <p className="text-[11px] text-stone-400 truncate">
+                <p className="text-[11px] text-white/60 truncate">
                   Web, Windows masaüstü, iOS ve Android kurulum merkezi
                 </p>
               </div>
@@ -190,7 +177,7 @@ export const WebLandingPortal: React.FC<{
                 <button
                   type="button"
                   onClick={() => onGoToLogin('LOGIN')}
-                  className="min-h-[40px] px-3 sm:px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                  className="min-h-[38px] px-4 py-1.5 rounded-full bg-[#10B981] hover:bg-[#059669] text-[#052E16] text-xs font-semibold flex items-center gap-1.5 transition-colors"
                 >
                   <ArrowRight size={14} />
                   <span className="hidden sm:inline">Giriş yap</span>
@@ -200,7 +187,7 @@ export const WebLandingPortal: React.FC<{
                 <button
                   type="button"
                   onClick={() => onOpenSupport('general')}
-                  className="hidden sm:flex min-h-[40px] px-3.5 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 border border-white/10 text-xs font-semibold items-center gap-1.5 transition-colors"
+                  className="hidden sm:flex min-h-[38px] px-4 py-1.5 rounded-full bg-white/[0.08] hover:bg-white/[0.14] text-white border border-white/12 text-xs font-medium items-center gap-1.5 transition-colors"
                 >
                   <MessageCircle size={14} />
                   <span>Destek</span>
@@ -212,16 +199,16 @@ export const WebLandingPortal: React.FC<{
                   data-mks-modal-close="true"
                   onClick={onClose}
                   aria-label="Kapat"
-                  className="w-10 h-10 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white flex items-center justify-center transition-colors"
+                  className="w-9 h-9 rounded-full bg-white/[0.08] hover:bg-white/[0.16] text-white/80 hover:text-white flex items-center justify-center transition-colors"
                 >
-                  <X size={18} />
+                  <X size={17} />
                 </button>
               )}
             </div>
           </div>
 
-          {/* Mobile-Safe Scrollable Navigation Rail (Zero 390px Overflow) */}
-          <div className="mks-tab-rail flex items-center gap-1.5 bg-stone-950 p-1 rounded-2xl border border-white/10 overflow-x-auto no-scrollbar max-w-full">
+          {/* Mobile-Safe Scrollable Apple Pill Navigation Rail */}
+          <div className="mks-tab-rail inline-flex items-center gap-1 bg-white/[0.06] p-1 rounded-full border border-white/[0.08] overflow-x-auto no-scrollbar max-w-full">
             {[
               { id: 'overview', label: 'Özellikler', icon: Layers },
               { id: 'download', label: 'Uygulamayı indir', icon: Download },
@@ -235,13 +222,13 @@ export const WebLandingPortal: React.FC<{
                   key={tab.id}
                   type="button"
                   onClick={() => setActiveTab(tab.id as any)}
-                  className={`shrink-0 min-h-[40px] flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors ${
+                  className={`shrink-0 min-h-[36px] flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
                     active
-                      ? 'bg-emerald-600 text-white'
-                      : 'text-stone-400 hover:text-white hover:bg-stone-900'
+                      ? 'bg-white text-[#1D1D1F] font-semibold shadow-sm'
+                      : 'text-white/75 hover:text-white hover:bg-white/[0.06]'
                   }`}
                 >
-                  <Icon size={14} />
+                  <Icon size={14} className={active ? 'text-emerald-600' : 'text-white/70'} />
                   <span>{tab.label}</span>
                 </button>
               );
@@ -270,7 +257,7 @@ export const WebLandingPortal: React.FC<{
             <button
               type="button"
               onClick={() => setActiveTab('pricing')}
-              className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-xs whitespace-nowrap transition-all shrink-0"
+              className="px-5 py-2.5 rounded-full bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-xs whitespace-nowrap transition-all shrink-0"
             >
               Paketleri İncele
             </button>
@@ -345,7 +332,7 @@ export const WebLandingPortal: React.FC<{
                       <a
                         href="/downloads/MKS_Masaustu_Kurulum.exe"
                         download="MKS_Masaustu_Kurulum.exe"
-                        className="py-3 px-4 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-950/60 transition-all text-center"
+                        className="py-3 px-4 rounded-full bg-[#0071E3] hover:bg-[#0077ED] text-white font-semibold text-xs flex items-center justify-center gap-2 shadow-lg transition-all text-center"
                       >
                         <Download size={15} />
                         <span>Direkt İndir (.EXE)</span>
@@ -353,7 +340,7 @@ export const WebLandingPortal: React.FC<{
                       <a
                         href="/downloads/MKS_Masaustu_Kurulum.zip"
                         download="MKS_Masaustu_Kurulum.zip"
-                        className="py-3 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/60 transition-all text-center"
+                        className="py-3 px-4 rounded-full bg-[#10B981] hover:bg-[#059669] text-[#052E16] font-semibold text-xs flex items-center justify-center gap-2 shadow-lg transition-all text-center"
                       >
                         <Download size={15} />
                         <span>Sıkıştırılmış İndir (.ZIP)</span>
@@ -363,7 +350,7 @@ export const WebLandingPortal: React.FC<{
                       <button
                         type="button"
                         onClick={() => handleCopyLink('win', windowsExeUrl)}
-                        className="flex-1 py-2.5 px-3 rounded-xl bg-stone-950 hover:bg-stone-800 text-stone-300 border border-white/10 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all"
+                        className="flex-1 py-2.5 px-4 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-white/85 border border-white/10 text-xs font-medium flex items-center justify-center gap-1.5 transition-all"
                       >
                         {copiedId === 'win' ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
                         <span>{copiedId === 'win' ? 'Link Kopyalandı!' : 'İndirme Linkini Kopyala'}</span>
@@ -411,7 +398,7 @@ export const WebLandingPortal: React.FC<{
                       href={googlePlayUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="w-full py-3.5 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/60 transition-all"
+                      className="w-full py-3.5 px-5 rounded-full bg-[#10B981] hover:bg-[#059669] text-[#052E16] font-semibold text-xs flex items-center justify-center gap-2 shadow-lg transition-all"
                     >
                       <ExternalLink size={16} />
                       <span>Google Play Mağazasından İndir</span>
@@ -420,7 +407,7 @@ export const WebLandingPortal: React.FC<{
                       <a
                         href="/downloads/MKS_Android.apk"
                         download="MKS_Android.apk"
-                        className="flex-1 py-2.5 px-3 rounded-xl bg-stone-950 hover:bg-stone-800 text-stone-200 border border-white/10 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all"
+                        className="flex-1 py-2.5 px-4 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-white/90 border border-white/10 text-xs font-medium flex items-center justify-center gap-1.5 transition-all"
                       >
                         <Download size={14} className="text-emerald-400" />
                         <span>Direkt APK İndir</span>
@@ -428,7 +415,7 @@ export const WebLandingPortal: React.FC<{
                       <button
                         type="button"
                         onClick={() => handleCopyLink('android', androidApkUrl)}
-                        className="py-2.5 px-3 rounded-xl bg-stone-950 hover:bg-stone-800 text-stone-300 border border-white/10 text-xs font-semibold flex items-center justify-center gap-1 transition-all"
+                        className="py-2.5 px-4 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-white/85 border border-white/10 text-xs font-medium flex items-center justify-center gap-1 transition-all"
                       >
                         {copiedId === 'android' ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
                         <span>{copiedId === 'android' ? 'Kopyalandı' : 'Link'}</span>
@@ -475,7 +462,7 @@ export const WebLandingPortal: React.FC<{
                     <button
                       type="button"
                       onClick={() => setActiveTab('ios_guide')}
-                      className="w-full py-3.5 px-4 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-purple-950/60 transition-all"
+                      className="w-full py-3.5 px-5 rounded-full bg-white text-[#1D1D1F] hover:bg-white/90 font-semibold text-xs flex items-center justify-center gap-2 shadow-lg transition-all"
                     >
                       <Apple size={16} />
                       <span>iPhone / iPad'e Tek Tıkla Yükle</span>
@@ -484,7 +471,7 @@ export const WebLandingPortal: React.FC<{
                       <button
                         type="button"
                         onClick={() => handleCopyLink('ios', officialSiteUrl)}
-                        className="flex-1 py-2.5 px-3 rounded-xl bg-stone-950 hover:bg-stone-800 text-stone-300 border border-white/10 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all"
+                        className="flex-1 py-2.5 px-4 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-white/85 border border-white/10 text-xs font-medium flex items-center justify-center gap-1.5 transition-all"
                       >
                         {copiedId === 'ios' ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
                         <span>{copiedId === 'ios' ? 'iOS Linki Kopyalandı!' : 'iOS Kurulum Linkini Kopyala'}</span>
@@ -538,14 +525,14 @@ export const WebLandingPortal: React.FC<{
                 </p>
 
                 {/* Monthly / Yearly Toggle */}
-                <div className="inline-flex items-center p-1.5 rounded-2xl bg-stone-900 border border-white/10 mt-2">
+                <div className="inline-flex items-center p-1 rounded-full bg-white/[0.06] border border-white/10 mt-2">
                   <button
                     type="button"
                     onClick={() => setBillingCycle('monthly')}
-                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                    className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all ${
                       billingCycle === 'monthly'
-                        ? 'bg-emerald-600 text-white shadow'
-                        : 'text-stone-400 hover:text-white'
+                        ? 'bg-white text-[#1D1D1F] font-semibold shadow'
+                        : 'text-white/75 hover:text-white'
                     }`}
                   >
                     Aylık Abonelik
@@ -553,10 +540,10 @@ export const WebLandingPortal: React.FC<{
                   <button
                     type="button"
                     onClick={() => setBillingCycle('yearly')}
-                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                    className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all flex items-center gap-1.5 ${
                       billingCycle === 'yearly'
-                        ? 'bg-emerald-600 text-white shadow'
-                        : 'text-stone-400 hover:text-white'
+                        ? 'bg-white text-[#1D1D1F] font-semibold shadow'
+                        : 'text-white/75 hover:text-white'
                     }`}
                   >
                     <span>Yıllık Abonelik</span>
@@ -674,12 +661,12 @@ export const WebLandingPortal: React.FC<{
                           type="button"
                           disabled={purchasingTier === tierKey}
                           onClick={() => handleSubscribeClick(tierKey)}
-                          className={`w-full py-3.5 px-4 rounded-2xl font-black text-xs transition-all shadow-lg flex items-center justify-center gap-2 ${
+                          className={`w-full py-3.5 px-5 rounded-full font-semibold text-xs transition-all shadow-lg flex items-center justify-center gap-2 ${
                             tierKey === 'MAX'
                               ? 'bg-amber-500 hover:bg-amber-400 text-stone-950 shadow-amber-950/40'
                               : tierKey === 'ULTRA'
-                              ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-950/40'
-                              : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-950/40'
+                              ? 'bg-[#0071E3] hover:bg-[#0077ED] text-white shadow-blue-950/40'
+                              : 'bg-[#10B981] hover:bg-[#059669] text-[#052E16] shadow-emerald-950/40'
                           }`}
                         >
                           <CreditCard size={15} />
@@ -785,7 +772,7 @@ export const WebLandingPortal: React.FC<{
                     <button
                       type="button"
                       onClick={() => handleCopyLink('ios_guide_copy', officialSiteUrl)}
-                      className="px-3.5 py-2.5 rounded-xl bg-stone-950 hover:bg-stone-800 text-stone-200 border border-white/15 font-bold text-xs flex items-center gap-1.5"
+                      className="px-4 py-2.5 rounded-full bg-white/[0.08] hover:bg-white/[0.14] text-white border border-white/15 font-medium text-xs flex items-center gap-1.5"
                     >
                       {copiedId === 'ios_guide_copy' ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
                       <span>{copiedId === 'ios_guide_copy' ? 'Bağlantı Kopyalandı' : 'Kurulum Linkini Kopyala'}</span>
@@ -794,7 +781,7 @@ export const WebLandingPortal: React.FC<{
                       <button
                         type="button"
                         onClick={() => onGoToLogin('LOGIN')}
-                        className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-stone-950 font-black text-xs whitespace-nowrap"
+                        className="px-5 py-2.5 rounded-full bg-[#10B981] hover:bg-[#059669] text-[#052E16] font-semibold text-xs whitespace-nowrap"
                       >
                         Web'den Hemen Giriş Yap
                       </button>
@@ -813,7 +800,7 @@ export const WebLandingPortal: React.FC<{
                 <div className="rounded-3xl overflow-hidden bg-stone-900/90 border border-emerald-500/25 shadow-2xl flex flex-col">
                   <div className="aspect-video w-full overflow-hidden bg-stone-950 relative">
                     <img
-                      src="/showcase/corporate-agtech-hero.jpg"
+                      src="/showcase/apple-hero-devices.png"
                       alt="MKS Çiftçi Cari Takibi, Depo Stok ve Barkodlu Satış Sistemi"
                       className="w-full h-full object-cover"
                     />

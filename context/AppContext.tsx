@@ -1,5 +1,5 @@
 
-import { safeStringify } from '../utils/json';
+import { safeStringify, safeJsonParse } from '../utils/json';
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { dbService, setActionBlocked, setActionBlockedCallback } from '../services/db';
 import { normalizeSupplierDoc } from '../utils/tradeCore';
@@ -24,7 +24,7 @@ import {
 } from '../utils/smartNotificationEngine';
 import { runLegacyDataSync } from './legacySync';
 import { generateUUID } from '../utils/uuid';
-import { round2 } from '../utils/dateUtils';
+import { round2, getLocalDateString } from '../utils/dateUtils';
 import { computeFarmerLedgerTotals } from '../utils/ledger';
 
 interface AppContextType {
@@ -257,9 +257,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [activeTeamMember, setActiveTeamMemberState] = useState<TeamMember | null>(() => {
     if (typeof window !== 'undefined') {
       const savedLocal = localStorage.getItem('mks_active_team_member');
-      if (savedLocal) return JSON.parse(savedLocal);
+      if (savedLocal) return safeJsonParse<TeamMember | null>(savedLocal, null);
       const savedSession = sessionStorage.getItem('mks_active_team_member');
-      if (savedSession) return JSON.parse(savedSession);
+      if (savedSession) return safeJsonParse<TeamMember | null>(savedSession, null);
     }
     return null;
   });
@@ -347,7 +347,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (list.length === 0) {
       const isSeeded = localStorage.getItem('mks_plants_seeded_v3');
       if (!isSeeded) {
-        console.log("Seeding default plants...");
         // Use batch if possible or just wait for all
         const seedPromises = DEFAULT_PLANTS.map(pData => {
           const plant: Plant = { ...pData as any, id: generateUUID() };
@@ -791,18 +790,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const farmerPayments = await dbService.getPaymentsByFarmer(id);
     const allTransactions = await dbService.getTransactions();
     const myPays = await dbService.getMyPayments();
+    const deletedMyPayIds = new Set<string>();
     for (const p of farmerPayments) {
-        const relatedTx = allTransactions.find(tx => tx.relatedId === p.id);
-        if (relatedTx) {
+        const relatedTxs = allTransactions.filter(tx => !tx.deletedAt && tx.relatedId === p.id);
+        for (const relatedTx of relatedTxs) {
             await dbService.deleteTransaction(relatedTx.id);
         }
         
-        const relatedMyPays = myPays.filter(mp => mp.relatedId === p.id);
+        const relatedMyPays = myPays.filter(mp => !mp.deletedAt && mp.relatedId === p.id);
         for (const mp of relatedMyPays) {
+            deletedMyPayIds.add(mp.id);
+            const settledTxs = allTransactions.filter(tx => !tx.deletedAt && tx.relatedId === mp.id);
+            for (const sTx of settledTxs) {
+                await dbService.deleteTransaction(sTx.id);
+            }
             await dbService.deleteMyPayment(mp.id);
         }
 
         await dbService.deletePayment(p.id);
+    }
+
+    // 2b. Delete standalone MyPayments (checks/notes not linked to a Payment row) & their settled Kasa txs
+    const standaloneFarmerMyPays = myPays.filter(mp => !mp.deletedAt && mp.farmerId === id && !deletedMyPayIds.has(mp.id));
+    for (const mp of standaloneFarmerMyPays) {
+        const settledTxs = allTransactions.filter(tx => !tx.deletedAt && tx.relatedId === mp.id);
+        for (const sTx of settledTxs) {
+            await dbService.deleteTransaction(sTx.id);
+        }
+        await dbService.deleteMyPayment(mp.id);
     }
 
     // 3. Delete all manual debts
@@ -815,6 +830,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const farmerVisits = await dbService.getVisitsByFarmer(id);
     for (const v of farmerVisits) {
         await dbService.deleteVisit(v.id);
+    }
+
+    // 4b. Delete farmer's map features & clear satellite cache for all farmer fields
+    const allFarmersForCache = await dbService.getFarmers();
+    const targetFarmer = allFarmersForCache.find(f => f.id === id);
+    for (const field of targetFarmer?.fields || []) {
+        await dbService.clearSatelliteCacheForField(field.id).catch(() => {});
+    }
+    const mapFeatures = await dbService.getMapFeatures();
+    for (const mf of mapFeatures) {
+        if (mf.farmerId === id) {
+            if (mf.fieldId) {
+                await dbService.clearSatelliteCacheForField(mf.fieldId).catch(() => {});
+            }
+            await dbService.deleteMapFeature(mf.id);
+        }
     }
 
     // 5. Delete the farmer
@@ -901,7 +932,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               const nextReminder: Reminder = {
                   ...reminder,
                   id: generateUUID(), // Yeni ID
-                  date: nextDate.toISOString().split('T')[0], // Yeni Tarih
+                  date: getLocalDateString(nextDate), // Yeni Tarih
                   isCompleted: false // Yeni görev aktif başlar
               };
 
@@ -1164,7 +1195,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               : 45;
         const d = new Date(normalizedPayment.date || Date.now());
         d.setDate(d.getDate() + days);
-        const unblockDateStr = d.toISOString().split('T')[0];
+        const unblockDateStr = getLocalDateString(d);
         const commRate = round2(Math.max(0, Number(normalizedPayment.commissionRate) || 0));
         const commAmount = round2((cleanAmount * commRate) / 100);
         const netAmt = round2(Math.max(0, cleanAmount - commAmount));
@@ -1199,20 +1230,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           createdById: normalizedPayment.createdById
         };
 
-        // Eğer bloke kart daha önce çözülüp Kasa'ya geçtiyse, bloke çözüm kaydına bağlı işlemi de yeni net tutara eşitle
-        if (alreadyUnblocked && existingMyPay) {
-          const unblockTx = allTxs.find(tx => !tx.deletedAt && tx.relatedId === existingMyPay.id);
-          if (unblockTx && normalizedPayment.accountId) {
-            await dbService.updateTransaction({
-              ...unblockTx,
-              accountId: normalizedPayment.accountId,
-              amount: netAmt,
-              partyName: farmerName,
-              partyType: 'FARMER',
-              partyId: normalizedPayment.farmerId
-            });
-          }
-        }
+        // Settled POS Kasa / Çek-Senet transaction preservation and in-place updates
+        // are handled atomically inside dbService.savePaymentWithEffects.
       }
     } else if (
       normalizedPayment.method === 'CHECK' ||
@@ -1387,21 +1406,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // 2. Delete all associated payments
     const payments = await dbService.getSupplierPayments(id);
+    const allTransactions = await dbService.getTransactions();
+    const myPays = await dbService.getMyPayments();
+    const deletedMyPayIds = new Set<string>();
     for (const p of payments) {
-        // Cleanup transactions
-        const transactions = await dbService.getTransactions();
-        const relatedTx = transactions.find(t => t.relatedId === p.id);
-        if (relatedTx) {
+        // Cleanup all related transactions
+        const relatedTxs = allTransactions.filter(t => !t.deletedAt && t.relatedId === p.id);
+        for (const relatedTx of relatedTxs) {
             await dbService.deleteTransaction(relatedTx.id);
         }
 
-        // Cleanup MyPayments
-        const myPays = await dbService.getMyPayments();
-        const relatedMyPay = myPays.find(mp => mp.relatedId === p.id || (mp.supplierId === id && mp.amount === p.amount && mp.issueDate === p.date));
-        if (relatedMyPay) {
-            await deleteMyPayment(relatedMyPay.id);
+        // Cleanup all matching MyPayments & any settled Kasa transactions linked to them
+        const relatedMyPays = myPays.filter(
+            mp => !mp.deletedAt && (mp.relatedId === p.id || (mp.supplierId === id && mp.amount === p.amount && mp.issueDate === p.date))
+        );
+        for (const mp of relatedMyPays) {
+            deletedMyPayIds.add(mp.id);
+            const settledTxs = allTransactions.filter(t => !t.deletedAt && t.relatedId === mp.id);
+            for (const sTx of settledTxs) {
+                await dbService.deleteTransaction(sTx.id);
+            }
+            await deleteMyPayment(mp.id);
         }
         await dbService.deleteSupplierPayment(p.id);
+    }
+
+    // Cleanup any standalone MyPayments belonging to this supplier
+    const remainingMyPays = myPays.filter(mp => !mp.deletedAt && mp.supplierId === id && !deletedMyPayIds.has(mp.id));
+    for (const mp of remainingMyPays) {
+        const settledTxs = allTransactions.filter(t => !t.deletedAt && t.relatedId === mp.id);
+        for (const sTx of settledTxs) {
+            await dbService.deleteTransaction(sTx.id);
+        }
+        await deleteMyPayment(mp.id);
     }
 
     // 3. Delete the supplier itself
@@ -1682,6 +1719,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const myPays = await dbService.getMyPayments();
     const relatedMyPays = myPays.filter(p => p.relatedId === payment.id);
     for (const p of relatedMyPays) {
+        const linkedMyPayTx = transactions.filter(t => t.relatedId === p.id);
+        for (const ltx of linkedMyPayTx) {
+            await dbService.deleteTransaction(ltx.id);
+        }
         await dbService.deleteMyPayment(p.id);
     }
 
@@ -1794,6 +1835,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const myPays = await dbService.getMyPayments();
         const relatedMyPays = myPays.filter(p => p.relatedId === id);
         for (const p of relatedMyPays) {
+            const linkedMyPayTx = transactions.filter(t => t.relatedId === p.id);
+            for (const ltx of linkedMyPayTx) {
+                await dbService.deleteTransaction(ltx.id);
+            }
             await dbService.deleteMyPayment(p.id);
         }
 
