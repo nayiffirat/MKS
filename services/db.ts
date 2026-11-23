@@ -279,7 +279,7 @@ const USER_SYNC_COLLECTIONS = [
   "supplierPayments", "myPayments", "turnoverLogs", "expenses", "accounts",
   "transactions", "teamMembers", "messages", "collectionLogs", "plants",
   "siloTransactions", "siloContacts", "mapFeatures", "prescriptionTemplates",
-  "ministryShipments", "ministryRecords"
+  "ministryShipments", "ministryRecords", "edmData"
 ] as const;
 
 const FS_ROOT = "MKS";
@@ -481,6 +481,309 @@ export const initDB = async () => {
 const portalRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const PORTAL_SYNC_COLLECTIONS = new Set(['farmers', 'prescriptions', 'visits', 'payments', 'myPayments', 'manualDebts', 'accounts']);
 
+export type PurgeCategoryKey =
+  | 'farmers'
+  | 'prescriptions'
+  | 'payments'
+  | 'inventory'
+  | 'suppliers'
+  | 'kasa'
+  | 'expenses'
+  | 'silo'
+  | 'visits_reminders'
+  | 'official_integrators';
+
+let isWipingData = false;
+const HARD_DELETE_TOMBSTONE_PREFIX = 'mks_hard_deleted_map_v1_';
+const CATEGORY_WIPE_TS_PREFIX = 'mks_category_wiped_at_v1_';
+
+const getStorageSafe = (): Storage | null => {
+  try {
+    return typeof localStorage !== 'undefined' ? localStorage : null;
+  } catch {
+    return null;
+  }
+};
+
+const resolveUidForTombstones = (explicitUid?: string): string => {
+  if (explicitUid) return explicitUid;
+  try {
+    if (auth?.currentUser?.uid) return auth.currentUser.uid;
+  } catch {}
+  const ls = getStorageSafe();
+  return ls?.getItem('lastUserId') || 'anon';
+};
+
+export const readHardDeletedMap = (uid?: string): Record<string, string> => {
+  const ls = getStorageSafe();
+  if (!ls) return {};
+  try {
+    const raw = ls.getItem(`${HARD_DELETE_TOMBSTONE_PREFIX}${resolveUidForTombstones(uid)}`);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+const writeHardDeletedMap = (map: Record<string, string>, uid?: string) => {
+  const ls = getStorageSafe();
+  if (!ls) return;
+  try {
+    const entries = Object.entries(map);
+    // Bounded retention so localStorage never overflows even after years of deletions
+    const capped = entries.length > 12000
+      ? Object.fromEntries(entries.sort((a, b) => (a[1] < b[1] ? 1 : -1)).slice(0, 10000))
+      : map;
+    ls.setItem(`${HARD_DELETE_TOMBSTONE_PREFIX}${resolveUidForTombstones(uid)}`, JSON.stringify(capped));
+  } catch (e) {
+    console.warn('writeHardDeletedMap warning:', e);
+  }
+};
+
+export const recordHardDeletes = (entries: { col: string; id: string }[], isoTs?: string, uid?: string) => {
+  if (!entries.length) return;
+  const ts = isoTs || new Date().toISOString();
+  const map = readHardDeletedMap(uid);
+  for (const { col, id } of entries) {
+    if (col && id) map[`${col}:${id}`] = ts;
+  }
+  writeHardDeletedMap(map, uid);
+};
+
+export const clearHardDeleteEntry = (col: string, id: string, uid?: string) => {
+  if (!col || !id) return;
+  const map = readHardDeletedMap(uid);
+  const key = `${col}:${id}`;
+  if (key in map) {
+    delete map[key];
+    writeHardDeletedMap(map, uid);
+  }
+};
+
+export const readCategoryWipeMap = (uid?: string): Record<string, string> => {
+  const ls = getStorageSafe();
+  if (!ls) return {};
+  try {
+    const raw = ls.getItem(`${CATEGORY_WIPE_TS_PREFIX}${resolveUidForTombstones(uid)}`);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+const writeCategoryWipeMap = (map: Record<string, string>, uid?: string) => {
+  const ls = getStorageSafe();
+  if (!ls) return;
+  try {
+    ls.setItem(`${CATEGORY_WIPE_TS_PREFIX}${resolveUidForTombstones(uid)}`, JSON.stringify(map));
+  } catch (e) {
+    console.warn('writeCategoryWipeMap warning:', e);
+  }
+};
+
+export const markCategoriesWiped = (cols: string[], isoTs: string, uid?: string): Record<string, string> => {
+  const current = readCategoryWipeMap(uid);
+  for (const col of cols) {
+    if (!col) continue;
+    if (!current[col] || isoTs > current[col]) {
+      current[col] = isoTs;
+    }
+  }
+  writeCategoryWipeMap(current, uid);
+  return current;
+};
+
+export const clearCategoryWipes = (cols: string[], uid?: string) => {
+  if (!cols.length) return;
+  const current = readCategoryWipeMap(uid);
+  let changed = false;
+  for (const col of cols) {
+    if (col in current) {
+      delete current[col];
+      changed = true;
+    }
+  }
+  if (changed) writeCategoryWipeMap(current, uid);
+};
+
+export const getCappedCloudHardDeletedMap = (uid?: string, maxEntries = 2000): Record<string, string> => {
+  const map = readHardDeletedMap(uid);
+  const entries = Object.entries(map).filter(([k, v]) => Boolean(k) && typeof v === 'string' && v.length > 0);
+  if (entries.length <= maxEntries) {
+    return Object.fromEntries(entries);
+  }
+  return Object.fromEntries(
+    entries.sort((a, b) => (a[1] < b[1] ? 1 : -1)).slice(0, maxEntries)
+  );
+};
+
+export const mergeCloudHardDeletedMap = (
+  cloudMap: Record<string, string> | undefined | null,
+  uid?: string
+): string[] => {
+  if (!cloudMap || typeof cloudMap !== 'object' || Array.isArray(cloudMap)) return [];
+  const localMap = readHardDeletedMap(uid);
+  const newlyAddedOrUpdated: string[] = [];
+  let changed = false;
+  for (const [key, iso] of Object.entries(cloudMap)) {
+    if (!key || typeof iso !== 'string' || !iso) continue;
+    const existingIso = localMap[key];
+    if (!existingIso || iso > existingIso) {
+      localMap[key] = iso;
+      newlyAddedOrUpdated.push(key);
+      changed = true;
+    }
+  }
+  if (changed) {
+    writeHardDeletedMap(localMap, uid);
+  }
+  return newlyAddedOrUpdated;
+};
+
+const EDM_SYNC_STORAGE_KEYS = new Set<string>([
+  'mks_official_efatura_warehouse_v2',
+  'mks_edm_incoming_invoices_v2',
+  'mks_edm_outgoing_invoices_v2',
+  'mks_edm_config_v2'
+]);
+
+export const hydrateLocalStorageFromEdmDataDoc = (
+  docRecord: { id?: string; data?: any } | null | undefined,
+  uid?: string
+): void => {
+  const docId = docRecord?.id;
+  if (!docId || !EDM_SYNC_STORAGE_KEYS.has(docId) || docRecord?.data === undefined) return;
+  const ls = getStorageSafe();
+  if (!ls) return;
+  const resolvedUid = resolveUidForTombstones(uid);
+  if (!resolvedUid || resolvedUid === 'anon') return;
+  try {
+    let payloadToStore = docRecord.data;
+    if (docId === 'mks_edm_config_v2' && payloadToStore && typeof payloadToStore === 'object') {
+      const { password: _strippedPwd, ...safeCfg } = payloadToStore as Record<string, any>;
+      payloadToStore = safeCfg;
+    }
+    ls.setItem(`${docId}_${resolvedUid}`, JSON.stringify(payloadToStore));
+    if (typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('mks-official-warehouse-updated'));
+    }
+  } catch (e) {
+    console.warn(`hydrateLocalStorageFromEdmDataDoc warning (${docId}):`, e);
+  }
+};
+
+const removeLocalStorageForEdmDataDoc = (docId: string, uid?: string): void => {
+  if (!docId || !EDM_SYNC_STORAGE_KEYS.has(docId)) return;
+  const ls = getStorageSafe();
+  if (!ls) return;
+  const resolvedUid = resolveUidForTombstones(uid);
+  if (!resolvedUid || resolvedUid === 'anon') return;
+  try {
+    ls.removeItem(`${docId}_${resolvedUid}`);
+    if (typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('mks-official-warehouse-updated'));
+    }
+  } catch (e) {
+    console.warn(`removeLocalStorageForEdmDataDoc warning (${docId}):`, e);
+  }
+};
+
+export function shouldAcceptCloudItem(params: {
+  col: string;
+  docId: string;
+  incoming: { lastUpdated?: string; deletedAt?: string } | null | undefined;
+  localExisting: { lastUpdated?: string; deletedAt?: string; _syncedFromCloud?: boolean } | null | undefined;
+  pendingOutbox?: boolean;
+  hardDeletedAtMap: Record<string, string>;
+  categoryWipedAtMap: Record<string, string>;
+}): { accept: boolean; reason?: 'HARD_DELETED' | 'WIPED' | 'PENDING_OUTBOX' | 'LOCAL_NEWER' | 'LOCAL_SOFT_DELETE' } {
+  const { col, docId, incoming, localExisting, pendingOutbox, hardDeletedAtMap, categoryWipedAtMap } = params;
+  if (!incoming || !docId) return { accept: false };
+
+  const incomingTsRaw = incoming.lastUpdated ? new Date(incoming.lastUpdated).getTime() : 0;
+  const incomingTs = Number.isFinite(incomingTsRaw) ? incomingTsRaw : 0;
+
+  const hardDeleteIso = hardDeletedAtMap[`${col}:${docId}`];
+  if (hardDeleteIso) {
+    const hdTs = new Date(hardDeleteIso).getTime();
+    if (!Number.isFinite(hdTs) || incomingTs <= hdTs) {
+      return { accept: false, reason: 'HARD_DELETED' };
+    }
+  }
+
+  const wipeIso = categoryWipedAtMap[col];
+  if (wipeIso) {
+    const wipeTs = new Date(wipeIso).getTime();
+    if (Number.isFinite(wipeTs) && incomingTs <= wipeTs) {
+      return { accept: false, reason: 'WIPED' };
+    }
+  }
+
+  if (pendingOutbox) {
+    const localTsRaw = localExisting?.lastUpdated ? new Date(localExisting.lastUpdated).getTime() : 0;
+    const localTs = Number.isFinite(localTsRaw) ? localTsRaw : 0;
+    if (incomingTs > localTs && localTs > 0) {
+      return { accept: true };
+    }
+    return { accept: false, reason: 'PENDING_OUTBOX' };
+  }
+
+  if (localExisting) {
+    const localTsRaw = localExisting.lastUpdated ? new Date(localExisting.lastUpdated).getTime() : 0;
+    const localTs = Number.isFinite(localTsRaw) ? localTsRaw : 0;
+    if (localExisting.deletedAt && !incoming.deletedAt) {
+      if (incomingTs <= localTs) {
+        return { accept: false, reason: 'LOCAL_SOFT_DELETE' };
+      }
+      return { accept: true };
+    }
+    if (localTs > incomingTs) {
+      return { accept: false, reason: 'LOCAL_NEWER' };
+    }
+  }
+
+  return { accept: true };
+}
+
+export function classifyLocalMissingFromServer(params: {
+  col: string;
+  localItem: { id: string; lastUpdated?: string; _syncedFromCloud?: boolean };
+  hasPendingOutbox: boolean;
+  hardDeletedAtMap: Record<string, string>;
+  categoryWipedAtMap: Record<string, string>;
+}): 'DELETE_LOCAL' | 'UPLOAD' {
+  const { col, localItem, hasPendingOutbox, hardDeletedAtMap, categoryWipedAtMap } = params;
+  const key = `${col}:${localItem.id}`;
+  const localTsRaw = localItem.lastUpdated ? new Date(localItem.lastUpdated).getTime() : 0;
+  const localTs = Number.isFinite(localTsRaw) ? localTsRaw : 0;
+
+  const hdIso = hardDeletedAtMap[key];
+  if (hdIso) {
+    const hdTs = new Date(hdIso).getTime();
+    if (!Number.isFinite(hdTs) || localTs <= hdTs) {
+      return 'DELETE_LOCAL';
+    }
+  }
+
+  const wipeIso = categoryWipedAtMap[col];
+  if (wipeIso) {
+    const wipeTs = new Date(wipeIso).getTime();
+    if (Number.isFinite(wipeTs) && localTs <= wipeTs) {
+      return 'DELETE_LOCAL';
+    }
+  }
+
+  if (localItem._syncedFromCloud === true && !hasPendingOutbox) {
+    return 'DELETE_LOCAL';
+  }
+
+  return 'UPLOAD';
+}
+
 let outboxRetryTimer: ReturnType<typeof setTimeout> | null = null;
 const scheduleOutboxRetry = (delayMs: number) => {
   if (typeof window === 'undefined') return;
@@ -497,7 +800,8 @@ const enqueueSyncOutbox = async (
   itemId: string,
   payload: any,
   op: 'UPSERT' | 'DELETE' = 'UPSERT',
-  queuedAtIso?: string
+  queuedAtIso?: string,
+  hardDelete: boolean = false
 ) => {
   if (
     !collectionName ||
@@ -505,8 +809,7 @@ const enqueueSyncOutbox = async (
     collectionName === 'systemErrors' ||
     collectionName === 'syncOutbox' ||
     collectionName === 'satelliteCache' ||
-    collectionName === 'counters' ||
-    collectionName === 'edmData'
+    collectionName === 'counters'
   ) {
     return;
   }
@@ -525,6 +828,7 @@ const enqueueSyncOutbox = async (
       collection: collectionName,
       itemId,
       op,
+      hardDelete: hardDelete || undefined,
       payload: sanitizeForFirestore(rawPayload),
       updatedAt,
       retryCount: existing?.retryCount || 0,
@@ -579,6 +883,7 @@ const dequeueSyncOutbox = async (collectionName: string, itemId: string, expecte
 let isFlushingOutbox = false;
 let recheckOutboxAfterFlush = false;
 const flushSyncOutboxInternal = async () => {
+  if (isWipingData) return;
   if (typeof navigator !== 'undefined' && !navigator.onLine) return;
   const user = auth.currentUser;
   if (!user) return;
@@ -591,14 +896,72 @@ const flushSyncOutboxInternal = async () => {
   try {
     const db = await initDB();
     const pending = (await db.getAll('syncOutbox')) as (SyncOutboxEntry & { ownerUid?: string; lastError?: string })[];
+    if (pending.length > 0) {
+      try {
+        const profRef = doc(firestore, FS_ROOT, FS_ORG, FS_USERS, user.uid);
+        const profSnap = await getDocFromServer(profRef).catch(() => getDoc(profRef));
+        if (profSnap && profSnap.exists()) {
+          const cloudProf = profSnap.data() as UserProfile;
+          if (cloudProf?.categoryWipedAt && typeof cloudProf.categoryWipedAt === 'object') {
+            for (const [colName, iso] of Object.entries(cloudProf.categoryWipedAt)) {
+              if (typeof iso === 'string' && iso) {
+                markCategoriesWiped([colName], iso, user.uid);
+              }
+            }
+          }
+          if (cloudProf?.hardDeletedAt) {
+            mergeCloudHardDeletedMap(cloudProf.hardDeletedAt, user.uid);
+          }
+        }
+      } catch {}
+    }
+
+    const hardDeletedAtMap = readHardDeletedMap(user.uid);
+    const categoryWipedAtMap = readCategoryWipeMap(user.uid);
+
     for (const entry of pending) {
+      if (isWipingData) break;
       if (!auth.currentUser || auth.currentUser.uid !== user.uid) break;
       if (entry.ownerUid && entry.ownerUid !== user.uid) continue;
       try {
-        const cleanData = sanitizeForFirestore(
-          entry.payload || { id: entry.itemId, deletedAt: new Date().toISOString(), lastUpdated: new Date().toISOString() }
-        );
-        await setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, user.uid, entry.collection, entry.itemId), cleanData, { merge: true });
+        const entryTsRaw = entry.updatedAt ? new Date(entry.updatedAt).getTime() : 0;
+        const entryTs = Number.isFinite(entryTsRaw) ? entryTsRaw : 0;
+
+        if (entry.op !== 'DELETE' || !entry.hardDelete) {
+          const hdIso = hardDeletedAtMap[`${entry.collection}:${entry.itemId}`];
+          const hdTs = hdIso ? new Date(hdIso).getTime() : NaN;
+          const wipeIso = categoryWipedAtMap[entry.collection];
+          const wipeTs = wipeIso ? new Date(wipeIso).getTime() : NaN;
+          const blockedByHd = Boolean(hdIso) && (!Number.isFinite(hdTs) || entryTs <= hdTs);
+          const blockedByWipe = Boolean(wipeIso) && Number.isFinite(wipeTs) && entryTs <= wipeTs;
+
+          if (blockedByHd || blockedByWipe) {
+            if (db.objectStoreNames.contains(entry.collection as any)) {
+              await db.delete(entry.collection as any, entry.itemId).catch(() => {});
+            }
+            if (entry.collection === 'edmData') {
+              removeLocalStorageForEdmDataDoc(entry.itemId, user.uid);
+            }
+            await dequeueSyncOutbox(entry.collection, entry.itemId, entry.updatedAt);
+            continue;
+          }
+        }
+
+        const targetRef = doc(firestore, FS_ROOT, FS_ORG, FS_USERS, user.uid, entry.collection, entry.itemId);
+        if (entry.op === 'DELETE' && entry.hardDelete) {
+          await deleteDoc(targetRef);
+        } else {
+          const cleanData = sanitizeForFirestore(
+            entry.payload || { id: entry.itemId, deletedAt: new Date().toISOString(), lastUpdated: new Date().toISOString() }
+          );
+          await setDoc(targetRef, cleanData, { merge: true });
+          if (db.objectStoreNames.contains(entry.collection as any)) {
+            const latestLocal = (await db.get(entry.collection as any, entry.itemId)) as any;
+            if (latestLocal && (!latestLocal.lastUpdated || !entry.updatedAt || latestLocal.lastUpdated <= entry.updatedAt)) {
+              await db.put(entry.collection as any, { ...latestLocal, _syncedFromCloud: true });
+            }
+          }
+        }
         await dequeueSyncOutbox(entry.collection, entry.itemId, entry.updatedAt);
       } catch (err) {
         const nextRetryCount = (entry.retryCount || 0) + 1;
@@ -686,17 +1049,42 @@ const schedulePortalShareRefreshIfActive = (collectionName: string, data: any) =
   );
 };
 
+let lastMonotonicMs = 0;
+const nextMonotonicIso = (): string => {
+  const now = Date.now();
+  lastMonotonicMs = now > lastMonotonicMs ? now : lastMonotonicMs + 1;
+  return new Date(lastMonotonicMs).toISOString();
+};
+
+const awaitCloudWriteWithTimeout = async (promise: Promise<unknown>, timeoutMs = 4000): Promise<void> => {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    await Promise.race([
+      promise.catch(() => {}),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
+
 /**
- * Write-ahead zero-data-loss sync:
- * 1. Stamps local copy without mutating caller's object in-place.
- * 2. Writes to syncOutbox FIRST so weak rural signal or app close never loses the mutation.
- * 3. Fires Firestore write asynchronously (`void`) without blocking UI, dequeuing on ACK or scheduling exponential backoff.
+ * Write-ahead direct cloud sync:
+ * 1. Stamps local copy with strictly monotonic lastUpdated without mutating caller's object in-place.
+ * 2. Writes to IndexedDB + syncOutbox FIRST so weak rural signal or app close never loses the mutation.
+ * 3. Pushes directly to Firestore immediately whenever authenticated and waits up to 4s for server ACK.
  */
 const backgroundSync = async (collectionName: string, data: any, opts?: { preserveLastUpdated?: boolean }) => {
   if (!data || !data.id) return;
-  const mutationIso = opts?.preserveLastUpdated && data.lastUpdated ? String(data.lastUpdated) : new Date().toISOString();
+  const mutationIso = opts?.preserveLastUpdated && data.lastUpdated ? String(data.lastUpdated) : nextMonotonicIso();
   const { _syncedFromCloud: _ignored, ...cleanInput } = data;
   const stamped = { ...cleanInput, lastUpdated: mutationIso };
+
+  if (!stamped.deletedAt) {
+    clearHardDeleteEntry(collectionName, stamped.id);
+  }
 
   try {
     const db = await initDB();
@@ -720,14 +1108,18 @@ const backgroundSync = async (collectionName: string, data: any, opts?: { preser
   schedulePortalShareRefreshIfActive(collectionName, stamped);
 
   const user = auth.currentUser;
-  if (!user || !navigator.onLine) {
+  if (!user) {
     return;
   }
 
   const cleanData = sanitizeForFirestore(stamped);
   const path = [FS_ROOT, FS_ORG, FS_USERS, user.uid, collectionName, stamped.id].join("/");
 
-  void setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, user.uid, collectionName, stamped.id), cleanData, { merge: true })
+  const writePromise = setDoc(
+    doc(firestore, FS_ROOT, FS_ORG, FS_USERS, user.uid, collectionName, stamped.id),
+    cleanData,
+    { merge: true }
+  )
     .then(async () => {
       await dequeueSyncOutbox(collectionName, stamped.id, mutationIso);
       try {
@@ -744,14 +1136,16 @@ const backgroundSync = async (collectionName: string, data: any, opts?: { preser
       await markOutboxRetryFailure(collectionName, stamped.id, err);
       handleFirestoreError(err, OperationType.WRITE, path);
     });
+
+  await awaitCloudWriteWithTimeout(writePromise, 4000);
 };
 
 const backgroundDelete = async (collectionName: import('idb').StoreNames<import('./db').AgriDB>, id: string) => {
   const db = await initDB();
-  const nowIso = new Date().toISOString();
+  const nowIso = nextMonotonicIso();
   const item = await db.get(collectionName, id) as any;
   if (item) {
-    const tombstone = { ...item, deletedAt: nowIso, lastUpdated: nowIso };
+    const tombstone = { ...item, deletedAt: item.deletedAt || nowIso, lastUpdated: nowIso };
     delete tombstone._syncedFromCloud;
     await db.put(collectionName, tombstone);
     await backgroundSync(collectionName, tombstone, { preserveLastUpdated: true });
@@ -762,16 +1156,152 @@ const backgroundDelete = async (collectionName: import('idb').StoreNames<import(
   await enqueueSyncOutbox(collectionName, id, tombstone, 'DELETE', nowIso);
 
   const user = auth.currentUser;
-  if (!user || !navigator.onLine) {
+  if (!user) {
     return;
   }
   const path = [FS_ROOT, FS_ORG, FS_USERS, user.uid, collectionName, id].join("/");
-  void setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, user.uid, collectionName, id), tombstone, { merge: true })
+  const writePromise = setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, user.uid, collectionName, id), tombstone, { merge: true })
     .then(() => dequeueSyncOutbox(collectionName, id, nowIso))
     .catch(async (err) => {
       await markOutboxRetryFailure(collectionName, id, err);
       handleFirestoreError(err, OperationType.WRITE, path);
     });
+
+  await awaitCloudWriteWithTimeout(writePromise, 4000);
+};
+
+const SYNCABLE_COLLECTION_SET = new Set<string>(USER_SYNC_COLLECTIONS as readonly string[]);
+
+/**
+ * Gerçek kalıcı silme: IndexedDB + syncOutbox + Firestore'dan tamamen siler
+ * ve mks_hard_deleted_map_v1 ile eski kopyaların geri dönmesini engeller.
+ */
+const hardDeleteRecordsBatchInternal = async (
+  itemsByCol: Record<string, string[]>,
+  opts?: { uid?: string }
+): Promise<void> => {
+  const pairs: { col: string; id: string }[] = [];
+  const colsSet = new Set<string>();
+
+  for (const [col, ids] of Object.entries(itemsByCol)) {
+    if (!col || !Array.isArray(ids) || ids.length === 0) continue;
+    const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+    if (uniqueIds.length === 0) continue;
+    colsSet.add(col);
+    for (const id of uniqueIds) {
+      pairs.push({ col, id });
+    }
+  }
+  if (pairs.length === 0) return;
+
+  const nowIso = new Date().toISOString();
+  const uid = opts?.uid || auth.currentUser?.uid || (typeof localStorage !== 'undefined' ? localStorage.getItem('lastUserId') || undefined : undefined);
+
+  // 1. Tombstone map'i HEMEN yaz (senkronizasyon veya yeniden yükleme yarışı olmaması için)
+  recordHardDeletes(pairs.filter(p => SYNCABLE_COLLECTION_SET.has(p.col)), nowIso, uid);
+
+  // 2. IndexedDB + syncOutbox'u tek transaction'da güncelle
+  const db = await initDB();
+  const existingStores = Array.from(colsSet).filter(c => db.objectStoreNames.contains(c as any));
+  const txStores = db.objectStoreNames.contains('syncOutbox')
+    ? [...existingStores, 'syncOutbox']
+    : existingStores;
+
+  if (txStores.length > 0) {
+    const tx = db.transaction(txStores as any, 'readwrite');
+    const hasOutbox = db.objectStoreNames.contains('syncOutbox');
+    const outboxStore = hasOutbox ? tx.objectStore('syncOutbox' as any) : null;
+
+    for (const { col, id } of pairs) {
+      if (existingStores.includes(col)) {
+        await tx.objectStore(col as any).delete(id);
+      }
+      if (col === 'edmData') {
+        removeLocalStorageForEdmDataDoc(id, uid);
+      }
+      if (outboxStore && SYNCABLE_COLLECTION_SET.has(col)) {
+        const entry: SyncOutboxEntry & { ownerUid?: string } = {
+          id: `${col}:${id}`,
+          collection: col,
+          itemId: id,
+          op: 'DELETE',
+          hardDelete: true,
+          payload: null,
+          updatedAt: nowIso,
+          retryCount: 0,
+          ownerUid: uid
+        };
+        await outboxStore.put(entry);
+      }
+    }
+    await tx.done;
+  }
+
+  // 3. Oturum açıksa Firestore'dan da batch halinde doğrudan sil, outbox'tan düş ve hardDeletedAt mührünü buluta yaz
+  const activeUser = auth.currentUser;
+  const targetUid = activeUser?.uid;
+  const ls = getStorageSafe();
+
+  if (!targetUid || (uid && targetUid !== uid)) {
+    if (ls && uid) {
+      try {
+        const rawProf = ls.getItem('mks_user_profile');
+        if (rawProf) {
+          const parsedProf = JSON.parse(rawProf);
+          parsedProf.hardDeletedAt = getCappedCloudHardDeletedMap(uid);
+          parsedProf.lastUpdate = nowIso;
+          ls.setItem('mks_user_profile', safeStringify(parsedProf));
+          ls.setItem(`mks_pending_profile_sync_${uid}`, '1');
+        }
+      } catch {}
+    }
+    return;
+  }
+
+  const cloudPairs = pairs.filter(p => SYNCABLE_COLLECTION_SET.has(p.col) || p.col === 'systemErrors' || p.col === 'counters' || p.col === 'edmData');
+  const batchSize = 400;
+  for (let i = 0; i < cloudPairs.length; i += batchSize) {
+    const chunk = cloudPairs.slice(i, i + batchSize);
+    const runBatch = async () => {
+      try {
+        const batch = writeBatch(firestore);
+        for (const { col, id } of chunk) {
+          batch.delete(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, targetUid, col, id));
+        }
+        await batch.commit();
+        for (const { col, id } of chunk) {
+          if (SYNCABLE_COLLECTION_SET.has(col)) {
+            await dequeueSyncOutbox(col, id, nowIso);
+          }
+        }
+      } catch (err) {
+        for (const { col, id } of chunk) {
+          if (SYNCABLE_COLLECTION_SET.has(col)) {
+            await markOutboxRetryFailure(col, id, err);
+          }
+        }
+        console.warn('hardDeleteRecordsBatch Firestore error (queued in outbox for retry):', err);
+      }
+    };
+    await awaitCloudWriteWithTimeout(runBatch(), 4000);
+  }
+
+  await awaitCloudWriteWithTimeout(
+    setDoc(
+      doc(firestore, FS_ROOT, FS_ORG, FS_USERS, targetUid),
+      sanitizeForFirestore({
+        hardDeletedAt: getCappedCloudHardDeletedMap(targetUid),
+        lastUpdate: nowIso
+      }),
+      { merge: true }
+    ).catch(err => console.warn('hardDeletedAt profile sync warning:', err)),
+    4000
+  );
+};
+
+const hardDeleteRecordInternal = async (collectionName: string, id: string, uid?: string): Promise<void> => {
+  if (!collectionName || !id) return;
+  await hardDeleteRecordsBatchInternal({ [collectionName]: [id] }, { uid });
 };
 
 let isActionBlocked = false;
@@ -1166,6 +1696,17 @@ const dbServiceObj = {
             if (snap && snap.exists()) {
                 const cloudData = snap.data() as UserProfile & { password?: string };
                 const { password: _legacyPassword, ...safeCloudData } = cloudData;
+                if (safeCloudData.categoryWipedAt && typeof safeCloudData.categoryWipedAt === 'object') {
+                  for (const [colName, iso] of Object.entries(safeCloudData.categoryWipedAt)) {
+                    if (typeof iso === 'string' && iso) {
+                      markCategoriesWiped([colName], iso, uid);
+                    }
+                  }
+                }
+                if (safeCloudData.hardDeletedAt) {
+                  mergeCloudHardDeletedMap(safeCloudData.hardDeletedAt, uid);
+                }
+
                 const localTs = cachedLocal?.lastUpdate ? new Date(cachedLocal.lastUpdate).getTime() : 0;
                 const cloudTs = safeCloudData.lastUpdate ? new Date(safeCloudData.lastUpdate).getTime() : 0;
                 const hasPendingOfflineProfile = localStorage.getItem(`mks_pending_profile_sync_${uid}`) === '1' && localTs > cloudTs;
@@ -1186,6 +1727,8 @@ const dbServiceObj = {
                   theme: resolvedTheme,
                   colorMode: resolvedColorMode,
                   language: resolvedLang,
+                  categoryWipedAt: readCategoryWipeMap(uid),
+                  hardDeletedAt: getCappedCloudHardDeletedMap(uid)
                 };
                 
                 if (isRootAdmin) {
@@ -1270,7 +1813,24 @@ const dbServiceObj = {
 
   async saveUserProfile(uid: string, profile: UserProfile) {
     const nowIso = new Date().toISOString();
-    const safeLocalProfile: any = { ...profile, uid, lastUpdate: nowIso };
+    if (profile.categoryWipedAt && typeof profile.categoryWipedAt === 'object') {
+      for (const [colName, iso] of Object.entries(profile.categoryWipedAt)) {
+        if (typeof iso === 'string' && iso) {
+          markCategoriesWiped([colName], iso, uid);
+        }
+      }
+    }
+    if (profile.hardDeletedAt) {
+      mergeCloudHardDeletedMap(profile.hardDeletedAt, uid);
+    }
+
+    const safeLocalProfile: any = {
+      ...profile,
+      uid,
+      lastUpdate: nowIso,
+      categoryWipedAt: readCategoryWipeMap(uid),
+      hardDeletedAt: getCappedCloudHardDeletedMap(uid)
+    };
     delete safeLocalProfile.password;
     if (safeLocalProfile.adminPassword && !isHashedSecret(safeLocalProfile.adminPassword)) {
       safeLocalProfile.adminPassword = await hashSecret(safeLocalProfile.adminPassword);
@@ -1292,18 +1852,36 @@ const dbServiceObj = {
             const isRootAdmin = user?.email === 'nayiffirat@gmail.com';
             
             let hadLegacyPassword = false;
+            let docExists = false;
             if (!isRootAdmin) {
                 const snap = await getDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid));
                 if (snap.exists()) {
+                    docExists = true;
                     const existingRaw = snap.data() as any;
                     hadLegacyPassword = 'password' in existingRaw;
                     const existingProfile = existingRaw as UserProfile;
-                    // Preserve sensitive billing & role fields
-                    profileToSave.role = existingProfile.role || 'user';
-                    profileToSave.subscriptionStatus = existingProfile.subscriptionStatus || 'trial';
-                    profileToSave.subscriptionTier = existingProfile.subscriptionTier || 'PRO';
-                    profileToSave.subscriptionEndsAt = existingProfile.subscriptionEndsAt;
-                    profileToSave.subscriptionEndsAtMs = existingProfile.subscriptionEndsAtMs;
+                    if (existingProfile.categoryWipedAt && typeof existingProfile.categoryWipedAt === 'object') {
+                      for (const [colName, iso] of Object.entries(existingProfile.categoryWipedAt)) {
+                        if (typeof iso === 'string' && iso) {
+                          markCategoriesWiped([colName], iso, uid);
+                        }
+                      }
+                    }
+                    if (existingProfile.hardDeletedAt) {
+                      mergeCloudHardDeletedMap(existingProfile.hardDeletedAt, uid);
+                    }
+                    profileToSave.categoryWipedAt = readCategoryWipeMap(uid);
+                    profileToSave.hardDeletedAt = getCappedCloudHardDeletedMap(uid);
+
+                    // Preserve server-managed billing & role fields in localStorage without modifying them in Firestore
+                    safeLocalProfile.role = existingProfile.role || 'user';
+                    safeLocalProfile.subscriptionStatus = existingProfile.subscriptionStatus || 'trial';
+                    safeLocalProfile.subscriptionTier = existingProfile.subscriptionTier || 'PRO';
+                    safeLocalProfile.subscriptionEndsAt = existingProfile.subscriptionEndsAt;
+                    safeLocalProfile.subscriptionEndsAtMs = existingProfile.subscriptionEndsAtMs;
+                    safeLocalProfile.categoryWipedAt = profileToSave.categoryWipedAt;
+                    safeLocalProfile.hardDeletedAt = profileToSave.hardDeletedAt;
+                    localStorage.setItem('mks_user_profile', safeStringify(safeLocalProfile));
                 } else {
                     // Prevent setting admin/active status or custom end date on creation
                     profileToSave.role = 'user';
@@ -1324,8 +1902,18 @@ const dbServiceObj = {
                 lastLoginAt: new Date().toISOString(),
                 email: (auth.currentUser?.email || profileToSave.email || '').toLowerCase()
             });
-            if (hadLegacyPassword) {
-                cleanProfile.password = deleteField();
+            if (!isRootAdmin && docExists) {
+                delete cleanProfile.role;
+                delete cleanProfile.subscriptionStatus;
+                delete cleanProfile.subscriptionTier;
+                delete cleanProfile.subscriptionEndsAt;
+                delete cleanProfile.subscriptionEndsAtMs;
+                delete cleanProfile.password;
+            } else {
+                delete cleanProfile.password;
+                if (isRootAdmin && hadLegacyPassword) {
+                    cleanProfile.password = deleteField();
+                }
             }
             await setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid), cleanProfile, { merge: true });
             localStorage.removeItem(`mks_pending_profile_sync_${uid}`);
@@ -1413,7 +2001,9 @@ const dbServiceObj = {
 
   async clearLocalData() {
     const db = await initDB();
-    const collections = [...USER_SYNC_COLLECTIONS, "pesticides", "syncOutbox", "satelliteCache", "systemErrors", "counters", "edmData"] as const;
+    const collections = Array.from(
+      new Set([...USER_SYNC_COLLECTIONS, "pesticides", "syncOutbox", "satelliteCache", "systemErrors", "counters", "edmData"])
+    ) as readonly string[];
     for (const col of collections) {
       if (db.objectStoreNames.contains(col as any)) {
         const tx = db.transaction(col as any, 'readwrite');
@@ -1434,6 +2024,494 @@ const dbServiceObj = {
     }
   },
 
+  async hardDeleteRecord(collectionName: string, id: string, uid?: string): Promise<void> {
+    await hardDeleteRecordInternal(collectionName, id, uid);
+  },
+
+  async hardDeleteRecordsBatch(itemsByCol: Record<string, string[]>, opts?: { uid?: string }): Promise<void> {
+    await hardDeleteRecordsBatchInternal(itemsByCol, opts);
+  },
+
+  /**
+   * Seçili modüllere (çiftçi, satış/reçete, tahsilat, depo, tedarikçi, kasa/banka, gider, silo,
+   * ziyaret/ajanda, e-Fatura/BKTS) ait verileri geri dönmemek üzere yerel cihazdan, senkronizasyon
+   * kuyruğundan ve Firestore'dan kalıcı olarak siler; etkilenen kasa/stok hesaplarını mutabık tutar.
+   */
+  async purgeSelectedCategories(uid: string, categories: PurgeCategoryKey[]): Promise<{
+    deletedCounts: Record<string, number>;
+    wipedCollections: string[];
+  }> {
+    if (!uid || !Array.isArray(categories) || categories.length === 0) {
+      return { deletedCounts: {}, wipedCollections: [] };
+    }
+
+    const selected = new Set<PurgeCategoryKey>(categories);
+    const wipeIso = new Date().toISOString();
+    const userPath = [FS_ROOT, FS_ORG, FS_USERS, uid].join("/");
+    const deletedCounts: Record<string, number> = {};
+
+    isWipingData = true;
+    for (const timer of portalRefreshTimers.values()) {
+      clearTimeout(timer);
+    }
+    portalRefreshTimers.clear();
+    if (outboxRetryTimer) {
+      clearTimeout(outboxRetryTimer);
+      outboxRetryTimer = null;
+    }
+
+    try {
+      const ls = getStorageSafe();
+      if (ls) ls.setItem('lastUserId', uid);
+      const db = await initDB();
+
+      const safeGetAll = async <T = any>(storeName: string): Promise<T[]> => {
+        if (!db.objectStoreNames.contains(storeName as any)) return [];
+        return (await db.getAll(storeName as any)) as T[];
+      };
+
+      const [
+        allFarmers,
+        allPrescriptions,
+        allPayments,
+        allManualDebts,
+        allSuppliers,
+        allSupplierPurchases,
+        allSupplierPayments,
+        allMyPayments,
+        allExpenses,
+        allTransactions,
+        allVisits,
+        allSiloTxs,
+        allTurnoverLogs,
+        allCounters,
+        allInventory
+      ] = await Promise.all([
+        safeGetAll<Farmer>('farmers'),
+        safeGetAll<Prescription>('prescriptions'),
+        safeGetAll<Payment>('payments'),
+        safeGetAll<ManualDebt>('manualDebts'),
+        safeGetAll<Supplier>('suppliers'),
+        safeGetAll<SupplierPurchase>('supplierPurchases'),
+        safeGetAll<SupplierPayment>('supplierPayments'),
+        safeGetAll<MyPayment>('myPayments'),
+        safeGetAll<Expense>('expenses'),
+        safeGetAll<Transaction>('transactions'),
+        safeGetAll<VisitLog>('visits'),
+        safeGetAll<any>('siloTransactions'),
+        safeGetAll<TurnoverLog>('turnoverLogs'),
+        safeGetAll<{ id: string }>('counters'),
+        safeGetAll<InventoryItem>('inventory')
+      ]);
+
+      const fullClearCollections = new Set<string>();
+      const idsToDeleteByCol: Record<string, Set<string>> = {};
+      const markDeleteId = (col: string, id?: string | null) => {
+        if (!col || !id) return;
+        if (!idsToDeleteByCol[col]) idsToDeleteByCol[col] = new Set<string>();
+        idsToDeleteByCol[col].add(id);
+      };
+
+      const portalTokensToDelete = new Set<string>();
+      const deletedFarmerIds = new Set<string>();
+      const deletedSupplierIds = new Set<string>();
+      const deletedPrescriptionIds = new Set<string>();
+      const deletedPurchaseIds = new Set<string>();
+      const deletedRelatedTxSourceIds = new Set<string>();
+
+      if (selected.has('farmers')) {
+        fullClearCollections.add('farmers');
+        fullClearCollections.add('mapFeatures');
+        fullClearCollections.add('collectionLogs');
+        fullClearCollections.add('satelliteCache');
+        for (const f of allFarmers) {
+          if (f?.id) deletedFarmerIds.add(f.id);
+          if (f?.portalToken && f.portalToken.length >= 16) {
+            portalTokensToDelete.add(f.portalToken);
+          }
+        }
+        // Silinen çiftçilere ait cari borç, satış/reçete, tahsilat ve ziyaretler yetim kalıp hesapları bozmasın
+        for (const p of allPrescriptions) {
+          if (p?.id && (!p.farmerId || deletedFarmerIds.has(p.farmerId))) {
+            markDeleteId('prescriptions', p.id);
+            deletedPrescriptionIds.add(p.id);
+            deletedRelatedTxSourceIds.add(p.id);
+          }
+        }
+        for (const d of allManualDebts) {
+          if (d?.id && (!d.farmerId || deletedFarmerIds.has(d.farmerId))) {
+            markDeleteId('manualDebts', d.id);
+          }
+        }
+        for (const pay of allPayments) {
+          if (pay?.id && (!pay.farmerId || deletedFarmerIds.has(pay.farmerId))) {
+            markDeleteId('payments', pay.id);
+            deletedRelatedTxSourceIds.add(pay.id);
+          }
+        }
+        for (const mp of allMyPayments) {
+          if (mp?.id && mp.farmerId && deletedFarmerIds.has(mp.farmerId)) {
+            markDeleteId('myPayments', mp.id);
+            deletedRelatedTxSourceIds.add(mp.id);
+          }
+        }
+        for (const v of allVisits) {
+          if (v?.id && (!v.farmerId || deletedFarmerIds.has(v.farmerId))) {
+            markDeleteId('visits', v.id);
+          }
+        }
+      }
+
+      if (selected.has('prescriptions')) {
+        fullClearCollections.add('prescriptions');
+        fullClearCollections.add('manualDebts');
+        for (const p of allPrescriptions) {
+          if (p?.id) {
+            deletedPrescriptionIds.add(p.id);
+            deletedRelatedTxSourceIds.add(p.id);
+          }
+        }
+        for (const l of allTurnoverLogs) {
+          if (l?.id && l.type === 'FINANCIAL') markDeleteId('turnoverLogs', l.id);
+        }
+        for (const c of allCounters) {
+          if (c?.id && c.id.startsWith('REC-')) markDeleteId('counters', c.id);
+        }
+      }
+
+      if (selected.has('payments')) {
+        fullClearCollections.add('payments');
+        fullClearCollections.add('collectionLogs');
+        for (const pay of allPayments) {
+          if (pay?.id) deletedRelatedTxSourceIds.add(pay.id);
+        }
+        for (const mp of allMyPayments) {
+          if (mp?.id && (mp.farmerId || mp.farmerName)) {
+            markDeleteId('myPayments', mp.id);
+            deletedRelatedTxSourceIds.add(mp.id);
+          }
+        }
+      }
+
+      if (selected.has('inventory')) {
+        fullClearCollections.add('inventory');
+        for (const l of allTurnoverLogs) {
+          if (l?.id && l.type === 'INVENTORY') markDeleteId('turnoverLogs', l.id);
+        }
+      }
+
+      if (selected.has('suppliers')) {
+        fullClearCollections.add('suppliers');
+        fullClearCollections.add('supplierPurchases');
+        fullClearCollections.add('supplierPayments');
+        for (const s of allSuppliers) {
+          if (s?.id) deletedSupplierIds.add(s.id);
+        }
+        for (const sp of allSupplierPurchases) {
+          if (sp?.id) deletedPurchaseIds.add(sp.id);
+        }
+        for (const spPay of allSupplierPayments) {
+          if (spPay?.id) deletedRelatedTxSourceIds.add(spPay.id);
+        }
+        for (const mp of allMyPayments) {
+          if (mp?.id && (mp.supplierId || mp.supplierName)) {
+            markDeleteId('myPayments', mp.id);
+            deletedRelatedTxSourceIds.add(mp.id);
+          }
+        }
+      }
+
+      if (selected.has('kasa')) {
+        fullClearCollections.add('accounts');
+        fullClearCollections.add('transactions');
+        fullClearCollections.add('myPayments');
+      }
+
+      if (selected.has('expenses')) {
+        fullClearCollections.add('expenses');
+        for (const ex of allExpenses) {
+          if (ex?.id) deletedRelatedTxSourceIds.add(ex.id);
+        }
+      }
+
+      if (selected.has('silo')) {
+        fullClearCollections.add('siloTransactions');
+        fullClearCollections.add('siloContacts');
+        for (const st of allSiloTxs) {
+          if (st?.linkedPaymentId && !String(st.linkedPaymentId).startsWith('barter_')) {
+            markDeleteId('payments', st.linkedPaymentId);
+            deletedRelatedTxSourceIds.add(st.linkedPaymentId);
+          }
+        }
+      }
+
+      if (selected.has('visits_reminders')) {
+        fullClearCollections.add('visits');
+        fullClearCollections.add('reminders');
+        fullClearCollections.add('notifications');
+        fullClearCollections.add('messages');
+        fullClearCollections.add('systemErrors');
+      }
+
+      if (selected.has('official_integrators')) {
+        fullClearCollections.add('ministryShipments');
+        fullClearCollections.add('ministryRecords');
+        fullClearCollections.add('edmData');
+      }
+
+      // Silinen tahsilat / peşin reçete / gider / tedarikçi ödemesine bağlı Kasa hareketlerini temizle
+      if (!fullClearCollections.has('transactions')) {
+        for (const tx of allTransactions) {
+          if (!tx?.id) continue;
+          const matchesRelated = tx.relatedId && deletedRelatedTxSourceIds.has(tx.relatedId);
+          const matchesFarmer = selected.has('farmers') && tx.partyType === 'FARMER' && (!tx.partyId || deletedFarmerIds.has(tx.partyId));
+          const matchesSupplier = selected.has('suppliers') && tx.partyType === 'SUPPLIER' && (!tx.partyId || deletedSupplierIds.has(tx.partyId));
+          const matchesExpense = selected.has('expenses') && tx.partyType === 'EXPENSE';
+          if (matchesRelated || matchesFarmer || matchesSupplier || matchesExpense) {
+            markDeleteId('transactions', tx.id);
+          }
+        }
+      }
+
+      // Depo korunup alış/satış geçmişi siliniyorsa raftaki mevcut stok miktarlarını eşitle (Stok Farkı bozulmasın)
+      const preservedInventoryUpdates: InventoryItem[] = [];
+      if (
+        !fullClearCollections.has('inventory') &&
+        (fullClearCollections.has('prescriptions') || fullClearCollections.has('supplierPurchases') || deletedPrescriptionIds.size > 0)
+      ) {
+        const survivingPurchases = fullClearCollections.has('supplierPurchases')
+          ? []
+          : allSupplierPurchases.filter(sp => !deletedPurchaseIds.has(sp.id));
+        const survivingPrescriptions = fullClearCollections.has('prescriptions')
+          ? []
+          : allPrescriptions.filter(pr => !deletedPrescriptionIds.has(pr.id));
+
+        const invTx = db.transaction('inventory', 'readwrite');
+        for (const rawItem of allInventory) {
+          if (!rawItem || rawItem.deletedAt) continue;
+          const rawCurrent = round2(Number(rawItem.quantity) || 0);
+          const ledgerAfter = computeInventoryItemLedger(
+            rawItem.pesticideId,
+            survivingPurchases,
+            survivingPrescriptions,
+            rawItem.adjustments
+          );
+          if (Math.abs(rawCurrent - ledgerAfter.calculatedQty) > 0.001) {
+            const hasRemainingDocs = ledgerAfter.hasAnyPurchaseLine || Math.abs(ledgerAfter.soldQty) > 0.001;
+            const deltaNeeded = round2(rawCurrent - ledgerAfter.calculatedQty);
+            const nextAdjustments = hasRemainingDocs
+              ? [
+                  ...(rawItem.adjustments || []),
+                  { date: wipeIso, amount: deltaNeeded, note: 'Veri Silme Sonrası Stok Eşitleme' }
+                ]
+              : (Math.abs(rawCurrent) > 0.001
+                  ? [{ date: wipeIso, amount: rawCurrent, note: 'Geçmiş Silme Sonrası Mevcut Stok' }]
+                  : undefined);
+            const nextItem: InventoryItem = {
+              ...rawItem,
+              adjustments: nextAdjustments,
+              lastUpdated: wipeIso
+            };
+            delete (nextItem as any)._syncedFromCloud;
+            await invTx.store.put(nextItem);
+            preservedInventoryUpdates.push(nextItem);
+          }
+        }
+        await invTx.done;
+      }
+
+      // Tam temizlenecek koleksiyonların mevcut kayıt sayılarını say, yerel store'u ve syncOutbox'ı temizle
+      const syncableFullCleared = Array.from(fullClearCollections).filter(c => SYNCABLE_COLLECTION_SET.has(c));
+      const allOutboxEntries = db.objectStoreNames.contains('syncOutbox')
+        ? ((await db.getAll('syncOutbox')) as SyncOutboxEntry[])
+        : [];
+      const offlineDeleteQueue: { col: string; id: string }[] = [];
+      const isOnline = typeof navigator === 'undefined' || navigator.onLine;
+
+      for (const col of fullClearCollections) {
+        if (!db.objectStoreNames.contains(col as any)) continue;
+        const rows = await db.getAll(col as any);
+        deletedCounts[col] = rows.filter((r: any) => !r?.deletedAt).length || rows.length;
+        if (!isOnline && SYNCABLE_COLLECTION_SET.has(col)) {
+          for (const r of rows as any[]) {
+            if (r?.id) offlineDeleteQueue.push({ col, id: r.id });
+          }
+        }
+        const tx = db.transaction(col as any, 'readwrite');
+        await tx.store.clear();
+        await tx.done;
+      }
+
+      if (db.objectStoreNames.contains('syncOutbox')) {
+        const outboxTx = db.transaction('syncOutbox', 'readwrite');
+        for (const entry of allOutboxEntries) {
+          if (fullClearCollections.has(entry.collection)) {
+            await outboxTx.store.delete(entry.id);
+          }
+        }
+        for (const q of offlineDeleteQueue) {
+          await outboxTx.store.put({
+            id: `${q.col}:${q.id}`,
+            collection: q.col,
+            itemId: q.id,
+            op: 'DELETE',
+            hardDelete: true,
+            payload: null,
+            updatedAt: wipeIso,
+            retryCount: 0,
+            ownerUid: uid
+          } as any);
+        }
+        await outboxTx.done;
+      }
+
+      // Kategori wipe zaman damgalarını kaydet (eski cihazlar geri yükleyemesin)
+      const updatedWipeMap = markCategoriesWiped(syncableFullCleared, wipeIso, uid);
+
+      // Kısmi kaskad silmeleri kalıcı olarak uygula (IDB + tombstone + outbox + Firestore)
+      const partialBatch: Record<string, string[]> = {};
+      for (const [col, idSet] of Object.entries(idsToDeleteByCol)) {
+        if (fullClearCollections.has(col) || idSet.size === 0) continue;
+        const arr = Array.from(idSet);
+        deletedCounts[col] = (deletedCounts[col] || 0) + arr.length;
+        partialBatch[col] = arr;
+      }
+      if (Object.keys(partialBatch).length > 0) {
+        await hardDeleteRecordsBatchInternal(partialBatch, { uid });
+      }
+
+      // Çevrimiçiyse full-clear koleksiyonları Firestore'dan topluca sil ve profil categoryWipedAt mührünü güncelle
+      if (isOnline && auth.currentUser?.uid === uid) {
+        for (const col of fullClearCollections) {
+          if (!SYNCABLE_COLLECTION_SET.has(col) && col !== 'systemErrors' && col !== 'counters' && col !== 'edmData') {
+            continue;
+          }
+          try {
+            const colRef = collection(firestore, userPath, col);
+            let snapshot;
+            try {
+              snapshot = await getDocsFromServer(colRef);
+            } catch {
+              snapshot = await getDocs(colRef);
+            }
+            if (!snapshot.empty) {
+              const batchSize = 400;
+              let batch = writeBatch(firestore);
+              let count = 0;
+              for (const document of snapshot.docs) {
+                batch.delete(document.ref);
+                count++;
+                if (count >= batchSize) {
+                  await batch.commit();
+                  batch = writeBatch(firestore);
+                  count = 0;
+                }
+              }
+              if (count > 0) {
+                await batch.commit();
+              }
+            }
+          } catch (fsErr) {
+            console.error(`Firestore wipe collection ${col} error:`, fsErr);
+          }
+        }
+
+        // Üretici portal paylaşımlarını da temizle
+        for (const token of portalTokensToDelete) {
+          await deleteDoc(doc(firestore, FS_ROOT, FS_ORG, 'portal_shares', token)).catch(() => {});
+        }
+
+        // Profil belgesinde categoryWipedAt mührünü güncelle
+        try {
+          await setDoc(
+            doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid),
+            sanitizeForFirestore({
+              categoryWipedAt: updatedWipeMap,
+              lastUpdate: wipeIso
+            }),
+            { merge: true }
+          );
+        } catch (profErr) {
+          console.warn('categoryWipedAt Firestore sync warning:', profErr);
+        }
+      } else if (ls) {
+        try {
+          const rawProf = ls.getItem('mks_user_profile');
+          if (rawProf) {
+            const parsedProf = JSON.parse(rawProf);
+            parsedProf.categoryWipedAt = updatedWipeMap;
+            parsedProf.lastUpdate = wipeIso;
+            ls.setItem('mks_user_profile', safeStringify(parsedProf));
+            ls.setItem(`mks_pending_profile_sync_${uid}`, '1');
+          }
+        } catch {}
+      }
+
+      // Korunan depo stoklarını bulutla eşle
+      for (const invItem of preservedInventoryUpdates) {
+        await backgroundSync('inventory', invItem, { preserveLastUpdated: true });
+      }
+
+      // LocalStorage önbelleklerini kategoriye göre temizle
+      if (ls) {
+        if (selected.has('farmers')) {
+          ls.removeItem(`mks_map_features_${uid}`);
+          ls.removeItem('mks_held_prescription_cart');
+        }
+        if (selected.has('prescriptions')) {
+          ls.removeItem('mks_held_prescription_cart');
+        }
+        if (selected.has('official_integrators')) {
+          ls.removeItem(`mks_official_efatura_warehouse_v2_${uid}`);
+          ls.removeItem(`mks_edm_incoming_invoices_v2_${uid}`);
+          ls.removeItem(`mks_edm_outgoing_invoices_v2_${uid}`);
+          ls.removeItem('mks_edm_incoming_invoices_v1');
+          ls.removeItem(`mks_ministry_records_v1_${uid}`);
+          ls.removeItem(`mks_ministry_shipments_v1_${uid}`);
+          ls.removeItem('mks_ministry_records_v1_guest');
+          ls.removeItem('mks_ministry_shipments_v1_guest');
+          try {
+            const keysToRemove: string[] = [];
+            for (let i = 0; i < ls.length; i++) {
+              const k = ls.key(i);
+              if (k && (k.startsWith(`mks_doc_counter_${uid}_`) || k.startsWith('mks_doc_counter_guest_'))) {
+                keysToRemove.push(k);
+              }
+            }
+            keysToRemove.forEach(k => ls.removeItem(k));
+          } catch {}
+        }
+        if (selected.has('visits_reminders')) {
+          ls.removeItem('mks_integrity_report');
+          try {
+            const keysToRemove: string[] = [];
+            for (let i = 0; i < ls.length; i++) {
+              const k = ls.key(i);
+              if (k && (k.startsWith('mks_smart_notif_') || k.startsWith('mks_weather_alert_'))) {
+                keysToRemove.push(k);
+              }
+            }
+            keysToRemove.forEach(k => ls.removeItem(k));
+          } catch {}
+        }
+        // Silinen verilerin eski yedek snapshot içinde tutulmasını engelle
+        ls.removeItem(`mks_last_pre_update_snapshot_${uid}`);
+      }
+
+      // Kasa silinmediyse kalan hareketlere göre hesap bakiyelerini yeniden mutabık kıl
+      if (!fullClearCollections.has('accounts') && !isSubscriptionBlocked()) {
+        await this.reconcileAccountBalances();
+      }
+
+      return {
+        deletedCounts,
+        wipedCollections: Array.from(fullClearCollections)
+      };
+    } finally {
+      isWipingData = false;
+    }
+  },
+
   /**
    * Kullanıcının hem buluttaki (Firestore) tüm verilerini hem de yerel
    * cihazdaki (IndexedDB, localStorage) verilerini tamamen ve kalıcı olarak siler.
@@ -1441,17 +2519,33 @@ const dbServiceObj = {
   async deleteAllUserData(uid: string) {
     if (!uid) return;
     const userPath = [FS_ROOT, FS_ORG, FS_USERS, uid].join("/");
-    const collections = [
-      ...USER_SYNC_COLLECTIONS, "systemErrors", "counters", "edmData"
-    ] as const;
+    const collections = Array.from(
+      new Set([...USER_SYNC_COLLECTIONS, "systemErrors", "counters", "edmData"])
+    );
+    const wipeIso = new Date().toISOString();
 
+    isWipingData = true;
     // 0. Arka planda bekleyen senkronizasyon ve portal zamanlayıcılarını durdur (eski veri buluta geri yazılmasın)
     for (const timer of portalRefreshTimers.values()) {
       clearTimeout(timer);
     }
     portalRefreshTimers.clear();
+    if (outboxRetryTimer) {
+      clearTimeout(outboxRetryTimer);
+      outboxRetryTimer = null;
+    }
+
     try {
       const db = await initDB();
+      // Çiftçilere bağlı üretici portalı paylaşımlarını da silmek için tokenları topla
+      const farmersToPurge = db.objectStoreNames.contains('farmers')
+        ? ((await db.getAll('farmers')) as Farmer[])
+        : [];
+      for (const f of farmersToPurge) {
+        if (f?.portalToken && f.portalToken.length >= 16) {
+          await deleteDoc(doc(firestore, FS_ROOT, FS_ORG, 'portal_shares', f.portalToken)).catch(() => {});
+        }
+      }
       if (db.objectStoreNames.contains('syncOutbox')) {
         await db.clear('syncOutbox');
       }
@@ -1459,92 +2553,164 @@ const dbServiceObj = {
       console.warn("syncOutbox pre-wipe clear error:", e);
     }
 
-    // 1. Buluttaki (Firestore) tüm dökümanları sil
-    for (const col of collections) {
-      try {
-        const colRef = collection(firestore, userPath, col);
-        const snapshot = await getDocsFromServer(colRef);
-        if (!snapshot.empty) {
-          const batchSize = 400;
-          let batch = writeBatch(firestore);
-          let count = 0;
-          for (const document of snapshot.docs) {
-            batch.delete(document.ref);
-            count++;
-            if (count >= batchSize) {
+    try {
+      // 1. Buluttaki (Firestore) tüm dökümanları sil
+      for (const col of collections) {
+        try {
+          const colRef = collection(firestore, userPath, col);
+          let snapshot;
+          try {
+            snapshot = await getDocsFromServer(colRef);
+          } catch {
+            snapshot = await getDocs(colRef);
+          }
+          if (!snapshot.empty) {
+            const batchSize = 400;
+            let batch = writeBatch(firestore);
+            let count = 0;
+            for (const document of snapshot.docs) {
+              batch.delete(document.ref);
+              count++;
+              if (count >= batchSize) {
+                await batch.commit();
+                batch = writeBatch(firestore);
+                count = 0;
+              }
+            }
+            if (count > 0) {
               await batch.commit();
-              batch = writeBatch(firestore);
-              count = 0;
             }
           }
-          if (count > 0) {
-            await batch.commit();
-          }
+        } catch (e) {
+          console.error(`Firestore wipe collection ${col} error:`, e);
         }
+      }
+
+      // Tüm koleksiyonlar için kalıcı sıfırlama mührü (başka cihazdan eski kopya geri gelmesin)
+      const fullWipeMap: Record<string, string> = {};
+      for (const col of USER_SYNC_COLLECTIONS) {
+        fullWipeMap[col] = wipeIso;
+      }
+
+      // 2. Kullanıcı profil belgesini temiz bir nesneyle sıfırla (eski şirket/kaşe/entegratör ayarlarını da kaldırır, abonelik & yetki korunur)
+      try {
+        const userDocRef = doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid);
+        const existingSnap = await getDoc(userDocRef);
+        const existingData = existingSnap.exists() ? (existingSnap.data() as UserProfile) : null;
+        const isRootAdmin = auth.currentUser?.email === 'nayiffirat@gmail.com';
+        const defaultEnd = new Date();
+        if (isRootAdmin) defaultEnd.setFullYear(2099);
+        else defaultEnd.setDate(defaultEnd.getDate() + 7);
+        const endsAt = existingData?.subscriptionEndsAt || defaultEnd.toISOString();
+
+        const resetProfile: Record<string, any> = {
+          uid,
+          email: auth.currentUser?.email || existingData?.email || '',
+          fullName: existingData?.fullName || auth.currentUser?.displayName || 'İsimsiz Kullanıcı',
+          role: existingData?.role || (isRootAdmin ? 'admin' : 'user'),
+          subscriptionStatus: existingData?.subscriptionStatus || (isRootAdmin ? 'active' : 'trial'),
+          subscriptionTier: existingData?.subscriptionTier || (isRootAdmin ? 'MAX' : 'PRO'),
+          subscriptionEndsAt: endsAt,
+          subscriptionEndsAtMs: existingData?.subscriptionEndsAtMs || new Date(endsAt).getTime(),
+          createdAt: existingData?.createdAt || new Date().toISOString(),
+          lastLoginAt: new Date().toISOString(),
+          categoryWipedAt: fullWipeMap,
+          lastUpdate: wipeIso
+        };
+        if (existingData?.adminPassword) {
+          resetProfile.adminPassword = existingData.adminPassword;
+        }
+
+        await setDoc(userDocRef, sanitizeForFirestore(resetProfile));
       } catch (e) {
-        console.error(`Firestore wipe collection ${col} error:`, e);
-      }
-    }
-
-    // 2. Kullanıcı profil belgesini temiz bir nesneyle sıfırla (eski şirket/kaşe/entegratör ayarlarını da kaldırır, abonelik & yetki korunur)
-    try {
-      const userDocRef = doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid);
-      const existingSnap = await getDoc(userDocRef);
-      const existingData = existingSnap.exists() ? (existingSnap.data() as UserProfile) : null;
-      const isRootAdmin = auth.currentUser?.email === 'nayiffirat@gmail.com';
-      const defaultEnd = new Date();
-      if (isRootAdmin) defaultEnd.setFullYear(2099);
-      else defaultEnd.setDate(defaultEnd.getDate() + 7);
-      const endsAt = existingData?.subscriptionEndsAt || defaultEnd.toISOString();
-
-      const resetProfile: Record<string, any> = {
-        uid,
-        email: auth.currentUser?.email || existingData?.email || '',
-        fullName: existingData?.fullName || auth.currentUser?.displayName || 'İsimsiz Kullanıcı',
-        role: existingData?.role || (isRootAdmin ? 'admin' : 'user'),
-        subscriptionStatus: existingData?.subscriptionStatus || (isRootAdmin ? 'active' : 'trial'),
-        subscriptionTier: existingData?.subscriptionTier || (isRootAdmin ? 'MAX' : 'PRO'),
-        subscriptionEndsAt: endsAt,
-        subscriptionEndsAtMs: existingData?.subscriptionEndsAtMs || new Date(endsAt).getTime(),
-        createdAt: existingData?.createdAt || new Date().toISOString(),
-        lastLoginAt: new Date().toISOString()
-      };
-      if (existingData?.adminPassword) {
-        resetProfile.adminPassword = existingData.adminPassword;
+        console.error("Firestore user doc reset error:", e);
       }
 
-      await setDoc(userDocRef, sanitizeForFirestore(resetProfile));
-    } catch (e) {
-      console.error("Firestore user doc reset error:", e);
-    }
+      // 3. Yerel veritabanını (IndexedDB) tamamen temizle
+      try {
+        await this.clearLocalUserData(true);
+        await this.clearLocalData();
+      } catch (e) {
+        console.error("IndexedDB wipe error:", e);
+      }
 
-    // 3. Yerel veritabanını (IndexedDB) tamamen temizle
-    try {
-      await this.clearLocalUserData(true);
-      await this.clearLocalData();
-    } catch (e) {
-      console.error("IndexedDB wipe error:", e);
+      // 4. LocalStorage önbelleğini temizle, ancak yeniden doğrulama/mühür anahtarını ve aktif uid'yi koru
+      localStorage.clear();
+      localStorage.setItem('lastUserId', uid);
+      writeCategoryWipeMap(fullWipeMap, uid);
+    } finally {
+      isWipingData = false;
     }
-
-    // 4. LocalStorage önbelleğini temizle
-    localStorage.clear();
   },
 
   /**
    * Giriş yapıldığında tüm verileri çeker ve yerelle birleştirir.
    */
   async syncAllDataOnLogin(uid: string) {
-    if (!navigator.onLine) return;
-    // First flush any pending offline writes from syncOutbox
-    await flushSyncOutboxInternal().catch(() => {});
+    if (isWipingData) return;
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
 
     const db = await initDB();
     const userPath = [FS_ROOT, FS_ORG, FS_USERS, uid].join("/");
     const collections = USER_SYNC_COLLECTIONS;
+
+    // 1. Önce buluttaki kullanıcı profilinden categoryWipedAt ve hardDeletedAt mühürlerini al ve yerelle birleştir
+    //    (Outbox flush edilmeden önce çalışır ki başka cihazda silinen kayıtlar eski outbox ile geri diriltilmesin!)
+    try {
+      const profSnap = await getDocFromServer(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid)).catch(() =>
+        getDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid))
+      );
+      if (profSnap && profSnap.exists()) {
+        const cloudProfile = profSnap.data() as UserProfile;
+        const cloudWipes = cloudProfile?.categoryWipedAt;
+        if (cloudWipes && typeof cloudWipes === 'object') {
+          for (const [colName, iso] of Object.entries(cloudWipes)) {
+            if (typeof iso === 'string' && iso) {
+              markCategoriesWiped([colName], iso, uid);
+            }
+          }
+        }
+        if (cloudProfile?.hardDeletedAt) {
+          mergeCloudHardDeletedMap(cloudProfile.hardDeletedAt, uid);
+        }
+      }
+    } catch {}
+
+    // 2. Bekleyen çevrimdışı yazımları/silmeleri gönder
+    await flushSyncOutboxInternal().catch(() => {});
+
+    // 3. Cihazda önceden localStorage'da bulunan ama IndexedDB 'edmData' store'una henüz yazılmamış e-Fatura / depo verilerini tohumla
+    const ls = getStorageSafe();
+    const initialWipes = readCategoryWipeMap(uid);
+    const edmWipeTs = initialWipes.edmData ? new Date(initialWipes.edmData).getTime() : NaN;
+    if (ls && (!initialWipes.edmData || !Number.isFinite(edmWipeTs) || Date.now() > edmWipeTs)) {
+      const nowIso = new Date().toISOString();
+      for (const baseKey of EDM_SYNC_STORAGE_KEYS) {
+        try {
+          const existingEdmDoc = await db.get('edmData', baseKey);
+          if (!existingEdmDoc) {
+            const rawLs = ls.getItem(`${baseKey}_${uid}`);
+            if (rawLs) {
+              const parsed = JSON.parse(rawLs);
+              if (baseKey === 'mks_edm_config_v2' && parsed && typeof parsed === 'object') {
+                const { password: _strippedPwd, ...safeCfg } = parsed as Record<string, any>;
+                await db.put('edmData', { id: baseKey, data: safeCfg, updatedAt: nowIso, lastUpdated: nowIso } as any);
+              } else if (parsed !== null && parsed !== undefined) {
+                await db.put('edmData', { id: baseKey, data: parsed, updatedAt: nowIso, lastUpdated: nowIso } as any);
+              }
+            }
+          }
+        } catch {}
+      }
+    }
+
+    const hardDeletedAtMap = readHardDeletedMap(uid);
+    const categoryWipedAtMap = readCategoryWipeMap(uid);
     const outboxEntries = await db.getAll('syncOutbox').catch(() => []);
     const pendingOutboxKeys = new Set(outboxEntries.map(e => e.id));
 
     for (const col of collections) {
+      if (isWipingData) break;
       try {
         const snap = await getDocsFromServer(collection(firestore, userPath, col));
         const data = snap.docs.map(d => d.data());
@@ -1558,54 +2724,94 @@ const dbServiceObj = {
         }
 
         const offlineItemsToUpload: any[] = [];
+        const cloudZombiesToDelete: string[] = [];
+        const staleOutboxIdsToClear: string[] = [];
 
-        // 1. Merge server items with local DB (protecting local soft-deletes, outbox & newer edits)
+        // 1. Sunucudaki kayıtları yerelle birleştir (mezar taşı & sıfırlama damgalarını koru)
         if (data.length > 0) {
-          const putPromises: Promise<any>[] = [];
+          const ops: Promise<any>[] = [];
           for (const serverItem of data as any[]) {
             if (!serverItem || !serverItem.id) continue;
             const localItem = localMap.get(serverItem.id);
-            if (localItem) {
-              if (pendingOutboxKeys.has(`${col}:${serverItem.id}`)) {
-                offlineItemsToUpload.push(localItem);
-                continue;
+            const hadPendingOutbox = pendingOutboxKeys.has(`${col}:${serverItem.id}`);
+            const decision = shouldAcceptCloudItem({
+              col,
+              docId: serverItem.id,
+              incoming: serverItem,
+              localExisting: localItem,
+              pendingOutbox: hadPendingOutbox,
+              hardDeletedAtMap,
+              categoryWipedAtMap
+            });
+
+            if (decision.accept) {
+              ops.push(tx.store.put({ ...serverItem, _syncedFromCloud: true }));
+              if (hadPendingOutbox) {
+                staleOutboxIdsToClear.push(serverItem.id);
               }
-              const localTime = localItem.lastUpdated ? new Date(localItem.lastUpdated).getTime() : 0;
-              const serverTime = serverItem.lastUpdated ? new Date(serverItem.lastUpdated).getTime() : 0;
-              // AK-21: If locally soft-deleted, only keep local delete if localTime >= serverTime.
-              // If another device explicitly restored/updated it AFTER local delete, accept server version!
-              if (localItem.deletedAt && !serverItem.deletedAt) {
-                if (serverTime > localTime) {
-                  putPromises.push(tx.store.put({ ...serverItem, _syncedFromCloud: true }));
-                  continue;
-                }
-                offlineItemsToUpload.push(localItem);
-                continue;
+              if (col === 'edmData') {
+                hydrateLocalStorageFromEdmDataDoc(serverItem, uid);
               }
-              // If local item has a newer lastUpdated timestamp, keep local version and push to server
-              if (localTime > serverTime) {
-                offlineItemsToUpload.push(localItem);
-                continue;
+            } else if (decision.reason === 'HARD_DELETED' || decision.reason === 'WIPED') {
+              if (localItem) {
+                ops.push(tx.store.delete(serverItem.id));
               }
+              if (hadPendingOutbox) {
+                staleOutboxIdsToClear.push(serverItem.id);
+              }
+              if (col === 'edmData') {
+                removeLocalStorageForEdmDataDoc(serverItem.id, uid);
+              }
+              cloudZombiesToDelete.push(serverItem.id);
+            } else if (localItem && (decision.reason === 'PENDING_OUTBOX' || decision.reason === 'LOCAL_SOFT_DELETE' || decision.reason === 'LOCAL_NEWER')) {
+              offlineItemsToUpload.push(localItem);
             }
-            putPromises.push(tx.store.put({ ...serverItem, _syncedFromCloud: true }));
           }
-          if (putPromises.length > 0) {
-            await Promise.all(putPromises);
+          if (ops.length > 0) {
+            await Promise.all(ops);
           }
         }
         
-        // 2. D-08: NEVER hard-delete local items missing from server — rely strictly on `deletedAt` tombstones!
-        // Any local item not yet present on Firestore (offline creation, imported backup, etc.) is queued for upload.
+        // 2. Sunucuda bulunmayan yerel kayıtları kontrol et:
+        //    - Eğer zaten daha önce buluttan senkronlanmışsa (_syncedFromCloud) veya silinme/sıfırlama mührüne yakalanıyorsa
+        //      bu kayıt bulutta kalıcı silinmiştir -> buluta geri YÜKLEME, yerelden de sil!
+        //    - Yalnızca gerçekten çevrimdışı oluşturulmuş/içe aktarılmış yeni kayıtları buluta yükle.
         for (const localItem of localItems) {
           if (localItem && localItem.id && !serverIds.has(localItem.id)) {
-            offlineItemsToUpload.push(localItem);
+            const hadPendingOutbox = pendingOutboxKeys.has(`${col}:${localItem.id}`);
+            const action = classifyLocalMissingFromServer({
+              col,
+              localItem,
+              hasPendingOutbox: hadPendingOutbox,
+              hardDeletedAtMap,
+              categoryWipedAtMap
+            });
+            if (action === 'DELETE_LOCAL') {
+              await tx.store.delete(localItem.id);
+              if (hadPendingOutbox) {
+                staleOutboxIdsToClear.push(localItem.id);
+              }
+              if (col === 'edmData') {
+                removeLocalStorageForEdmDataDoc(localItem.id, uid);
+              }
+            } else {
+              offlineItemsToUpload.push(localItem);
+            }
           }
         }
         
         await tx.done;
 
-        // 3. Upload offline-created/modified items to Firestore
+        for (const staleId of staleOutboxIdsToClear) {
+          await dequeueSyncOutbox(col, staleId);
+        }
+
+        // Sunucuda yakalanan eski/silinmiş artıkları buluttan da temizle
+        for (const zombieId of cloudZombiesToDelete) {
+          await deleteDoc(doc(firestore, userPath, col, zombieId)).catch(() => {});
+        }
+
+        // 3. Çevrimdışı oluşturulan/güncellenen kayıtları Firestore'a gönder
         for (const offItem of offlineItemsToUpload) {
           try {
             const { _syncedFromCloud: _ignoredFlag, ...rawItem } = offItem as any;
@@ -1624,9 +2830,14 @@ const dbServiceObj = {
       }
     }
 
-    // Reconcile and audit accounts and transactions after cloud sync
-    if (!isSubscriptionBlocked()) {
+    // Reconcile and audit accounts and inventory numbers after cloud sync
+    if (!isWipingData && !isSubscriptionBlocked()) {
       await dbService.reconcileAccountBalances();
+      await dbService.sanitizeInventoryNumbers().catch(() => {});
+    }
+
+    if (typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('mks-cloud-sync-applied', { detail: { collections: [...collections] } }));
     }
   },
 
@@ -1693,6 +2904,15 @@ const dbServiceObj = {
     const nowIso = new Date().toISOString();
     const ownerUid = auth.currentUser?.uid || (typeof localStorage !== 'undefined' ? localStorage.getItem('lastUserId') || undefined : undefined);
 
+    // Bilinçli yedek geri yüklemede ilgili koleksiyonların eski silme mühürlerini kaldır ki yedek veriler geri yüklenebilsin
+    clearCategoryWipes(validStores.filter(s => syncableSet.has(s)), ownerUid);
+    if (ownerUid && auth.currentUser?.uid === ownerUid && (typeof navigator === 'undefined' || navigator.onLine)) {
+      try {
+        const updatedWipes = readCategoryWipeMap(ownerUid);
+        await setDoc(doc(firestore, FS_ROOT, FS_ORG, FS_USERS, ownerUid), { categoryWipedAt: updatedWipes }, { merge: true });
+      } catch {}
+    }
+
     const tx = db.transaction([...validStores, 'syncOutbox'] as any, 'readwrite');
     const outboxStore = tx.objectStore('syncOutbox');
     await outboxStore.clear();
@@ -1703,9 +2923,10 @@ const dbServiceObj = {
         for (const rawItem of data[store]) {
             if (!rawItem || typeof rawItem !== 'object' || !rawItem.id) continue;
             const { _syncedFromCloud: _ignored, ...cleanItem } = rawItem;
+            clearHardDeleteEntry(store, cleanItem.id, ownerUid);
             const stamped = {
                 ...cleanItem,
-                lastUpdated: cleanItem.lastUpdated || nowIso
+                lastUpdated: nowIso
             };
             await os.put(stamped);
             if (syncableSet.has(store)) {
@@ -1739,7 +2960,9 @@ const dbServiceObj = {
       }
     }
     const db = await initDB();
-    const stores = [...USER_SYNC_COLLECTIONS, 'systemErrors', 'syncOutbox', 'satelliteCache', 'counters', 'edmData'] as const;
+    const stores = Array.from(
+      new Set([...USER_SYNC_COLLECTIONS, 'systemErrors', 'syncOutbox', 'satelliteCache', 'counters', 'edmData'])
+    );
     for (const store of stores) {
       if (db.objectStoreNames.contains(store as any)) {
         await db.clear(store as any);
@@ -1775,10 +2998,24 @@ const dbServiceObj = {
   async getFarmers() {
     const db = await initDB();
     const farmers = await db.getAll('farmers');
-    return farmers.map(f => ({
+    return farmers
+      .filter((f: any) => !f.deletedAt)
+      .map(f => ({
         ...f,
         fields: f.fields || []
-    })).sort((a, b) => a.fullName.localeCompare(b.fullName, 'tr'));
+      }))
+      .sort((a, b) => a.fullName.localeCompare(b.fullName, 'tr'));
+  },
+
+  async getAllFarmersRaw() {
+    const db = await initDB();
+    const farmers = await db.getAll('farmers');
+    return farmers
+      .map(f => ({
+        ...f,
+        fields: f.fields || []
+      }))
+      .sort((a, b) => a.fullName.localeCompare(b.fullName, 'tr'));
   },
 
   /**
@@ -2019,16 +3256,12 @@ const dbServiceObj = {
   },
   
   async addFarmer(farmer: Farmer) {
-    const db = await initDB();
-    await db.put('farmers', farmer);
-    backgroundSync('farmers', farmer);
+    await backgroundSync('farmers', farmer);
     return farmer.id;
   },
 
   async updateFarmer(farmer: Farmer) {
-    const db = await initDB();
-    await db.put('farmers', farmer);
-    backgroundSync('farmers', farmer);
+    await backgroundSync('farmers', farmer);
     return farmer.id;
   },
 
@@ -2067,16 +3300,12 @@ const dbServiceObj = {
   },
   
   async addVisit(visit: VisitLog) {
-    const db = await initDB();
-    await db.put('visits', visit);
-    backgroundSync('visits', visit);
+    await backgroundSync('visits', visit);
     return visit.id;
   },
 
   async updateVisit(visit: VisitLog) {
-    const db = await initDB();
-    await db.put('visits', visit);
-    backgroundSync('visits', visit);
+    await backgroundSync('visits', visit);
     return visit.id;
   },
 
@@ -2091,16 +3320,12 @@ const dbServiceObj = {
   },
   
   async addPrescription(prescription: Prescription) {
-    const db = await initDB();
-    await db.put('prescriptions', prescription);
-    backgroundSync('prescriptions', prescription);
+    await backgroundSync('prescriptions', prescription);
     return prescription.id;
   },
 
   async updatePrescription(prescription: Prescription) {
-    const db = await initDB();
-    await db.put('prescriptions', prescription);
-    backgroundSync('prescriptions', prescription);
+    await backgroundSync('prescriptions', prescription);
     return prescription.id;
   },
 
@@ -2132,6 +3357,12 @@ const dbServiceObj = {
     return items.filter((i: any) => !i.deletedAt).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   },
 
+  async getAllVisitsRaw() {
+    const db = await initDB();
+    const items = await db.getAll('visits');
+    return items.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  },
+
   async getReminders() {
     const db = await initDB();
     const items = await db.getAll('reminders');
@@ -2139,15 +3370,11 @@ const dbServiceObj = {
   },
 
   async addReminder(reminder: Reminder) {
-    const db = await initDB();
-    await db.put('reminders', reminder);
-    backgroundSync('reminders', reminder);
+    await backgroundSync('reminders', reminder);
   },
 
   async updateReminder(reminder: Reminder) {
-    const db = await initDB();
-    await db.put('reminders', reminder);
-    backgroundSync('reminders', reminder);
+    await backgroundSync('reminders', reminder);
   },
 
   async deleteReminder(id: string) {
@@ -2161,15 +3388,11 @@ const dbServiceObj = {
   },
 
   async addNotification(n: AppNotification) {
-    const db = await initDB();
-    await db.put('notifications', n);
-    backgroundSync('notifications', n);
+    await backgroundSync('notifications', n);
   },
 
   async updateNotification(n: AppNotification) {
-    const db = await initDB();
-    await db.put('notifications', n);
-    backgroundSync('notifications', n);
+    await backgroundSync('notifications', n);
   },
 
   async deleteNotification(id: string) {
@@ -2189,24 +3412,20 @@ const dbServiceObj = {
   },
 
   async addInventoryItem(item: InventoryItem) {
-    const db = await initDB();
-    await db.put('inventory', item);
-    backgroundSync('inventory', item);
+    await backgroundSync('inventory', item);
   },
 
   async updateInventoryItem(item: InventoryItem) {
-    const db = await initDB();
-    await db.put('inventory', item);
-    backgroundSync('inventory', item);
+    await backgroundSync('inventory', item);
   },
 
   async deleteInventoryItem(id: string) {
     const db = await initDB();
     const item = await db.get('inventory', id);
     if (item) {
-      const updatedItem = { ...item, deletedAt: new Date().toISOString() };
-      await db.put('inventory', updatedItem);
-      backgroundSync('inventory', updatedItem);
+      const nowIso = new Date().toISOString();
+      const updatedItem = { ...item, deletedAt: nowIso, lastUpdated: nowIso };
+      await backgroundSync('inventory', updatedItem, { preserveLastUpdated: true });
     }
   },
 
@@ -2214,15 +3433,15 @@ const dbServiceObj = {
     const db = await initDB();
     const item = await db.get('inventory', id);
     if (item) {
-      const updatedItem = { ...item, deletedAt: undefined };
-      const syncData = { ...updatedItem, deletedAt: null }; 
-      await db.put('inventory', updatedItem);
-      backgroundSync('inventory', syncData);
+      const nowIso = new Date().toISOString();
+      const updatedItem = { ...item, deletedAt: undefined, lastUpdated: nowIso };
+      const syncData = { ...updatedItem, deletedAt: null };
+      await backgroundSync('inventory', syncData, { preserveLastUpdated: true });
     }
   },
 
   async permanentlyDeleteInventoryItem(id: string) {
-    await backgroundDelete('inventory', id);
+    await hardDeleteRecordInternal('inventory', id);
   },
 
   async initializeInventoryFromPrescriptions() {
@@ -2279,12 +3498,13 @@ const dbServiceObj = {
     }
 
     await tx.done;
-    updates.forEach(item => backgroundSync('inventory', item));
+    await Promise.all(updates.map(item => backgroundSync('inventory', item, { preserveLastUpdated: true })));
   },
 
   async applyInventoryFixes(fixes: { pesticideId: string, quantity: number }[]) {
     const db = await initDB();
     const inventory = await db.getAll('inventory');
+    const syncQueue: InventoryItem[] = [];
     
     for (const fix of fixes) {
         const item = inventory.find(i => i.pesticideId === fix.pesticideId && !i.deletedAt);
@@ -2292,7 +3512,7 @@ const dbServiceObj = {
             const newQty = Number(fix.quantity) || 0;
             const diff = newQty - (Number(item.quantity) || 0);
             item.quantity = newQty;
-            item.lastUpdated = new Date().toISOString();
+            item.lastUpdated = nextMonotonicIso();
             if (Math.abs(diff) > 0.0001) {
                 item.adjustments = [
                     ...(item.adjustments || []),
@@ -2304,9 +3524,10 @@ const dbServiceObj = {
                 ];
             }
             await db.put('inventory', item);
-            backgroundSync('inventory', item);
+            syncQueue.push(item);
         }
     }
+    await Promise.all(syncQueue.map(item => backgroundSync('inventory', item, { preserveLastUpdated: true })));
   },
 
   async applyFarmerFixes(fixes: { 
@@ -2386,10 +3607,12 @@ const dbServiceObj = {
     }
     await txMD.done;
 
-    syncQueueP.forEach(p => backgroundSync('prescriptions', p));
-    syncQueuePay.forEach(p => backgroundSync('payments', p));
-    syncQueueMyPay.forEach(p => backgroundSync('myPayments', p));
-    syncQueueMD.forEach(p => backgroundSync('manualDebts', p));
+    await Promise.all([
+      ...syncQueueP.map(p => backgroundSync('prescriptions', p)),
+      ...syncQueuePay.map(p => backgroundSync('payments', p)),
+      ...syncQueueMyPay.map(p => backgroundSync('myPayments', p)),
+      ...syncQueueMD.map(p => backgroundSync('manualDebts', p))
+    ]);
   },
 
   async analyzeFarmerBalances(): Promise<{
@@ -2550,17 +3773,19 @@ const dbServiceObj = {
     const db = await initDB();
     const inventory = await db.getAll('inventory');
     let fixedCount = 0;
-    const nowIso = new Date().toISOString();
+    const nowIso = nextMonotonicIso();
+    const toSync: InventoryItem[] = [];
     for (const raw of inventory) {
       if (raw.deletedAt) continue;
       const { item, changed } = normalizeInventoryNumbers(raw);
       if (changed) {
         item.lastUpdated = nowIso;
         await db.put('inventory', item);
-        void backgroundSync('inventory', item, { preserveLastUpdated: true });
+        toSync.push(item);
         fixedCount++;
       }
     }
+    await Promise.all(toSync.map(item => backgroundSync('inventory', item, { preserveLastUpdated: true })));
     return fixedCount;
   },
 
@@ -2610,7 +3835,7 @@ const dbServiceObj = {
         };
         uniqueByPesticide.set(normItem.pesticideId, merged);
         await db.put('inventory', merged);
-        void backgroundSync('inventory', merged, { preserveLastUpdated: true });
+        await backgroundSync('inventory', merged, { preserveLastUpdated: true });
         await backgroundDelete('inventory', normItem.id);
         deduplicatedCount++;
       } else {
@@ -2658,7 +3883,7 @@ const dbServiceObj = {
 
       if (qtyChanged || adjAdded || batchChanged) {
         await db.put('inventory', reconciled);
-        void backgroundSync('inventory', reconciled, { preserveLastUpdated: true });
+        await backgroundSync('inventory', reconciled, { preserveLastUpdated: true });
         updatedCount++;
       }
     }
@@ -2672,8 +3897,9 @@ const dbServiceObj = {
     if (mismatches.length === 0) return 0;
 
     const inventory = await db.getAll('inventory');
-    const nowIso = new Date().toISOString();
+    const nowIso = nextMonotonicIso();
     let adjustedCount = 0;
+    const toSync: InventoryItem[] = [];
 
     for (const m of mismatches) {
       const item = inventory.find(i => !i.deletedAt && i.pesticideId === m.pesticideId);
@@ -2700,10 +3926,11 @@ const dbServiceObj = {
         nowIso
       );
       await db.put('inventory', updated);
-      void backgroundSync('inventory', updated, { preserveLastUpdated: true });
+      toSync.push(updated);
       adjustedCount++;
     }
 
+    await Promise.all(toSync.map(item => backgroundSync('inventory', item, { preserveLastUpdated: true })));
     return adjustedCount;
   },
 
@@ -2726,7 +3953,7 @@ const dbServiceObj = {
 
     const allInventory = await inventoryStore.getAll();
     const inventoryUpdates: InventoryItem[] = [];
-    const nowIso = new Date().toISOString();
+    const nowIso = nextMonotonicIso();
 
     for (const item of prescription.items || []) {
       if (!item.quantity) continue;
@@ -2872,8 +4099,10 @@ const dbServiceObj = {
 
     await tx.done;
 
-    inventoryUpdates.forEach(item => void backgroundSync('inventory', item));
-    void backgroundSync('prescriptions', updatedPrescription);
+    await Promise.all([
+      ...inventoryUpdates.map(item => backgroundSync('inventory', item, { preserveLastUpdated: true })),
+      backgroundSync('prescriptions', updatedPrescription, { preserveLastUpdated: true })
+    ]);
   },
 
   async revertInventory(prescription: Prescription) {
@@ -2892,7 +4121,7 @@ const dbServiceObj = {
 
     const allInventory = await inventoryStore.getAll();
     const inventoryUpdates: InventoryItem[] = [];
-    const nowIso = new Date().toISOString();
+    const nowIso = nextMonotonicIso();
 
     for (const item of effectiveRx.items || []) {
       if (!item.quantity) continue;
@@ -2987,8 +4216,10 @@ const dbServiceObj = {
 
     await tx.done;
 
-    inventoryUpdates.forEach(item => void backgroundSync('inventory', item));
-    void backgroundSync('prescriptions', updatedPrescription);
+    await Promise.all([
+      ...inventoryUpdates.map(item => backgroundSync('inventory', item, { preserveLastUpdated: true })),
+      backgroundSync('prescriptions', updatedPrescription, { preserveLastUpdated: true })
+    ]);
   },
 
   async cleanupOldNotifications() {
@@ -3052,6 +4283,12 @@ const dbServiceObj = {
     return items.filter((i: any) => !i.deletedAt).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   },
 
+  async getAllPaymentsRaw() {
+    const db = await initDB();
+    const items = await db.getAll('payments');
+    return items.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  },
+
   async getPaymentsByFarmer(farmerId: string) {
     const db = await initDB();
     const list = await db.getAllFromIndex('payments', 'by-farmer', farmerId);
@@ -3059,16 +4296,12 @@ const dbServiceObj = {
   },
 
   async addPayment(payment: Payment) {
-    const db = await initDB();
-    await db.put('payments', payment);
-    backgroundSync('payments', payment);
+    await backgroundSync('payments', payment);
     return payment.id;
   },
 
   async updatePayment(payment: Payment) {
-    const db = await initDB();
-    await db.put('payments', payment);
-    backgroundSync('payments', payment);
+    await backgroundSync('payments', payment);
   },
 
   async deletePayment(id: string) {
@@ -3270,10 +4503,12 @@ const dbServiceObj = {
 
     await tx.done;
 
-    void backgroundSync('payments', stampedPayment, { preserveLastUpdated: true });
-    syncMyPays.forEach(mp => void backgroundSync('myPayments', mp, { preserveLastUpdated: true }));
-    syncTxs.forEach(t => void backgroundSync('transactions', t, { preserveLastUpdated: true }));
-    syncAccounts.forEach(acc => void backgroundSync('accounts', acc, { preserveLastUpdated: true }));
+    await Promise.all([
+      backgroundSync('payments', stampedPayment, { preserveLastUpdated: true }),
+      ...syncMyPays.map(mp => backgroundSync('myPayments', mp, { preserveLastUpdated: true })),
+      ...syncTxs.map(t => backgroundSync('transactions', t, { preserveLastUpdated: true })),
+      ...syncAccounts.map(acc => backgroundSync('accounts', acc, { preserveLastUpdated: true }))
+    ]);
 
     return stampedPayment.id;
   },
@@ -3343,16 +4578,24 @@ const dbServiceObj = {
 
     await tx.done;
 
-    void backgroundSync('payments', tombPay, { preserveLastUpdated: true });
-    syncMyPays.forEach(mp => void backgroundSync('myPayments', mp, { preserveLastUpdated: true }));
-    syncTxs.forEach(t => void backgroundSync('transactions', t, { preserveLastUpdated: true }));
-    syncAccounts.forEach(acc => void backgroundSync('accounts', acc, { preserveLastUpdated: true }));
+    await Promise.all([
+      backgroundSync('payments', tombPay, { preserveLastUpdated: true }),
+      ...syncMyPays.map(mp => backgroundSync('myPayments', mp, { preserveLastUpdated: true })),
+      ...syncTxs.map(t => backgroundSync('transactions', t, { preserveLastUpdated: true })),
+      ...syncAccounts.map(acc => backgroundSync('accounts', acc, { preserveLastUpdated: true }))
+    ]);
   },
   
   async getManualDebts() {
     const db = await initDB();
     const items = await db.getAll('manualDebts');
     return items.filter((i: any) => !i.deletedAt).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  },
+
+  async getAllManualDebtsRaw() {
+    const db = await initDB();
+    const items = await db.getAll('manualDebts');
+    return items.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   },
 
   async getManualDebtsByFarmer(farmerId: string) {
@@ -3362,16 +4605,12 @@ const dbServiceObj = {
   },
 
   async addManualDebt(debt: ManualDebt) {
-    const db = await initDB();
-    await db.put('manualDebts', debt);
-    backgroundSync('manualDebts', debt);
+    await backgroundSync('manualDebts', debt);
     return debt.id;
   },
 
   async updateManualDebt(debt: ManualDebt) {
-    const db = await initDB();
-    await db.put('manualDebts', debt);
-    backgroundSync('manualDebts', debt);
+    await backgroundSync('manualDebts', debt);
     return debt.id;
   },
 
@@ -3385,17 +4624,19 @@ const dbServiceObj = {
     return items.filter((i: any) => !i.deletedAt).sort((a, b) => a.name.localeCompare(b.name, 'tr'));
   },
 
-  async addSupplier(supplier: Supplier) {
+  async getAllSuppliersRaw() {
     const db = await initDB();
-    await db.put('suppliers', supplier);
-    backgroundSync('suppliers', supplier);
+    const items = await db.getAll('suppliers');
+    return items.sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+  },
+
+  async addSupplier(supplier: Supplier) {
+    await backgroundSync('suppliers', supplier);
     return supplier.id;
   },
 
   async updateSupplier(supplier: Supplier) {
-    const db = await initDB();
-    await db.put('suppliers', supplier);
-    backgroundSync('suppliers', supplier);
+    await backgroundSync('suppliers', supplier);
     return supplier.id;
   },
 
@@ -3408,7 +4649,7 @@ const dbServiceObj = {
     const tx = db.transaction('inventory', 'readwrite');
     const updates = await this._applyPurchaseToInventory(tx.objectStore('inventory'), purchase, isRevert);
     await tx.done;
-    updates.forEach(item => void backgroundSync('inventory', item));
+    await Promise.all(updates.map(item => backgroundSync('inventory', item, { preserveLastUpdated: true })));
   },
 
   /**
@@ -3590,8 +4831,10 @@ const dbServiceObj = {
       throw err;
     }
     const latest = new Map(touched.map(i => [i.id, i]));
-    latest.forEach(item => void backgroundSync('inventory', item));
-    void backgroundSync('supplierPurchases', finalRecord);
+    await Promise.all([
+      ...Array.from(latest.values()).map(item => backgroundSync('inventory', item, { preserveLastUpdated: true })),
+      backgroundSync('supplierPurchases', finalRecord, { preserveLastUpdated: true })
+    ]);
     return finalRecord.id;
   },
 
@@ -3617,8 +4860,10 @@ const dbServiceObj = {
       await tx.done.catch(() => undefined);
       throw err;
     }
-    touched.forEach(item => void backgroundSync('inventory', item));
-    void backgroundSync('supplierPurchases', deleted, { preserveLastUpdated: true });
+    await Promise.all([
+      ...touched.map(item => backgroundSync('inventory', item, { preserveLastUpdated: true })),
+      backgroundSync('supplierPurchases', deleted, { preserveLastUpdated: true })
+    ]);
   },
 
   async getSupplierPurchases(supplierId?: string) {
@@ -3630,6 +4875,11 @@ const dbServiceObj = {
       items = await db.getAllFromIndex('supplierPurchases', 'by-supplier', supplierId);
     }
     return items.filter((i: any) => !i.deletedAt);
+  },
+
+  async getAllSupplierPurchasesRaw() {
+    const db = await initDB();
+    return await db.getAll('supplierPurchases');
   },
 
   async getSupplierPurchaseById(id: string) {
@@ -3648,18 +4898,18 @@ const dbServiceObj = {
     return items.filter((i: any) => !i.deletedAt);
   },
 
-  async addSupplierPurchase(purchase: SupplierPurchase) {
+  async getAllSupplierPaymentsRaw() {
     const db = await initDB();
-    await db.put('supplierPurchases', purchase);
+    return await db.getAll('supplierPayments');
+  },
+
+  async addSupplierPurchase(purchase: SupplierPurchase) {
     await backgroundSync('supplierPurchases', purchase);
     return purchase.id;
   },
 
   async updateSupplierPurchase(purchase: SupplierPurchase) {
-    const db = await initDB();
-    await db.put('supplierPurchases', purchase);
-    // Non-blocking sync
-    backgroundSync('supplierPurchases', purchase).catch(() => {});
+    await backgroundSync('supplierPurchases', purchase);
     return purchase.id;
   },
 
@@ -3668,16 +4918,12 @@ const dbServiceObj = {
   },
 
   async addSupplierPayment(payment: SupplierPayment) {
-    const db = await initDB();
-    await db.put('supplierPayments', payment);
-    backgroundSync('supplierPayments', payment);
+    await backgroundSync('supplierPayments', payment);
     return payment.id;
   },
 
   async updateSupplierPayment(payment: SupplierPayment) {
-    const db = await initDB();
-    await db.put('supplierPayments', payment);
-    backgroundSync('supplierPayments', payment);
+    await backgroundSync('supplierPayments', payment);
   },
 
   async deleteSupplierPayment(id: string) {
@@ -3690,17 +4936,19 @@ const dbServiceObj = {
     return items.filter((i: any) => !i.deletedAt).sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
   },
 
-  async addMyPayment(payment: MyPayment) {
+  async getAllMyPaymentsRaw() {
     const db = await initDB();
-    await db.put('myPayments', payment);
-    backgroundSync('myPayments', payment);
+    const items = await db.getAll('myPayments');
+    return items.sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
+  },
+
+  async addMyPayment(payment: MyPayment) {
+    await backgroundSync('myPayments', payment);
     return payment.id;
   },
 
   async updateMyPayment(payment: MyPayment) {
-    const db = await initDB();
-    await db.put('myPayments', payment);
-    backgroundSync('myPayments', payment);
+    await backgroundSync('myPayments', payment);
     return payment.id;
   },
 
@@ -3768,27 +5016,21 @@ const dbServiceObj = {
     await tx.done;
 
     for (const entry of toSyncDebts) {
-      backgroundSync('manualDebts', entry);
+      await backgroundSync('manualDebts', entry, { preserveLastUpdated: true });
     }
-    backgroundSync('turnoverLogs', log);
+    await backgroundSync('turnoverLogs', log, { preserveLastUpdated: true });
   },
 
   async performInventoryTurnover(year: number, inventoryItems: InventoryItem[]): Promise<void> {
-    const db = await initDB();
-    const tx = db.transaction(['turnoverLogs'], 'readwrite');
-    const logStore = tx.objectStore('turnoverLogs');
-    
+    const nowIso = new Date().toISOString();
     const log: TurnoverLog = {
       id: `turnover-log-inv-${year}`,
       year,
-      date: new Date().toISOString(),
+      date: nowIso,
       type: 'INVENTORY',
-      ...({ itemCount: inventoryItems.length } as any)
+      ...({ itemCount: inventoryItems.length, lastUpdated: nowIso } as any)
     };
-    
-    await logStore.put(log);
-    await tx.done;
-    backgroundSync('turnoverLogs', log);
+    await backgroundSync('turnoverLogs', log, { preserveLastUpdated: true });
   },
 
   // --- EXPENSES ---
@@ -3798,17 +5040,19 @@ const dbServiceObj = {
     return items.filter((i: any) => !i.deletedAt).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   },
 
-  async addExpense(expense: Expense) {
+  async getAllExpensesRaw() {
     const db = await initDB();
-    await db.put('expenses', expense);
-    backgroundSync('expenses', expense);
+    const items = await db.getAll('expenses');
+    return items.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  },
+
+  async addExpense(expense: Expense) {
+    await backgroundSync('expenses', expense);
     return expense.id;
   },
 
   async updateExpense(expense: Expense) {
-    const db = await initDB();
-    await db.put('expenses', expense);
-    backgroundSync('expenses', expense);
+    await backgroundSync('expenses', expense);
   },
 
   // --- ACCOUNTS & TRANSACTIONS ---
@@ -3819,16 +5063,12 @@ const dbServiceObj = {
   },
 
   async addAccount(account: Account) {
-    const db = await initDB();
-    await db.put('accounts', account);
-    backgroundSync('accounts', account);
+    await backgroundSync('accounts', account);
     return account.id;
   },
 
   async updateAccount(account: Account) {
-    const db = await initDB();
-    await db.put('accounts', account);
-    backgroundSync('accounts', account);
+    await backgroundSync('accounts', account);
     return account.id;
   },
 
@@ -3840,6 +5080,12 @@ const dbServiceObj = {
     const db = await initDB();
     const items = await db.getAll('transactions');
     return items.filter((i: any) => !i.deletedAt).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  },
+
+  async getAllTransactionsRaw() {
+    const db = await initDB();
+    const items = await db.getAll('transactions');
+    return items.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   },
 
   async addTransaction(transaction: Transaction) {
@@ -3890,10 +5136,13 @@ const dbServiceObj = {
     }
     await idbTx.done;
 
-    void backgroundSync('transactions', cleanTx, { preserveLastUpdated: true });
+    const syncPromises: Promise<void>[] = [
+      backgroundSync('transactions', cleanTx, { preserveLastUpdated: true })
+    ];
     if (updatedAccount) {
-      void backgroundSync('accounts', updatedAccount, { preserveLastUpdated: true });
+      syncPromises.push(backgroundSync('accounts', updatedAccount, { preserveLastUpdated: true }));
     }
+    await Promise.all(syncPromises);
     return cleanTx.id;
   },
 
@@ -3939,8 +5188,10 @@ const dbServiceObj = {
     }
     await idbTx.done;
 
-    void backgroundSync('transactions', cleanTx, { preserveLastUpdated: true });
-    updatedAccounts.forEach(acc => void backgroundSync('accounts', acc, { preserveLastUpdated: true }));
+    await Promise.all([
+      backgroundSync('transactions', cleanTx, { preserveLastUpdated: true }),
+      ...updatedAccounts.map(acc => backgroundSync('accounts', acc, { preserveLastUpdated: true }))
+    ]);
   },
 
   async deleteTransaction(id: string) {
@@ -3983,10 +5234,13 @@ const dbServiceObj = {
     }
     await idbTx.done;
 
-    void backgroundSync('transactions', tombstoneTx, { preserveLastUpdated: true });
+    const syncPromises: Promise<void>[] = [
+      backgroundSync('transactions', tombstoneTx, { preserveLastUpdated: true })
+    ];
     if (updatedAccount) {
-      void backgroundSync('accounts', updatedAccount, { preserveLastUpdated: true });
+      syncPromises.push(backgroundSync('accounts', updatedAccount, { preserveLastUpdated: true }));
     }
+    await Promise.all(syncPromises);
   },
 
   /**
@@ -4089,10 +5343,12 @@ const dbServiceObj = {
     await accStore.put(updatedToAcc);
     await idbTx.done;
 
-    void backgroundSync('transactions', outTx, { preserveLastUpdated: true });
-    void backgroundSync('transactions', inTx, { preserveLastUpdated: true });
-    void backgroundSync('accounts', updatedFromAcc, { preserveLastUpdated: true });
-    void backgroundSync('accounts', updatedToAcc, { preserveLastUpdated: true });
+    await Promise.all([
+      backgroundSync('transactions', outTx, { preserveLastUpdated: true }),
+      backgroundSync('transactions', inTx, { preserveLastUpdated: true }),
+      backgroundSync('accounts', updatedFromAcc, { preserveLastUpdated: true }),
+      backgroundSync('accounts', updatedToAcc, { preserveLastUpdated: true })
+    ]);
 
     return { outTxId, inTxId };
   },
@@ -4104,7 +5360,7 @@ const dbServiceObj = {
    */
   _isReconcilingAccounts: false,
   async reconcileAccountBalances() {
-    if (this._isReconcilingAccounts) return;
+    if (this._isReconcilingAccounts || isWipingData) return;
     this._isReconcilingAccounts = true;
     try {
       const db = await initDB();
@@ -4144,7 +5400,7 @@ const dbServiceObj = {
         if (Math.abs((Number(acc.balance) || 0) - calculatedBalance) >= 0.005) {
           const nextAcc = { ...acc, balance: calculatedBalance };
           await db.put('accounts', nextAcc);
-          void backgroundSync('accounts', nextAcc);
+          await backgroundSync('accounts', nextAcc);
         }
       }
     } catch (err) {
@@ -4166,13 +5422,11 @@ const dbServiceObj = {
   },
 
   async addTeamMember(member: TeamMember) {
-    const db = await initDB();
     const hashedMember: TeamMember = {
       ...member,
       password: member.password && !isHashedSecret(member.password) ? await hashSecret(member.password) : member.password
     };
-    await db.put('teamMembers', hashedMember);
-    backgroundSync('teamMembers', hashedMember);
+    await backgroundSync('teamMembers', hashedMember);
     return hashedMember.id;
   },
 
@@ -4186,8 +5440,7 @@ const dbServiceObj = {
       ...member,
       password: nextPassword
     };
-    await db.put('teamMembers', hashedMember);
-    backgroundSync('teamMembers', hashedMember);
+    await backgroundSync('teamMembers', hashedMember);
     return hashedMember.id;
   },
 
@@ -4279,9 +5532,7 @@ const dbServiceObj = {
   },
 
   async sendMessage(message: Message) {
-    const db = await initDB();
-    await db.put('messages', message);
-    backgroundSync('messages', message);
+    await backgroundSync('messages', message);
     return message.id;
   },
 
@@ -4298,37 +5549,29 @@ const dbServiceObj = {
   },
 
   async addPlant(plant: Plant): Promise<void> {
-    const db = await initDB();
-    await db.put('plants', plant);
-    backgroundSync('plants', plant);
+    await backgroundSync('plants', plant);
   },
 
   async updatePlant(plant: Plant): Promise<void> {
-    const db = await initDB();
-    await db.put('plants', plant);
-    backgroundSync('plants', plant);
+    await backgroundSync('plants', plant);
   },
 
   async deletePlant(id: string): Promise<void> {
     const db = await initDB();
     const existing = await db.get('plants', id);
     if (existing) {
-      const updated = { ...existing, deletedAt: new Date().toISOString() };
-      await db.put('plants', updated);
-      backgroundSync('plants', updated);
+      const nowIso = new Date().toISOString();
+      const updated = { ...existing, deletedAt: nowIso, lastUpdated: nowIso };
+      await backgroundSync('plants', updated, { preserveLastUpdated: true });
     }
   },
 
   async addCollectionLog(log: CollectionLog) {
-    const db = await initDB();
-    await db.put('collectionLogs', log);
-    backgroundSync('collectionLogs', log);
+    await backgroundSync('collectionLogs', log);
   },
 
   async updateCollectionLog(log: CollectionLog) {
-    const db = await initDB();
-    await db.put('collectionLogs', log);
-    backgroundSync('collectionLogs', log);
+    await backgroundSync('collectionLogs', log);
   },
 
   async deleteCollectionLog(id: string) {
@@ -4342,15 +5585,11 @@ const dbServiceObj = {
   },
 
   async addSiloTransaction(transaction: import('../types').SiloTransaction) {
-    const db = await initDB();
-    await db.put('siloTransactions', transaction);
-    backgroundSync('siloTransactions', transaction);
+    await backgroundSync('siloTransactions', transaction);
   },
 
   async updateSiloTransaction(transaction: import('../types').SiloTransaction) {
-    const db = await initDB();
-    await db.put('siloTransactions', transaction);
-    backgroundSync('siloTransactions', transaction);
+    await backgroundSync('siloTransactions', transaction);
   },
 
   async deleteSiloTransaction(id: string) {
@@ -4373,86 +5612,229 @@ const dbServiceObj = {
   setupRealtimeSync(uid: string, onSync: () => void, onProfileSync?: (profile: import('../types').UserProfile) => void) {
     const userPath = [FS_ROOT, FS_ORG, FS_USERS, uid].join("/");
     const collections = USER_SYNC_COLLECTIONS;
+    const FINANCIAL_SYNC_COLS = new Set(['accounts', 'transactions', 'payments', 'myPayments', 'expenses', 'supplierPayments']);
     
     const unsubscribes: (() => void)[] = [];
     let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-    const triggerDebouncedSync = () => {
+    let needsAccountReconcile = false;
+    const pendingChangedCols = new Set<string>();
+    const triggerDebouncedSync = (changedCol?: string) => {
+      if (changedCol) pendingChangedCols.add(changedCol);
       if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
-      syncDebounceTimer = setTimeout(() => {
+      syncDebounceTimer = setTimeout(async () => {
         syncDebounceTimer = null;
-        if (auth.currentUser?.uid === uid) {
-          onSync();
+        if (auth.currentUser?.uid !== uid) return;
+        const flushedCols = Array.from(pendingChangedCols);
+        pendingChangedCols.clear();
+        if (needsAccountReconcile && !isWipingData && !isSubscriptionBlocked()) {
+          needsAccountReconcile = false;
+          await dbServiceObj.reconcileAccountBalances().catch(() => {});
         }
-      }, 150);
+        onSync();
+        if (typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('mks-cloud-sync-applied', { detail: { collections: flushedCols } }));
+        }
+      }, 40);
     };
 
     // Kick off an outbox flush right when realtime sync attaches
     flushSyncOutboxInternal().catch(() => {});
 
-    // Profile listener
-    if (onProfileSync) {
-      const profileRef = doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid);
-      const profileUnsub = onSnapshot(profileRef, (snapshot) => {
-        try {
-          if (auth.currentUser?.uid !== uid) return;
-          if (snapshot.exists() && !snapshot.metadata.hasPendingWrites) {
-            const profileData = snapshot.data() as UserProfile;
-            if (localStorage.getItem(`mks_pending_profile_sync_${uid}`) === '1') return;
-            localStorage.setItem('mks_user_profile', safeStringify({ ...profileData, uid }));
-            onProfileSync(profileData);
+    // Profile listener (handles profile settings + remote categoryWipedAt + remote hardDeletedAt tombstones)
+    const profileRef = doc(firestore, FS_ROOT, FS_ORG, FS_USERS, uid);
+    const profileUnsub = onSnapshot(profileRef, async (snapshot) => {
+      try {
+        if (isWipingData || auth.currentUser?.uid !== uid) return;
+        if (snapshot.exists() && !snapshot.metadata.hasPendingWrites) {
+          const profileData = snapshot.data() as UserProfile;
+
+          // 1. Başka cihazda kategori sıfırlama yapılmışsa yerel cache'i hemen temizle
+          const cloudWipes = profileData?.categoryWipedAt;
+          if (cloudWipes && typeof cloudWipes === 'object') {
+            const localWipes = readCategoryWipeMap(uid);
+            const colsToPurgeLocally: string[] = [];
+            for (const [colName, iso] of Object.entries(cloudWipes)) {
+              if (typeof iso === 'string' && iso && (!localWipes[colName] || iso > localWipes[colName])) {
+                colsToPurgeLocally.push(colName);
+              }
+            }
+            if (colsToPurgeLocally.length > 0) {
+              for (const colName of colsToPurgeLocally) {
+                markCategoriesWiped([colName], cloudWipes[colName], uid);
+              }
+              const db = await initDB();
+              for (const colName of colsToPurgeLocally) {
+                if (db.objectStoreNames.contains(colName as any)) {
+                  const wipeTs = new Date(cloudWipes[colName]).getTime();
+                  const colTx = db.transaction(colName as any, 'readwrite');
+                  const rows = await colTx.store.getAll();
+                  for (const row of rows as any[]) {
+                    const rowTs = row?.lastUpdated ? new Date(row.lastUpdated).getTime() : 0;
+                    if (!Number.isFinite(wipeTs) || rowTs <= wipeTs) {
+                      await colTx.store.delete(row.id);
+                    }
+                  }
+                  await colTx.done;
+                }
+                if (colName === 'edmData') {
+                  for (const baseKey of EDM_SYNC_STORAGE_KEYS) {
+                    removeLocalStorageForEdmDataDoc(baseKey, uid);
+                  }
+                }
+                if (FINANCIAL_SYNC_COLS.has(colName)) {
+                  needsAccountReconcile = true;
+                }
+              }
+              triggerDebouncedSync();
+            }
           }
-        } catch (profileErr) {
-          console.error('[setupRealtimeSync] Profile snapshot callback error:', profileErr);
+
+          // 2. Başka cihazda tekil kalıcı silme yapılmışsa yerel kopyayı & bayat outbox'ı hemen sil
+          const cloudHardDeletes = profileData?.hardDeletedAt;
+          const newlyHardDeletedKeys = mergeCloudHardDeletedMap(cloudHardDeletes, uid);
+          if (newlyHardDeletedKeys.length > 0) {
+            const db = await initDB();
+            let deletedLocallyCount = 0;
+            for (const fullKey of newlyHardDeletedKeys) {
+              const sepIdx = fullKey.indexOf(':');
+              if (sepIdx <= 0) continue;
+              const colName = fullKey.slice(0, sepIdx);
+              const docId = fullKey.slice(sepIdx + 1);
+              const hdIso = cloudHardDeletes?.[fullKey];
+              const hdTs = hdIso ? new Date(hdIso).getTime() : NaN;
+
+              if (db.objectStoreNames.contains(colName as any)) {
+                const existingLocal = (await db.get(colName as any, docId)) as any;
+                const localTs = existingLocal?.lastUpdated ? new Date(existingLocal.lastUpdated).getTime() : 0;
+                if (existingLocal && (!Number.isFinite(hdTs) || !Number.isFinite(localTs) || localTs <= hdTs)) {
+                  await db.delete(colName as any, docId).catch(() => {});
+                  deletedLocallyCount++;
+                  if (colName === 'edmData') {
+                    removeLocalStorageForEdmDataDoc(docId, uid);
+                  }
+                  if (FINANCIAL_SYNC_COLS.has(colName)) {
+                    needsAccountReconcile = true;
+                  }
+                }
+              }
+
+              if (db.objectStoreNames.contains('syncOutbox')) {
+                const outboxEntry = await db.get('syncOutbox', fullKey);
+                const outboxTs = outboxEntry?.updatedAt ? new Date(outboxEntry.updatedAt).getTime() : 0;
+                if (outboxEntry && (!Number.isFinite(hdTs) || !Number.isFinite(outboxTs) || outboxTs <= hdTs)) {
+                  await db.delete('syncOutbox', fullKey).catch(() => {});
+                }
+              }
+            }
+            if (deletedLocallyCount > 0) {
+              triggerDebouncedSync();
+            }
+          }
+
+          if (localStorage.getItem(`mks_pending_profile_sync_${uid}`) === '1') return;
+
+          const mergedProfile: UserProfile = {
+            ...profileData,
+            uid,
+            categoryWipedAt: readCategoryWipeMap(uid),
+            hardDeletedAt: getCappedCloudHardDeletedMap(uid)
+          };
+          localStorage.setItem('mks_user_profile', safeStringify(mergedProfile));
+          if (onProfileSync) {
+            onProfileSync(mergedProfile);
+          }
         }
-      }, (error) => {
-        handleFirestoreError(error, OperationType.GET, `${userPath}`);
-      });
-      unsubscribes.push(profileUnsub);
-    }
+      } catch (profileErr) {
+        console.error('[setupRealtimeSync] Profile snapshot callback error:', profileErr);
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, `${userPath}`);
+    });
+    unsubscribes.push(profileUnsub);
 
     collections.forEach(col => {
       const q = collection(firestore, userPath, col);
       const unsub = onSnapshot(q, async (snapshot) => {
         try {
-          if (auth.currentUser?.uid !== uid) return;
+          if (isWipingData || auth.currentUser?.uid !== uid) return;
           const db = await initDB();
-          if (auth.currentUser?.uid !== uid) return;
+          if (isWipingData || auth.currentUser?.uid !== uid) return;
+          const hardDeletedAtMap = readHardDeletedMap(uid);
+          const categoryWipedAtMap = readCategoryWipeMap(uid);
           const outboxEntries = await db.getAll('syncOutbox').catch(() => []);
           const pendingIds = new Set(outboxEntries.filter(e => e.collection === col).map(e => e.itemId));
           const tx = db.transaction(col, 'readwrite');
           
           let changedCount = 0;
+          const cloudZombiesToDelete: string[] = [];
+          const staleOutboxToClear: string[] = [];
           for (const change of snapshot.docChanges()) {
-            if (change.doc.metadata.hasPendingWrites) continue;
             const docId = change.doc.id;
-            if (pendingIds.has(docId)) continue;
+            const hasPendingOutbox = pendingIds.has(docId);
 
             if (change.type === 'added' || change.type === 'modified') {
               const incoming = change.doc.data() as any;
               const localExisting = await tx.store.get(docId) as any;
-              if (localExisting) {
-                const localTs = localExisting.lastUpdated ? new Date(localExisting.lastUpdated).getTime() : 0;
-                const incomingTs = incoming.lastUpdated ? new Date(incoming.lastUpdated).getTime() : 0;
-                // AK-21: Allow newer server restores (incomingTs > localTs) to revive locally soft-deleted records
-                if (localExisting.deletedAt && !incoming.deletedAt) {
-                  if (incomingTs <= localTs) {
-                    continue;
-                  }
-                } else if (localTs > incomingTs) {
-                  continue;
-                }
+              if (
+                localExisting &&
+                localExisting._syncedFromCloud === true &&
+                incoming?.lastUpdated &&
+                localExisting.lastUpdated === incoming.lastUpdated &&
+                Boolean(localExisting.deletedAt) === Boolean(incoming.deletedAt)
+              ) {
+                continue;
               }
-              await tx.store.put({ ...incoming, _syncedFromCloud: true });
-              changedCount++;
+              const decision = shouldAcceptCloudItem({
+                col,
+                docId,
+                incoming,
+                localExisting,
+                pendingOutbox: hasPendingOutbox,
+                hardDeletedAtMap,
+                categoryWipedAtMap
+              });
+
+              if (decision.accept) {
+                await tx.store.put({ ...incoming, _syncedFromCloud: true });
+                if (hasPendingOutbox) staleOutboxToClear.push(docId);
+                if (col === 'edmData') {
+                  hydrateLocalStorageFromEdmDataDoc(incoming, uid);
+                }
+                changedCount++;
+              } else if (decision.reason === 'HARD_DELETED' || decision.reason === 'WIPED') {
+                if (localExisting) {
+                  await tx.store.delete(docId);
+                  changedCount++;
+                }
+                if (hasPendingOutbox) staleOutboxToClear.push(docId);
+                if (col === 'edmData') {
+                  removeLocalStorageForEdmDataDoc(docId, uid);
+                }
+                cloudZombiesToDelete.push(docId);
+              }
             } else if (change.type === 'removed') {
-              await tx.store.delete(docId);
-              changedCount++;
+              if (!hasPendingOutbox) {
+                await tx.store.delete(docId);
+                if (col === 'edmData') {
+                  removeLocalStorageForEdmDataDoc(docId, uid);
+                }
+                changedCount++;
+              }
             }
           }
           
           await tx.done;
+          for (const staleId of staleOutboxToClear) {
+            await dequeueSyncOutbox(col, staleId);
+          }
+          for (const zombieId of cloudZombiesToDelete) {
+            await deleteDoc(doc(firestore, userPath, col, zombieId)).catch(() => {});
+          }
           if (changedCount > 0) {
-            triggerDebouncedSync(); // UI'ı tek seferde bilgilendir
+            if (FINANCIAL_SYNC_COLS.has(col)) {
+              needsAccountReconcile = true;
+            }
+            triggerDebouncedSync(col); // UI'ı anında bilgilendir
           }
         } catch (snapErr) {
           console.error(`[setupRealtimeSync] Snapshot error for ${col}:`, snapErr);
@@ -4476,8 +5858,6 @@ const dbServiceObj = {
         
         const ops: Promise<any>[] = [];
         for (const change of snapshot.docChanges()) {
-          if (change.doc.metadata.hasPendingWrites) continue;
-
           if (change.type === 'added' || change.type === 'modified') {
             ops.push(tx.store.put(change.doc.data() as any));
           } else if (change.type === 'removed') {
@@ -4488,7 +5868,7 @@ const dbServiceObj = {
         if (ops.length > 0) {
           await Promise.all(ops);
           await tx.done;
-          triggerDebouncedSync();
+          triggerDebouncedSync('news');
         } else {
           await tx.done;
         }
@@ -4526,16 +5906,12 @@ const dbServiceObj = {
   },
 
   async addSiloContact(contact: import('../types').SiloContact) {
-    const db = await initDB();
-    await db.put('siloContacts', contact);
-    backgroundSync('siloContacts', contact);
+    await backgroundSync('siloContacts', contact);
     return contact.id;
   },
 
   async updateSiloContact(contact: import('../types').SiloContact) {
-    const db = await initDB();
-    await db.put('siloContacts', contact);
-    backgroundSync('siloContacts', contact);
+    await backgroundSync('siloContacts', contact);
     return contact.id;
   },
 
@@ -4543,9 +5919,9 @@ const dbServiceObj = {
     const db = await initDB();
     const contact = await db.get('siloContacts', id);
     if (contact) {
-      const updatedContact = { ...contact, deletedAt: new Date().toISOString() };
-      await db.put('siloContacts', updatedContact);
-      backgroundSync('siloContacts', updatedContact);
+      const nowIso = new Date().toISOString();
+      const updatedContact = { ...contact, deletedAt: nowIso, lastUpdated: nowIso };
+      await backgroundSync('siloContacts', updatedContact, { preserveLastUpdated: true });
     }
   },
 
@@ -4561,14 +5937,12 @@ const dbServiceObj = {
   },
 
   async saveMapFeature(feature: SavedMapFeature): Promise<string> {
-    const db = await initDB();
     const stamped: SavedMapFeature = {
       ...feature,
       createdAt: feature.createdAt || new Date().toISOString(),
       lastUpdated: new Date().toISOString()
     };
-    await db.put('mapFeatures', stamped);
-    backgroundSync('mapFeatures', stamped);
+    await backgroundSync('mapFeatures', stamped, { preserveLastUpdated: true });
     return stamped.id;
   },
 
@@ -4631,14 +6005,12 @@ const dbServiceObj = {
   },
 
   async savePrescriptionTemplate(template: PrescriptionTemplate): Promise<string> {
-    const db = await initDB();
     const stamped: PrescriptionTemplate = {
       ...template,
       createdAt: template.createdAt || new Date().toISOString(),
       lastUpdated: new Date().toISOString()
     };
-    await db.put('prescriptionTemplates', stamped);
-    backgroundSync('prescriptionTemplates', stamped);
+    await backgroundSync('prescriptionTemplates', stamped, { preserveLastUpdated: true });
     return stamped.id;
   },
 
@@ -4701,14 +6073,12 @@ const dbServiceObj = {
   },
 
   async saveMinistryShipment(rec: MinistryShipmentRecord): Promise<string> {
-    const db = await initDB();
     const stamped: MinistryShipmentRecord = {
       ...rec,
       id: rec.id || generateUUID(),
       lastUpdated: new Date().toISOString()
     };
-    await db.put('ministryShipments', stamped);
-    void backgroundSync('ministryShipments', stamped, { preserveLastUpdated: true });
+    await backgroundSync('ministryShipments', stamped, { preserveLastUpdated: true });
     return stamped.id;
   },
 
@@ -4721,14 +6091,12 @@ const dbServiceObj = {
   },
 
   async saveMinistryRecord(rec: MinistryRecord): Promise<string> {
-    const db = await initDB();
     const stamped: MinistryRecord = {
       ...rec,
       id: rec.id || generateUUID(),
       lastUpdated: new Date().toISOString()
     };
-    await db.put('ministryRecords', stamped);
-    void backgroundSync('ministryRecords', stamped, { preserveLastUpdated: true });
+    await backgroundSync('ministryRecords', stamped, { preserveLastUpdated: true });
     return stamped.id;
   },
 
@@ -4749,7 +6117,7 @@ const dbServiceObj = {
       stampedList.push(stamped);
     }
     await tx.done;
-    stampedList.forEach(r => void backgroundSync('ministryRecords', r, { preserveLastUpdated: true }));
+    await Promise.all(stampedList.map(r => backgroundSync('ministryRecords', r, { preserveLastUpdated: true })));
   },
 
   /**
@@ -4913,9 +6281,11 @@ const dbServiceObj = {
     await shipStore.put(acceptedShipment);
     await tx.done;
 
-    inventoryUpdates.forEach(item => void backgroundSync('inventory', item, { preserveLastUpdated: true }));
-    void backgroundSync('ministryShipments', acceptedShipment, { preserveLastUpdated: true });
-    createdRecords.forEach(rec => void backgroundSync('ministryRecords', rec, { preserveLastUpdated: true }));
+    await Promise.all([
+      ...inventoryUpdates.map(item => backgroundSync('inventory', item, { preserveLastUpdated: true })),
+      backgroundSync('ministryShipments', acceptedShipment, { preserveLastUpdated: true }),
+      ...createdRecords.map(rec => backgroundSync('ministryRecords', rec, { preserveLastUpdated: true }))
+    ]);
 
     return { alreadyAccepted: false, shipment: acceptedShipment, records: createdRecords };
   },
@@ -4974,15 +6344,15 @@ const dbServiceObj = {
     return candidate;
   },
 
-  // --- EDM WAREHOUSE INDEXEDDB MIRROR (AK-12) ---
+  // --- EDM WAREHOUSE INDEXEDDB + FIRESTORE MIRROR (AK-12) ---
   async saveEdmData(key: string, data: any): Promise<void> {
     if (!key) return;
-    const db = await initDB();
-    await db.put('edmData', {
-      id: key,
-      data,
-      updatedAt: new Date().toISOString()
-    });
+    const nowIso = new Date().toISOString();
+    await backgroundSync(
+      'edmData',
+      { id: key, data, updatedAt: nowIso, lastUpdated: nowIso },
+      { preserveLastUpdated: true }
+    );
   },
 
   async getEdmData<T = any>(key: string): Promise<T | null> {
@@ -5028,7 +6398,8 @@ export const dbService = new Proxy(dbServiceObj, {
                          propStr !== 'updatePortalInquiryStatus' &&
                          propStr !== 'clearLocalUserData' &&
                          propStr !== 'cleanupOldNotifications' &&
-                         propStr !== 'deleteAllUserData';
+                         propStr !== 'deleteAllUserData' &&
+                         propStr !== 'purgeSelectedCategories';
                          
       if (isMutating) {
         return async (...args: any[]) => {

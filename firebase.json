@@ -18,6 +18,22 @@
     ],
     "rewrites": [
       {
+        "source": "/privacy",
+        "destination": "/gizlilik-politikasi.html"
+      },
+      {
+        "source": "/privacy-policy",
+        "destination": "/gizlilik-politikasi.html"
+      },
+      {
+        "source": "/gizlilik",
+        "destination": "/gizlilik-politikasi.html"
+      },
+      {
+        "source": "/gizlilik-politikasi",
+        "destination": "/gizlilik-politikasi.html"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

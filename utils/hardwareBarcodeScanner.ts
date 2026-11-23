@@ -169,12 +169,17 @@ export function initHardwareBarcodeScanner(): () => void {
         const before = valueBefore;
         reset();
         const inField = isEditable(e.target);
-        const minLen = inField ? MIN_LENGTH_IN_INPUT : MIN_LENGTH;
-        if (len < minLen || avg >= MAX_AVG_INTERVAL_MS) return;
+        const optIn = inField && (e.target as HTMLElement).getAttribute(SCAN_TARGET_ATTR) === 'true';
+        if (inField && !optIn) {
+          // Normal form alanlarında Tab veya hızlı insan yazımı asla barkod diye yakalanıp silinmemeli
+          if (e.key === 'Tab' || len < 12 || avg >= 30) return;
+        } else {
+          const minLen = inField ? MIN_LENGTH_IN_INPUT : MIN_LENGTH;
+          if (len < minLen || avg >= MAX_AVG_INTERVAL_MS) return;
+        }
 
         // A real scanner burst: never let Enter/Tab submit a form or move focus.
         e.preventDefault();
-        const optIn = inField && (e.target as HTMLElement).getAttribute(SCAN_TARGET_ATTR) === 'true';
         if (optIn) return; // the field owns the scan
         if (target && target === e.target && typeof target.value === 'string') {
           // Strip the burst that the browser typed into the focused field.

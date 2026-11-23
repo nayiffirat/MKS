@@ -1,6 +1,7 @@
 import { Capacitor } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { dbService, isSubscriptionBlocked } from '../services/db';
+import { generateUUID } from '../utils/uuid';
 import {
   Account,
   CollectionLog,
@@ -96,26 +97,28 @@ export async function computeFullAppSnapshot(syncedReminders?: Reminder[]): Prom
     rawPaymentList,
     rawManualDebtList,
     rawSupplierList,
-    myPaymentList,
+    rawMyPaymentList,
     rawExpenseList,
     teamMemberList,
     messageList,
     collectionLogList
   ] = await Promise.all([
-    dbService.getAllPrescriptions(),
-    dbService.getFarmers(),
-    dbService.getAllVisits(),
+    dbService.getAllPrescriptionsRaw(),
+    dbService.getAllFarmersRaw(),
+    dbService.getAllVisitsRaw(),
     dbService.getReminders(),
     dbService.getInventory(),
-    dbService.getPayments(),
-    dbService.getManualDebts(),
-    dbService.getSuppliers(),
-    dbService.getMyPayments(),
-    dbService.getExpenses(),
+    dbService.getAllPaymentsRaw(),
+    dbService.getAllManualDebtsRaw(),
+    dbService.getAllSuppliersRaw(),
+    dbService.getAllMyPaymentsRaw(),
+    dbService.getAllExpensesRaw(),
     dbService.getTeamMembers(),
     dbService.getMessages(),
     dbService.getCollectionLogs()
   ]);
+
+  const myPaymentList = rawMyPaymentList.filter(p => !p.deletedAt);
 
   // --- AUTO UNBLOCK EXPIRED CARD PAYMENTS ---
   const todayLocalYmd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -150,7 +153,7 @@ export async function computeFullAppSnapshot(syncedReminders?: Reminder[]): Prom
             if (!existingTx) {
               const name = p.farmerName || 'Müşteri';
               const newTx = {
-                id: crypto.randomUUID(),
+                id: generateUUID(),
                 accountId: accId,
                 type: 'INCOME' as const,
                 amount: p.amount,
@@ -165,7 +168,7 @@ export async function computeFullAppSnapshot(syncedReminders?: Reminder[]): Prom
           }
 
           if (p.relatedId) {
-            const origP = rawPaymentList.find(orig => orig.id === p.relatedId);
+            const origP = rawPaymentList.find(orig => !orig.deletedAt && orig.id === p.relatedId);
             if (origP) {
               await dbService.updatePayment({ ...origP, isUnblocked: true });
             }
@@ -178,6 +181,14 @@ export async function computeFullAppSnapshot(syncedReminders?: Reminder[]): Prom
   }
 
   // --- PRESCRIPTIONS FILTERING & AUTO-DELETE ---
+  const farmerList = rawFarmerList.filter(f => !f.deletedAt);
+  const trashedF = rawFarmerList.filter(f => f.deletedAt);
+  const trashedFarmerIds = new Set(trashedF.map(f => f.id));
+
+  const supplierList = rawSupplierList.filter(s => !s.deletedAt);
+  const trashedS = rawSupplierList.filter(s => s.deletedAt);
+  const trashedSupplierIds = new Set(trashedS.map(s => s.id));
+
   const prescriptions: Prescription[] = [];
   const trashedPrescriptions: Prescription[] = [];
 
@@ -187,42 +198,38 @@ export async function computeFullAppSnapshot(syncedReminders?: Reminder[]): Prom
     if (p.deletedAt) {
       const deletedTime = new Date(p.deletedAt).getTime();
       if (!subscriptionBlocked && now.getTime() - deletedTime > thirtyDaysInMs) {
-        dbService.deletePrescription(p.id).catch(() => {});
+        dbService.hardDeleteRecord('prescriptions', p.id).catch(() => {});
       } else {
         trashedPrescriptions.push(p);
       }
-    } else {
+    } else if (!trashedFarmerIds.has(p.farmerId)) {
       prescriptions.push(p);
     }
   }
 
   const [allPurchasesRaw, allPaymentsRaw, allTransactionsRaw] = await Promise.all([
-    dbService.getSupplierPurchases(),
-    dbService.getSupplierPayments(),
-    dbService.getTransactions()
+    dbService.getAllSupplierPurchasesRaw(),
+    dbService.getAllSupplierPaymentsRaw(),
+    dbService.getAllTransactionsRaw()
   ]);
 
-  const flatPurchases = allPurchasesRaw.filter(p => !p.deletedAt);
-  const flatPayments = allPaymentsRaw.filter(p => !p.deletedAt);
+  const flatPurchases = allPurchasesRaw.filter(p => !p.deletedAt && !trashedSupplierIds.has(p.supplierId));
+  const flatPayments = allPaymentsRaw.filter(p => !p.deletedAt && !trashedSupplierIds.has(p.supplierId));
 
-  const farmerList = rawFarmerList.filter(f => !f.deletedAt);
-  const trashedF = rawFarmerList.filter(f => f.deletedAt);
-  const visitList = rawVisitList.filter(v => !v.deletedAt);
+  const visitList = rawVisitList.filter(v => !v.deletedAt && !trashedFarmerIds.has(v.farmerId));
   const trashedV = rawVisitList.filter(v => v.deletedAt);
-  const paymentList = rawPaymentList.filter(p => !p.deletedAt);
+  const paymentList = rawPaymentList.filter(p => !p.deletedAt && !trashedFarmerIds.has(p.farmerId));
   const trashedP = rawPaymentList.filter(p => p.deletedAt);
-  const manualDebtList = rawManualDebtList.filter(d => !d.deletedAt);
+  const manualDebtList = rawManualDebtList.filter(d => !d.deletedAt && !trashedFarmerIds.has(d.farmerId));
   const trashedMD = rawManualDebtList.filter(d => d.deletedAt);
   const expenseList = rawExpenseList.filter(e => !e.deletedAt);
   const trashedE = rawExpenseList.filter(e => e.deletedAt);
-  const supplierList = rawSupplierList.filter(s => !s.deletedAt);
-  const trashedS = rawSupplierList.filter(s => s.deletedAt);
   const trashedSPurchases = allPurchasesRaw.filter(p => p.deletedAt);
   const trashedSPayments = allPaymentsRaw.filter(p => p.deletedAt);
-  const trashedMyPayments = myPaymentList.filter(p => p.deletedAt);
+  const trashedMyPayments = rawMyPaymentList.filter(p => p.deletedAt);
   const trashedTransactions = allTransactionsRaw.filter(tx => tx.deletedAt);
 
-  // 30-day trash auto-purge in background
+  // 30-day trash auto-purge in background (true permanent deletion from IDB & Firestore)
   const deletePromises: Promise<any>[] = [];
   const collectOld = <T extends { id: string; deletedAt?: string }>(
     arr: T[],
@@ -239,16 +246,16 @@ export async function computeFullAppSnapshot(syncedReminders?: Reminder[]): Prom
     return kept;
   };
 
-  const keptTrashedFarmers = collectOld(trashedF, id => dbService.deleteFarmer(id));
-  const keptTrashedVisits = collectOld(trashedV, id => dbService.deleteVisit(id));
-  const keptTrashedPayments = collectOld(trashedP, id => dbService.deletePayment(id));
-  const keptTrashedSuppliers = collectOld(trashedS, id => dbService.deleteSupplier(id));
-  const keptTrashedManualDebts = collectOld(trashedMD, id => dbService.deleteManualDebt(id));
-  const keptTrashedExpenses = collectOld(trashedE, id => dbService.deleteExpense(id));
-  const keptTrashedSPurchases = collectOld(trashedSPurchases, id => dbService.deleteSupplierPurchase(id));
-  const keptTrashedSPayments = collectOld(trashedSPayments, id => dbService.deleteSupplierPayment(id));
-  const keptTrashedMyPayments = collectOld(trashedMyPayments, id => dbService.deleteMyPayment(id));
-  collectOld(trashedTransactions, id => dbService.deleteTransaction(id));
+  const keptTrashedFarmers = collectOld(trashedF, id => dbService.hardDeleteRecord('farmers', id));
+  const keptTrashedVisits = collectOld(trashedV, id => dbService.hardDeleteRecord('visits', id));
+  const keptTrashedPayments = collectOld(trashedP, id => dbService.hardDeleteRecord('payments', id));
+  const keptTrashedSuppliers = collectOld(trashedS, id => dbService.hardDeleteRecord('suppliers', id));
+  const keptTrashedManualDebts = collectOld(trashedMD, id => dbService.hardDeleteRecord('manualDebts', id));
+  const keptTrashedExpenses = collectOld(trashedE, id => dbService.hardDeleteRecord('expenses', id));
+  const keptTrashedSPurchases = collectOld(trashedSPurchases, id => dbService.hardDeleteRecord('supplierPurchases', id));
+  const keptTrashedSPayments = collectOld(trashedSPayments, id => dbService.hardDeleteRecord('supplierPayments', id));
+  const keptTrashedMyPayments = collectOld(trashedMyPayments, id => dbService.hardDeleteRecord('myPayments', id));
+  collectOld(trashedTransactions, id => dbService.hardDeleteRecord('transactions', id));
 
   if (deletePromises.length > 0) {
     Promise.allSettled(deletePromises).catch(err => console.warn('Background cleanup failed:', err));
@@ -327,7 +334,7 @@ export async function computeFullAppSnapshot(syncedReminders?: Reminder[]): Prom
 
         if (title && !finalReminders.find(r => r.title === title)) {
           finalReminders.push({
-            id: `auto-${crypto.randomUUID()}`,
+            id: `auto-${generateUUID()}`,
             title,
             description,
             date: todayStr,
@@ -512,7 +519,7 @@ export async function computeFullAppSnapshot(syncedReminders?: Reminder[]): Prom
         const currentAccounts = await dbService.getAccounts();
         if (currentAccounts.length === 0) {
           const defaultAccount: Account = {
-            id: crypto.randomUUID(),
+            id: generateUUID(),
             name: 'Nakit Kasam',
             type: 'CASH',
             balance: 0,
@@ -531,8 +538,13 @@ export async function computeFullAppSnapshot(syncedReminders?: Reminder[]): Prom
     }
   }
 
-  const transactionList = (await dbService.getTransactions()).filter(tx => !tx.deletedAt);
-  const activeMyPayments = myPaymentList.filter(p => !p.deletedAt);
+  const transactionList = allTransactionsRaw.filter(tx => !tx.deletedAt);
+  const activeMyPayments = myPaymentList.filter(
+    p =>
+      !p.deletedAt &&
+      !(p.farmerId && trashedFarmerIds.has(p.farmerId)) &&
+      !(p.supplierId && trashedSupplierIds.has(p.supplierId))
+  );
 
   const cashBalance = accountList.filter(a => a.type === 'CASH').reduce((acc, a) => acc + a.balance, 0);
   const bankBalance = accountList.filter(a => a.type === 'BANK').reduce((acc, a) => acc + a.balance, 0);
@@ -585,7 +597,7 @@ export async function computeFullAppSnapshot(syncedReminders?: Reminder[]): Prom
     trashedExpenses: keptTrashedExpenses,
     suppliers: updatedSupplierList,
     trashedSuppliers: keptTrashedSuppliers,
-    myPayments: myPaymentList,
+    myPayments: activeMyPayments,
     trashedMyPayments: keptTrashedMyPayments,
     teamMembers: teamMemberList,
     messages: messageList,

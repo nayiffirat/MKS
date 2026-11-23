@@ -472,6 +472,8 @@ export interface UserProfile {
   stampShape?: 'RECTANGLE' | 'OVAL';
   // Rol Bazlı Maliyet & Kâr Gizleme (#47)
   lastUpdate?: string;
+  categoryWipedAt?: Record<string, string>;
+  hardDeletedAt?: Record<string, string>;
   hideCostAndProfit?: boolean;
   hideBuyingPricesForStaff?: boolean;
   hideCostInScreens?: boolean;
@@ -724,6 +726,7 @@ export interface SyncOutboxEntry {
   collection: string;
   itemId: string;
   op: 'UPSERT' | 'DELETE';
+  hardDelete?: boolean;
   payload?: any;
   updatedAt: string;
   retryCount?: number;

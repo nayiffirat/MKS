@@ -480,7 +480,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigat
 
               <button
                 type="button"
-                onClick={() => (window as any).mks_open_efatura?.('incoming')}
+                onClick={() => (window as any).mks_open_efatura?.('issue')}
                 title="EDM e-Fatura Deposu"
                 aria-label="EDM e-Fatura deposu"
                 className="hidden sm:flex v22-surface-pill min-h-[44px] min-w-[44px] px-3 py-2 rounded-full shadow-sm items-center justify-center gap-1.5 text-xs font-semibold active:scale-95 transition-colors"

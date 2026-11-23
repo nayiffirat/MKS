@@ -1,5 +1,5 @@
 /* MKS Unified Service Worker — Web, Windows Desktop (.exe) & Mobile PWA Notifications */
-const MKS_SW_VERSION = '8.2.1-b36';
+const MKS_SW_VERSION = '8.4.1-b35';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

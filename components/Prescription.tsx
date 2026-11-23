@@ -98,9 +98,10 @@ interface PrescriptionFormProps {
     onBack: () => void;
     initialFarmerId?: string;
     initialPrescriptionId?: string;
+    initialCreateMode?: boolean;
 }
 
-export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, initialFarmerId, initialPrescriptionId }) => {
+export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, initialFarmerId, initialPrescriptionId, initialCreateMode }) => {
     const { 
         userProfile, 
         refreshStats, 
@@ -162,24 +163,32 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
 
     const canEditPrescription = !isSales;
     const canCreatePrescription = canEditPrescription;
-    const [viewMode, setViewMode] = useState<'LIST' | 'FORM' | 'DETAIL'>(initialFarmerId ? 'FORM' : 'LIST');
-    
+    const [viewMode, setViewMode] = useState<'LIST' | 'FORM' | 'DETAIL'>(
+        (initialFarmerId || initialCreateMode || initialPrescriptionId) ? 'FORM' : 'LIST'
+    );
+    const stepRef = useRef(1);
+
     // Sub-navigation sync
     useEffect(() => {
         const handlePop = (e: PopStateEvent) => {
             const state = e.state;
             if (state?.view === 'PRESCRIPTIONS') {
-                if (state.subView) {
-                    setViewMode(state.subView);
+                const effectiveSub =
+                    state.subView ||
+                    (state.mode === 'prescription_new' || state.mode === 'prescription_edit' ? 'FORM' : undefined);
+                if (effectiveSub) {
+                    setViewMode(effectiveSub);
                     if (state.step) {
                         setStep(state.step);
                     } else {
                         setStep(initialFarmerId ? 2 : 1);
                     }
-                    if (state.subView === 'DETAIL' && state.detailId) {
+                    if (effectiveSub === 'DETAIL' && state.detailId) {
                         const target = contextPrescriptions.find(p => p.id === state.detailId);
                         if (target) setDetailPrescription(target);
                     }
+                } else if (stepRef.current > 1) {
+                    setStep(s => Math.max(1, s - 1));
                 } else {
                     setViewMode('LIST');
                     setDetailPrescription(null);
@@ -572,6 +581,7 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     const [farmerMap, setFarmerMap] = useState<Record<string, Farmer>>({});
 
     const [step, setStep] = useState(1);
+    stepRef.current = step;
     const [isScanning, setIsScanning] = useState(false);
     const [farmers, setFarmers] = useState<Farmer[]>([]);
     const [pesticides, setPesticides] = useState<Pesticide[]>([]);
@@ -677,6 +687,11 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
 
     useEffect(() => {
         loadData();
+        const onCloudSync = () => {
+            loadData();
+        };
+        window.addEventListener('mks-cloud-sync-applied', onCloudSync);
+        return () => window.removeEventListener('mks-cloud-sync-applied', onCloudSync);
     }, []);
 
     useEffect(() => {
@@ -925,10 +940,10 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
     }, [contextFarmers]);
 
     const handleBackFromForm = () => {
-        if (step > 1 && !initialFarmerId) {
-            window.history.back();
-        } else if (initialFarmerId) {
-            onBack(); 
+        if (step > 1 && !(step === 2 && initialFarmerId)) {
+            setStep(prev => Math.max(1, prev - 1));
+        } else if (initialFarmerId || initialCreateMode) {
+            onBack();
         } else {
             changeViewMode('LIST');
             resetForm();
@@ -1120,6 +1135,14 @@ export const PrescriptionForm: React.FC<PrescriptionFormProps> = ({ onBack, init
 
     // --- Hardware back button layers ---
     useBackHandler(viewMode === 'FORM' && !initialFarmerId && !initialPrescriptionId, () => {
+        if (stepRef.current > 1) {
+            setStep(s => Math.max(1, s - 1));
+            return;
+        }
+        if (initialCreateMode) {
+            onBack();
+            return;
+        }
         setViewMode('LIST');
         setEditingId(null);
         resetForm();

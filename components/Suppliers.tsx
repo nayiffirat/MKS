@@ -103,6 +103,10 @@ export const Suppliers: React.FC<{ onBack: () => void; initialSupplierId?: strin
         }
     }, [isInitialized]);
 
+    useEffect(() => {
+        setSelectedSupplier(prev => prev ? (suppliers.find(s => s.id === prev.id) || null) : null);
+    }, [suppliers]);
+
     const [confirmModal, setConfirmModal] = useState<{
         isOpen: boolean;
         title: string;
@@ -1378,7 +1382,12 @@ const SupplierDetailView = ({
 
     React.useEffect(() => {
         loadData();
-    }, [supplier]);
+        const onCloudSync = () => {
+            loadData();
+        };
+        window.addEventListener('mks-cloud-sync-applied', onCloudSync);
+        return () => window.removeEventListener('mks-cloud-sync-applied', onCloudSync);
+    }, [supplier.id, supplier.balance, supplier.totalDebt, myPayments]);
 
     const handleDeletePurchase = async (id: string) => {
         setConfirmModal({

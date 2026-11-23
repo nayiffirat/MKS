@@ -171,11 +171,18 @@ export const EdmIntegrationModal: React.FC<EdmIntegrationModalProps> = ({
   const [config, setConfig] = useState<EdmConfig>(getEdmConfig);
   const [connTest, setConnTest] = useState<{ state: 'idle' | 'busy' | 'ok' | 'fail'; message?: string }>({ state: 'idle' });
 
-  /** EDM TEST ortamında gerçek Login çağrısı yapar (sunucu üzerinden). Şifre saklanmaz. */
+  const activeProviderId = config.provider || 'EDM';
+  const isDirectProvider = ['EDM', 'VERIBAN', 'PARK_ENTEGRASYON', 'MYSOFT'].includes(activeProviderId);
+
+  /** Seçili entegratör ortamında (EDM / Veriban / Park / Mysoft) gerçek Login çağrısı yapar. Şifre saklanmaz. */
   const runEdmConnectionTest = async () => {
     if (connTest.state === 'busy') return;
+    if (!isDirectProvider) {
+      setConnTest({ state: 'fail', message: `${activeProviderId} için doğrudan API bağlantısı iş ortaklığı onayı bekliyor.` });
+      return;
+    }
     if (!config.username.trim() || !(config.password || '').trim()) {
-      setConnTest({ state: 'fail', message: 'Önce EDM test kullanıcı adı ve şifresini girin.' });
+      setConnTest({ state: 'fail', message: 'Önce entegratör kullanıcı adı / Client ID ve şifresini girin.' });
       return;
     }
     setConnTest({ state: 'busy' });
@@ -184,7 +191,12 @@ export const EdmIntegrationModal: React.FC<EdmIntegrationModalProps> = ({
       const resp = await fetch(`${API_BASE}/api/edm/test-connection`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
-        body: JSON.stringify({ username: config.username.trim(), password: config.password })
+        body: JSON.stringify({
+          provider: activeProviderId,
+          username: config.username.trim(),
+          password: config.password,
+          environment: config.edmEnv === 'LIVE' ? 'LIVE' : 'TEST',
+        })
       });
       const data = await resp.json().catch(() => ({}));
       if (data?.ok) setConnTest({ state: 'ok', message: data.message || 'Bağlantı başarılı.' });
@@ -218,7 +230,7 @@ export const EdmIntegrationModal: React.FC<EdmIntegrationModalProps> = ({
   const [customerTaxNo, setCustomerTaxNo] = useState('');
   const [taxCheck, setTaxCheck] = useState<{ state: 'idle' | 'busy' | 'done' | 'fail'; message?: string; isEInvoiceUser?: boolean }>({ state: 'idle' });
 
-  /** Alıcı VKN/TCKN e-Fatura mükellefi mi? EDM (TEST) CheckUser ile sorgular ve belge türünü buna göre seçer. */
+  /** Alıcı VKN/TCKN e-Fatura mükellefi mi? Aktif entegratör CheckUser/Mükellef servisi ile sorgular. */
   const runTaxpayerCheck = async () => {
     if (taxCheck.state === 'busy') return;
     if (!checkRequiredTaxId(customerTaxNo).ok) {
@@ -226,7 +238,7 @@ export const EdmIntegrationModal: React.FC<EdmIntegrationModalProps> = ({
       return;
     }
     if (!config.username.trim() || !(config.password || '').trim()) {
-      setTaxCheck({ state: 'fail', message: 'Önce Ayarlar sekmesinden EDM kullanıcı adı ve şifresini girin.' });
+      setTaxCheck({ state: 'fail', message: 'Önce Ayarlar sekmesinden entegratör kullanıcı adı ve şifresini girin.' });
       return;
     }
     setTaxCheck({ state: 'busy' });
@@ -235,7 +247,13 @@ export const EdmIntegrationModal: React.FC<EdmIntegrationModalProps> = ({
       const resp = await fetch(`${API_BASE}/api/edm/check-user`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
-        body: JSON.stringify({ username: config.username.trim(), password: config.password, identifier: customerTaxNo.replace(/\D/g, '') })
+        body: JSON.stringify({
+          provider: activeProviderId,
+          username: config.username.trim(),
+          password: config.password,
+          environment: config.edmEnv === 'LIVE' ? 'LIVE' : 'TEST',
+          identifier: customerTaxNo.replace(/\D/g, ''),
+        })
       });
       const data = await resp.json().catch(() => ({}));
       if (!data?.ok) {
@@ -1664,7 +1682,7 @@ export const EdmIntegrationModal: React.FC<EdmIntegrationModalProps> = ({
                       )}
                     </div>
                   </div>
-                  {(config.provider || 'EDM') === 'EDM' && (
+                  {isDirectProvider && (
                     <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
@@ -1672,7 +1690,7 @@ export const EdmIntegrationModal: React.FC<EdmIntegrationModalProps> = ({
                         disabled={taxCheck.state === 'busy'}
                         className="shrink-0 min-h-[40px] px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold disabled:opacity-60"
                       >
-                        {taxCheck.state === 'busy' ? 'Sorgulanıyor…' : 'Mükellef Sorgula (EDM Test)'}
+                        {taxCheck.state === 'busy' ? 'Sorgulanıyor…' : 'Mükellef Sorgula (Canlı/Test)'}
                       </button>
                       {taxCheck.state === 'done' && (
                         <p className={`text-xs font-bold min-w-0 flex-1 ${taxCheck.isEInvoiceUser ? 'text-emerald-300' : 'text-amber-300'}`}>{taxCheck.message}</p>
@@ -1920,14 +1938,27 @@ export const EdmIntegrationModal: React.FC<EdmIntegrationModalProps> = ({
                       : 'bg-stone-800 text-stone-400 border border-white/10'
                   }`}
                 >
-                  {config.enabled ? '🟡 Entegratör Bilgileri Kayıtlı (Canlı Bağlantı Yok)' : '⚪ E-Fatura Kaydı Yok / Kapalı'}
+                  {config.enabled
+                    ? isDirectProvider
+                      ? `🟢 ${activeProviderId} Doğrudan Web Servis Aktif`
+                      : '🟡 Entegratör Bilgileri Kayıtlı (İş Ortaklığı Onayı Bekliyor)'
+                    : '⚪ E-Fatura Kaydı Yok / Kapalı'}
                 </button>
               </div>
 
-              <div className="bg-amber-950/40 border border-amber-500/40 rounded-xl p-3 flex items-start gap-2.5" role="note">
-                <AlertTriangle size={18} className="text-amber-300 shrink-0 mt-0.5" />
+              <div className={isDirectProvider ? 'bg-emerald-950/40 border border-emerald-500/40 rounded-xl p-3 flex items-start gap-2.5' : 'bg-amber-950/40 border border-amber-500/40 rounded-xl p-3 flex items-start gap-2.5'} role="note">
+                <AlertTriangle size={18} className={isDirectProvider ? 'text-emerald-300 shrink-0 mt-0.5' : 'text-amber-300 shrink-0 mt-0.5'} />
                 <p className="text-xs text-stone-300">
-                  <b className="text-amber-200">{EDM_DRAFT_LABEL}.</b> MKS şu an seçilen entegratöre veya GİB&apos;e <b>bağlanmıyor</b>; buradaki kullanıcı adı/şifre hiçbir servise gönderilmez. Şifre yalnızca bu oturumda (sessionStorage) tutulur. Kesilen belgeler yerel <b>taslak</b> olarak kaydedilir; resmi faturayı entegratör portalınızdan kesin.
+                  {isDirectProvider ? (
+                    <>
+                      <b className="text-emerald-200">{activeProviderId} Doğrudan Web Servis Hazır.</b> Resmî tek tuşla fatura kesimi için yeni{' '}
+                      <b>e-Fatura</b> panelini kullanabilirsiniz. Bu pencereden de bağlantı ve mükellef sorgusu canlı test edilebilir; şifre cihaza kalıcı kaydedilmez.
+                    </>
+                  ) : (
+                    <>
+                      <b className="text-amber-200">{EDM_DRAFT_LABEL}.</b> Seçili entegratör iş ortaklığı/API onayı aşamasındadır. Doğrudan API kesimi şu an <b>EDM Bilişim, Veriban, Park Entegrasyon ve Mysoft</b> üzerinden aktiftir.
+                    </>
+                  )}
                 </p>
               </div>
 
@@ -1937,9 +1968,10 @@ export const EdmIntegrationModal: React.FC<EdmIntegrationModalProps> = ({
                 </label>
                 <select
                   value={config.provider || 'EDM'}
-                  onChange={e =>
-                    updateAndPersistConfig({ ...config, provider: e.target.value as EInvoiceProviderId })
-                  }
+                  onChange={e => {
+                    updateAndPersistConfig({ ...config, provider: e.target.value as EInvoiceProviderId });
+                    setConnTest({ state: 'idle' });
+                  }}
                   className="w-full px-3.5 py-3 bg-stone-950 border border-indigo-500/40 rounded-xl text-xs font-bold text-white"
                 >
                   {EINVOICE_PROVIDERS.map(p => (
@@ -1950,11 +1982,11 @@ export const EdmIntegrationModal: React.FC<EdmIntegrationModalProps> = ({
                 </select>
               </div>
 
-              {(config.provider || 'EDM') === 'EDM' && (
+              {isDirectProvider && (
                 <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 p-3 space-y-2">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-xs text-stone-300 min-w-0 flex-1">
-                      <b className="text-indigo-200">EDM test ortamı bağlantı testi.</b> Aşağıdaki kullanıcı adı ve şifreyle EDM&apos;nin <b>test</b> sunucusunda gerçek bir oturum açma denemesi yapılır. Fatura gönderilmez.
+                      <b className="text-indigo-200">{activeProviderId} ({config.edmEnv === 'LIVE' ? 'CANLI' : 'TEST'}) bağlantı testi.</b> Aşağıdaki bilgilerle seçili entegratör sunucusunda gerçek oturum açma denemesi yapılır. Fatura gönderilmez.
                     </p>
                     <button
                       type="button"
@@ -1972,16 +2004,20 @@ export const EdmIntegrationModal: React.FC<EdmIntegrationModalProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
                 <div>
-                  <label className="text-[11px] font-bold text-stone-400 block mb-1">Entegratör Web Servis Kullanıcı Adı</label>
+                  <label className="text-[11px] font-bold text-stone-400 block mb-1">
+                    {activeProviderId === 'MYSOFT' ? 'Mysoft Client ID (OAuth2)' : 'Entegratör Web Servis Kullanıcı Adı'}
+                  </label>
                   <input
                     value={config.username}
                     onChange={e => updateAndPersistConfig({ ...config, username: e.target.value })}
-                    placeholder="Örn: EDM / QNB / Uyumsoft / e-Logo kullanıcı adı"
+                    placeholder="Örn: EDM / Veriban / Park / Mysoft kullanıcı adı"
                     className="w-full px-3 py-2.5 bg-stone-950 border border-white/15 rounded-xl text-xs text-white"
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] font-bold text-stone-400 block mb-1">EDM Web Servis Şifresi</label>
+                  <label className="text-[11px] font-bold text-stone-400 block mb-1">
+                    {activeProviderId === 'MYSOFT' ? 'Mysoft Client Secret' : 'Entegratör Web Servis Şifresi'}
+                  </label>
                   <input
                     type="password"
                     value={config.password || ''}

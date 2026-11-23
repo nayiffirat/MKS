@@ -390,11 +390,32 @@ function MainApp() {
     let cleanupSync: (() => void) | undefined;
     let failsafeTimer: number | undefined;
     let cancelled = false;
+    let lastForegroundSyncAt = 0;
 
     if (!currentUser && !loading) {
       setInitialDataLoaded(false);
       return;
     }
+
+    const ensureRealtimeSyncAttached = () => {
+      if (cleanupSync || cancelled || !currentUser || !navigator.onLine) return;
+      const stopSync = dbService.setupRealtimeSync(
+        currentUser.uid,
+        () => {
+          refreshStats().catch(() => {});
+          refreshNews().catch(() => {});
+          refreshMinistryBridgeData().catch(() => {});
+        },
+        (updatedProfile) => {
+          syncUserProfile(updatedProfile);
+        }
+      );
+      if (cancelled) {
+        stopSync();
+        return;
+      }
+      cleanupSync = stopSync;
+    };
 
     const initializeAppData = async () => {
       if (currentUser && !loading) {
@@ -430,24 +451,11 @@ function MainApp() {
             if (cancelled) return;
 
             // 3. ADIM: Gerçek zamanlı senkronizasyonu başlat (Çoklu cihaz desteği)
-            const stopSync = dbService.setupRealtimeSync(
-              currentUser.uid,
-              () => {
-                refreshStats().catch(() => {});
-                refreshNews().catch(() => {});
-              },
-              (updatedProfile) => {
-                syncUserProfile(updatedProfile);
-              }
-            );
-            if (cancelled) {
-              stopSync();
-              return;
-            }
-            cleanupSync = stopSync;
+            ensureRealtimeSyncAttached();
 
             // Veriler güncellenmiş olabilir, tekrar arayüzü yenile
             await refreshStats();
+            await refreshMinistryBridgeData().catch(() => {});
           } catch (e) {
             console.warn("Background sync failed, using local data:", e);
           }
@@ -457,14 +465,26 @@ function MainApp() {
 
     initializeAppData();
 
+    const onSubActivated = (ev: Event) => {
+      const nextProf = (ev as CustomEvent)?.detail;
+      if (nextProf && typeof nextProf === 'object') {
+        syncUserProfile(nextProf);
+      } else if (currentUser) {
+        dbService.getUserProfile(currentUser.uid).then(p => { if (p) syncUserProfile(p); }).catch(() => {});
+      }
+    };
+    window.addEventListener('mks-subscription-activated', onSubActivated);
+
     // Auto-sync when reconnecting to the internet
     const handleOnline = async () => {
       if (!cancelled && currentUser && !loading) {
         try {
+          ensureRealtimeSyncAttached();
           await dbService.syncAllDataOnLogin(currentUser.uid);
           if (cancelled) return;
           await refreshStats();
           await refreshNews();
+          await refreshMinistryBridgeData().catch(() => {});
         } catch (err) {
           console.warn("Online auto-sync error:", err);
         }
@@ -472,11 +492,39 @@ function MainApp() {
     };
     window.addEventListener('online', handleOnline);
 
+    // Ön plana dönüldüğünde (mobil/masaüstü pencere geçişi) diğer cihazdaki yeni verileri veya silmeleri hemen çek
+    const handleForegroundResume = async () => {
+      if (typeof document !== 'undefined' && document.visibilityState && document.visibilityState !== 'visible') {
+        return;
+      }
+      if (cancelled || !currentUser || loading || !navigator.onLine) return;
+      const now = Date.now();
+      if (now - lastForegroundSyncAt < 15_000) return;
+      lastForegroundSyncAt = now;
+      try {
+        ensureRealtimeSyncAttached();
+        await dbService.flushSyncOutboxNow().catch(() => {});
+        const freshProf = await dbService.getUserProfile(currentUser.uid).catch(() => null);
+        if (freshProf && !cancelled) syncUserProfile(freshProf);
+        await dbService.syncAllDataOnLogin(currentUser.uid);
+        if (cancelled) return;
+        await refreshStats();
+        await refreshMinistryBridgeData().catch(() => {});
+      } catch (err) {
+        console.warn("Foreground resume sync warning:", err);
+      }
+    };
+    document.addEventListener('visibilitychange', handleForegroundResume);
+    window.addEventListener('focus', handleForegroundResume);
+
     return () => {
       cancelled = true;
       if (failsafeTimer) window.clearTimeout(failsafeTimer);
       if (cleanupSync) cleanupSync();
+      window.removeEventListener('mks-subscription-activated', onSubActivated);
       window.removeEventListener('online', handleOnline);
+      document.removeEventListener('visibilitychange', handleForegroundResume);
+      window.removeEventListener('focus', handleForegroundResume);
     };
   }, [currentUser, loading]);
 
@@ -497,9 +545,7 @@ function MainApp() {
   useBackHandler(!!selectedFarmerId && currentView === 'FARMERS', () => setSelectedFarmerId(null), 'selected_farmer', 20);
   useBackHandler(!!selectedSupplierId && currentView === 'SUPPLIERS', () => setSelectedSupplierId(null), 'selected_supplier', 20);
   useBackHandler(isMinistryModalOpen, () => setIsMinistryModalOpen(false), 'ministry_modal', 75);
-  useBackHandler(isEdmModalOpen, () => setIsEdmModalOpen(false), 'edm_modal', 75);
   useBackHandler(isEfaturaOpen, () => setIsEfaturaOpen(false), 'efatura_panel', 76);
-  useBackHandler(isWebPortalOpen, () => setIsWebPortalOpen(false), 'web_portal_modal', 75);
   useBackHandler(showWelcomeModal, () => setShowWelcomeModal(false), 'welcome_modal', 80);
 
   // Automatic Pre-Update Safety Snapshot & Subscription Matrix Cloud Sync
@@ -532,6 +578,7 @@ function MainApp() {
         !isModeActiveRef.current &&
         !isMinistryModalOpen &&
         !isEdmModalOpen &&
+        !isEfaturaOpen &&
         !isWebPortalOpen &&
         !showWelcomeModal &&
         !isLiveSupportOpen &&
@@ -700,15 +747,16 @@ function MainApp() {
       setIsEdmModalOpen(true);
     };
     // Sade e-Fatura ekranı (EDM'ye gerçek gönderim, giden/gelen kutusu)
-    (window as any).mks_open_efatura = (tab?: 'issue' | 'out' | 'in' | 'settings', prefill?: EFaturaPrefill) => {
+    (window as any).mks_open_efatura = (tab?: string, prefill?: EFaturaPrefill) => {
       if (!isFeatureEnabledForUser('EDM_EFATURA', userProfile, isAdmin)) {
         if (showToast) showToast('e-Fatura modülü seçili paketinizde kapalıdır. Paket yükseltiniz.', 'info');
         setWebPortalTab('pricing');
         setIsWebPortalOpen(true);
         return;
       }
+      const validTab = tab === 'out' || tab === 'in' || tab === 'settings' || tab === 'issue' ? tab : 'issue';
       setEfaturaPrefill(prefill || null);
-      setEfaturaTab(tab || 'issue');
+      setEfaturaTab(validTab);
       setIsEfaturaOpen(true);
     };
     (window as any).mks_open_live_support = (cat?: 'general' | 'subscription' | 'password_reset' | 'bkst_gts') => {
@@ -844,7 +892,7 @@ function MainApp() {
   }
 
   const renderContent = () => {
-    if (isPrescriptionMode) return <PrescriptionForm onBack={handleSmartStepBack} initialFarmerId={prescriptionFarmerId} initialPrescriptionId={editPrescriptionId} />;
+    if (isPrescriptionMode) return <PrescriptionForm onBack={handleSmartStepBack} initialFarmerId={prescriptionFarmerId} initialPrescriptionId={editPrescriptionId} initialCreateMode={!editPrescriptionId} />;
     if (currentView === 'VISITS' && isVisitMode) return <VisitLogForm onBack={handleSmartStepBack} initialVisitId={editVisitId} />;
     if (currentView === 'REMINDERS') return <RemindersScreen onBack={handleSmartStepBack} initialAddMode={isReminderAddMode} initialFilter={isTomorrowMode ? 'TOMORROW' : undefined} />;
 

@@ -71,6 +71,11 @@ import { IncomeExpenseChartReport } from './IncomeExpenseChartReport';
             setVisitLogs(vData);
         };
         loadData();
+        const onCloudSync = () => {
+            loadData();
+        };
+        window.addEventListener('mks-cloud-sync-applied', onCloudSync);
+        return () => window.removeEventListener('mks-cloud-sync-applied', onCloudSync);
     }, []);
 
     const visitLogsWithNames = React.useMemo(() => {

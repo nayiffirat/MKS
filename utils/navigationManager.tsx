@@ -10,43 +10,28 @@ type BackHandlerEntry = {
 };
 
 const backStack: BackHandlerEntry[] = [];
+const activeHistoryIds = new Set<string>();
 let lastExitAttemptTime = 0;
 
-/**
- * D-09: X/kapat ile (geri tuşu olmadan) kapatılan katmanın sentetik geçmiş girdisi geri alınır.
- * Bu `history.back()` çağrısının ürettiği popstate "sessiz" kabul edilir ve App'in popstate
- * dinleyicisine ulaşmadan tüketilir (yoksa bir katman daha kapanır / ekran geri gider).
- */
-let silentPopCount = 0;
-let silentPopDeadline = 0;
-
-if (typeof window !== 'undefined') {
-  // Modül yüklenirken (App'in useEffect dinleyicisinden ÖNCE) kaydedilir → stopImmediatePropagation çalışır.
-  window.addEventListener('popstate', (event: PopStateEvent) => {
-    if (silentPopCount > 0) {
-      if (Date.now() <= silentPopDeadline) {
-        silentPopCount -= 1;
-        event.stopImmediatePropagation();
-        return;
-      }
-      // Süresi geçmiş (popstate hiç gelmemiş) sayaç gerçek bir geri hareketini yutmasın
-      silentPopCount = 0;
-    }
-  });
-}
-
-function scheduleHistoryCleanup(id: string) {
+function syncHistoryLayerState() {
   if (typeof window === 'undefined') return;
-  // StrictMode'daki kaldır→yeniden-ekle döngüsünde gereksiz geri gitmeyi önlemek için bir tick ertele
-  window.setTimeout(() => {
-    if (backStack.some(item => item.id === id)) return; // katman yeniden kaydedildi
-    const state = window.history.state;
-    if (state && state.layerId === id) {
-      silentPopCount += 1;
-      silentPopDeadline = Date.now() + 1500;
-      window.history.back();
-    }
-  }, 0);
+  const currentState = window.history.state || { view: 'DASHBOARD' };
+  const top = backStack[backStack.length - 1];
+  const nextLayerId = top?.id;
+  if (currentState.layerId === nextLayerId && currentState.layerDepth === backStack.length) return;
+  const nextState = { ...currentState };
+  if (nextLayerId) {
+    nextState.layerId = nextLayerId;
+    nextState.layerDepth = backStack.length;
+  } else {
+    delete nextState.layerId;
+    delete nextState.layerDepth;
+  }
+  try {
+    window.history.replaceState(nextState, '');
+  } catch {
+    /* ignore history replace errors */
+  }
 }
 
 export function pushBackHandler(id: string, handler: () => boolean | void, priority = 10, label?: string) {
@@ -56,11 +41,15 @@ export function pushBackHandler(id: string, handler: () => boolean | void, prior
   }
   backStack.push({ id, handler, priority, label });
   backStack.sort((a, b) => a.priority - b.priority);
-  // Push a synthetic history entry so browser/Android popstate catches it instead of leaving the page
+  activeHistoryIds.add(id);
   if (typeof window !== 'undefined') {
     const currentState = window.history.state || { view: 'DASHBOARD' };
     if (currentState.layerId !== id) {
-      window.history.pushState({ ...currentState, layerId: id, layerDepth: backStack.length }, '');
+      if (currentState.layerId) {
+        window.history.replaceState({ ...currentState, layerId: id, layerDepth: backStack.length }, '');
+      } else {
+        window.history.pushState({ ...currentState, layerId: id, layerDepth: backStack.length }, '');
+      }
     }
   }
   return () => removeBackHandler(id);
@@ -71,8 +60,8 @@ export function removeBackHandler(id: string) {
   if (idx !== -1) {
     backStack.splice(idx, 1);
   }
-  // Geçmişin en üstü hâlâ bu katmansa (X / ESC / Android geri ile kapatıldı) hayalet girdiyi temizle
-  scheduleHistoryCleanup(id);
+  if (!activeHistoryIds.delete(id)) return;
+  syncHistoryLayerState();
 }
 
 export function getBackStackDepth(): number {
@@ -226,10 +215,7 @@ export function useBackHandler(isActive: boolean, onBack: () => void, idPrefix =
   const idRef = useRef(`${idPrefix}_${Math.random().toString(36).slice(2, 9)}`);
 
   useEffect(() => {
-    if (!isActive) {
-      removeBackHandler(idRef.current);
-      return;
-    }
+    if (!isActive) return;
     const cleanup = pushBackHandler(
       idRef.current,
       () => {
@@ -300,15 +286,18 @@ export function initGlobalNavigationAndScrollGuard(onGlobalBackTrigger: () => vo
     if (e.key === 'Escape') {
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName?.toLowerCase();
-      // If user is typing in an input/textarea outside a modal, blur first; if modal or screen is active, step back
+      const isField = tag === 'input' || tag === 'textarea' || tag === 'select' || !!target?.isContentEditable;
+      // Metin girişi / datalist açıkken Escape sadece alanı odaktan çıkarır; açık ekranı kapatmaz.
+      if (isField) {
+        target?.blur?.();
+        return;
+      }
       if (executeSmartBackStep()) {
         e.preventDefault();
         return;
       }
-      if (tag !== 'input' && tag !== 'textarea' && tag !== 'select') {
-        e.preventDefault();
-        onGlobalBackTrigger();
-      }
+      e.preventDefault();
+      onGlobalBackTrigger();
     }
   };
 
@@ -367,6 +356,10 @@ export const EdgeSwipeBackGesture: React.FC<{ onTriggerBack: () => void; enabled
 
     const handleTouchStart = (e: TouchEvent) => {
       if (e.touches.length !== 1) return;
+      if ((e.target as HTMLElement | null)?.closest?.('.fixed.inset-0, input, textarea, select, table')) {
+        startXRef.current = null;
+        return;
+      }
       const touch = e.touches[0];
       const rtl = document.documentElement.dir === 'rtl';
       const fromEdge = rtl ? window.innerWidth - touch.clientX : touch.clientX;

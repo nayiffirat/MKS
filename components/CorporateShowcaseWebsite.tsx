@@ -1228,9 +1228,10 @@ export const CorporateShowcaseWebsite: React.FC<CorporateShowcaseProps> = ({
                   </span>
                 </a>
 
-                <button
-                  type="button"
-                  onClick={() => onOpenPortalTab('ios_guide')}
+                <a
+                  href="https://apps.apple.com/tr/app/m%C3%BChendis-kay%C4%B1t-sistemi-mks/id6760776127"
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="p-6 rounded-3xl bg-[#F5F5F7] hover:bg-[#EFEFF3] transition-colors flex flex-col justify-between gap-5 text-left"
                 >
                   <div className="w-11 h-11 rounded-2xl bg-white text-[#1D1D1F] shadow-sm flex items-center justify-center">
@@ -1239,13 +1240,13 @@ export const CorporateShowcaseWebsite: React.FC<CorporateShowcaseProps> = ({
                   <div>
                     <div className="text-base font-semibold text-[#1D1D1F]">iPhone &amp; iPad (iOS)</div>
                     <p className="text-xs text-[#6E6E73] mt-1 leading-relaxed">
-                      Tam ekran iOS kurulumu, bildirim desteği ve Xcode bulut paketi.
+                      iPhone ve iPad için resmî Apple App Store mobil uygulaması.
                     </p>
                   </div>
                   <span className="text-xs font-semibold text-[#0071E3] inline-flex items-center gap-1">
-                    iOS Kurulumunu Aç <ChevronRight size={13} />
+                    <Apple size={13} /> App Store’dan İndir <ChevronRight size={13} />
                   </span>
-                </button>
+                </a>
 
                 <button
                   type="button"
@@ -1333,9 +1334,14 @@ export const CorporateShowcaseWebsite: React.FC<CorporateShowcaseProps> = ({
                   </button>
                 </li>
                 <li>
-                  <button type="button" onClick={() => onOpenPortalTab('ios_guide')} className="hover:text-[#1D1D1F] hover:underline">
-                    iPhone &amp; iPad (iOS)
-                  </button>
+                  <a
+                    href="https://apps.apple.com/tr/app/m%C3%BChendis-kay%C4%B1t-sistemi-mks/id6760776127"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:text-[#1D1D1F] hover:underline"
+                  >
+                    iPhone &amp; iPad (App Store)
+                  </a>
                 </li>
                 <li>
                   <button type="button" onClick={() => onOpenAuthModal('LOGIN')} className="hover:text-[#1D1D1F] hover:underline">

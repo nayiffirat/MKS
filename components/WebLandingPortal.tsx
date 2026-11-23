@@ -35,6 +35,9 @@ import {
 } from '../utils/subscriptionManager';
 import { useBackHandler, useScrollLock } from '../utils/navigationManager';
 import { Capacitor } from '@capacitor/core';
+import { auth } from '../services/firebase';
+import { dbService } from '../services/db';
+import { API_BASE } from '../utils/api';
 
 export const WebLandingPortal: React.FC<{
   mode?: 'modal' | 'fullscreen_gate';
@@ -53,13 +56,17 @@ export const WebLandingPortal: React.FC<{
   onOpenSupport,
   onTierUpgraded
 }) => {
-  const normalizedInitTab = initialTab === 'showcase' ? 'overview' : initialTab;
-  const [activeTab, setActiveTab] = useState<'overview' | 'download' | 'pricing' | 'ios_guide'>(normalizedInitTab);
+  const normalizedInitTab = initialTab === 'showcase' ? 'overview' : initialTab === 'ios_guide' ? 'download' : initialTab;
+  const [activeTab, setActiveTab] = useState<'overview' | 'download' | 'pricing'>(normalizedInitTab);
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('yearly');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [purchasingTier, setPurchasingTier] = useState<SubscriptionTierId | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [shopierOrderId, setShopierOrderId] = useState('');
+  const [shopierBuyerContact, setShopierBuyerContact] = useState('');
+  const [claimingOrder, setClaimingOrder] = useState(false);
+  const [claimFeedback, setClaimFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
   const [plans, setPlans] = useState(() => getSubscriptionPlans());
   const [featureMatrix, setFeatureMatrix] = useState(() => getFeatureMatrix());
 
@@ -68,12 +75,13 @@ export const WebLandingPortal: React.FC<{
   const windowsExeUrl = `${currentOrigin}/downloads/MKS_Masaustu_Kurulum.exe`;
   const androidApkUrl = `${currentOrigin}/downloads/MKS_Android.apk`;
   const googlePlayUrl = 'https://play.google.com/store/apps/details?id=com.nayiffirat.muhendiskayitsistemi';
+  const appStoreUrl = 'https://apps.apple.com/tr/app/m%C3%BChendis-kay%C4%B1t-sistemi-mks/id6760776127';
 
   useBackHandler(mode === 'modal' && !!onClose, () => onClose?.(), 'web_landing_portal', 85);
   useScrollLock(mode === 'modal');
 
   useEffect(() => {
-    setActiveTab(initialTab === 'showcase' ? 'overview' : initialTab);
+    setActiveTab(initialTab === 'showcase' ? 'overview' : initialTab === 'ios_guide' ? 'download' : initialTab);
   }, [initialTab]);
 
   useEffect(() => {
@@ -114,23 +122,75 @@ export const WebLandingPortal: React.FC<{
     const purchasedInStore = await purchaseSubscriptionPlan(tier, period, (plan, per) => {
       const price = per === 'YEARLY' ? plan.yearlyPriceTRY : plan.monthlyPriceTRY;
       const periodLabel = per === 'YEARLY' ? 'Yıllık' : 'Aylık';
-      setStatusMessage(
-        isNativeApp
-          ? `${plan.name} (${periodLabel} - ${price.toLocaleString('tr-TR')} TL) mağaza üzerinden tamamlanamadı. Canlı Destek ile paketinizi hemen aktif edebiliriz.`
-          : `Shopier güvenli ödeme sayfası açıldı. ${plan.name} (${periodLabel} - ${price.toLocaleString('tr-TR')} TL) ödemenizi tamamlayabilirsiniz.`
-      );
-      onOpenSupport?.(
-        'subscription',
-        isNativeApp
-          ? `Merhaba Fırat Bey, ${plan.name} (${periodLabel} - ${price.toLocaleString('tr-TR')} TL) paketini aktif etmek istiyorum.`
-          : `Merhaba Fırat Bey, ${plan.name} (${periodLabel} - ${price.toLocaleString('tr-TR')} TL) paketini Shopier üzerinden ödedim/aktif etmek istiyorum.`
-      );
+      if (isNativeApp) {
+        setStatusMessage(
+          `${plan.name} (${periodLabel} - ${price.toLocaleString('tr-TR')} TL) mağaza üzerinden tamamlanamadı. Canlı Destek ile paketinizi hemen aktif edebiliriz.`
+        );
+        onOpenSupport?.(
+          'subscription',
+          `Merhaba Fırat Bey, ${plan.name} (${periodLabel} - ${price.toLocaleString('tr-TR')} TL) paketini aktif etmek istiyorum.`
+        );
+      } else {
+        setStatusMessage(
+          `Shopier güvenli ödeme sayfası açıldı (${plan.name} · ${periodLabel}). MKS hesabınızdaki e-posta veya telefon ile öderseniz aboneliğiniz saniyeler içinde OTOMATİK açılır; farklı e-posta kullandıysanız sayfanın altından sipariş numaranızı girebilirsiniz.`
+        );
+      }
     });
 
     setPurchasingTier(null);
     if (purchasedInStore) {
       onTierUpgraded?.(tier);
       setStatusMessage(`${tier} paketiniz başarıyla aktifleştirildi!`);
+    }
+  };
+
+  const handleClaimShopierOrder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (claimingOrder) return;
+    if (!auth.currentUser) {
+      setClaimFeedback({ ok: false, msg: 'Sipariş kodunu hesabınıza tanımlamak için önce MKS oturumu açın.' });
+      return;
+    }
+    const cleanOrder = shopierOrderId.trim();
+    const cleanContact = shopierBuyerContact.trim();
+    if (cleanOrder.length < 4) {
+      setClaimFeedback({ ok: false, msg: 'Geçerli Shopier sipariş numarasını girin.' });
+      return;
+    }
+    if (!cleanContact) {
+      setClaimFeedback({ ok: false, msg: 'Shopier ödemesinde girdiğiniz e-posta adresini veya cep telefonunu yazın.' });
+      return;
+    }
+    setClaimingOrder(true);
+    setClaimFeedback(null);
+    try {
+      const idToken = await auth.currentUser.getIdToken();
+      const resp = await fetch(`${API_BASE}/api/shopier/claim-order`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ orderId: cleanOrder, buyerContact: cleanContact }),
+      });
+      const data = await resp.json().catch(() => ({ ok: false, error: 'Sunucudan geçersiz yanıt alındı.' }));
+      if (!resp.ok || !data?.ok) {
+        setClaimFeedback({ ok: false, msg: data?.error || 'Sipariş doğrulanamadı.' });
+        return;
+      }
+      localStorage.setItem('mks_active_tier', data.tier);
+      const updatedProfile = await dbService.getUserProfile(auth.currentUser.uid).catch(() => null);
+      if (updatedProfile) {
+        window.dispatchEvent(new CustomEvent('mks-subscription-activated', { detail: updatedProfile }));
+      }
+      onTierUpgraded?.(data.tier);
+      setShopierOrderId('');
+      setShopierBuyerContact('');
+      setClaimFeedback({ ok: true, msg: data.message || `MKS ${data.tier} aboneliğiniz aktifleştirildi!` });
+    } catch {
+      setClaimFeedback({ ok: false, msg: 'Sunucuya ulaşılamadı. Lütfen internet bağlantınızı kontrol edip tekrar deneyin.' });
+    } finally {
+      setClaimingOrder(false);
     }
   };
 
@@ -212,8 +272,7 @@ export const WebLandingPortal: React.FC<{
             {[
               { id: 'overview', label: 'Özellikler', icon: Layers },
               { id: 'download', label: 'Uygulamayı indir', icon: Download },
-              { id: 'pricing', label: 'Paketler', icon: Crown },
-              { id: 'ios_guide', label: 'iOS kurulumu', icon: Apple }
+              { id: 'pricing', label: 'Paketler', icon: Crown }
             ].map(tab => {
               const Icon = tab.icon;
               const active = activeTab === tab.id;
@@ -233,6 +292,16 @@ export const WebLandingPortal: React.FC<{
                 </button>
               );
             })}
+            <a
+              href={appStoreUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 min-h-[36px] flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all text-white/75 hover:text-white hover:bg-white/[0.06]"
+            >
+              <Apple size={14} className="text-white/70" />
+              <span>App Store (iOS)</span>
+              <ExternalLink size={11} className="text-white/60" />
+            </a>
           </div>
         </div>
 
@@ -432,49 +501,51 @@ export const WebLandingPortal: React.FC<{
                         <Apple size={26} />
                       </div>
                       <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-purple-500/15 text-purple-300 border border-purple-500/30">
-                        iPhone & iPad (iOS)
+                        Apple App Store
                       </span>
                     </div>
                     <div>
                       <h3 className="text-lg font-extrabold text-white">iOS (iPhone & iPad) Uygulaması</h3>
                       <p className="text-stone-400 text-xs mt-1 leading-relaxed">
-                        iPhone ve iPad cihazlarınızda tam ekran (Safari adres çubuğu olmadan) çalışan, kamera ile barkod
-                        ve yaprak tarayan yerel iOS uygulaması ve Xcode paketi.
+                        iPhone ve iPad cihazlarınız için Apple App Store üzerinden doğrudan indirilebilen resmî MKS
+                        mobil uygulaması.
                       </p>
                     </div>
                     <ul className="space-y-1.5 text-xs text-stone-300">
                       <li className="flex items-center gap-2">
                         <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
-                        <span>1. Yöntem: Saniyeler İçinde Ana Ekrana Tam Ekran Kurulum</span>
+                        <span>Apple App Store Üzerinden Tek Tıkla Doğrudan İndirme</span>
                       </li>
                       <li className="flex items-center gap-2">
                         <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
-                        <span>iPhone Kamera Barkod, Fatura OCR & Dynamic Island Uyumu</span>
+                        <span>iPhone Kamera 1D/2D BKTS & GTS Karekod Okuma</span>
                       </li>
                       <li className="flex items-center gap-2">
                         <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
-                        <span>Apple StoreKit & Bulut Xcode (.IPA) Paket Desteği</span>
+                        <span>Çevrimdışı Çalışma ve Tüm Cihazlarla Anlık Bulut Senkronu</span>
                       </li>
                     </ul>
                   </div>
 
                   <div className="pt-6 space-y-2.5">
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('ios_guide')}
+                    <a
+                      href={appStoreUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
                       className="w-full py-3.5 px-5 rounded-full bg-white text-[#1D1D1F] hover:bg-white/90 font-semibold text-xs flex items-center justify-center gap-2 shadow-lg transition-all"
                     >
                       <Apple size={16} />
-                      <span>iPhone / iPad'e Tek Tıkla Yükle</span>
-                    </button>
+                      <span>App Store Mağazasından İndir</span>
+                      <ExternalLink size={14} />
+                    </a>
                     <div className="flex gap-2">
                       <button
                         type="button"
-                        onClick={() => handleCopyLink('ios', officialSiteUrl)}
+                        onClick={() => handleCopyLink('ios', appStoreUrl)}
                         className="flex-1 py-2.5 px-4 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-white/85 border border-white/10 text-xs font-medium flex items-center justify-center gap-1.5 transition-all"
                       >
                         {copiedId === 'ios' ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
-                        <span>{copiedId === 'ios' ? 'iOS Linki Kopyalandı!' : 'iOS Kurulum Linkini Kopyala'}</span>
+                        <span>{copiedId === 'ios' ? 'App Store Linki Kopyalandı!' : 'App Store Linkini Kopyala'}</span>
                       </button>
                     </div>
                   </div>
@@ -685,110 +756,77 @@ export const WebLandingPortal: React.FC<{
                   );
                 })}
               </div>
-            </div>
-          )}
 
-          {/* TAB 3: iOS 1-CLICK INSTALL WIZARD */}
-          {activeTab === 'ios_guide' && (
-            <div className="max-w-4xl mx-auto space-y-5">
-              <div className="bg-stone-900 border border-white/10 rounded-3xl p-6 sm:p-8 space-y-6">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="p-3.5 rounded-2xl bg-purple-500/15 text-purple-300 border border-purple-500/30">
-                      <Apple size={28} />
-                    </div>
+              {/* Shopier Otomatik & Tek Kullanımlık Sipariş Kodu Aktivasyon Kutusu */}
+              {!Capacitor.isNativePlatform() && (
+                <div className="bg-stone-900/90 border border-emerald-500/25 rounded-3xl p-5 sm:p-6 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
-                      <h2 className="text-xl sm:text-2xl font-black text-white">
-                        iPhone ve iPad (iOS) Kurulum &amp; App Store Merkezi
-                      </h2>
-                      <p className="text-stone-400 text-xs sm:text-sm">
-                        Çiftçi Cari Takibi, Depo Stok, Kamera ile 2D BKTS/GTS Karekod ve e-Fatura iPhone &amp; iPad'inizde
+                      <h3 className="text-base font-black text-white flex items-center gap-2">
+                        <ShieldCheck size={18} className="text-emerald-400" />
+                        <span>Shopier Ödeme Sonrası Otomatik Aktivasyon &amp; Sipariş Kodu</span>
+                      </h3>
+                      <p className="text-xs text-stone-400 mt-1">
+                        MKS hesabınızdaki e-posta veya telefon ile Shopier&apos;den aldığınızda aboneliğiniz saniyeler içinde otomatik açılır.
+                        Shopier&apos;de <b>farklı bir e-posta/telefon</b> yazdıysanız tek kullanımlık sipariş numaranızla buradan anında aktif edebilirsiniz.
                       </p>
                     </div>
                   </div>
-                  <span className="px-3 py-1 rounded-full text-[10px] font-black bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                    v8.2.1 • Build 28 • iOS 14 – iOS 18 Tam Uyumlu
-                  </span>
-                </div>
 
-                {/* Core ERP modules available on iPhone & iPad */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {[
-                    { badge: '1. ÖNCELİK', title: 'Çiftçi Cari & Devir', desc: 'Veresiye, parçalı tahsilat, yıllık devir ve WhatsApp ekstre' },
-                    { badge: '2. ÖNCELİK', title: 'Depo & Stok Sayım', desc: 'iPhone kamerasıyla barkodlu satış ve onaylı stok sayımı' },
-                    { badge: '3. ÖNCELİK', title: 'BKTS & GTS Karekod', desc: 'GS1 2D karekod okuma, parti/SKT ve muadil ilaç radarı' },
-                    { badge: '4. ÖNCELİK', title: 'EDM e-Fatura & Kasa', desc: 'Gelen faturayı stoğa işleme, resmi fatura ve kasa takibi' },
-                  ].map((m, idx) => (
-                    <div key={idx} className="p-3.5 rounded-2xl bg-stone-950/90 border border-emerald-500/20 space-y-1">
-                      <span className="text-[10px] font-bold text-emerald-400">{m.badge}</span>
-                      <div className="text-xs font-bold text-white">{m.title}</div>
-                      <p className="text-[11px] text-stone-400 leading-snug">{m.desc}</p>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div className="p-4 rounded-2xl bg-stone-950 border border-white/10 space-y-2">
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-purple-500/20 text-purple-300">
-                      1. ADIM
-                    </span>
-                    <h4 className="text-white font-bold text-sm">Safari ile Açın</h4>
-                    <p className="text-stone-400 text-xs leading-relaxed">
-                      iPhone veya iPad'inizde Safari tarayıcısından{' '}
-                      <strong className="text-white">muhendiskayitsistemi.com.tr</strong> adresine girin.
-                    </p>
-                  </div>
-                  <div className="p-4 rounded-2xl bg-stone-950 border border-white/10 space-y-2">
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-purple-500/20 text-purple-300">
-                      2. ADIM
-                    </span>
-                    <h4 className="text-white font-bold text-sm">Paylaş Butonuna Dokunun</h4>
-                    <p className="text-stone-400 text-xs leading-relaxed">
-                      Ekranın alt ortasındaki <strong className="text-white">Paylaş (Yukarı Ok)</strong> simgesine dokunun.
-                    </p>
-                  </div>
-                  <div className="p-4 rounded-2xl bg-stone-950 border border-white/10 space-y-2">
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/20 text-emerald-300">
-                      3. ADIM
-                    </span>
-                    <h4 className="text-white font-bold text-sm">"Ana Ekrana Ekle" Seçin</h4>
-                    <p className="text-stone-400 text-xs leading-relaxed">
-                      Menüden <strong className="text-emerald-400">"Ana Ekrana Ekle"</strong> seçeneğine basıp sağ üstten{' '}
-                      <strong className="text-white">Ekle</strong>'ye dokunun. Özel MKS ikonuyla tam ekran kurulur!
-                    </p>
-                  </div>
-                </div>
-
-                <div className="p-4 rounded-2xl bg-purple-950/25 border border-purple-500/25 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                  <div className="space-y-1">
-                    <span className="text-xs font-bold text-purple-300">
-                      Apple App Store Connect &amp; TestFlight Paketi (v8.2.1 • Build 28)
-                    </span>
-                    <p className="text-xs text-stone-300 leading-relaxed">
-                      Yerel iOS projesi (<code className="text-emerald-300">com.nayiffirat.muhendiskayitsistemi</code>) Apple Privacy Manifest (<code className="text-purple-300">PrivacyInfo.xcprivacy</code>), 24-bit 1024px AppIcon, kamera 2D BKTS/GTS karekod okuyucu ve bulut Xcode 16 (<code className="text-purple-300">ios-release.yml</code>) derleme hattıyla hazırdır.
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => handleCopyLink('ios_guide_copy', officialSiteUrl)}
-                      className="px-4 py-2.5 rounded-full bg-white/[0.08] hover:bg-white/[0.14] text-white border border-white/15 font-medium text-xs flex items-center gap-1.5"
-                    >
-                      {copiedId === 'ios_guide_copy' ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
-                      <span>{copiedId === 'ios_guide_copy' ? 'Bağlantı Kopyalandı' : 'Kurulum Linkini Kopyala'}</span>
-                    </button>
-                    {onGoToLogin && (
+                  {auth.currentUser ? (
+                    <form onSubmit={handleClaimShopierOrder} className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <input
+                        type="text"
+                        value={shopierOrderId}
+                        onChange={e => setShopierOrderId(e.target.value)}
+                        placeholder="Shopier Sipariş No (ör. 834912345)"
+                        className="px-3.5 py-2.5 rounded-xl bg-stone-950 border border-white/15 text-xs text-white placeholder:text-stone-500 focus:outline-none focus:border-emerald-500"
+                      />
+                      <input
+                        type="text"
+                        value={shopierBuyerContact}
+                        onChange={e => setShopierBuyerContact(e.target.value)}
+                        placeholder="Shopier'deki E-Posta veya Cep Tel"
+                        className="px-3.5 py-2.5 rounded-xl bg-stone-950 border border-white/15 text-xs text-white placeholder:text-stone-500 focus:outline-none focus:border-emerald-500"
+                      />
                       <button
-                        type="button"
-                        onClick={() => onGoToLogin('LOGIN')}
-                        className="px-5 py-2.5 rounded-full bg-[#10B981] hover:bg-[#059669] text-[#052E16] font-semibold text-xs whitespace-nowrap"
+                        type="submit"
+                        disabled={claimingOrder}
+                        className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-xs font-extrabold transition-colors"
                       >
-                        Web'den Hemen Giriş Yap
+                        {claimingOrder ? 'Doğrulanıyor...' : 'Siparişi Doğrula ve Paketimi Aç'}
                       </button>
-                    )}
-                  </div>
+                    </form>
+                  ) : (
+                    <div className="flex flex-wrap items-center justify-between gap-3 bg-stone-950/60 border border-white/10 rounded-2xl px-4 py-3">
+                      <span className="text-xs text-stone-300">
+                        Farklı e-posta ile alınan Shopier sipariş kodunu tanımlamak için önce MKS hesabınıza giriş yapın.
+                      </span>
+                      {onGoToLogin && (
+                        <button
+                          type="button"
+                          onClick={() => onGoToLogin('LOGIN')}
+                          className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold"
+                        >
+                          Giriş Yap
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {claimFeedback && (
+                    <p
+                      className={`text-xs font-bold rounded-xl px-3.5 py-2.5 border ${
+                        claimFeedback.ok
+                          ? 'bg-emerald-500/15 border-emerald-500/35 text-emerald-300'
+                          : 'bg-rose-500/15 border-rose-500/35 text-rose-300'
+                      }`}
+                    >
+                      {claimFeedback.msg}
+                    </p>
+                  )}
                 </div>
-              </div>
+              )}
             </div>
           )}
 

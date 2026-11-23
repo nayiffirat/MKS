@@ -102,6 +102,11 @@ export const VisitLogForm: React.FC<VisitsProps> = ({ onBack, initialVisitId }) 
 
     useEffect(() => {
         loadData();
+        const onCloudSync = () => {
+            loadData();
+        };
+        window.addEventListener('mks-cloud-sync-applied', onCloudSync);
+        return () => window.removeEventListener('mks-cloud-sync-applied', onCloudSync);
     }, []);
 
     useEffect(() => {

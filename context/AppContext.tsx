@@ -630,7 +630,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addPrescription = async (pData: Omit<Prescription, 'id' | 'prescriptionNo'>) => {
-    const id = await dbService.nextDocumentCounter('REC');
+    const id = (pData as any).id || generateUUID();
+    const prescriptionNo = (pData as any).prescriptionNo || await dbService.nextDocumentCounter('REC');
     const accountsList = await dbService.getAccounts();
     const defaultAcc = accountsList.find(a => a.type === 'CASH') || accountsList[0];
     const targetAccId = pData.accountId || defaultAcc?.id;
@@ -639,7 +640,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const prescription: Prescription = { 
         ...pData, 
         id, 
-        prescriptionNo: id,
+        prescriptionNo,
         createdById: activeTeamMember?.id,
         isProcessed: shouldProcess,
         isInventoryProcessed: false,
@@ -776,101 +777,162 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await refreshStats();
   };
 
-  const deleteFarmer = async (id: string) => {
-    // 1. Delete all prescriptions and revert inventory
-    const farmerPrescriptions = await dbService.getPrescriptionsByFarmer(id);
+  const permanentlyDeleteFarmer = async (id: string) => {
+    const [
+      allFarmers,
+      allPrescriptions,
+      allPayments,
+      allMyPays,
+      allTransactions,
+      allDebts,
+      allVisits,
+      mapFeatures,
+      collectionLogs
+    ] = await Promise.all([
+      dbService.getAllFarmersRaw(),
+      dbService.getAllPrescriptionsRaw(),
+      dbService.getAllPaymentsRaw(),
+      dbService.getAllMyPaymentsRaw(),
+      dbService.getAllTransactionsRaw(),
+      dbService.getAllManualDebtsRaw(),
+      dbService.getAllVisitsRaw(),
+      dbService.getMapFeatures(),
+      dbService.getCollectionLogs()
+    ]);
+
+    const targetFarmer = allFarmers.find(f => f.id === id);
+    const farmerPrescriptions = allPrescriptions.filter(p => p.farmerId === id);
+    const relatedSourceIds = new Set<string>();
+
     for (const p of farmerPrescriptions) {
-        if (p.isInventoryProcessed) {
-            await dbService.revertInventory(p);
-        }
-        await dbService.deletePrescription(p.id);
+      relatedSourceIds.add(p.id);
+      if (!p.deletedAt && p.isInventoryProcessed) {
+        await dbService.revertInventory(p);
+      }
     }
 
-    // 2. Delete all payments and their transactions
-    const farmerPayments = await dbService.getPaymentsByFarmer(id);
-    const allTransactions = await dbService.getTransactions();
-    const myPays = await dbService.getMyPayments();
-    const deletedMyPayIds = new Set<string>();
-    for (const p of farmerPayments) {
-        const relatedTxs = allTransactions.filter(tx => !tx.deletedAt && tx.relatedId === p.id);
-        for (const relatedTx of relatedTxs) {
-            await dbService.deleteTransaction(relatedTx.id);
-        }
-        
-        const relatedMyPays = myPays.filter(mp => !mp.deletedAt && mp.relatedId === p.id);
-        for (const mp of relatedMyPays) {
-            deletedMyPayIds.add(mp.id);
-            const settledTxs = allTransactions.filter(tx => !tx.deletedAt && tx.relatedId === mp.id);
-            for (const sTx of settledTxs) {
-                await dbService.deleteTransaction(sTx.id);
-            }
-            await dbService.deleteMyPayment(mp.id);
-        }
-
-        await dbService.deletePayment(p.id);
+    const farmerPayments = allPayments.filter(p => p.farmerId === id);
+    const paymentIds = new Set<string>(farmerPayments.map(p => p.id));
+    for (const payId of paymentIds) {
+      relatedSourceIds.add(payId);
     }
 
-    // 2b. Delete standalone MyPayments (checks/notes not linked to a Payment row) & their settled Kasa txs
-    const standaloneFarmerMyPays = myPays.filter(mp => !mp.deletedAt && mp.farmerId === id && !deletedMyPayIds.has(mp.id));
-    for (const mp of standaloneFarmerMyPays) {
-        const settledTxs = allTransactions.filter(tx => !tx.deletedAt && tx.relatedId === mp.id);
-        for (const sTx of settledTxs) {
-            await dbService.deleteTransaction(sTx.id);
-        }
-        await dbService.deleteMyPayment(mp.id);
+    const farmerMyPays = allMyPays.filter(
+      mp => mp.farmerId === id || (mp.relatedId && paymentIds.has(mp.relatedId))
+    );
+    for (const mp of farmerMyPays) {
+      relatedSourceIds.add(mp.id);
     }
 
-    // 3. Delete all manual debts
-    const farmerDebts = await dbService.getManualDebtsByFarmer(id);
-    for (const d of farmerDebts) {
-        await dbService.deleteManualDebt(d.id);
-    }
+    const relatedTxIds = allTransactions
+      .filter(
+        tx =>
+          (tx.relatedId && relatedSourceIds.has(tx.relatedId)) ||
+          (tx.partyType === 'FARMER' && tx.partyId === id)
+      )
+      .map(tx => tx.id);
 
-    // 4. Delete all visits
-    const farmerVisits = await dbService.getVisitsByFarmer(id);
-    for (const v of farmerVisits) {
-        await dbService.deleteVisit(v.id);
-    }
-
-    // 4b. Delete farmer's map features & clear satellite cache for all farmer fields
-    const allFarmersForCache = await dbService.getFarmers();
-    const targetFarmer = allFarmersForCache.find(f => f.id === id);
     for (const field of targetFarmer?.fields || []) {
-        await dbService.clearSatelliteCacheForField(field.id).catch(() => {});
+      await dbService.clearSatelliteCacheForField(field.id).catch(() => {});
     }
-    const mapFeatures = await dbService.getMapFeatures();
-    for (const mf of mapFeatures) {
-        if (mf.farmerId === id) {
-            if (mf.fieldId) {
-                await dbService.clearSatelliteCacheForField(mf.fieldId).catch(() => {});
-            }
-            await dbService.deleteMapFeature(mf.id);
-        }
+    const matchingMapFeatures = mapFeatures.filter(mf => mf.farmerId === id);
+    for (const mf of matchingMapFeatures) {
+      if (mf.fieldId) {
+        await dbService.clearSatelliteCacheForField(mf.fieldId).catch(() => {});
+      }
     }
 
-    // 5. Delete the farmer
-    await dbService.deleteFarmer(id);
+    await dbService.hardDeleteRecordsBatch({
+      prescriptions: farmerPrescriptions.map(p => p.id),
+      payments: farmerPayments.map(p => p.id),
+      myPayments: farmerMyPays.map(mp => mp.id),
+      transactions: relatedTxIds,
+      manualDebts: allDebts.filter(d => d.farmerId === id).map(d => d.id),
+      visits: allVisits.filter(v => v.farmerId === id).map(v => v.id),
+      mapFeatures: matchingMapFeatures.map(mf => mf.id),
+      collectionLogs: collectionLogs.filter(cl => cl.farmerId === id).map(cl => cl.id),
+      farmers: [id]
+    });
+
+    await dbService.reconcileAccountBalances();
+    await refreshInventory();
     await refreshStats();
+  };
+
+  const deleteFarmer = async (id: string) => {
+    await permanentlyDeleteFarmer(id);
   };
 
   const softDeleteFarmer = async (id: string) => {
     const farmer = farmers.find(f => f.id === id);
-    if (farmer) {
-        await dbService.updateFarmer({ ...farmer, deletedAt: new Date().toISOString() });
-        await refreshStats();
+    if (!farmer) return;
+    const nowIso = new Date().toISOString();
+
+    const farmerPrescriptions = await dbService.getPrescriptionsByFarmer(id);
+    const allTransactions = await dbService.getTransactions();
+    for (const p of farmerPrescriptions) {
+      const wasActiveProcessed = p.isProcessed !== false;
+      for (const tx of allTransactions.filter(t => !t.deletedAt && t.relatedId === p.id)) {
+        await dbService.deleteTransaction(tx.id);
+      }
+      if (p.isInventoryProcessed) {
+        await dbService.revertInventory(p);
+      }
+      await dbService.updatePrescription({
+        ...p,
+        isProcessed: wasActiveProcessed,
+        isInventoryProcessed: false,
+        deletedAt: nowIso
+      });
     }
+
+    const farmerPayments = await dbService.getPaymentsByFarmer(id);
+    for (const pay of farmerPayments) {
+      await dbService.deletePaymentWithEffects(pay.id);
+    }
+
+    const myPays = await dbService.getMyPayments();
+    for (const mp of myPays.filter(m => !m.deletedAt && m.farmerId === id)) {
+      for (const tx of allTransactions.filter(t => !t.deletedAt && t.relatedId === mp.id)) {
+        await dbService.deleteTransaction(tx.id);
+      }
+      await dbService.updateMyPayment({ ...mp, deletedAt: nowIso });
+    }
+
+    const farmerDebts = await dbService.getManualDebtsByFarmer(id);
+    for (const d of farmerDebts) {
+      await dbService.updateManualDebt({ ...d, deletedAt: nowIso });
+    }
+
+    const farmerVisits = await dbService.getVisitsByFarmer(id);
+    for (const v of farmerVisits) {
+      await dbService.updateVisit({ ...v, deletedAt: nowIso });
+    }
+
+    await dbService.updateFarmer({ ...farmer, deletedAt: nowIso });
+    await refreshInventory();
+    await refreshStats();
   };
 
   const restoreFarmer = async (id: string) => {
     const farmer = trashedFarmers.find(f => f.id === id);
     if (farmer) {
+        const cascadeTs = farmer.deletedAt;
         await dbService.updateFarmer({ ...farmer, deletedAt: null as any });
+        if (cascadeTs) {
+          const [allDebts, allVisits] = await Promise.all([
+            dbService.getAllManualDebtsRaw(),
+            dbService.getAllVisitsRaw()
+          ]);
+          for (const d of allDebts.filter(x => x.farmerId === id && x.deletedAt === cascadeTs)) {
+            await dbService.updateManualDebt({ ...d, deletedAt: null as any });
+          }
+          for (const v of allVisits.filter(x => x.farmerId === id && x.deletedAt === cascadeTs)) {
+            await dbService.updateVisit({ ...v, deletedAt: null as any });
+          }
+        }
         await refreshStats();
     }
-  };
-
-  const permanentlyDeleteFarmer = async (id: string) => {
-    await deleteFarmer(id);
   };
 
   const bulkAddFarmers = async (farmersData: Omit<Farmer, 'id'>[]) => {
@@ -984,7 +1046,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const permanentlyDeleteVisit = async (id: string) => {
-    await deleteVisit(id);
+    await dbService.hardDeleteRecord('visits', id);
+    await refreshStats();
   };
 
   const softDeletePrescription = async (id: string) => {
@@ -1072,16 +1135,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const permanentlyDeletePrescription = async (id: string) => {
-    const allPrescriptions = await dbService.getAllPrescriptionsRaw();
+    const [allPrescriptions, allTransactions] = await Promise.all([
+      dbService.getAllPrescriptionsRaw(),
+      dbService.getAllTransactionsRaw()
+    ]);
     const target = allPrescriptions.find(p => p.id === id);
     if (target && !target.deletedAt && target.isInventoryProcessed) {
       await dbService.revertInventory(target);
     }
-    const allTransactions = await dbService.getTransactions();
-    for (const tx of allTransactions.filter(t => t.relatedId === id && !t.deletedAt)) {
-      await dbService.deleteTransaction(tx.id);
-    }
-    await dbService.deletePrescription(id);
+    const relatedTxIds = allTransactions.filter(t => t.relatedId === id).map(t => t.id);
+    await dbService.hardDeleteRecordsBatch({
+      transactions: relatedTxIds,
+      prescriptions: [id]
+    });
+    await dbService.reconcileAccountBalances();
     await refreshPrescriptions();
     await refreshInventory();
     await refreshStats();
@@ -1337,7 +1404,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const permanentlyDeletePayment = async (id: string) => {
-    await deletePayment(id);
+    const [allMyPays, allTxs] = await Promise.all([
+      dbService.getAllMyPaymentsRaw(),
+      dbService.getAllTransactionsRaw()
+    ]);
+    const relatedMyPayIds = allMyPays.filter(mp => mp.relatedId === id).map(mp => mp.id);
+    const txSourceIds = new Set<string>([id, ...relatedMyPayIds]);
+    const relatedTxIds = allTxs.filter(t => t.relatedId && txSourceIds.has(t.relatedId)).map(t => t.id);
+
+    await dbService.hardDeleteRecordsBatch({
+      payments: [id],
+      myPayments: relatedMyPayIds,
+      transactions: relatedTxIds
+    });
+    await dbService.reconcileAccountBalances();
+    await refreshStats();
   };
 
   const addManualDebt = async (debt: Omit<ManualDebt, 'id'>) => {
@@ -1373,7 +1454,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const permanentlyDeleteManualDebt = async (id: string) => {
-    await deleteManualDebt(id);
+    await dbService.hardDeleteRecord('manualDebts', id);
+    await refreshStats();
   };
 
   const addSupplier = async (supplierData: Omit<Supplier, 'id' | 'totalDebt' | 'balance'>): Promise<string> => {
@@ -1393,65 +1475,96 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await refreshStats();
   };
 
-  const deleteSupplier = async (id: string) => {
-    // 1. Delete all associated purchases and revert inventory
-    const purchases = await dbService.getSupplierPurchases(id);
-    for (const p of purchases) {
-        // Only revert inventory if the purchase was processed and not already soft-deleted
-        if (!p.deletedAt && p.isInventoryProcessed !== false) {
-            await dbService.updateInventoryFromPurchase(p, true);
-        }
-        await dbService.deleteSupplierPurchase(p.id);
+  const permanentlyDeleteSupplier = async (id: string) => {
+    const [allPurchases, allPayments, allMyPays, allTxs] = await Promise.all([
+      dbService.getAllSupplierPurchasesRaw(),
+      dbService.getAllSupplierPaymentsRaw(),
+      dbService.getAllMyPaymentsRaw(),
+      dbService.getAllTransactionsRaw()
+    ]);
+
+    const supPurchases = allPurchases.filter(p => p.supplierId === id);
+    for (const p of supPurchases) {
+      if (!p.deletedAt && p.isInventoryProcessed !== false) {
+        await dbService.updateInventoryFromPurchase(p, true);
+      }
     }
 
-    // 2. Delete all associated payments
-    const payments = await dbService.getSupplierPayments(id);
-    const allTransactions = await dbService.getTransactions();
-    const myPays = await dbService.getMyPayments();
-    const deletedMyPayIds = new Set<string>();
-    for (const p of payments) {
-        // Cleanup all related transactions
-        const relatedTxs = allTransactions.filter(t => !t.deletedAt && t.relatedId === p.id);
-        for (const relatedTx of relatedTxs) {
-            await dbService.deleteTransaction(relatedTx.id);
-        }
+    const supPayments = allPayments.filter(p => p.supplierId === id);
+    const supPayIds = new Set<string>(supPayments.map(p => p.id));
+    const supMyPays = allMyPays.filter(
+      mp => mp.supplierId === id || (mp.relatedId && supPayIds.has(mp.relatedId))
+    );
+    const txSourceIds = new Set<string>([
+      ...supPayIds,
+      ...supMyPays.map(mp => mp.id)
+    ]);
+    const relatedTxIds = allTxs
+      .filter(
+        t =>
+          (t.relatedId && txSourceIds.has(t.relatedId)) ||
+          (t.partyType === 'SUPPLIER' && t.partyId === id)
+      )
+      .map(t => t.id);
 
-        // Cleanup all matching MyPayments & any settled Kasa transactions linked to them
-        const relatedMyPays = myPays.filter(
-            mp => !mp.deletedAt && (mp.relatedId === p.id || (mp.supplierId === id && mp.amount === p.amount && mp.issueDate === p.date))
-        );
-        for (const mp of relatedMyPays) {
-            deletedMyPayIds.add(mp.id);
-            const settledTxs = allTransactions.filter(t => !t.deletedAt && t.relatedId === mp.id);
-            for (const sTx of settledTxs) {
-                await dbService.deleteTransaction(sTx.id);
-            }
-            await deleteMyPayment(mp.id);
-        }
-        await dbService.deleteSupplierPayment(p.id);
-    }
+    await dbService.hardDeleteRecordsBatch({
+      supplierPurchases: supPurchases.map(p => p.id),
+      supplierPayments: supPayments.map(p => p.id),
+      myPayments: supMyPays.map(mp => mp.id),
+      transactions: relatedTxIds,
+      suppliers: [id]
+    });
 
-    // Cleanup any standalone MyPayments belonging to this supplier
-    const remainingMyPays = myPays.filter(mp => !mp.deletedAt && mp.supplierId === id && !deletedMyPayIds.has(mp.id));
-    for (const mp of remainingMyPays) {
-        const settledTxs = allTransactions.filter(t => !t.deletedAt && t.relatedId === mp.id);
-        for (const sTx of settledTxs) {
-            await dbService.deleteTransaction(sTx.id);
-        }
-        await deleteMyPayment(mp.id);
-    }
-
-    // 3. Delete the supplier itself
-    await dbService.deleteSupplier(id);
+    await dbService.reconcileAccountBalances();
+    await refreshInventory();
     await refreshStats();
+  };
+
+  const deleteSupplier = async (id: string) => {
+    await permanentlyDeleteSupplier(id);
   };
 
   const softDeleteSupplier = async (id: string) => {
     const supplier = suppliers.find(s => s.id === id);
-    if (supplier) {
-        await dbService.updateSupplier({ ...supplier, deletedAt: new Date().toISOString() });
-        await refreshStats();
+    if (!supplier) return;
+    const nowIso = new Date().toISOString();
+
+    const purchases = await dbService.getSupplierPurchases(id);
+    for (const p of purchases) {
+      if (!p.deletedAt) {
+        await dbService.softDeleteSupplierPurchaseWithInventory(p.id);
+      }
     }
+
+    const sPayments = await dbService.getSupplierPayments(id);
+    const allTransactions = await dbService.getTransactions();
+    const myPays = await dbService.getMyPayments();
+    const deletedMyPayIds = new Set<string>();
+
+    for (const p of sPayments) {
+      for (const tx of allTransactions.filter(t => !t.deletedAt && t.relatedId === p.id)) {
+        await dbService.deleteTransaction(tx.id);
+      }
+      for (const mp of myPays.filter(m => !m.deletedAt && m.relatedId === p.id)) {
+        deletedMyPayIds.add(mp.id);
+        for (const sTx of allTransactions.filter(t => !t.deletedAt && t.relatedId === mp.id)) {
+          await dbService.deleteTransaction(sTx.id);
+        }
+        await dbService.updateMyPayment({ ...mp, deletedAt: nowIso });
+      }
+      await dbService.updateSupplierPayment({ ...p, deletedAt: nowIso });
+    }
+
+    for (const mp of myPays.filter(m => !m.deletedAt && m.supplierId === id && !deletedMyPayIds.has(m.id))) {
+      for (const sTx of allTransactions.filter(t => !t.deletedAt && t.relatedId === mp.id)) {
+        await dbService.deleteTransaction(sTx.id);
+      }
+      await dbService.updateMyPayment({ ...mp, deletedAt: nowIso });
+    }
+
+    await dbService.updateSupplier({ ...supplier, deletedAt: nowIso });
+    await refreshInventory();
+    await refreshStats();
   };
 
   const restoreSupplier = async (id: string) => {
@@ -1460,10 +1573,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         await dbService.updateSupplier({ ...supplier, deletedAt: null as any });
         await refreshStats();
     }
-  };
-
-  const permanentlyDeleteSupplier = async (id: string) => {
-    await deleteSupplier(id);
   };
 
   const addSupplierPurchase = async (purchaseData: Omit<SupplierPurchase, 'id'>) => {
@@ -1595,7 +1704,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (target && !target.deletedAt && target.isInventoryProcessed !== false) {
       await dbService.updateInventoryFromPurchase(target, true);
     }
-    await dbService.deleteSupplierPurchase(id);
+    await dbService.hardDeleteRecord('supplierPurchases', id);
     await refreshInventory();
     await refreshStats();
   };
@@ -1857,7 +1966,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const permanentlyDeleteSupplierPayment = async (id: string) => {
-    await dbService.deleteSupplierPayment(id);
+    const [allMyPays, allTxs] = await Promise.all([
+      dbService.getAllMyPaymentsRaw(),
+      dbService.getAllTransactionsRaw()
+    ]);
+    const relatedMyPayIds = allMyPays.filter(mp => mp.relatedId === id).map(mp => mp.id);
+    const txSourceIds = new Set<string>([id, ...relatedMyPayIds]);
+    const relatedTxIds = allTxs.filter(t => t.relatedId && txSourceIds.has(t.relatedId)).map(t => t.id);
+
+    await dbService.hardDeleteRecordsBatch({
+      supplierPayments: [id],
+      myPayments: relatedMyPayIds,
+      transactions: relatedTxIds
+    });
+    await dbService.reconcileAccountBalances();
     await refreshStats();
   };
 
@@ -1949,12 +2071,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const permanentlyDeleteMyPayment = async (id: string) => {
-    const allTransactions = await dbService.getTransactions();
-    const relatedTx = allTransactions.find(tx => tx.relatedId === id);
-    if (relatedTx) {
-      await dbService.deleteTransaction(relatedTx.id);
-    }
-    await dbService.deleteMyPayment(id);
+    const allTransactions = await dbService.getAllTransactionsRaw();
+    const relatedTxIds = allTransactions.filter(tx => tx.relatedId === id).map(tx => tx.id);
+    await dbService.hardDeleteRecordsBatch({
+      myPayments: [id],
+      transactions: relatedTxIds
+    });
+    await dbService.reconcileAccountBalances();
     await refreshStats();
   };
 
@@ -2059,7 +2182,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const permanentlyDeleteExpense = async (id: string) => {
-    await deleteExpense(id);
+    const allTransactions = await dbService.getAllTransactionsRaw();
+    const relatedTxIds = allTransactions.filter(tx => tx.relatedId === id).map(tx => tx.id);
+    await dbService.hardDeleteRecordsBatch({
+      expenses: [id],
+      transactions: relatedTxIds
+    });
+    await dbService.reconcileAccountBalances();
+    await refreshStats();
   };
 
   const addAccount = async (accountData: Omit<Account, 'id' | 'balance'>) => {

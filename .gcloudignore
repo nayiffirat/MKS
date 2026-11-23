@@ -17,6 +17,9 @@ docs/
 tests/
 scripts/
 store_assets/
+promo-film/
+.agent/
+.agents/
 Claude outputs/
 .claude-flow/
 .swarm/

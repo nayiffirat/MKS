@@ -8,7 +8,7 @@ import { getRedirectResult, EmailAuthProvider, reauthenticateWithCredential, rea
 import { UIScale, Language, InventoryItem } from '../types';
 import { ConfirmationModal } from './ConfirmationModal';
 import PermissionsPanel from './PermissionsPanel';
-import { dbService } from '../services/db';
+import { dbService, PurgeCategoryKey } from '../services/db';
 import {
   runIntegrityCheck,
   IntegrityReport,
@@ -86,6 +86,9 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
     supplierPurchases,
     accounts,
     expenses,
+    visits,
+    reminders,
+    transactions,
     refreshStats,
     refreshInventory,
     activeTeamMember
@@ -451,26 +454,187 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
     return Array.from(years).sort((a, b) => b - a);
   }, [prescriptions, payments, manualDebts, supplierPurchases, expenses, turnoverLogsList]);
 
-  // Verilerimi Sil Modal & Şifre durumları
+  // Verilerimi Sil Modal & Seçimli Silme & Şifre durumları
+  const DELETE_CATEGORY_META: {
+    key: PurgeCategoryKey;
+    title: string;
+    desc: string;
+    accent: string;
+  }[] = useMemo(() => [
+    {
+      key: 'farmers',
+      title: 'Çiftçiler (Müstahsiller) & Tarlalar',
+      desc: 'Tüm çiftçi kartları, tarlalar, harita çizimleri + bağlı reçete, borç, tahsilat ve ziyaretler',
+      accent: 'text-sky-400 border-sky-500/30 bg-sky-500/10'
+    },
+    {
+      key: 'prescriptions',
+      title: 'Satışlar, Reçeteler & Manuel Borçlar',
+      desc: 'Tüm reçete/satış belgeleri, manuel cari borçlar ve devir kayıtları (depo stok adedi korunur)',
+      accent: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10'
+    },
+    {
+      key: 'payments',
+      title: 'Çiftçi Tahsilatları (Nakit / POS)',
+      desc: 'Çiftçilerden alınan tüm tahsilat makbuzları ve tahsilat arama günlükleri',
+      accent: 'text-teal-400 border-teal-500/30 bg-teal-500/10'
+    },
+    {
+      key: 'inventory',
+      title: 'Depo & Stok Ürünleri',
+      desc: 'Depodaki tüm ürünler, parti/lot, SKT ve stok hareket düzeltmeleri',
+      accent: 'text-amber-400 border-amber-500/30 bg-amber-500/10'
+    },
+    {
+      key: 'suppliers',
+      title: 'Tedarikçiler, Alım Faturaları & Ödemeleri',
+      desc: 'Tüm toptancı/fabrika carileri, alım-iade faturaları ve tedarikçi ödemeleri',
+      accent: 'text-purple-400 border-purple-500/30 bg-purple-500/10'
+    },
+    {
+      key: 'kasa',
+      title: 'Kasa, Banka Hesapları & Çek/Senet',
+      desc: 'Tüm kasa/banka hesapları, nakit hareketleri ve çek/senet/bloke POS portföyü',
+      accent: 'text-indigo-400 border-indigo-500/30 bg-indigo-500/10'
+    },
+    {
+      key: 'expenses',
+      title: 'İşletme Giderleri',
+      desc: 'Kira, yakıt, maaş, fatura gibi tüm gider kayıtları ve bağlı kasa çıkışları',
+      accent: 'text-orange-400 border-orange-500/30 bg-orange-500/10'
+    },
+    {
+      key: 'silo',
+      title: 'Silo & Tüccar İşlemleri',
+      desc: 'Hububat/mahsul silo alım-satım hareketleri ve tüccar/alıcı rehberi',
+      accent: 'text-yellow-400 border-yellow-500/30 bg-yellow-500/10'
+    },
+    {
+      key: 'visits_reminders',
+      title: 'Tarla Ziyaretleri, Ajanda & Bildirimler',
+      desc: 'Ziyaret notları, hatırlatıcılar, bildirim geçmişi ve ekip mesajları',
+      accent: 'text-cyan-400 border-cyan-500/30 bg-cyan-500/10'
+    },
+    {
+      key: 'official_integrators',
+      title: 'e-Fatura Deposu & Bakanlık (BKTS/GTS)',
+      desc: 'e-Fatura deposu/fatura önbelleği ve BKTS/GTS mal kabul & satış kayıtları (şifreler korunur)',
+      accent: 'text-rose-400 border-rose-500/30 bg-rose-500/10'
+    }
+  ], []);
+
   const [isDeleteDataModalOpen, setIsDeleteDataModalOpen] = useState(false);
+  const [selectedDeleteCategories, setSelectedDeleteCategories] = useState<Set<PurgeCategoryKey>>(new Set());
+  const [extraCategoryCounts, setExtraCategoryCounts] = useState<{ silo: number; official_integrators: number }>({
+    silo: 0,
+    official_integrators: 0
+  });
   const [deletePassword, setDeletePassword] = useState('');
   const [showDeletePassword, setShowDeletePassword] = useState(false);
   const [isDeletingData, setIsDeletingData] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  const executeDeleteAllDataAfterAuth = async () => {
+  React.useEffect(() => {
+    if (!isDeleteDataModalOpen) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [siloTxs, siloContacts, minShips, minRecs] = await Promise.all([
+          dbService.getAllSiloTransactions().catch(() => []),
+          dbService.getSiloContacts().catch(() => []),
+          dbService.getMinistryShipments().catch(() => []),
+          dbService.getMinistryRecords().catch(() => [])
+        ]);
+        let edmCount = 0;
+        try {
+          const wh = await dbService.getEdmData<any[]>('mks_official_efatura_warehouse_v2');
+          if (Array.isArray(wh)) edmCount = wh.length;
+        } catch {}
+        if (!cancelled) {
+          setExtraCategoryCounts({
+            silo: siloTxs.length + siloContacts.length,
+            official_integrators: minShips.length + minRecs.length + edmCount
+          });
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [isDeleteDataModalOpen]);
+
+  const categoryCountMap = useMemo<Record<PurgeCategoryKey, number>>(() => ({
+    farmers: farmers.length,
+    prescriptions: prescriptions.length + manualDebts.length,
+    payments: payments.length,
+    inventory: inventory.length,
+    suppliers: suppliers.length + supplierPurchases.length,
+    kasa: accounts.length + transactions.length + myPayments.length,
+    expenses: expenses.length,
+    silo: extraCategoryCounts.silo,
+    visits_reminders: visits.length + reminders.length,
+    official_integrators: extraCategoryCounts.official_integrators
+  }), [farmers.length, prescriptions.length, manualDebts.length, payments.length, inventory.length, suppliers.length, supplierPurchases.length, accounts.length, transactions.length, myPayments.length, expenses.length, extraCategoryCounts, visits.length, reminders.length]);
+
+  const openDeleteModalWithReset = () => {
+    setDeletePassword('');
+    setDeleteError(null);
+    setSelectedDeleteCategories(new Set());
+    setIsDeleteDataModalOpen(true);
+  };
+
+  const toggleDeleteCategory = (key: PurgeCategoryKey) => {
+    setDeleteError(null);
+    setSelectedDeleteCategories(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const isFullWipeSelected = selectedDeleteCategories.size === DELETE_CATEGORY_META.length;
+
+  const executeDeleteDataAfterAuth = async () => {
     if (!currentUser) return;
-    showToast('Tüm verileriniz kalıcı olarak siliniyor...', 'info');
-    await dbService.deleteAllUserData(currentUser.uid);
-    showToast('Tüm verileriniz başarıyla silindi. Hesabınız sıfırlandı.', 'success');
+    if (selectedDeleteCategories.size === 0) {
+      setDeleteError('Lütfen kalıcı olarak silmek istediğiniz en az bir veri modülü seçin.');
+      setIsDeletingData(false);
+      return;
+    }
+
+    if (isFullWipeSelected) {
+      showToast('Seçili tüm veriler kalıcı olarak siliniyor...', 'info');
+      await dbService.deleteAllUserData(currentUser.uid);
+      showToast('Tüm verileriniz kalıcı olarak silindi. Hesabınız sıfırlandı.', 'success');
+      hapticFeedback('success');
+      setIsDeleteDataModalOpen(false);
+      setTimeout(() => {
+        window.location.reload();
+      }, 900);
+      return;
+    }
+
+    const keys = Array.from(selectedDeleteCategories);
+    showToast(`${keys.length} seçili modül verisi kalıcı olarak siliniyor...`, 'info');
+    await dbService.purgeSelectedCategories(currentUser.uid, keys);
+    if (selectedDeleteCategories.has('official_integrators')) {
+      window.dispatchEvent(new CustomEvent('mks-official-warehouse-updated'));
+    }
+    await refreshInventory();
+    await refreshStats();
+    await refreshSystemStatus();
+    showToast(`${keys.length} modüldeki veriler geri dönmemek üzere silindi ve hesaplar dengelendi.`, 'success');
     hapticFeedback('success');
+    setDeletePassword('');
+    setSelectedDeleteCategories(new Set());
+    setIsDeletingData(false);
     setIsDeleteDataModalOpen(false);
-    setTimeout(() => {
-      window.location.reload();
-    }, 1000);
   };
 
   const handleDeleteAllData = async () => {
+    if (selectedDeleteCategories.size === 0) {
+      setDeleteError('Lütfen kalıcı olarak silmek istediğiniz en az bir modül seçin.');
+      return;
+    }
     if (!deletePassword) {
       setDeleteError('Lütfen şifrenizi girin.');
       return;
@@ -492,7 +656,7 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
         hapticFeedback('error');
         return;
       }
-      await executeDeleteAllDataAfterAuth();
+      await executeDeleteDataAfterAuth();
     } catch (error: any) {
       console.error("Delete data error:", error);
       setDeleteError('Veriler silinirken bir hata oluştu: ' + (error?.message || 'Bilinmeyen hata'));
@@ -502,13 +666,17 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
   };
 
   const handleDeleteAllDataWithGoogle = async () => {
+    if (selectedDeleteCategories.size === 0) {
+      setDeleteError('Lütfen kalıcı olarak silmek istediğiniz en az bir modül seçin.');
+      return;
+    }
     setDeleteError(null);
     hapticFeedback('medium');
     const ok = await reauthenticateWithGooglePopup((msg) => setDeleteError(msg));
     if (!ok) return;
     setIsDeletingData(true);
     try {
-      await executeDeleteAllDataAfterAuth();
+      await executeDeleteDataAfterAuth();
     } catch (error: any) {
       console.error("Google delete data error:", error);
       setDeleteError('Veriler silinirken bir hata oluştu: ' + (error?.message || 'Bilinmeyen hata'));
@@ -630,6 +798,14 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
           subtitle={t('settings.system.desc')} 
           color="bg-stone-800 text-stone-400 border-stone-700"
           onClick={() => setActiveSection('SYSTEM')} 
+        />
+
+        <MenuItem 
+          icon={Trash2} 
+          title="Verileri Seçerek Kalıcı Sil" 
+          subtitle="Çiftçi, depo, satış, kasa veya tüm modülleri geri dönmemek üzere silin" 
+          color="bg-rose-900/30 text-rose-400 border-rose-500/20"
+          onClick={openDeleteModalWithReset} 
         />
       </div>
 
@@ -1653,6 +1829,31 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
             <p className="text-[11px] text-stone-400 mt-2">Dosya seçmek verilerinizi değiştirmez; geri yüklemeden önce onayınız istenir ve mevcut verilerinizin güvenlik yedeği otomatik indirilir.</p>
         </div>
       </div>
+
+      {/* Seçimli Kalıcı Veri Silme Kartı */}
+      <button
+        type="button"
+        onClick={openDeleteModalWithReset}
+        className="w-full flex items-center justify-between gap-4 p-5 rounded-3xl bg-stone-900 border border-rose-500/35 hover:border-rose-500/70 hover:bg-rose-950/20 transition-all group text-left"
+      >
+        <div className="flex items-center gap-3.5 min-w-0">
+          <div className="p-3 bg-rose-500/15 text-rose-400 rounded-2xl border border-rose-500/30 group-hover:bg-rose-600 group-hover:text-white transition-colors shrink-0">
+            <Trash2 size={20} />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h4 className="text-sm font-black text-white group-hover:text-rose-300 transition-colors">Seçimli Kalıcı Veri Silme</h4>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">
+                Geri Dönmemek Üzere
+              </span>
+            </div>
+            <p className="text-xs text-stone-400 mt-1">
+              Çiftçi, depo, satış, kasa, tedarikçi veya seçtiğiniz modülleri hem cihazdan hem buluttan kalıcı olarak silin
+            </p>
+          </div>
+        </div>
+        <ChevronRight size={18} className="text-stone-500 group-hover:text-rose-400 shrink-0" />
+      </button>
     </div>
   );
 
@@ -2012,11 +2213,7 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
             {/* Verilerimi Sil (Delete My Data) Banner Card */}
             <button
               type="button"
-              onClick={() => {
-                setDeletePassword('');
-                setDeleteError(null);
-                setIsDeleteDataModalOpen(true);
-              }}
+              onClick={openDeleteModalWithReset}
               className="sm:col-span-2 w-full flex items-center justify-between gap-4 p-4 sm:p-5 rounded-2xl bg-[color:var(--mks-subcard)] border border-rose-500/30 hover:border-rose-500/60 hover:bg-rose-500/5 transition-all group shadow-sm text-left"
             >
               <div className="flex items-center gap-3.5 min-w-0">
@@ -2027,11 +2224,11 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
                   <div className="flex items-center gap-2 flex-wrap">
                     <h4 className="text-sm font-black text-[color:var(--mks-text)] group-hover:text-rose-400 transition-colors">Verilerimi Sil</h4>
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/30">
-                      Kalıcı Sıfırlama
+                      Seçimli &amp; Kalıcı Silme
                     </span>
                   </div>
                   <p className="text-xs text-[color:var(--mks-muted)] font-medium leading-relaxed mt-0.5">
-                    Bulut ve cihazdaki tüm cari, fatura, stok ve kasa kayıtlarını doğrulamalı olarak sıfırlayın
+                    Çiftçi, depo, satış, kasa veya tüm kayıtları geri dönmemek üzere seçip cihaz ve buluttan kalıcı silin
                   </p>
                 </div>
               </div>
@@ -2757,21 +2954,25 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
         variant="danger"
       />
 
-      {/* Verilerimi Sil Şifreli Onay Modalı */}
+      {/* Seçimli Kalıcı Veri Silme & Sıfırlama Onay Modalı */}
       {isDeleteDataModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-stone-950/75 backdrop-blur-md animate-in fade-in duration-200">
-          <div className="bg-[color:var(--mks-modal-bg)] border border-rose-500/35 w-full max-w-md rounded-3xl p-6 shadow-2xl relative overflow-hidden">
+        <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center sm:p-4 bg-stone-950/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-[color:var(--mks-modal-bg)] border border-rose-500/35 w-full sm:max-w-xl max-h-[92dvh] flex flex-col rounded-t-3xl sm:rounded-3xl p-5 sm:p-6 shadow-2xl relative overflow-hidden">
             {/* Üst Vurgu Çizgisi */}
             <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-rose-600 via-red-500 to-amber-500" />
 
-            <div className="flex items-start justify-between gap-4 mb-4">
-              <div className="flex items-start gap-3.5">
-                <div className="p-3 bg-rose-500/15 text-rose-400 border border-rose-500/30 rounded-2xl flex-shrink-0">
-                  <Trash2 size={22} />
+            <div className="flex items-start justify-between gap-4 mb-3 pt-1 shrink-0">
+              <div className="flex items-start gap-3">
+                <div className="p-2.5 bg-rose-500/15 text-rose-400 border border-rose-500/30 rounded-2xl flex-shrink-0">
+                  <Trash2 size={20} />
                 </div>
                 <div>
-                  <h3 className="text-lg font-black text-[color:var(--mks-text)] tracking-tight">Verilerimi Sil</h3>
-                  <p className="text-xs font-bold text-rose-400 uppercase tracking-wider mt-0.5">Kalıcı Hesap Sıfırlama</p>
+                  <h3 className="text-base sm:text-lg font-black text-[color:var(--mks-text)] tracking-tight">Seçimli Kalıcı Veri Silme</h3>
+                  <p className="text-[11px] font-bold text-rose-400 uppercase tracking-wider mt-0.5">
+                    {isFullWipeSelected
+                      ? 'Tam Hesap Sıfırlama (Tümü Seçili)'
+                      : `${selectedDeleteCategories.size} Modül Seçildi • Geri Dönülmez`}
+                  </p>
                 </div>
               </div>
               <button
@@ -2789,87 +2990,182 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
               </button>
             </div>
 
-            <div className="bg-rose-500/10 border border-rose-500/30 p-4 rounded-2xl mb-5 text-xs leading-relaxed">
-              <p className="font-bold text-rose-400 mb-1 flex items-center gap-1.5">
-                <AlertTriangle size={14} className="text-rose-400 flex-shrink-0" />
-                Bu işlem geri alınamaz!
-              </p>
-              <p className="text-[color:var(--mks-muted)]">
-                Müşteri kayıtlarınız, reçeteleriniz, stoklarınız, borç/alacak takibiniz, bulut yedekleriniz ve tüm işlem geçmişiniz hem cihazınızdan hem de sunucudan kalıcı olarak silinecek, hesabınız sıfır veri haline gelecektir.
-              </p>
-            </div>
-
-            {deleteError && (
-              <div className="p-3 bg-rose-500/15 border border-rose-500/40 text-rose-400 text-xs font-bold rounded-xl mb-4 flex items-center gap-2 animate-in fade-in">
-                <AlertTriangle size={16} className="text-rose-400 flex-shrink-0" />
-                <span>{deleteError}</span>
+            <div className="overflow-y-auto space-y-4 pr-1 flex-1 no-scrollbar">
+              <div className="bg-rose-500/10 border border-rose-500/30 p-3.5 rounded-2xl text-xs leading-relaxed">
+                <p className="font-bold text-rose-400 mb-1 flex items-center gap-1.5">
+                  <AlertTriangle size={14} className="text-rose-400 flex-shrink-0" />
+                  Seçilen veriler hem cihazdan hem buluttan geri dönmemek üzere silinir!
+                </p>
+                <p className="text-[color:var(--mks-muted)] text-[11px]">
+                  Silinen kayıtlar bir daha senkronizasyonda geri gelmez. Depo seçilmediyse mevcut raf stokları korunur; kasa ve bakiye hesapları kalan işlemlere göre otomatik mutabık tutulur.
+                </p>
               </div>
-            )}
 
-            {isGoogleUser && (
-              <div className="space-y-3 mb-4">
-                <button
-                  type="button"
-                  onClick={handleDeleteAllDataWithGoogle}
-                  disabled={isDeletingData || isReauthenticatingGoogle}
-                  className="w-full py-3 px-4 rounded-2xl bg-[color:var(--mks-subcard)] border border-rose-500/40 hover:border-rose-500 text-[color:var(--mks-text)] font-bold text-xs flex items-center justify-center gap-2 transition-all disabled:opacity-50"
-                >
-                  {isReauthenticatingGoogle || isDeletingData ? (
-                    <>
-                      <Loader2 size={16} className="animate-spin text-rose-400" />
-                      <span>Google Hesabı Doğrulanıyor...</span>
-                    </>
-                  ) : (
-                    <>
-                      <ShieldCheck size={16} className="text-rose-400" />
-                      <span>Google Hesabı ile Doğrula ve Sil</span>
-                    </>
-                  )}
-                </button>
-                <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-[color:var(--mks-muted)]">
-                  <div className="h-px flex-1 bg-[color:var(--mks-card-border)]" />
-                  <span>veya yönetici / hesap şifresi</span>
-                  <div className="h-px flex-1 bg-[color:var(--mks-card-border)]" />
+              {/* Hızlı Seçim Çubuğu */}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[11px] font-black uppercase tracking-wider text-[color:var(--mks-muted)]">
+                  Silinecek Modülleri Seçin
+                </span>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    disabled={isDeletingData || isReauthenticatingGoogle}
+                    onClick={() => {
+                      setDeleteError(null);
+                      setSelectedDeleteCategories(new Set(DELETE_CATEGORY_META.map(c => c.key)));
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/35 text-rose-300 text-[11px] font-bold transition-colors disabled:opacity-50"
+                  >
+                    Tümünü Seç
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isDeletingData || isReauthenticatingGoogle}
+                    onClick={() => {
+                      setDeleteError(null);
+                      setSelectedDeleteCategories(new Set(['farmers', 'prescriptions', 'payments', 'suppliers', 'expenses']));
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/35 text-amber-300 text-[11px] font-bold transition-colors disabled:opacity-50"
+                  >
+                    Cari &amp; Satışlar
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isDeletingData || isReauthenticatingGoogle || selectedDeleteCategories.size === 0}
+                    onClick={() => {
+                      setDeleteError(null);
+                      setSelectedDeleteCategories(new Set());
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] text-[color:var(--mks-muted)] hover:text-[color:var(--mks-text)] text-[11px] font-bold transition-colors disabled:opacity-40"
+                  >
+                    Temizle
+                  </button>
                 </div>
               </div>
-            )}
 
-            <div className="space-y-2 mb-6">
-              <label className="text-[11px] font-black text-[color:var(--mks-muted)] uppercase tracking-widest block">
-                Silme İşlemini Onaylamak İçin Şifrenizi Girin
-              </label>
-              <div className="relative">
-                <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[color:var(--mks-muted)]">
-                  <Lock size={18} />
+              {/* Modül Seçim Listesi */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {DELETE_CATEGORY_META.map(cat => {
+                  const isChecked = selectedDeleteCategories.has(cat.key);
+                  const count = categoryCountMap[cat.key] ?? 0;
+                  return (
+                    <button
+                      key={cat.key}
+                      type="button"
+                      disabled={isDeletingData || isReauthenticatingGoogle}
+                      aria-pressed={isChecked}
+                      onClick={() => toggleDeleteCategory(cat.key)}
+                      className={`p-3 rounded-2xl border text-left transition-all flex items-start gap-2.5 ${
+                        isChecked
+                          ? 'bg-rose-500/15 border-rose-500/60 shadow-sm'
+                          : 'bg-[color:var(--mks-subcard)] border-[color:var(--mks-card-border)] hover:border-rose-500/30'
+                      } disabled:opacity-50`}
+                    >
+                      <span
+                        className={`mt-0.5 w-5 h-5 rounded-lg border flex items-center justify-center shrink-0 transition-colors ${
+                          isChecked
+                            ? 'bg-rose-600 border-rose-500 text-white'
+                            : 'bg-stone-950/60 border-stone-700 text-transparent'
+                        }`}
+                      >
+                        <Check size={13} strokeWidth={3} />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center justify-between gap-1.5">
+                          <span className="text-xs font-black text-[color:var(--mks-text)] leading-snug">
+                            {cat.title}
+                          </span>
+                          <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold border shrink-0 tabular-nums ${cat.accent}`}>
+                            {count}
+                          </span>
+                        </span>
+                        <span className="block text-[10px] text-[color:var(--mks-muted)] leading-snug mt-1">
+                          {cat.desc}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {deleteError && (
+                <div className="p-3 bg-rose-500/15 border border-rose-500/40 text-rose-400 text-xs font-bold rounded-xl flex items-center gap-2 animate-in fade-in">
+                  <AlertTriangle size={16} className="text-rose-400 flex-shrink-0" />
+                  <span>{deleteError}</span>
                 </div>
-                <input
-                  type={showDeletePassword ? "text" : "password"}
-                  value={deletePassword}
-                  onChange={(e) => {
-                    setDeletePassword(e.target.value);
-                    if (deleteError) setDeleteError(null);
-                  }}
-                  placeholder="Hesap / yönetici şifreniz"
-                  disabled={isDeletingData || isReauthenticatingGoogle}
-                  className="w-full bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] text-[color:var(--mks-text)] pl-10 pr-12 py-3.5 rounded-2xl text-sm font-medium outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20 transition-all"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !isDeletingData && !isReauthenticatingGoogle && deletePassword) {
-                      handleDeleteAllData();
-                    }
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowDeletePassword(!showDeletePassword)}
-                  aria-label={showDeletePassword ? 'Şifreyi gizle' : 'Şifreyi göster'}
-                  className="absolute right-0.5 top-1/2 -translate-y-1/2 w-11 h-11 flex items-center justify-center text-[color:var(--mks-muted)] hover:text-[color:var(--mks-text)]"
-                >
-                  {showDeletePassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                </button>
+              )}
+
+              {isGoogleUser && (
+                <div className="space-y-3">
+                  <button
+                    type="button"
+                    onClick={handleDeleteAllDataWithGoogle}
+                    disabled={isDeletingData || isReauthenticatingGoogle || selectedDeleteCategories.size === 0}
+                    className="w-full py-3 px-4 rounded-2xl bg-[color:var(--mks-subcard)] border border-rose-500/40 hover:border-rose-500 text-[color:var(--mks-text)] font-bold text-xs flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                  >
+                    {isReauthenticatingGoogle || isDeletingData ? (
+                      <>
+                        <Loader2 size={16} className="animate-spin text-rose-400" />
+                        <span>Google Hesabı Doğrulanıyor...</span>
+                      </>
+                    ) : (
+                      <>
+                        <ShieldCheck size={16} className="text-rose-400" />
+                        <span>
+                          {selectedDeleteCategories.size === 0
+                            ? 'Önce Silinecek Modül Seçin'
+                            : isFullWipeSelected
+                              ? 'Google ile Doğrula ve Tüm Verileri Sil'
+                              : `Google ile Doğrula ve ${selectedDeleteCategories.size} Modülü Sil`}
+                        </span>
+                      </>
+                    )}
+                  </button>
+                  <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-[color:var(--mks-muted)]">
+                    <div className="h-px flex-1 bg-[color:var(--mks-card-border)]" />
+                    <span>veya yönetici / hesap şifresi</span>
+                    <div className="h-px flex-1 bg-[color:var(--mks-card-border)]" />
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <label className="text-[11px] font-black text-[color:var(--mks-muted)] uppercase tracking-widest block">
+                  Silme İşlemini Onaylamak İçin Şifrenizi Girin
+                </label>
+                <div className="relative">
+                  <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[color:var(--mks-muted)]">
+                    <Lock size={18} />
+                  </div>
+                  <input
+                    type={showDeletePassword ? "text" : "password"}
+                    value={deletePassword}
+                    onChange={(e) => {
+                      setDeletePassword(e.target.value);
+                      if (deleteError) setDeleteError(null);
+                    }}
+                    placeholder="Hesap / yönetici şifreniz"
+                    disabled={isDeletingData || isReauthenticatingGoogle}
+                    className="w-full bg-[color:var(--mks-subcard)] border border-[color:var(--mks-card-border)] text-[color:var(--mks-text)] pl-10 pr-12 py-3 rounded-2xl text-sm font-medium outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20 transition-all"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !isDeletingData && !isReauthenticatingGoogle && deletePassword && selectedDeleteCategories.size > 0) {
+                        handleDeleteAllData();
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowDeletePassword(!showDeletePassword)}
+                    aria-label={showDeletePassword ? 'Şifreyi gizle' : 'Şifreyi göster'}
+                    className="absolute right-0.5 top-1/2 -translate-y-1/2 w-11 h-11 flex items-center justify-center text-[color:var(--mks-muted)] hover:text-[color:var(--mks-text)]"
+                  >
+                    {showDeletePassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 pt-4 mt-3 border-t border-[color:var(--mks-card-border)] shrink-0">
               <button
                 type="button"
                 onClick={() => {
@@ -2887,7 +3183,7 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
               <button
                 type="button"
                 onClick={handleDeleteAllData}
-                disabled={isDeletingData || isReauthenticatingGoogle || !deletePassword}
+                disabled={isDeletingData || isReauthenticatingGoogle || !deletePassword || selectedDeleteCategories.size === 0}
                 className="flex-1 py-3.5 px-4 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white text-xs font-bold rounded-2xl transition-all flex items-center justify-center gap-2 shadow-lg"
               >
                 {isDeletingData ? (
@@ -2898,7 +3194,13 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ onNavigate }) => {
                 ) : (
                   <>
                     <Trash2 size={16} />
-                    <span>Verilerimi Kalıcı Sil</span>
+                    <span>
+                      {selectedDeleteCategories.size === 0
+                        ? 'Modül Seçin'
+                        : isFullWipeSelected
+                          ? 'Tümünü Kalıcı Sil'
+                          : `${selectedDeleteCategories.size} Modülü Kalıcı Sil`}
+                    </span>
                   </>
                 )}
               </button>

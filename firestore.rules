@@ -82,6 +82,11 @@ service cloud.firestore {
       );
     }
 
+    // 6c. Shopier Tam Otomatik Ödeme & Tek Kullanımlık Sipariş Kilidi (istemcilere tamamen kapalı; yalnızca sunucu / Root Admin)
+    match /MKS/{orgId}/shopier_orders/{orderId} {
+      allow read, write: if isRootAdmin();
+    }
+
     // 7. Canlı Destek Kanalları (Liste sorgusu yalnızca Root Admin'e açık; kullanıcı sadece kendi kanalına erişebilir)
     match /MKS/{orgId}/support_threads/{threadId} {
       allow get, create, update: if isRootAdmin()

@@ -16,9 +16,9 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("MKS Mühendis Kayıt Sistemi")]
 [assembly: AssemblyDescription("MKS Çiftçi Cari, Depo Stok, BKTS/GTS ve e-Fatura Kurumsal Masaüstü Uygulaması")]
 [assembly: AssemblyCompany("MKS Dijital Tarım")]
-[assembly: AssemblyProduct("MKS Masaüstü v8.2.1")]
-[assembly: AssemblyVersion("8.2.1.0")]
-[assembly: AssemblyFileVersion("8.2.1.0")]
+[assembly: AssemblyProduct("MKS Masaüstü v8.4.1")]
+[assembly: AssemblyVersion("8.4.1.0")]
+[assembly: AssemblyFileVersion("8.4.1.0")]
 
 namespace MksDesktop
 {
@@ -1467,8 +1467,8 @@ namespace MksDesktop
 
     internal static class Program
     {
-        public const string CurrentVersionLabel = "8.2.1";
-        public const int CurrentDesktopBuild = 29;
+        public const string CurrentVersionLabel = "8.4.1";
+        public const int CurrentDesktopBuild = 35;
 
         private const string DefaultCloudOrigin = "https://muhendiskayitsistemi.com";
         private const string LocalStandaloneOrigin = "http://127.0.0.1:3000";

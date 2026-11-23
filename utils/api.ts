@@ -21,18 +21,20 @@ export const getApiBase = (): string => {
   }
 
   const origin = window.location.origin || '';
+  const hostname = window.location.hostname || '';
+  const port = window.location.port || '';
+
+  // Express API'yi aynı origin'de barındıran yerel geliştirme (:3000/:5173) ve doğrudan Cloud Run adresleri
   if (
-    origin.startsWith('capacitor://') ||
-    origin.startsWith('ionic://') ||
-    origin.startsWith('file://') ||
-    origin === 'http://localhost' ||
-    origin === 'https://localhost'
+    /^https:\/\/m-hendis-kay-t-sistemi-[a-z0-9.-]+\.run\.app$/i.test(origin) ||
+    ((hostname === 'localhost' || hostname === '127.0.0.1' || /^192\.168\.|^10\.|^172\.(1[6-9]|2\d|3[01])\./.test(hostname)) &&
+      Boolean(port))
   ) {
-    return PUBLIC_PORTAL_ORIGIN;
+    return '';
   }
 
-  // Web tarayıcı (:3000, :5173, Cloud Run, Firebase Hosting veya özel alan adı) aynı origin'i kullanır
-  return '';
+  // Firebase Hosting (muhendiskayitsistemi.com, .web.app, .firebaseapp.com), Capacitor ve file:// -> Cloud Run API
+  return PUBLIC_PORTAL_ORIGIN;
 };
 
 export const API_BASE = getApiBase();

@@ -13,6 +13,8 @@ import {
 } from '../utils/gs1Parser';
 import { useHardwareBarcodeScanner, playScanBeep, playErrorBeep } from '../utils/hardwareBarcodeScanner';
 import { dbService } from '../services/db';
+import { auth } from '../services/firebase';
+import { API_BASE } from '../utils/api';
 import { useAppViewModel } from '../context/AppContext';
 import ModalCloseButton from './ModalCloseButton';
 import LazyBarcodeScanner from './LazyBarcodeScanner';
@@ -554,6 +556,25 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
   const [accountUsername, setAccountUsername] = useState('');
   const [accountPassword, setAccountPassword] = useState('');
   const [accountShowPassword, setAccountShowPassword] = useState(false);
+  const [wsGln, setWsGln] = useState(() => buildConfig().gln || '');
+  const [wsServiceKey, setWsServiceKey] = useState('');
+  const [wsEndpoint, setWsEndpoint] = useState('');
+  const [wsEnv, setWsEnv] = useState<'LIVE' | 'TEST'>(() => (buildConfig().environment === 'TEST' ? 'TEST' : 'LIVE'));
+  const [wsTestResult, setWsTestResult] = useState<{ state: 'idle' | 'busy' | 'ok' | 'fail'; message?: string; diagnostic?: string }>({ state: 'idle' });
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setWsGln(config.gln || '');
+    setWsEnv(config.environment === 'TEST' ? 'TEST' : 'LIVE');
+    const ep =
+      activeService === 'GTS'
+        ? config.gtsEndpoint || ''
+        : activeService === 'BRECETE'
+          ? config.bReceteEndpoint || ''
+          : config.bktsEndpoint || '';
+    setWsEndpoint(ep);
+    setWsTestResult({ state: 'idle' });
+  }, [isOpen, activeService, config.gln, config.environment, config.bktsEndpoint, config.gtsEndpoint, config.bReceteEndpoint]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -740,6 +761,66 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
         : `${activeMeta.shortLabel} hesap bilgileri bu oturum için güncellendi.`,
       'success',
     );
+  };
+
+  const handleTestMinistryConnection = async () => {
+    if (wsTestResult.state === 'busy') return;
+    const cleanGln = wsGln.replace(/\D/g, '');
+    const u = (accountUsername || activeAuth?.username || '').trim();
+    const p = accountPassword || activeAuth?.password || '';
+    const k = wsServiceKey.trim();
+    if (!/^\d{13}$/.test(cleanGln)) {
+      setWsTestResult({ state: 'fail', message: 'Canlı test için 13 haneli Bayi GLN numarası gereklidir.' });
+      return;
+    }
+    if (!u || !p || !k) {
+      setWsTestResult({ state: 'fail', message: `${activeMeta.shortLabel} Kullanıcı Adı, Şifre ve Web Servis KeyNo alanlarını doldurun.` });
+      return;
+    }
+    const cleanEp = wsEndpoint.trim();
+    await persistConfig({
+      ...config,
+      gln: cleanGln,
+      environment: wsEnv,
+      ...(activeService === 'GTS'
+        ? { gtsEndpoint: cleanEp }
+        : activeService === 'BRECETE'
+          ? { bReceteEndpoint: cleanEp }
+          : { bktsEndpoint: cleanEp }),
+    });
+    setWsTestResult({ state: 'busy' });
+    try {
+      const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : '';
+      const resp = await fetch(`${API_BASE}/api/ministry/test-connection`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
+        body: JSON.stringify({
+          system: activeService,
+          environment: wsEnv,
+          gln: cleanGln,
+          username: u,
+          password: p,
+          serviceKey: k,
+          ...(cleanEp ? { endpointUrl: cleanEp } : {}),
+        }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (data?.ok) {
+        setWsTestResult({
+          state: 'ok',
+          message: `${activeMeta.shortLabel} web servisi canlı doğrulandı.`,
+          diagnostic: data.diagnostic || '',
+        });
+      } else {
+        setWsTestResult({
+          state: 'fail',
+          message: data?.error || `${activeMeta.shortLabel} web servisi doğrulanamadı.`,
+          diagnostic: data?.diagnostic || '',
+        });
+      }
+    } catch {
+      setWsTestResult({ state: 'fail', message: 'MKS sunucusuna ulaşılamadı.' });
+    }
   };
 
   const handleServiceLogout = () => {
@@ -1688,7 +1769,6 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
   return (
     <div
       className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-black/70 backdrop-blur-sm"
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
         role="dialog"
@@ -2421,6 +2501,17 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
                       : 'resmî oturum ve güvenlik doğrulaması'}{' '}
                     yalnızca kendi alan adı üzerinde çalışır. Portalı buradan açtığınızda MKS bağlı bilginizi panoya hazırlar; tek tıkla kopyalayıp yapıştırarak resmî işlemi tamamlayabilirsiniz.
                   </p>
+                  {activeService === 'GTS' && (
+                    <div className="rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-3 py-2.5 space-y-1">
+                      <p className="text-[11px] font-black text-emerald-400">DSTRACE GTS Teknik Koordinasyon Durumu</p>
+                      <p className="text-[11px] leading-relaxed" style={mutedStyle}>
+                        <b>16.11.2026 12:33 — Alisa Çiçek AKYOL:</b> Talebiniz ilgili teknik birime iletilmiş olup dönüş sağlanacaktır. Resmî API dokümanı / uç nokta ulaştığında yan paneldeki özel HTTPS alanından anında tanımlayabilirsiniz.
+                      </p>
+                      <p className="text-[11px] font-mono text-emerald-300/90">
+                        Destek: yardim.masasi@dstrace.com • 0850 310 80 08
+                      </p>
+                    </div>
+                  )}
                   <div className="grid gap-2 sm:grid-cols-2">
                     <button
                       type="button"
@@ -2516,9 +2607,80 @@ export const MinistryIntegrationModal: React.FC<MinistryIntegrationModalProps> =
                       </button>
                     </div>
                   </label>
+
+                  <div className="pt-2 border-t border-white/10 space-y-2.5">
+                    <p className="text-[11px] font-black uppercase tracking-wider" style={mutedStyle}>
+                      Canlı Web Servis Parametreleri (GLN · KeyNo · Uç Nokta)
+                    </p>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[11px] font-bold" style={mutedStyle}>Bayi GLN (13 Hane)</span>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={wsGln}
+                          onChange={e => setWsGln(e.target.value.replace(/\D/g, '').slice(0, 13))}
+                          placeholder="868..."
+                          className="min-h-[40px] border rounded-xl px-3 text-xs font-mono outline-none"
+                          style={inputStyle}
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[11px] font-bold" style={mutedStyle}>Web Servis KeyNo / API Anahtarı</span>
+                        <input
+                          type="password"
+                          value={wsServiceKey}
+                          onChange={e => setWsServiceKey(e.target.value)}
+                          placeholder="Bakanlık / DSTRACE KeyNo"
+                          className="min-h-[40px] border rounded-xl px-3 text-xs font-mono outline-none"
+                          style={inputStyle}
+                        />
+                      </label>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-3">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[11px] font-bold" style={mutedStyle}>Ortam</span>
+                        <select
+                          value={wsEnv}
+                          onChange={e => setWsEnv(e.target.value === 'TEST' ? 'TEST' : 'LIVE')}
+                          className="min-h-[40px] border rounded-xl px-2.5 text-xs font-bold outline-none"
+                          style={inputStyle}
+                        >
+                          <option value="LIVE">Canlı (LIVE)</option>
+                          <option value="TEST">Test (TEST)</option>
+                        </select>
+                      </label>
+                      <label className="flex flex-col gap-1 sm:col-span-2">
+                        <span className="text-[11px] font-bold" style={mutedStyle}>Özel HTTPS Uç Noktası (Opsiyonel: .gov.tr / .dstrace.com)</span>
+                        <input
+                          type="url"
+                          value={wsEndpoint}
+                          onChange={e => setWsEndpoint(e.target.value)}
+                          placeholder={activeService === 'GTS' ? 'https://api.dstrace.com/...' : 'Varsayılan Bakanlık adresi kullanılır'}
+                          className="min-h-[40px] border rounded-xl px-3 text-xs font-mono outline-none"
+                          style={inputStyle}
+                        />
+                      </label>
+                    </div>
+                    {wsTestResult.state !== 'idle' && wsTestResult.state !== 'busy' && (
+                      <div className={`rounded-xl border px-3 py-2 text-[11px] space-y-0.5 ${wsTestResult.state === 'ok' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/40 bg-amber-500/10 text-amber-200'}`}>
+                        <p className="font-bold">{wsTestResult.state === 'ok' ? `✓ ${wsTestResult.message}` : `⚠ ${wsTestResult.message}`}</p>
+                        {wsTestResult.diagnostic && <p className="opacity-85 leading-relaxed">{wsTestResult.diagnostic}</p>}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
-                <div className="grid gap-2 sm:grid-cols-2">
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <button
+                    type="button"
+                    onClick={() => void handleTestMinistryConnection()}
+                    disabled={wsTestResult.state === 'busy'}
+                    className="min-h-[44px] rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 disabled:opacity-60"
+                  >
+                    {wsTestResult.state === 'busy' ? <Loader2 size={14} className="animate-spin" /> : <Globe size={14} />}
+                    Web Servis Bağlantısını Test Et
+                  </button>
                   <button
                     type="submit"
                     className="min-h-[44px] rounded-xl font-bold text-xs flex items-center justify-center gap-1.5"

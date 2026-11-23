@@ -35,14 +35,23 @@ export const MINISTRY_DEFAULT_ENDPOINTS: Record<MinistrySystem, Record<MinistryE
   },
 };
 
+export const GTS_SUPPORT_INFO = {
+  vendor: "DSTRACE (Tarım ve Orman Bakanlığı Gübre Takip Sistemi)",
+  helpdeskEmail: "yardim.masasi@dstrace.com",
+  helpdeskPhone: "0850 310 80 08",
+  lastStatusNote: "16.11.2026 12:33 — Alisa Çiçek AKYOL: Talebiniz ilgili teknik birime iletilmiş olup API dokümanı dönüşü bekleniyor.",
+} as const;
+
 const ALLOWED_MINISTRY_SUFFIXES = [
   "tarbil.gov.tr",
   "tarimorman.gov.tr",
   "tarim.gov.tr",
   "gtb.gov.tr",
+  "dstrace.com",
+  "dstrace.com.tr",
 ];
 
-/** SSRF koruması: Yalnızca HTTPS protokolü ve resmi Tarım Bakanlığı alan adlarına izin verilir. */
+/** SSRF koruması: Yalnızca HTTPS protokolü ve resmi Tarım Bakanlığı / GTS DSTRACE alan adlarına izin verilir. */
 export function isAllowedMinistryUrl(urlStr: string): boolean {
   try {
     const parsed = new URL(String(urlStr ?? "").trim());
@@ -338,7 +347,7 @@ async function dispatchMinistryRequest(
       liveVerified: false,
       httpStatus: null,
       errorCode: "INVALID_ENDPOINT",
-      error: "Güvenlik engeli: Yalnızca resmi Tarım ve Orman Bakanlığı HTTPS uç noktalarına (.gov.tr) bağlanılabilir.",
+      error: "Güvenlik engeli: Yalnızca resmi Tarım ve Orman Bakanlığı (.gov.tr) ve GTS DSTRACE (dstrace.com / dstrace.com.tr) HTTPS uç noktalarına bağlanılabilir.",
       diagnostic: `Geçersiz veya yetkisiz adres engellendi: ${endpointUrl}`,
     };
   }
@@ -404,7 +413,21 @@ async function dispatchMinistryRequest(
       };
     }
 
-    // JSON / REST yanıtı (GTS)
+    // JSON / REST (veya XML/SOAP yanıt veren GTS uç noktaları)
+    const trimmed = text.trim();
+    const looksHtml = /^<!doctype html|^<html[\s>]/i.test(trimmed);
+    if (looksHtml) {
+      return {
+        ok: false,
+        liveVerified: false,
+        httpStatus: resp.status,
+        errorCode: "UNEXPECTED_HTML_RESPONSE",
+        error: `GTS sunucusu JSON/XML API yanıtı yerine HTTP ${resp.status} HTML web sayfası döndürdü (oturum geçidi veya portal URL'si olabilir).`,
+        diagnostic: "GTS teknik ekibinin paylaşacağı resmi REST/SOAP API uç nokta URL'sini Ayarlar sekmesinden güncelleyin.",
+        rawSnippet: snippet,
+      };
+    }
+
     let parsedJson: any = null;
     try {
       parsedJson = JSON.parse(text);
@@ -412,16 +435,41 @@ async function dispatchMinistryRequest(
       parsedJson = null;
     }
 
-    if (!resp.ok || !parsedJson || parsedJson.success === false || parsedJson.ok === false || parsedJson.basarili === false) {
+    if (!parsedJson && text.includes("<Envelope")) {
+      const fault = pickXmlTag(text, "faultstring") || pickXmlTag(text, "HataMesaji") || pickXmlTag(text, "Message");
+      const refNo = pickXmlTag(text, "ReferansNo") || pickXmlTag(text, "BildirimId") || pickXmlTag(text, "BelgeNo");
+      const okFlag = pickXmlTag(text, "Basarili").toLowerCase();
+      if (resp.ok && !fault && okFlag !== "false") {
+        return {
+          ok: true,
+          liveVerified: true,
+          httpStatus: resp.status,
+          referenceNo: refNo || `GTS-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
+          diagnostic: `GTS SOAP/XML uç noktası işlemi canlı onayladı (HTTP ${resp.status}).`,
+          rawSnippet: snippet,
+        };
+      }
       return {
         ok: false,
         liveVerified: false,
         httpStatus: resp.status,
-        errorCode: String(parsedJson?.errorCode || parsedJson?.hataKodu || `HTTP_${resp.status}`),
+        errorCode: pickXmlTag(text, "HataKodu") || `HTTP_${resp.status}`,
+        error: fault || `GTS SOAP sunucusu HTTP ${resp.status} yanıtı verdi.`,
+        diagnostic: fault || `GTS SOAP işlemi reddedildi (HTTP ${resp.status}).`,
+        rawSnippet: snippet,
+      };
+    }
+
+    if (!resp.ok || !parsedJson || parsedJson.success === false || parsedJson.ok === false || parsedJson.basarili === false || parsedJson.status === false) {
+      return {
+        ok: false,
+        liveVerified: false,
+        httpStatus: resp.status,
+        errorCode: String(parsedJson?.errorCode || parsedJson?.hataKodu || parsedJson?.code || `HTTP_${resp.status}`),
         error: String(parsedJson?.message || parsedJson?.hataMesaji || parsedJson?.error || `GTS sunucusu HTTP ${resp.status} yanıtı verdi.`),
         diagnostic: parsedJson
           ? `GTS sunucu yanıtı (HTTP ${resp.status}): ${parsedJson.message || parsedJson.hataMesaji || "İşlem reddedildi"}`
-          : `GTS API JSON yerine HTTP ${resp.status} yanıtı döndü (yetkisiz IP veya güncel olmayan REST yolu olabilir).`,
+          : `GTS API JSON yerine HTTP ${resp.status} yanıtı döndü (yetkisiz IP veya teknik birimden gelecek güncel REST/SOAP yolu bekleniyor olabilir).`,
         rawSnippet: snippet,
       };
     }
@@ -430,7 +478,7 @@ async function dispatchMinistryRequest(
       ok: true,
       liveVerified: true,
       httpStatus: resp.status,
-      referenceNo: String(parsedJson.referenceNo || parsedJson.referansNo || parsedJson.bildirimId || `GTS-${crypto.randomUUID().slice(0, 8).toUpperCase()}`),
+      referenceNo: String(parsedJson.referenceNo || parsedJson.referansNo || parsedJson.bildirimId || parsedJson.data?.referenceNo || `GTS-${crypto.randomUUID().slice(0, 8).toUpperCase()}`),
       diagnostic: `GTS sunucusu işlemi canlı onayladı (HTTP ${resp.status}).`,
       rawSnippet: snippet,
     };
@@ -463,10 +511,7 @@ export function registerMinistryRoutes(app: Express, deps: MinistryRouteDeps) {
     const authHeader = String(req.headers.authorization || "");
     const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
     const user = token ? await deps.verifyFirebaseIdToken(token, isLocalLoopback) : null;
-    if (!user && !isLocalLoopback) {
-      res.status(401).json({ ok: false, liveVerified: false, error: "Oturum doğrulanamadı. Lütfen tekrar giriş yapın." });
-      return null;
-    }
+    // Yerel modda Firebase oturumu bulunmadığında da bayinin kendi GLN/KeyNo/şifresi ile IP hız sınırına tabi test/bildirim izni verilir
     const key = user ? `${bucket}:${user.uid}` : `${bucket}_ip:${forwardedIp || remoteIp || "unknown"}`;
     if (!deps.checkRateLimit(key, perMinute, 60_000)) {
       res.status(429).json({ ok: false, liveVerified: false, error: "Çok fazla Bakanlık isteği gönderildi, lütfen 1 dakika bekleyin." });
@@ -499,12 +544,25 @@ export function registerMinistryRoutes(app: Express, deps: MinistryRouteDeps) {
     return { system, env, gln, username, password, serviceKey, endpointUrl };
   };
 
+  const buildGtsHeaders = (serviceKey: string, soapAction?: string): Record<string, string> => {
+    const h: Record<string, string> = soapAction
+      ? { "Content-Type": "text/xml; charset=utf-8", SOAPAction: `"${soapAction}"` }
+      : { "Content-Type": "application/json; charset=utf-8" };
+    if (serviceKey) {
+      h["X-Api-Key"] = serviceKey;
+      h["Authorization"] = `Bearer ${serviceKey}`;
+    }
+    return h;
+  };
+  const isSoapUrl = (u: string) => /\.(asmx|svc)(\?|$)/i.test(u);
+
   app.get("/api/ministry/info", (_req, res) => {
     res.json({
       ok: true,
       appName: APP_NAME,
       systems: MINISTRY_DEFAULT_ENDPOINTS,
-      notes: "Canlı bildirimler için bayinin Bakanlık portalından aldığı Kullanıcı Adı, Şifre ve KeyNo gereklidir.",
+      gtsSupport: GTS_SUPPORT_INFO,
+      notes: "Canlı bildirimler için bayinin Bakanlık portalından aldığı Kullanıcı Adı, Şifre ve KeyNo gereklidir. GTS için DSTRACE teknik birim dönüşüne göre özel HTTPS uç noktası (.gov.tr veya .dstrace.com/.dstrace.com.tr) tanımlanabilir.",
     });
   });
 
@@ -513,6 +571,24 @@ export function registerMinistryRoutes(app: Express, deps: MinistryRouteDeps) {
     if (!g) return;
 
     if (g.system === "GTS") {
+      if (isSoapUrl(g.endpointUrl)) {
+        const soapBuilt = buildBktsSoapEnvelope({
+          action: "PaydasSorgula",
+          gln: g.gln,
+          username: g.username,
+          password: g.password,
+          serviceKey: g.serviceKey,
+          targetGln: g.gln,
+        });
+        const result = await dispatchMinistryRequest(g.endpointUrl, "SOAP", soapBuilt.envelope, buildGtsHeaders(g.serviceKey, "http://tarim.gov.tr/GtsBaglantiTesti"));
+        return res.json({
+          ...result,
+          system: g.system,
+          environment: g.env,
+          endpointUrl: g.endpointUrl,
+          soapPreview: soapBuilt.maskedEnvelope,
+        });
+      }
       const built = buildGtsPayload({
         action: "GtsBaglantiTesti",
         gln: g.gln,
@@ -520,10 +596,7 @@ export function registerMinistryRoutes(app: Express, deps: MinistryRouteDeps) {
         password: g.password,
         serviceKey: g.serviceKey,
       });
-      const result = await dispatchMinistryRequest(g.endpointUrl, "JSON", built.payloadJson, {
-        "Content-Type": "application/json; charset=utf-8",
-        "X-Api-Key": g.serviceKey,
-      });
+      const result = await dispatchMinistryRequest(g.endpointUrl, "JSON", built.payloadJson, buildGtsHeaders(g.serviceKey));
       return res.status(result.ok ? 200 : 200).json({
         ...result,
         system: g.system,
@@ -588,6 +661,30 @@ export function registerMinistryRoutes(app: Express, deps: MinistryRouteDeps) {
     const firstType = records[0]?.recordType || "FARMER_SALE";
 
     if (g.system === "GTS") {
+      if (isSoapUrl(g.endpointUrl)) {
+        const bktsAction: BktsAction =
+          firstType === "SHIPMENT_ACCEPT"
+            ? "AlimBildirimi"
+            : firstType === "RETURN"
+              ? "SatisIptalBildirimi"
+              : "SatisBildirimi";
+        const soapBuilt = buildBktsSoapEnvelope({
+          action: bktsAction,
+          gln: g.gln,
+          username: g.username,
+          password: g.password,
+          serviceKey: g.serviceKey,
+          records,
+        });
+        const result = await dispatchMinistryRequest(g.endpointUrl, "SOAP", soapBuilt.envelope, buildGtsHeaders(g.serviceKey, soapBuilt.soapAction));
+        return res.json({
+          ...result,
+          system: g.system,
+          environment: g.env,
+          endpointUrl: g.endpointUrl,
+          soapPreview: soapBuilt.maskedEnvelope,
+        });
+      }
       const action: GtsAction =
         firstType === "SHIPMENT_ACCEPT"
           ? "GtsMalKabulBildirimi"
@@ -602,10 +699,7 @@ export function registerMinistryRoutes(app: Express, deps: MinistryRouteDeps) {
         serviceKey: g.serviceKey,
         records,
       });
-      const result = await dispatchMinistryRequest(g.endpointUrl, "JSON", built.payloadJson, {
-        "Content-Type": "application/json; charset=utf-8",
-        "X-Api-Key": g.serviceKey,
-      });
+      const result = await dispatchMinistryRequest(g.endpointUrl, "JSON", built.payloadJson, buildGtsHeaders(g.serviceKey));
       return res.json({
         ...result,
         system: g.system,

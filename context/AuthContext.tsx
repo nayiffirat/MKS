@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { 
     User, 
     onAuthStateChanged, 
@@ -30,41 +31,55 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     useEffect(() => {
-        // Handle Global Redirect Results (Flawless Bridge)
-        const checkAuthResults = async () => {
-            try {
-                const result = await getRedirectResult(auth);
-                if (result) {
-                    await syncUserToFirestore(result.user);
-                }
-            } catch (error: any) {
-                console.error("Global Auth Redirect Error:", error);
-            }
-        };
-        checkAuthResults();
+        const authFailsafe = window.setTimeout(() => {
+            setLoading(false);
+        }, 2000);
 
-        const unsubscribe = onAuthStateChanged(auth, async (user) => {
-            if (user && user.email) {
-                localStorage.setItem('mks_user_email', user.email);
-                
+        // Handle Global Redirect Results on Web only (skip on native Capacitor WKWebView)
+        if (!Capacitor.isNativePlatform()) {
+            const checkAuthResults = async () => {
+                try {
+                    const result = await getRedirectResult(auth);
+                    if (result) {
+                        void syncUserToFirestore(result.user);
+                    }
+                } catch (error: any) {
+                    console.error("Global Auth Redirect Error:", error);
+                }
+            };
+            void checkAuthResults();
+        }
+
+        const unsubscribe = onAuthStateChanged(auth, (user) => {
+            window.clearTimeout(authFailsafe);
+            if (user) {
+                if (user.email) {
+                    localStorage.setItem('mks_user_email', user.email);
+                }
                 // Track user ID for IndexedDB isolation
                 const lastUid = localStorage.getItem('lastUserId');
                 if (lastUid && lastUid !== user.uid) {
-                    await dbService.flushSyncOutboxNow().catch(e => console.warn("Kullanıcı değişimi outbox flush uyarısı:", e));
-                    const remainingOldOutbox = await dbService.getPendingOutboxCount(lastUid).catch(() => 0);
-                    if (remainingOldOutbox === 0) {
-                        await dbService.clearLocalData().catch(e => console.error("Kullanıcı değişimi temizlik hatası:", e));
-                    } else {
-                        console.warn(`[AK-01] Önceki kullanıcıya (${lastUid}) ait ${remainingOldOutbox} bekleyen çevrimdışı kayıt korundu.`);
-                    }
+                    localStorage.removeItem('mks_user_profile');
+                    localStorage.removeItem('userProfile');
+                    localStorage.removeItem(`mks_pending_profile_sync_${lastUid}`);
+                    localStorage.removeItem(`mks_map_features_${lastUid}`);
+                    localStorage.removeItem(`mks_ministry_records_v1_${lastUid}`);
+                    localStorage.removeItem(`mks_ministry_shipments_v1_${lastUid}`);
                 }
                 localStorage.setItem('lastUserId', user.uid);
             }
             setCurrentUser(user);
             setLoading(false);
+
+            if (user) {
+                void dbService.flushSyncOutboxNow().catch((e) => console.warn("Auth init outbox flush uyarısı:", e));
+            }
         });
 
-        return () => unsubscribe();
+        return () => {
+            window.clearTimeout(authFailsafe);
+            unsubscribe();
+        };
     }, []);
 
     const logout = async () => {

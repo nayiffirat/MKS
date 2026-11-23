@@ -270,6 +270,11 @@ Not: Ton olarak yazılmışsa KG'ye çevir (örn: 24.580 kg veya 24,58 ton -> 24
 
     useEffect(() => {
         loadData();
+        const onCloudSync = () => {
+            loadData();
+        };
+        window.addEventListener('mks-cloud-sync-applied', onCloudSync);
+        return () => window.removeEventListener('mks-cloud-sync-applied', onCloudSync);
     }, []);
     
     const loadData = async () => {

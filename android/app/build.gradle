@@ -6,8 +6,8 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
 
-def customVersionCode = project.hasProperty('versionCode') ? project.property('versionCode').toInteger() : 30
-def customVersionName = project.hasProperty('versionName') ? project.property('versionName').toString() : "8.3.0"
+def customVersionCode = project.hasProperty('versionCode') ? project.property('versionCode').toInteger() : 35
+def customVersionName = project.hasProperty('versionName') ? project.property('versionName').toString() : "8.4.1"
 
 android {
     namespace "com.nayiffirat.muhendiskayitsistemi"

@@ -21,7 +21,7 @@ import { AGRI_CITIES, WeatherService } from '../services/weather';
 import { API_BASE } from './api';
 import { safeStringify } from './json';
 
-export const MKS_CLIENT_VERSION = '8.2.1';
+export const MKS_CLIENT_VERSION = '8.4.1';
 export const MKS_CLIENT_BUILD = 35;
 export const MKS_ALERT_CHANNEL_ID = 'mks_smart_alerts';
 /** Android bildirim simgeleri: durum çubuğu için tek renk silüet, bildirim gövdesi için renkli logo (android/app/src/main/res/drawable-*) */

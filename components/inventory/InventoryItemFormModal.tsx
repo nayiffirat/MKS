@@ -184,8 +184,8 @@ export const InventoryItemFormModal: React.FC<InventoryItemFormModalProps> = Rea
     };
 
     return (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
-            <div className="bg-stone-900 w-full max-w-md md:max-w-2xl lg:max-w-3xl max-h-[90dvh] flex flex-col rounded-3xl border border-white/10 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-stone-900 w-full max-w-md md:max-w-2xl lg:max-w-3xl max-h-[90dvh] flex flex-col rounded-3xl border border-white/10 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
                 <div className="p-4 border-b border-white/10 flex justify-between items-center bg-stone-950/50 shrink-0">
                     <h3 className="font-bold text-stone-100">
                         {isEditModalOpen ? 'Ürün Düzenle' : 'Depoya Ürün Ekle'}

@@ -5,6 +5,21 @@
  */
 import type { Express, Request, Response } from "express";
 import crypto from "crypto";
+import {
+  MULTI_ACTIVE_PROVIDERS,
+  IntegratorError,
+  type MultiProviderId,
+  type ProviderAuth,
+  type BuiltUblInvoice,
+  adapterTestConnection,
+  adapterCheckUser,
+  adapterSendInvoice,
+  adapterListInvoices,
+  adapterInvoiceHtml,
+  adapterInvoiceDetail,
+  adapterCancelInvoice,
+  adapterRespondInvoice,
+} from "./eInvoiceAdapters";
 
 const EDM_URLS = {
   TEST: "https://test.edmbilisim.com.tr/EFaturaEDM21ea/EFaturaEDM.svc",
@@ -287,38 +302,43 @@ export function registerEdmRoutes(app: Express, deps: EdmRouteDeps) {
     const authHeader = String(req.headers.authorization || "");
     const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
     const user = token ? await deps.verifyFirebaseIdToken(token, isLocalLoopback) : null;
-    if (!user && !isLocalLoopback) {
-      res.status(401).json({ ok: false, error: "Oturum doğrulanamadı. Lütfen tekrar giriş yapın." });
-      return null;
-    }
+    // Yerel (offline-first) modda Firebase oturumu olmadan kullanıcının kendi entegratör kimliğiyle IP hız sınırına tabi erişim desteklenir
     const key = user ? `${bucket}:${user.uid}` : `${bucket}_ip:${forwardedIp || remoteIp || "unknown"}`;
     if (!deps.checkRateLimit(key, perMinute, 60_000)) {
       res.status(429).json({ ok: false, error: "Çok fazla istek gönderildi, bir dakika bekleyin." });
       return null;
     }
     const provider = String(req.body?.provider || "EDM").trim().toUpperCase();
-    if (provider !== "EDM") {
+    if (!MULTI_ACTIVE_PROVIDERS.has(provider)) {
       res.status(400).json({
         ok: false,
-        error: `${provider} web servis bağlantısı iş ortaklığı / test hesabı onayı aşamasındadır. Şu an doğrudan API kesimi yalnızca EDM Bilişim üzerinden aktiftir.`,
+        error: `${provider} web servis bağlantısı iş ortaklığı / test hesabı onayı aşamasındadır. Şu an doğrudan API kesimi EDM Bilişim, Veriban, Park Entegrasyon ve Mysoft üzerinden aktiftir.`,
         code: "PROVIDER_NOT_ACTIVE"
       });
       return null;
     }
     const username = String(req.body?.username || "").trim();
     const password = String(req.body?.password || "");
-    if (!username || !password || username.length > 120 || password.length > 200) {
-      res.status(400).json({ ok: false, error: "EDM kullanıcı adı ve şifresi gereklidir (Ayarlar sekmesi)." });
+    if (!username || !password || username.length > 160 || password.length > 256) {
+      res.status(400).json({ ok: false, error: `${provider} kullanıcı adı / Client ID ve şifresi gereklidir (Ayarlar sekmesi).` });
       return null;
     }
     const env: EdmEnv = req.body?.environment === "LIVE" ? "LIVE" : "TEST";
-    return { username, password, env };
+    return { provider: provider as "EDM" | MultiProviderId, username, password, env };
   };
-  const fail = (res: Response, err: any) => {
-    if (err instanceof EdmError) return res.json({ ok: false, error: err.message, errorCode: err.code });
+  const asAdapterAuth = (g: { provider: "EDM" | MultiProviderId; username: string; password: string; env: EdmEnv }): ProviderAuth => ({
+    provider: g.provider as MultiProviderId,
+    env: g.env,
+    username: g.username,
+    password: g.password,
+  });
+  const fail = (res: Response, err: any, provider = "Entegratör") => {
+    if (err instanceof EdmError || err instanceof IntegratorError) {
+      return res.json({ ok: false, error: err.message, errorCode: err.code });
+    }
     return res.status(502).json({
       ok: false,
-      error: err?.name === "AbortError" ? "EDM sunucusu zamanında yanıt vermedi." : "EDM sunucusuna ulaşılamadı."
+      error: err?.name === "AbortError" ? `${provider} sunucusu zamanında yanıt vermedi.` : `${provider} sunucusuna ulaşılamadı.`
     });
   };
 
@@ -326,10 +346,13 @@ export function registerEdmRoutes(app: Express, deps: EdmRouteDeps) {
     const g = await guard(req, res, "edm", 6);
     if (!g) return;
     try {
+      if (g.provider !== "EDM") {
+        return res.json(await adapterTestConnection(asAdapterAuth(g)));
+      }
       await withSession(g.env, g.username, g.password, "MKS baglanti testi", async () => true);
       res.json({ ok: true, environment: g.env, message: g.env === "LIVE" ? "EDM canlı ortamına giriş başarılı." : "EDM test ortamına giriş başarılı." });
     } catch (err) {
-      fail(res, err);
+      fail(res, err, g.provider);
     }
   });
 
@@ -341,6 +364,9 @@ export function registerEdmRoutes(app: Express, deps: EdmRouteDeps) {
       return res.status(400).json({ ok: false, error: "10 haneli VKN veya 11 haneli TCKN girin." });
     }
     try {
+      if (g.provider !== "EDM") {
+        return res.json(await adapterCheckUser(asAdapterAuth(g), identifier));
+      }
       const text = await withSession(g.env, g.username, g.password, "MKS mukellef sorgusu", async sid => {
         const r = await soap(g.env, "CheckUserRequest", `${requestHeader(sid, "MKS mukellef sorgusu")}<USER xmlns=""><IDENTIFIER>${identifier}</IDENTIFIER></USER>`);
         if (!r.ok) throw faultOf(r.text, "Mükellef sorgusu başarısız.");
@@ -350,11 +376,11 @@ export function registerEdmRoutes(app: Express, deps: EdmRouteDeps) {
       const inbox = users.filter(u => u.unit === "PK" && u.alias);
       res.json({ ok: true, environment: g.env, isEInvoiceUser: inbox.length > 0, title: (inbox[0] || users[0])?.title || "", aliases: inbox.map(u => u.alias).slice(0, 10) });
     } catch (err) {
-      fail(res, err);
+      fail(res, err, g.provider);
     }
   });
 
-  // Gerçek fatura gönderimi: UBL-TR üretir, EDM üzerinden GİB'e iletir. EDM belgeyi mali mühürle imzalar ve numarayı atar.
+  // Gerçek fatura gönderimi: UBL-TR üretir, seçili entegratör üzerinden GİB'e iletir. Entegratör belgeyi mali mühürle imzalar ve numarayı atar.
   app.post("/api/edm/send-invoice", async (req, res) => {
     const g = await guard(req, res, "edmsend", 12);
     if (!g) return;
@@ -365,6 +391,16 @@ export function registerEdmRoutes(app: Express, deps: EdmRouteDeps) {
       const ubl = buildUblInvoice(inv);
       const isArchive = inv.docType === "EARSIV";
       const senderVkn = String(inv.sender.taxNo).replace(/\D/g, "");
+      if (g.provider !== "EDM") {
+        const built: BuiltUblInvoice = {
+          ...ubl,
+          docType: isArchive ? "EARSIV" : "EFATURA",
+          receiverAlias: inv.receiverAlias,
+          senderTaxNo: senderVkn,
+          prefix: String(req.body?.prefix || "MKS").trim() || "MKS",
+        };
+        return res.json(await adapterSendInvoice(asAdapterAuth(g), built));
+      }
       const receiverVkn = String(inv.receiver.taxNo).replace(/\D/g, "");
       const text = await withSession(g.env, g.username, g.password, "MKS fatura gonderimi", async sid => {
         const r = await soap(
@@ -394,7 +430,7 @@ export function registerEdmRoutes(app: Express, deps: EdmRouteDeps) {
         profile: ubl.profile
       });
     } catch (err) {
-      fail(res, err);
+      fail(res, err, g.provider);
     }
   });
 
@@ -407,6 +443,10 @@ export function registerEdmRoutes(app: Express, deps: EdmRouteDeps) {
     const end = isDate(req.body?.endDate) ? req.body.endDate : new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
     const start = isDate(req.body?.startDate) ? req.body.startDate : new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
     try {
+      if (g.provider !== "EDM") {
+        const invoices = await adapterListInvoices(asAdapterAuth(g), direction, start, end);
+        return res.json({ ok: true, environment: g.env, direction, startDate: start, endDate: end, invoices });
+      }
       const text = await withSession(g.env, g.username, g.password, "MKS fatura listesi", async sid => {
         const r = await soap(
           g.env,
@@ -420,7 +460,7 @@ export function registerEdmRoutes(app: Express, deps: EdmRouteDeps) {
       });
       res.json({ ok: true, environment: g.env, direction, startDate: start, endDate: end, invoices: parseInvoices(text) });
     } catch (err) {
-      fail(res, err);
+      fail(res, err, g.provider);
     }
   });
 
@@ -431,6 +471,9 @@ export function registerEdmRoutes(app: Express, deps: EdmRouteDeps) {
     const uuid = String(req.body?.uuid || "").trim();
     if (!/^[0-9a-fA-F-]{36}$/.test(uuid)) return res.status(400).json({ ok: false, error: "Geçersiz fatura kimliği." });
     try {
+      if (g.provider !== "EDM") {
+        return res.json(await adapterCancelInvoice(asAdapterAuth(g), uuid));
+      }
       await withSession(g.env, g.username, g.password, "MKS fatura iptali", async sid => {
         const r = await soap(g.env, "CancelInvoiceRequest", `${requestHeader(sid, "MKS fatura iptali")}<INVOICE TRXID="0" UUID="${uuid}" xmlns=""/>`, 90_000);
         if (!r.ok) throw faultOf(r.text, "Fatura iptal edilemedi.");
@@ -438,23 +481,33 @@ export function registerEdmRoutes(app: Express, deps: EdmRouteDeps) {
       });
       res.json({ ok: true });
     } catch (err) {
-      fail(res, err);
+      fail(res, err, g.provider);
     }
   });
 
-  // Gelen TİCARİ faturaya yanıt: KABUL / RED (EDM mali mühürle imzalar)
+  // Gelen TİCARİ faturaya yanıt: KABUL / RED (entegratör mali mühürle imzalar)
   app.post("/api/edm/respond-invoice", async (req, res) => {
     const g = await guard(req, res, "edmresp", 10);
     if (!g) return;
     const invoiceId = String(req.body?.invoiceId || "").trim();
-    if (!/^[A-Za-z0-9]{16}$/.test(invoiceId)) return res.status(400).json({ ok: false, error: "Geçersiz fatura numarası." });
+    const uuid = String(req.body?.uuid || "").trim();
+    const externalId = String(req.body?.externalId || "").trim() || undefined;
+    if (g.provider === "EDM") {
+      if (!/^[A-Za-z0-9]{16}$/.test(invoiceId)) return res.status(400).json({ ok: false, error: "Geçersiz fatura numarası." });
+    } else if (!/^[0-9a-fA-F-]{36}$/.test(uuid) && !externalId && !invoiceId) {
+      return res.status(400).json({ ok: false, error: "Geçersiz fatura kimliği." });
+    }
     const status = req.body?.accept === true ? "KABUL" : "RED";
+    const note = String(req.body?.note || "").trim();
     try {
+      if (g.provider !== "EDM") {
+        return res.json(await adapterRespondInvoice(asAdapterAuth(g), uuid || invoiceId, req.body?.accept === true, externalId, note));
+      }
       await withSession(g.env, g.username, g.password, "MKS fatura yaniti", async sid => {
         const r = await soap(
           g.env,
           "SendInvoiceResponseWithServerSignRequest",
-          `${requestHeader(sid, "MKS fatura yaniti")}<STATUS xmlns="">${status}</STATUS><INVOICE TRXID="0" ID="${invoiceId}" xmlns=""/>`,
+          `${requestHeader(sid, "MKS fatura yaniti")}<STATUS xmlns="">${status}</STATUS>${note ? `<DESCRIPTION xmlns="">${esc(note)}</DESCRIPTION>` : ""}<INVOICE TRXID="0" ID="${invoiceId}" xmlns=""/>`,
           90_000
         );
         if (!r.ok) throw faultOf(r.text, "Yanıt gönderilemedi.");
@@ -462,7 +515,7 @@ export function registerEdmRoutes(app: Express, deps: EdmRouteDeps) {
       });
       res.json({ ok: true, status });
     } catch (err) {
-      fail(res, err);
+      fail(res, err, g.provider);
     }
   });
 
@@ -471,9 +524,15 @@ export function registerEdmRoutes(app: Express, deps: EdmRouteDeps) {
     const g = await guard(req, res, "edmdet", 20);
     if (!g) return;
     const uuid = String(req.body?.uuid || "").trim();
-    if (!/^[0-9a-fA-F-]{36}$/.test(uuid)) return res.status(400).json({ ok: false, error: "Geçersiz fatura kimliği." });
+    const externalId = String(req.body?.externalId || "").trim() || undefined;
+    if (!/^[0-9a-fA-F-]{36}$/.test(uuid) && !(g.provider === "PARK_ENTEGRASYON" && externalId)) {
+      return res.status(400).json({ ok: false, error: "Geçersiz fatura kimliği." });
+    }
     const direction = req.body?.direction === "OUT" ? "OUT" : "IN";
     try {
+      if (g.provider !== "EDM") {
+        return res.json(await adapterInvoiceDetail(asAdapterAuth(g), uuid, direction, externalId));
+      }
       const text = await withSession(g.env, g.username, g.password, "MKS fatura icerigi", async sid => {
         const r = await soap(
           g.env,
@@ -491,7 +550,7 @@ export function registerEdmRoutes(app: Express, deps: EdmRouteDeps) {
       const d = parseUbl(xml);
       res.json({ ok: true, ...d, invoiceNo: d.invoiceNo || parseInvoices(text)[0]?.id || "" });
     } catch (err) {
-      fail(res, err);
+      fail(res, err, g.provider);
     }
   });
 
@@ -500,9 +559,16 @@ export function registerEdmRoutes(app: Express, deps: EdmRouteDeps) {
     const g = await guard(req, res, "edmhtml", 20);
     if (!g) return;
     const uuid = String(req.body?.uuid || "").trim();
-    if (!/^[0-9a-fA-F-]{36}$/.test(uuid)) return res.status(400).json({ ok: false, error: "Geçersiz fatura kimliği." });
+    const externalId = String(req.body?.externalId || "").trim() || undefined;
+    if (!/^[0-9a-fA-F-]{36}$/.test(uuid) && !(g.provider === "PARK_ENTEGRASYON" && externalId)) {
+      return res.status(400).json({ ok: false, error: "Geçersiz fatura kimliği." });
+    }
     const direction = req.body?.direction === "OUT" ? "OUT" : "IN";
     try {
+      if (g.provider !== "EDM") {
+        const html = await adapterInvoiceHtml(asAdapterAuth(g), uuid, direction, externalId);
+        return res.json({ ok: true, html });
+      }
       const text = await withSession(g.env, g.username, g.password, "MKS fatura goruntuleme", async sid => {
         const r = await soap(
           g.env,
@@ -518,7 +584,7 @@ export function registerEdmRoutes(app: Express, deps: EdmRouteDeps) {
       if (!b64) return res.json({ ok: false, error: "Fatura içeriği bulunamadı." });
       res.json({ ok: true, html: Buffer.from(b64, "base64").toString("utf8") });
     } catch (err) {
-      fail(res, err);
+      fail(res, err, g.provider);
     }
   });
 }

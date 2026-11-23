@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Plus, Trash2, Send, Search, Loader2, CheckCircle2, RefreshCw, Eye, Settings as SettingsIcon, FileText, Inbox, ArrowLeft, Warehouse, Undo2, ShoppingBag, AlertTriangle, Check, ChevronRight, UserCheck, Download, Printer } from 'lucide-react';
 import { auth } from '../services/firebase';
 import { API_BASE } from '../utils/api';
 import { getLocalDateString } from '../utils/dateUtils';
+import { useBackHandler } from '../utils/navigationManager';
 import { dbService } from '../services/db';
 import { useAppViewModel } from '../context/AppContext';
 import { EdmConfig, EInvoiceProviderId, EINVOICE_PROVIDERS, getEdmConfig, saveEdmConfig } from '../utils/edmWarehouseManager';
@@ -14,9 +15,10 @@ type TabId = 'issue' | 'out' | 'in' | 'settings';
 type Kind = 'SATIS' | 'IADE';
 interface Line { id: string; name: string; quantity: string; unit: string; price: string; vat: number }
 interface RemoteInvoice {
-  id: string; uuid: string; supplier: string; customer: string; issueDate: string; payableAmount: number;
+  id: string; externalId?: string; uuid: string; supplier: string; customer: string; issueDate: string; payableAmount: number;
   profile: string; status: string; responseCode: string;
 }
+const ACTIVE_DIRECT_PROVIDERS = new Set<string>(['EDM', 'VERIBAN', 'PARK_ENTEGRASYON', 'MYSOFT']);
 
 const VAT_RATES = [0, 1, 10, 20];
 const digits = (s: string) => (s || '').replace(/\D/g, '');
@@ -37,7 +39,7 @@ const STATUS_TR: Array<[RegExp, string, string]> = [
   [/SUCCEED|RECEIVE|SEND/i, 'Başarılı', 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30']
 ];
 const statusOf = (s: string) => STATUS_TR.find(([re]) => re.test(s)) || [/./, s || '—', 'bg-stone-800 text-stone-300 border-white/10'];
-const needsReply = (inv: RemoteInvoice) => inv.profile === 'TICARIFATURA' && !inv.responseCode && !!inv.id && !/CANCEL|REJECT|ACCEPT/i.test(inv.status);
+const needsReply = (inv: RemoteInvoice) => inv.profile === 'TICARIFATURA' && (!inv.responseCode || /bekl/i.test(inv.responseCode)) && !!inv.id && !/CANCEL|REJECT|ACCEPT/i.test(inv.status);
 
 async function edmPost(path: string, cfg: EdmConfig, body: Record<string, unknown> = {}) {
   const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : '';
@@ -80,26 +82,29 @@ export interface EFaturaPrefill {
 
 export const EFaturaPanel: React.FC<{ isOpen: boolean; initialTab?: TabId; prefill?: EFaturaPrefill | null; onClose: () => void }> = ({ isOpen, initialTab = 'issue', prefill, onClose }) => {
   const { farmers, inventory, prescriptions, addPrescription, refreshPrescriptions, userProfile, showToast } = useAppViewModel();
-  const [tab, setTab] = useState<TabId>(initialTab);
+  const safeInitialTab: TabId = initialTab === 'out' || initialTab === 'in' || initialTab === 'settings' || initialTab === 'issue' ? initialTab : 'issue';
+  const [tab, setTab] = useState<TabId>(safeInitialTab);
   const [cfg, setCfg] = useState<EdmConfig>(getEdmConfig);
   const selectedProvider = useMemo(
     () => EINVOICE_PROVIDERS.find(p => p.id === (cfg.provider || 'EDM')) || EINVOICE_PROVIDERS[0],
     [cfg.provider]
   );
-  const isEdmProvider = selectedProvider.id === 'EDM';
-  const providerShortName = isEdmProvider ? 'EDM' : selectedProvider.name.split(' (')[0];
+  const isDirectActive = ACTIVE_DIRECT_PROVIDERS.has(selectedProvider.id);
+  const providerShortName = selectedProvider.id === 'EDM' ? 'EDM' : selectedProvider.name.split(' (')[0];
   const isLive = cfg.edmEnv === 'LIVE';
   const hasCreds = Boolean(cfg.username.trim() && (cfg.password || '').trim());
   const hasCompany = Boolean((digits(cfg.companyVknOrTc).length === 10 || digits(cfg.companyVknOrTc).length === 11) && cfg.companyTitle.trim());
 
+  const wasOpenRef = useRef(false);
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !wasOpenRef.current) {
       const fresh = getEdmConfig();
       setCfg(fresh);
       const ready = fresh.username.trim() && (fresh.password || '').trim() && fresh.companyTitle.trim();
-      setTab(ready ? initialTab : 'settings');
+      setTab(ready ? safeInitialTab : 'settings');
     }
-  }, [isOpen, initialTab]);
+    wasOpenRef.current = isOpen;
+  }, [isOpen, safeInitialTab]);
 
   const updateCfg = (patch: Partial<EdmConfig>) => {
     setCfg(prev => {
@@ -111,6 +116,7 @@ export const EFaturaPanel: React.FC<{ isOpen: boolean; initialTab?: TabId; prefi
 
   // ------------------------------------------------------------ Fatura kes
   const [kind, setKind] = useState<Kind>('SATIS');
+  const [scenario, setScenario] = useState<'TEMELFATURA' | 'TICARIFATURA'>('TEMELFATURA');
   const [saleId, setSaleId] = useState('');
   const [farmerId, setFarmerId] = useState('');
   const [custName, setCustName] = useState('');
@@ -133,7 +139,7 @@ export const EFaturaPanel: React.FC<{ isOpen: boolean; initialTab?: TabId; prefi
   const [sent, setSent] = useState<{ invoiceNo: string; uuid: string; payable: number; docType: string; ledger: 'linked' | 'created' | 'failed' | 'none' } | null>(null);
 
   const clearForm = (nextKind: Kind = 'SATIS') => {
-    setSent(null); setKind(nextKind); setSaleId(''); setFarmerId(''); setCustName(''); setCustTax(''); setCustDistrict(''); setCustCity(''); setCustQuery('');
+    setSent(null); setKind(nextKind); setScenario('TEMELFATURA'); setSaleId(''); setFarmerId(''); setCustName(''); setCustTax(''); setCustDistrict(''); setCustCity(''); setCustQuery('');
     setRefNo(''); setRefDate(''); setLines([newLine()]); setNote(''); setSendError(''); setConfirming(false); setVatIncluded(true); setLedger(true); setPayType('TERM');
   };
 
@@ -277,8 +283,10 @@ export const EFaturaPanel: React.FC<{ isOpen: boolean; initialTab?: TabId; prefi
     setSendError('');
     const isEInvoice = !!payer.isEInvoice;
     const data = await edmPost('send-invoice', cfg, {
+      prefix: cfg.defaultInvoicePrefix || 'MKS',
       invoice: {
         docType: isEInvoice ? 'EFATURA' : 'EARSIV',
+        scenario: isEInvoice && kind === 'SATIS' ? scenario : 'TEMELFATURA',
         invoiceType: kind,
         ...(kind === 'IADE' ? { refInvoiceNo: refNo.trim(), refInvoiceDate: refDate } : {}),
         sender: {
@@ -308,8 +316,25 @@ export const EFaturaPanel: React.FC<{ isOpen: boolean; initialTab?: TabId; prefi
   const [listQuery, setListQuery] = useState('');
   const [viewer, setViewer] = useState<{ state: 'busy' | 'done' | 'fail'; html?: string; title: string; message?: string; inv?: RemoteInvoice; direction?: 'IN' | 'OUT' } | null>(null);
   const [action, setAction] = useState<{ kind: 'cancel' | 'accept' | 'reject' | null; busy?: boolean; message?: string; ok?: boolean }>({ kind: null });
+  const [rejectNote, setRejectNote] = useState('');
   const [returnBusy, setReturnBusy] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
+
+  useBackHandler(
+    isOpen && (!!viewer || confirming || !!action.kind),
+    () => {
+      if (action.kind) {
+        setAction({ kind: null });
+        setRejectNote('');
+      } else if (viewer) {
+        setViewer(null);
+      } else if (confirming) {
+        setConfirming(false);
+      }
+    },
+    'efatura_inner',
+    78
+  );
 
   const sanitizeInvoiceHtml = (rawHtml: string): string => {
     try {
@@ -434,7 +459,7 @@ export const EFaturaPanel: React.FC<{ isOpen: boolean; initialTab?: TabId; prefi
   const openInvoice = async (uuid: string, title: string, direction: 'IN' | 'OUT', inv?: RemoteInvoice) => {
     setAction({ kind: null });
     setViewer({ state: 'busy', title, inv, direction });
-    const data = await edmPost('invoice-html', cfg, { uuid, direction }).catch(offline);
+    const data = await edmPost('invoice-html', cfg, { uuid, direction, externalId: inv?.externalId }).catch(offline);
     setViewer(data?.ok ? { state: 'done', html: data.html, title, inv, direction } : { state: 'fail', title, inv, direction, message: data?.error || 'Fatura açılamadı.' });
   };
 
@@ -444,7 +469,14 @@ export const EFaturaPanel: React.FC<{ isOpen: boolean; initialTab?: TabId; prefi
     setAction({ kind: k, busy: true });
     const data = k === 'cancel'
       ? await edmPost('cancel-invoice', cfg, { uuid: viewer.inv.uuid }).catch(offline)
-      : await edmPost('respond-invoice', cfg, { invoiceId: viewer.inv.id, accept: k === 'accept' }).catch(offline);
+      : await edmPost('respond-invoice', cfg, {
+          invoiceId: viewer.inv.id,
+          uuid: viewer.inv.uuid,
+          externalId: viewer.inv.externalId,
+          accept: k === 'accept',
+          ...(k === 'reject' ? { note: rejectNote.trim() || 'Fatura muhteviyatına itiraz nedeniyle reddedildi' } : {}),
+        }).catch(offline);
+    setRejectNote('');
     setAction({ kind: null, ok: !!data?.ok, message: data?.ok ? (k === 'cancel' ? 'Fatura iptal edildi.' : k === 'accept' ? 'Fatura kabul edildi.' : 'Fatura reddedildi.') : data?.error || 'İşlem yapılamadı.' });
     if (data?.ok) void loadList(viewer.direction === 'OUT' ? 'OUT' : 'IN');
   };
@@ -453,7 +485,7 @@ export const EFaturaPanel: React.FC<{ isOpen: boolean; initialTab?: TabId; prefi
   const startReturnFrom = async (inv: RemoteInvoice) => {
     if (returnBusy) return;
     setReturnBusy(true);
-    const d = await edmPost('invoice-detail', cfg, { uuid: inv.uuid, direction: 'OUT' }).catch(offline);
+    const d = await edmPost('invoice-detail', cfg, { uuid: inv.uuid, direction: 'OUT', externalId: inv.externalId }).catch(offline);
     setReturnBusy(false);
     if (!d?.ok) return setAction({ kind: null, ok: false, message: d?.error || 'Fatura içeriği alınamadı.' });
     const tax = digits(d.customer?.taxNo || '');
@@ -491,10 +523,9 @@ export const EFaturaPanel: React.FC<{ isOpen: boolean; initialTab?: TabId; prefi
 
   // Alt menü ve üst çubuğun üstünde kalması için gövdeye (body) çizilir
   return createPortal(
-    <div className="fixed inset-0 z-[120] bg-black/75 flex items-end sm:items-center justify-center sm:p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[120] bg-black/75 flex items-end sm:items-center justify-center sm:p-4">
       <div
         className="bg-stone-900 w-full sm:max-w-2xl h-[100dvh] sm:h-[92dvh] sm:rounded-3xl border border-white/10 shadow-2xl flex flex-col overflow-hidden"
-        onClick={e => e.stopPropagation()}
       >
         {/* Başlık */}
         <div className="shrink-0 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-2.5 flex items-center justify-between gap-2">
@@ -639,9 +670,25 @@ export const EFaturaPanel: React.FC<{ isOpen: boolean; initialTab?: TabId; prefi
                 {linkedFarmer && !saleId && <p className="text-[11px] text-stone-400 flex items-center gap-1.5"><UserCheck size={13} className="text-emerald-400" /> Kayıtlı müşteri: <b className="text-stone-200">{linkedFarmer.fullName}</b></p>}
                 {payer.state === 'busy' && <p className="text-xs text-stone-400 flex items-center gap-1.5"><Loader2 size={13} className="animate-spin" /> Mükellef sorgulanıyor…</p>}
                 {payer.state === 'done' && (
-                  <p className={`text-xs font-bold ${payer.isEInvoice ? 'text-emerald-400' : 'text-sky-400'}`}>
-                    {payer.isEInvoice ? 'e-Fatura mükellefi → e-Fatura kesilecek.' : 'e-Fatura mükellefi değil → e-Arşiv fatura kesilecek.'}
-                  </p>
+                  <div className="space-y-2">
+                    <p className={`text-xs font-bold ${payer.isEInvoice ? 'text-emerald-400' : 'text-sky-400'}`}>
+                      {payer.isEInvoice ? 'e-Fatura mükellefi → e-Fatura kesilecek.' : 'e-Fatura mükellefi değil → e-Arşiv fatura kesilecek.'}
+                    </p>
+                    {payer.isEInvoice && kind === 'SATIS' && (
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {([['TEMELFATURA', 'Temel Fatura (Doğrudan)'], ['TICARIFATURA', 'Ticari Fatura (Kabul/Redli)']] as const).map(([sc, lbl]) => (
+                          <button
+                            key={sc}
+                            type="button"
+                            onClick={() => setScenario(sc)}
+                            className={`min-h-[36px] rounded-lg px-2 text-[11px] font-bold border transition-colors ${scenario === sc ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/40' : 'bg-stone-900 text-stone-400 border-white/10'}`}
+                          >
+                            {lbl}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )}
                 {payer.state === 'fail' && <p className="text-xs font-bold text-rose-400">{payer.message}</p>}
               </Step>
@@ -778,7 +825,7 @@ export const EFaturaPanel: React.FC<{ isOpen: boolean; initialTab?: TabId; prefi
                 </button>
               </div>
               {waitingCount > 0 && <p className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-400">{waitingCount} fatura yanıtınızı bekliyor. Açıp Kabul Et veya Reddet'e basın.</p>}
-              {list.state === 'busy' && <p className="py-10 text-center text-sm text-stone-400 flex items-center justify-center gap-2"><Loader2 size={16} className="animate-spin" /> EDM'den alınıyor…</p>}
+              {list.state === 'busy' && <p className="py-10 text-center text-sm text-stone-400 flex items-center justify-center gap-2"><Loader2 size={16} className="animate-spin" /> {providerShortName}'den alınıyor…</p>}
               {list.state === 'fail' && <p className="py-8 text-center text-sm font-bold text-rose-400">{list.message}</p>}
               {list.state === 'done' && list.items.length >= 100 && <p className="text-[11px] text-amber-400">En fazla 100 kayıt gösterilir; daha kısa bir aralık seçin.</p>}
               {list.state === 'done' && shownList.length === 0 && <p className="py-10 text-center text-sm text-stone-400">{list.items.length ? 'Aramaya uyan fatura yok.' : 'Bu dönemde fatura yok.'}</p>}
@@ -829,8 +876,16 @@ export const EFaturaPanel: React.FC<{ isOpen: boolean; initialTab?: TabId; prefi
                       <p className="text-xs text-stone-200">
                         <b>{inv.id || viewer.title}</b> numaralı fatura {action.kind === 'cancel' ? 'iptal edilecek' : action.kind === 'accept' ? 'kabul edilecek' : 'reddedilecek'}. Bu işlem geri alınamaz.
                       </p>
+                      {action.kind === 'reject' && (
+                        <input
+                          value={rejectNote}
+                          onChange={e => setRejectNote(e.target.value)}
+                          placeholder="Red gerekçesi (isteğe bağlı)"
+                          className={inputCls}
+                        />
+                      )}
                       <div className="flex gap-2">
-                        <button type="button" disabled={action.busy} onClick={() => setAction({ kind: null })} className="flex-1 min-h-[44px] rounded-xl bg-stone-800 text-stone-200 text-sm font-bold">Vazgeç</button>
+                        <button type="button" disabled={action.busy} onClick={() => { setRejectNote(''); setAction({ kind: null }); }} className="flex-1 min-h-[44px] rounded-xl bg-stone-800 text-stone-200 text-sm font-bold">Vazgeç</button>
                         <button type="button" disabled={action.busy} onClick={() => void runAction()} className={`flex-1 min-h-[44px] rounded-xl text-white text-sm font-bold flex items-center justify-center gap-1.5 disabled:opacity-60 ${action.kind === 'accept' ? 'bg-emerald-600' : 'bg-rose-600'}`}>
                           {action.busy && <Loader2 size={15} className="animate-spin" />} {action.kind === 'cancel' ? 'Evet, İptal Et' : action.kind === 'accept' ? 'Evet, Kabul Et' : 'Evet, Reddet'}
                         </button>
@@ -888,7 +943,7 @@ export const EFaturaPanel: React.FC<{ isOpen: boolean; initialTab?: TabId; prefi
               <section className={cardCls}>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-sm font-extrabold text-stone-100">{providerShortName} hesabı</h3>
-                  {isEdmProvider ? (
+                  {isDirectActive ? (
                     <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
                       ✓ Doğrudan Canlı API Aktif (Tek Tuşla Kesim)
                     </span>
@@ -915,18 +970,88 @@ export const EFaturaPanel: React.FC<{ isOpen: boolean; initialTab?: TabId; prefi
                     ))}
                   </select>
                 </div>
-                {!isEdmProvider && (
+                {!isDirectActive && (
                   <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300 leading-relaxed">
-                    <b>{providerShortName}</b> için web servis / iş ortaklığı aktivasyon süreci devam etmektedir. Doğrudan tek tuşla resmi fatura kesimi şu an <b>EDM Bilişim</b> üzerinden aktiftir; diğer entegratörler API onayı tamamlandığında aynı ekrandan otomatik açılacaktır.
+                    <b>{providerShortName}</b> için web servis / iş ortaklığı aktivasyon süreci devam etmektedir. Doğrudan tek tuşla resmi fatura kesimi şu an <b>EDM Bilişim, Veriban, Park Entegrasyon ve Mysoft</b> üzerinden aktiftir; diğer entegratörler API onayı tamamlandığında aynı ekrandan otomatik açılacaktır.
                   </p>
+                )}
+                {(cfg.edmEnv || 'TEST') === 'TEST' && (selectedProvider.id === 'EDM' || selectedProvider.id === 'VERIBAN' || selectedProvider.id === 'PARK_ENTEGRASYON') && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-3 py-2">
+                    <p className="text-[11px] text-indigo-200">
+                      {selectedProvider.id === 'EDM'
+                        ? 'EDM Bilişim MKS Test Sandbox hesabı hazır.'
+                        : selectedProvider.id === 'VERIBAN'
+                        ? 'Veriban Test Sandbox hesabı hazır.'
+                        : 'Park Entegrasyon Test Sandbox hesabı hazır.'}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (selectedProvider.id === 'EDM') {
+                          updateCfg({
+                            username: 'mks.test',
+                            password: 'Abc.123',
+                            edmEnv: 'TEST',
+                          });
+                        } else if (selectedProvider.id === 'VERIBAN') {
+                          updateCfg({
+                            username: 'TESTER@VRBN',
+                            password: 'Vtest*2020*',
+                            edmEnv: 'TEST',
+                            companyVknOrTc: '9240481875',
+                            companyTitle: 'Örnek Zirai Bayi Test A.Ş.',
+                            companyTaxOffice: 'Çankaya',
+                            companyCity: 'Ankara',
+                            companyDistrict: 'Çankaya',
+                          });
+                        } else {
+                          updateCfg({
+                            username: 'park-entegrasyon',
+                            password: 'cmc2017*!Park',
+                            edmEnv: 'TEST',
+                            companyVknOrTc: '7210452742',
+                            companyTitle: 'PARK ENTEGRASYON TEST BAYİ A.Ş.',
+                            companyTaxOffice: 'İlyasbey',
+                            companyCity: 'Kocaeli',
+                            companyDistrict: 'Gebze',
+                          });
+                        }
+                        setConn({ state: 'idle' });
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-[11px] font-bold hover:bg-indigo-500"
+                    >
+                      Test Sandbox Hesabını Doldur
+                    </button>
+                  </div>
+                )}
+                {selectedProvider.id === 'MYSOFT' && (
+                  <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-[11px] text-indigo-200 leading-relaxed space-y-1">
+                    <p>
+                      <b>Mysoft OAuth2 Erişim Anahtarı:</b> Mysoft Portal üzerinde{' '}
+                      <b>Firma Bilgileri &gt; Entegrasyon &gt; Erişim Anahtarı</b> menüsünden{' '}
+                      <code>Client ID</code> ve <code>Client Secret</code> oluşturup aşağıya girin.
+                    </p>
+                    <a
+                      href={isLive ? 'https://eportal.mysoft.com.tr' : 'https://eportal.mytest.tr/?#!/login'}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-block font-bold text-indigo-300 hover:underline"
+                    >
+                      {isLive ? 'Mysoft Canlı Portalını Aç ↗' : 'Mysoft Test Portalını Aç (eportal.mytest.tr) ↗'}
+                    </a>
+                  </div>
                 )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>
-                    <label className={labelCls}>{providerShortName} kullanıcı adı</label>
+                    <label className={labelCls}>
+                      {selectedProvider.id === 'MYSOFT' ? 'Mysoft Client ID (OAuth2)' : `${providerShortName} kullanıcı adı`}
+                    </label>
                     <input value={cfg.username} onChange={e => updateCfg({ username: e.target.value })} autoCapitalize="none" className={inputCls} />
                   </div>
                   <div>
-                    <label className={labelCls}>{providerShortName} şifresi</label>
+                    <label className={labelCls}>
+                      {selectedProvider.id === 'MYSOFT' ? 'Mysoft Client Secret' : `${providerShortName} şifresi`}
+                    </label>
                     <input type="password" value={cfg.password || ''} onChange={e => updateCfg({ password: e.target.value })} className={inputCls} />
                   </div>
                 </div>

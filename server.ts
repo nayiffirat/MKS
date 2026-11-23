@@ -4,6 +4,7 @@ import path from "path";
 import crypto from "crypto";
 import { registerEdmRoutes } from "./server/edm";
 import { registerMinistryRoutes } from "./server/ministry";
+import { registerShopierRoutes } from "./server/shopier";
 import cors from "cors";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
@@ -133,6 +134,8 @@ function buildCorsOptions(): cors.CorsOptions {
     "http://localhost:5173",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:5173",
+    "https://muhendiskayitsistemi.com",
+    "https://www.muhendiskayitsistemi.com",
     "https://m-hendis-kay-t-sistemi-65385039239.europe-west3.run.app",
     `https://${FIREBASE_PROJECT_ID}.web.app`,
     `https://${FIREBASE_PROJECT_ID}.firebaseapp.com`,
@@ -404,6 +407,9 @@ async function startServer() {
   // --- Tarım ve Orman Bakanlığı Resmi Servisler köprüsü (BKTS, GTS, B-Reçete) ---
   registerMinistryRoutes(app, { isDev, isLoopbackAddress, verifyFirebaseIdToken, checkRateLimit });
 
+  // --- Shopier Tam Otomatik Abonelik (OSB Webhook + Tek Kullanımlık Sipariş Doğrulama) ---
+  registerShopierRoutes(app, { verifyFirebaseIdToken, checkRateLimit });
+
   // --- TKGM Ada/Parsel ve Koordinat Sorgulama Uç Noktası (Uygulama İçi, Yönlendirmesiz) ---
   app.post("/api/tkgm/parcel", async (req, res) => {
     const remoteIp = req.socket.remoteAddress;
@@ -498,6 +504,25 @@ async function startServer() {
         code: err?.code || "SATELLITE_ANALYSIS_FAILED"
       });
     }
+  });
+
+  // Google Play / App Store uyumu: Gizlilik Politikası SPA fallback öncesinde tüm kısa yollardan sunulur
+  const privacyPolicyPaths = [
+    "/gizlilik-politikasi.html",
+    "/gizlilik-politikasi",
+    "/gizlilik",
+    "/privacy",
+    "/privacy-policy",
+  ];
+  app.get(privacyPolicyPaths, (_req, res) => {
+    const publicHtml = path.join(process.cwd(), "public", "gizlilik-politikasi.html");
+    const distHtml = path.join(process.cwd(), "dist", "gizlilik-politikasi.html");
+    const target = fs.existsSync(publicHtml) ? publicHtml : distHtml;
+    if (fs.existsSync(target)) {
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      return res.sendFile(target);
+    }
+    return res.status(404).send("Privacy Policy not found.");
   });
 
   // Vite middleware for development

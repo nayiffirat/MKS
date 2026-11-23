@@ -79,6 +79,7 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
     updateFarmer, 
     softDeleteFarmer, 
     userProfile, 
+    visits: contextVisits,
     softDeleteVisit, 
     showToast, 
     hapticFeedback, 
@@ -380,22 +381,18 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
   const loadFarmers = async () => {
       setIsLoading(true);
       try {
-          const list = await dbService.getFarmers();
-          setFarmers(list.filter(f => !f.deletedAt));
+          await refreshStats();
       } finally {
           setIsLoading(false);
       }
   };
 
   useEffect(() => {
-    loadFarmers();
-  }, []);
-
-  useEffect(() => {
     if (contextFarmers && contextFarmers.length >= 0) {
       const activeList = contextFarmers.filter(f => !f.deletedAt);
       setFarmers(activeList);
-      setSelectedFarmer(prev => prev ? (activeList.find(f => f.id === prev.id) || prev) : null);
+      setIsLoading(false);
+      setSelectedFarmer(prev => prev ? (activeList.find(f => f.id === prev.id) || null) : null);
     }
   }, [contextFarmers]);
 
@@ -408,6 +405,16 @@ export const Farmers: React.FC<FarmersProps> = ({ onBack, onNavigateToPrescripti
         }
     }
   }, [selectedFarmer]);
+
+  useEffect(() => {
+    if (!selectedFarmer) return;
+    loadFarmerDetails();
+    const onCloudSync = () => {
+      loadFarmerDetails();
+    };
+    window.addEventListener('mks-cloud-sync-applied', onCloudSync);
+    return () => window.removeEventListener('mks-cloud-sync-applied', onCloudSync);
+  }, [selectedFarmer?.id, contextVisits]);
 
   // Set default selected year to the latest available year
   const farmerPayments = useMemo(() => 

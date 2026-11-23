@@ -437,11 +437,21 @@ export const MapComponent = ({ onBack }: { onBack: () => void }) => {
       }
     };
     loadFeatures();
-    dbService.getAllVisits().then((v: VisitLog[]) => {
-      if (mounted) setVisits(v.filter((item: VisitLog) => !item.deletedAt));
-    });
+    const loadVisits = () => {
+      dbService.getAllVisits().then((v: VisitLog[]) => {
+        if (mounted) setVisits(v.filter((item: VisitLog) => !item.deletedAt));
+      });
+    };
+    loadVisits();
+    const onCloudSync = () => {
+      if (!mounted) return;
+      loadFeatures();
+      loadVisits();
+    };
+    window.addEventListener("mks-cloud-sync-applied", onCloudSync);
     return () => {
       mounted = false;
+      window.removeEventListener("mks-cloud-sync-applied", onCloudSync);
     };
   }, [userProfile?.uid]);
 

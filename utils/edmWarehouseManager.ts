@@ -152,7 +152,7 @@ export const EINVOICE_PROVIDERS: { id: EInvoiceProviderId; name: string; endpoin
   { id: 'BIEN_TEKNOLOJI', name: 'Bien Teknoloji Özel Entegratör', endpointHint: 'bienteknoloji.com.tr' },
   { id: 'NILVERA', name: 'Nilvera E-Dönüşüm', endpointHint: 'apitest.nilvera.com' },
   { id: 'VERIBAN', name: 'Veriban E-Fatura', endpointHint: 'efatura.veriban.com.tr' },
-  { id: 'MYSOFT', name: 'Mysoft E-Belge', endpointHint: 'edonusumapi.mysoft.com.tr' },
+  { id: 'MYSOFT', name: 'Mysoft E-Belge', endpointHint: 'edocumentapi.mysoft.com.tr' },
   { id: 'EDOKSIS', name: 'Edoksis (SabancıDx)', endpointHint: 'efatura.edoksis.net' },
   { id: 'ISNET', name: 'İşNet (NetteFatura)', endpointHint: 'nettefatura.isnet.net.tr' },
   { id: 'KOCSISTEM', name: 'KoçSistem E-Dönüşüm', endpointHint: 'efatura.kocsistem.com.tr' },
@@ -200,7 +200,8 @@ function getScopedKey(base: string): string | null {
 export const EDM_DATA_KEYS = {
   warehouse: 'mks_official_efatura_warehouse_v2',
   incoming: 'mks_edm_incoming_invoices_v2',
-  outgoing: 'mks_edm_outgoing_invoices_v2'
+  outgoing: 'mks_edm_outgoing_invoices_v2',
+  config: 'mks_edm_config_v2'
 } as const;
 
 export type EdmDataKey = (typeof EDM_DATA_KEYS)[keyof typeof EDM_DATA_KEYS];
@@ -256,8 +257,16 @@ export async function hydrateEdmDataFromIndexedDb(): Promise<boolean> {
     try {
       if (localStorage.getItem(key)) continue;
       const data = await getFn(baseKey);
-      if (Array.isArray(data) && data.length > 0) {
-        localStorage.setItem(key, JSON.stringify(data));
+      const isValidData = Array.isArray(data)
+        ? data.length > 0
+        : Boolean(data && typeof data === 'object' && !Array.isArray(data));
+      if (isValidData) {
+        if (baseKey === EDM_DATA_KEYS.config) {
+          const { password: _strippedPwd, ...safeCfg } = data as Record<string, any>;
+          localStorage.setItem(key, JSON.stringify(safeCfg));
+        } else {
+          localStorage.setItem(key, JSON.stringify(data));
+        }
         restored = true;
       }
     } catch (err) {
@@ -323,8 +332,13 @@ export function saveEdmConfig(cfg: EdmConfig): boolean {
     } else {
       sessionStorage.removeItem(`${key}_pwd`);
     }
-    // Never persist cleartext EDM password in long-lived localStorage
+    // Never persist cleartext EDM password in long-lived localStorage or cloud
     localStorage.setItem(key, JSON.stringify(rest));
+    if (typeof (dbService as any)?.saveEdmData === 'function') {
+      void dbService.saveEdmData(EDM_DATA_KEYS.config, rest).catch(err => {
+        console.warn('[EDM] Config cloud sync warning:', err);
+      });
+    }
     return true;
   } catch (err) {
     console.error('[EDM] Ayarlar kaydedilemedi:', err);
