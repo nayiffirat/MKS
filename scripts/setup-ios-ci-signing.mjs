@@ -175,8 +175,18 @@ async function main() {
 
   await downloadIntermediateCerts(tempDir, keychainPath);
 
-  const sslVer = execFileSync('openssl', ['version'], { encoding: 'utf8' });
-  const useLegacyFlag = sslVer.includes('OpenSSL 3');
+  const sslVer = execFileSync('openssl', ['version'], { encoding: 'utf8' }).trim();
+  console.log(`Detected OpenSSL: ${sslVer}`);
+  const useLegacyFlag = /^OpenSSL\s+([3-9]|\d{2,})\./i.test(sslVer);
+
+  const importTrustArgs = [
+    '-T',
+    '/usr/bin/codesign',
+    '-T',
+    '/usr/bin/security',
+    '-T',
+    '/usr/bin/productbuild',
+  ];
 
   for (const certType of certTypes) {
     const cerPath = path.join(tempDir, `${certType}.cer`);
@@ -185,38 +195,41 @@ async function main() {
     fs.writeFileSync(cerPath, certDers[certType]);
 
     execFileSync('openssl', ['x509', '-inform', 'DER', '-in', cerPath, '-out', pemPath], { stdio: 'inherit' });
-    const pkcs12Args = [
-      'pkcs12',
-      '-export',
-      ...(useLegacyFlag ? ['-legacy'] : []),
-      '-out',
-      p12Path,
-      '-inkey',
-      keyPath,
-      '-in',
-      pemPath,
-      '-passout',
-      `pass:${p12Pass}`,
-    ];
-    execFileSync('openssl', pkcs12Args, { stdio: 'inherit' });
-    execFileSync(
-      'security',
-      [
-        'import',
+
+    const buildAndImportP12 = (opensslBin, extraArgs) => {
+      const pkcs12Args = [
+        'pkcs12',
+        '-export',
+        ...extraArgs,
+        '-out',
         p12Path,
-        '-k',
-        keychainPath,
-        '-P',
-        p12Pass,
-        '-T',
-        '/usr/bin/codesign',
-        '-T',
-        '/usr/bin/security',
-        '-T',
-        '/usr/bin/productbuild',
-      ],
-      { stdio: 'inherit' }
-    );
+        '-inkey',
+        keyPath,
+        '-in',
+        pemPath,
+        '-passout',
+        `pass:${p12Pass}`,
+      ];
+      execFileSync(opensslBin, pkcs12Args, { stdio: 'inherit' });
+      execFileSync(
+        'security',
+        ['import', p12Path, '-k', keychainPath, '-P', p12Pass, ...importTrustArgs],
+        { stdio: 'inherit' }
+      );
+    };
+
+    try {
+      buildAndImportP12('openssl', useLegacyFlag ? ['-legacy'] : []);
+    } catch (err) {
+      console.warn(`Primary PKCS12 import failed for ${certType} (${err.message}); retrying with /usr/bin/openssl...`);
+      try {
+        buildAndImportP12('/usr/bin/openssl', []);
+      } catch (fallbackErr) {
+        console.warn(`/usr/bin/openssl PKCS12 import failed (${fallbackErr.message}); importing certificate and private key directly...`);
+        execFileSync('security', ['import', cerPath, '-k', keychainPath, ...importTrustArgs], { stdio: 'inherit' });
+        execFileSync('security', ['import', keyPath, '-k', keychainPath, ...importTrustArgs], { stdio: 'inherit' });
+      }
+    }
   }
 
   execFileSync(
